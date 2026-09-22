@@ -72,12 +72,37 @@ adicionar < <(psql -tAc "
    where n.nspname = 'public' and not t.tgisinternal
    order by t.tgname")
 
-# Política de RLS. Derrubar uma política de leitura **abre** dados em vez de fechar,
-# então aqui o teste que tem que ficar vermelho é o que afirma que alguém NÃO lê algo.
-# A recriação é montada a partir do catálogo, com comando, papéis e as duas expressões,
-# para não assumir que toda política deste esquema é de select.
+# Política de RLS, por dois caminhos opostos, porque as falhas são opostas.
+#
+#   **ausente**  — a política some e a tabela fecha. Mata o teste que afirma que alguém
+#                  LÊ algo. Pega a política sem nenhuma asserção positiva.
+#   **frouxa**   — o `using` vira `true` e a tabela abre inteira. Mata o teste que afirma
+#                  que alguém NÃO lê algo. Pega o `using (true)` posto por engano, que a
+#                  mutação por ausência não enxerga: toda asserção de "fulano lê o
+#                  próprio" continua verdadeira com a tabela escancarada.
+#
+# A segunda existe porque uma revisão mediu seis políticas que sobreviviam a ela, com a
+# suíte verde — e o que passaria era token de push, distância de check-in e valor de
+# turno de terceiros.
 adicionar < <(psql -tAc "
-  select 'política|' || p.polname || '|' ||
+  select 'frouxa|' || p.polname || '|' ||
+         'alter policy ' || quote_ident(p.polname) || ' on ' || p.polrelid::regclass ||
+           ' using (true)' || '|' ||
+         'alter policy ' || quote_ident(p.polname) || ' on ' || p.polrelid::regclass ||
+           ' using (' || pg_get_expr(p.polqual, p.polrelid) || ')'
+    from pg_policy p
+    join pg_class c on c.oid = p.polrelid
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public'
+     and p.polqual is not null
+     -- A política do catálogo de funções é using(true) por definição: ele é aberto a
+     -- quem está logado. Afrouxá-la não muda nada, e cobrá-la seria cobrar um teste
+     -- impossível.
+     and pg_get_expr(p.polqual, p.polrelid) <> 'true'
+   order by p.polname")
+
+adicionar < <(psql -tAc "
+  select 'ausente|' || p.polname || '|' ||
          'drop policy ' || quote_ident(p.polname) || ' on ' || p.polrelid::regclass || '|' ||
          'create policy ' || quote_ident(p.polname) || ' on ' || p.polrelid::regclass ||
            ' as ' || case when p.polpermissive then 'permissive' else 'restrictive' end ||

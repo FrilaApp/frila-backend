@@ -18,11 +18,19 @@
 -- relógio não virar no meio. Com um relógio sobreponível, o teste diz "são 3 horas
 -- depois" e pronto.
 --
--- A sobreposição só vale onde o ambiente é de teste, e o marcador do ambiente vem de uma
--- tabela que **só a semente preenche**. `supabase db reset` roda a semente no local e na
--- CI; `supabase db push` para o frila-dev e o frila-prod não roda. Não há variável de
--- ambiente para alguém esquecer ligada, e não há como o remoto ficar sobreponível por
--- descuido: lá a tabela está vazia.
+-- A sobreposição só vale onde o ambiente é de teste, e o marcador do ambiente é uma
+-- linha que **nenhum arquivo do repositório grava**. Quem a escreve é o próprio teste,
+-- dentro da transação, e o `rollback` a leva junto.
+--
+-- Não é variável de ambiente, e não é arquivo de semente. Os dois já foram tentados e
+-- os dois têm caminho para o remoto: variável alguém esquece ligada, e semente listada
+-- em `config.toml → sql_paths` é executada por `supabase db push --include-seed`, que é
+-- uma flag de uma linha. Marcar um ambiente publicado como de teste tornaria
+-- `privado.agora()` sobreponível, e com ele todo prazo do produto vira decoração — os
+-- 7 dias do contato (RN10), as 24 h do modo seleção (RN24), o fim previsto que libera
+-- a avaliação (RN07).
+--
+-- Sem arquivo, não há caminho remoto, e não há guarda para alguém manter.
 
 create table privado.ambiente (
   id        boolean primary key default true check (id),
@@ -30,7 +38,7 @@ create table privado.ambiente (
 );
 
 comment on table privado.ambiente is
-  'Marcador de ambiente de teste. Preenchido só pela semente, que não roda em ambiente remoto. Uma linha, no máximo.';
+  'Marcador de ambiente de teste. Escrito apenas dentro da transação de um teste pgTAP e desfeito no rollback: nenhum arquivo do repositório o grava, e por isso não há caminho que o leve a um ambiente publicado.';
 
 create or replace function privado.agora() returns timestamptz
 language plpgsql stable security definer set search_path = ''

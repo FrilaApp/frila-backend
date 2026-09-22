@@ -88,9 +88,12 @@ if [ "$SECO" = "--seco" ]; then
   exit 0
 fi
 
-# Só o `seed.sql`, que é o catálogo de funções e é idempotente. O `seed-teste.sql`,
-# que marca o ambiente como sobreponível, nunca entra aqui — e a conferência abaixo
-# prova isso em vez de confiar na leitura deste comentário.
+# Só o `seed.sql`, que é o catálogo de funções e é idempotente.
+#
+# A conferência seguinte é redundante por desenho: o marcador de ambiente de teste não
+# mora em arquivo nenhum, então não há caminho que o traga para cá. Ela fica porque é
+# barata e porque a propriedade importa demais para depender de ninguém ter reintroduzido
+# um arquivo de semente sem pensar.
 echo "▸ Semente do catálogo"
 rodar "$(cat supabase/seed.sql)" >/dev/null && echo "  ✓"
 

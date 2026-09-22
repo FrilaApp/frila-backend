@@ -40,11 +40,17 @@ jobs:
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
-      # Suíte verde não diz o que ela protege. Derruba cada CHECK e cada EXCLUDE, um
-      # por vez, e exige que o pgTAP fique vermelho. Escrito depois de uma revisão
-      # medir que 11 de 31 restrições passavam sem nenhum teste reclamar.
-      - name: Os testes cobrem as restrições
+      # Suíte verde não diz o que ela protege. Derruba cada restrição, trigger e
+      # política — e afrouxa cada política para `using (true)` — exigindo que o pgTAP
+      # fique vermelho em cada caso. Escrito depois de duas revisões medirem que 11 de
+      # 31 restrições e 6 de 19 políticas passavam sem nenhum teste reclamar.
+      - name: Os testes cobrem as regras
         run: ./scripts/mutacao.sh
+
+      # O lint tem um achado conhecido e falso positivo. Fixado por nome: achado novo
+      # reprova, e o conhecido que sumir também avisa.
+      - name: Lint do plpgsql sem achado novo
+        run: ./scripts/lint-conhecido.sh
 
       - name: Diagnóstico ao falhar
         if: failure()

@@ -80,11 +80,15 @@ select ok(
   privado.agora() between now() - interval '5 s' and now() + interval '5 s',
   'sem sobreposição, o relógio é o relógio');
 
--- A semente de teste marcou este ambiente, então a sobreposição vale aqui.
+-- O marcador é escrito **aqui dentro**, e o rollback o leva junto. Nenhum arquivo do
+-- repositório o grava: não há semente listada em `config.toml` para um
+-- `supabase db push --include-seed` levar a um ambiente publicado.
 select is(
-  (select eh_teste from privado.ambiente),
-  true,
-  'o ambiente local está marcado como de teste pela seed-teste.sql');
+  (select count(*)::int from privado.ambiente),
+  0,
+  'nenhuma migração e nenhuma semente deixa marcador de teste para trás — é assim que o frila-dev nasce');
+
+insert into privado.ambiente (id, eh_teste) values (true, true);
 
 set local frila.agora = '2026-12-25 03:00:00+00';
 

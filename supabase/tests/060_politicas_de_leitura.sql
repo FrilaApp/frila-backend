@@ -6,7 +6,7 @@
 -- telefone de alguém sai por engano.
 
 begin;
-select plan(41);
+select plan(53);
 
 -- Executa `sql` com a identidade de uma conta, como o PostgREST faria: role
 -- `authenticated` e o `sub` do JWT apontando para a conta. `auth.uid()` lê daí.
@@ -397,6 +397,123 @@ select is(
     'select count(*)::int from public.ocorrencia'),
   0,
   'mas a ocorrência de outra pessoa não aparece');
+
+-- ── O que a mutação não enxerga: política frouxa demais ────────────────────────
+--
+-- Derrubar uma política de leitura **fecha** dado, então o verificador de mutação só
+-- pega a ausência de uma asserção positiva. Ele não pega o contrário: um `using (true)`
+-- posto por engano abriria a tabela inteira e a suíte seguiria verde, porque toda
+-- asserção do tipo "fulano lê o próprio" continua verdadeira.
+--
+-- Uma revisão mediu isso: trocando o `using` de cada política por `true`, seis
+-- sobreviveram. O que passaria despercebido era o token de push da Ana, a distância do
+-- check-in dela, o valor acordado do turno, a posição confirmada, o histórico de
+-- notificação, as funções declaradas e as equipes de que ela faz parte.
+--
+-- A defesa é a asserção simétrica: para cada "fulano lê o próprio", um "sicrano não lê
+-- o de fulano". O Beto serve de contraparte — é profissional, ativo, e não tem relação
+-- nenhuma com nada disto.
+
+select is(
+  pg_temp.contar_como('11111111-0000-0000-0000-000000000002',
+    'select count(*)::int from public.dispositivo'),
+  0,
+  'o token de push de um aparelho não vaza para outro profissional');
+
+select is(
+  pg_temp.contar_como('11111111-0000-0000-0000-000000000002',
+    'select count(*)::int from public.notificacao'),
+  0,
+  'nem o histórico de notificação, que diria quando e quantas vezes alguém foi chamado');
+
+select is(
+  pg_temp.contar_como('11111111-0000-0000-0000-000000000002',
+    'select count(*)::int from public.profissional_funcao'),
+  0,
+  'nem as funções que outro profissional declarou');
+
+select is(
+  pg_temp.contar_como('11111111-0000-0000-0000-000000000002',
+    'select count(*)::int from public.equipe_confianca'),
+  0,
+  'RF18: de que equipes alguém faz parte é assunto entre ele e a casa');
+
+select is(
+  pg_temp.contar_como('11111111-0000-0000-0000-000000000002',
+    'select count(*)::int from public.posicao'),
+  0,
+  'a posição de um turno confirmado não aparece para quem não é das duas partes');
+
+select is(
+  pg_temp.contar_como('11111111-0000-0000-0000-000000000002',
+    'select count(*)::int from public.turno'),
+  0,
+  'RN22: nem o turno, que carrega a distância do check-in e o valor acordado');
+
+-- ── O membro não fica bloqueado com o próprio estabelecimento ──────────────────
+--
+-- O Zé bloqueou o Caio. A auxiliar de bloqueio perguntava se a conta e algum membro
+-- aparecem no mesmo bloqueio — e o Zé satisfazia as duas pontas sozinho.
+select is(
+  (select privado.bloqueado_com_estabelecimento(
+            '22222222-0000-0000-0000-000000000001',
+            '33333333-0000-0000-0000-000000000001')),
+  false,
+  'quem bloqueia alguém não fica bloqueado com a própria casa');
+
+select is(
+  (select privado.bloqueado_com_estabelecimento(
+            '11111111-0000-0000-0000-000000000003',
+            '33333333-0000-0000-0000-000000000001')),
+  true,
+  'e o bloqueado continua bloqueado');
+
+-- ── O operador lê o mesmo que o administrador ─────────────────────────────────
+--
+-- Decisão da Modelagem: `eh_administrador` não aparece em nenhuma política de leitura.
+-- O papel separa quem **faz** certas coisas, não quem enxerga. Sem um operador no
+-- cenário, essa propriedade não era medida — e alguém "endureceria" as políticas por
+-- reflexo, tirando o operador da leitura do próprio estabelecimento.
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento)
+values ('22222222-0000-0000-0000-000000000003','contratante','Nina','+5561999990013','nina@t.test','1990-01-01');
+insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
+values ('22222222-0000-0000-0000-000000000003','33333333-0000-0000-0000-000000000001','operador');
+
+select is(
+  pg_temp.contar_como('22222222-0000-0000-0000-000000000003',
+    'select count(*)::int from public.vaga'),
+  2,
+  'o operador lê as mesmas vagas que o administrador: o papel separa quem faz, não quem vê');
+
+select is(
+  pg_temp.contar_como('22222222-0000-0000-0000-000000000003',
+    'select count(*)::int from public.candidatura'),
+  1,
+  'e as mesmas candidaturas');
+
+-- ── Conta suspensa ─────────────────────────────────────────────────────────────
+--
+-- Nenhuma política olha `usuario.estado`, e isso é deliberado: o contrato recusa no
+-- momento da ação (`422 inelegivel` com `perfil_suspenso`), não na leitura. Quem está
+-- suspenso precisa continuar lendo a própria conta para ver o motivo e contestar
+-- (RN13, RF24) — fechar a leitura fecharia justamente o caminho do direito de defesa.
+--
+-- O teste existe para que a decisão seja decisão, e não descuido: se alguém fechar a
+-- leitura por reflexo, ele fica vermelho e a conversa acontece.
+update public.usuario set estado = 'suspensa'
+ where id = '11111111-0000-0000-0000-000000000002';
+
+select is(
+  pg_temp.contar_como('11111111-0000-0000-0000-000000000002',
+    'select count(*)::int from public.usuario'),
+  1,
+  'RN13: conta suspensa continua lendo a própria linha — é por ela que o motivo e a contestação chegam');
+
+select is(
+  pg_temp.contar_como('11111111-0000-0000-0000-000000000002',
+    $$ select count(*)::int from public.vaga where estado = 'publicada' $$),
+  2,
+  'e continua vendo as vagas: a recusa é no ato de se candidatar, não na leitura');
 
 select * from finish();
 rollback;
