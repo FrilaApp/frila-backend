@@ -72,6 +72,28 @@ adicionar < <(psql -tAc "
    where n.nspname = 'public' and not t.tgisinternal
    order by t.tgname")
 
+# Política de RLS. Derrubar uma política de leitura **abre** dados em vez de fechar,
+# então aqui o teste que tem que ficar vermelho é o que afirma que alguém NÃO lê algo.
+# A recriação é montada a partir do catálogo, com comando, papéis e as duas expressões,
+# para não assumir que toda política deste esquema é de select.
+adicionar < <(psql -tAc "
+  select 'política|' || p.polname || '|' ||
+         'drop policy ' || quote_ident(p.polname) || ' on ' || p.polrelid::regclass || '|' ||
+         'create policy ' || quote_ident(p.polname) || ' on ' || p.polrelid::regclass ||
+           ' as ' || case when p.polpermissive then 'permissive' else 'restrictive' end ||
+           ' for ' || case p.polcmd when 'r' then 'select' when 'a' then 'insert'
+                                    when 'w' then 'update' when 'd' then 'delete'
+                                    else 'all' end ||
+           ' to ' || coalesce((select string_agg(quote_ident(r.rolname), ', ')
+                                 from pg_roles r where r.oid = any (p.polroles)), 'public') ||
+           coalesce(' using (' || pg_get_expr(p.polqual, p.polrelid) || ')', '') ||
+           coalesce(' with check (' || pg_get_expr(p.polwithcheck, p.polrelid) || ')', '')
+    from pg_policy p
+    join pg_class c on c.oid = p.polrelid
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public'
+   order by p.polname")
+
 sobreviventes=()
 mortos=0
 
