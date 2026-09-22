@@ -5,7 +5,7 @@
 -- três clientes, e é o tipo de mudança que passa numa revisão apressada.
 
 begin;
-select plan(36);
+select plan(37);
 
 -- ── As dezoito tabelas marcadas v1, mais `evento` ──────────────────────────────
 --
@@ -68,6 +68,10 @@ select columns_are('public', 'candidatura', array[
 select columns_are('public', 'avaliacao', array[
   'id','turno_id','autor_id','alvo_tipo','alvo_id','resposta','criada_em'
 ], 'avaliacao tem exatamente as colunas da Modelagem');
+
+select columns_are('public', 'estabelecimento', array[
+  'id','nome','documento','tipo','endereco','ponto','criado_em','aval_positivas','aval_total'
+], 'estabelecimento tem exatamente as colunas da Modelagem');
 
 -- ── O que NÃO pode existir ─────────────────────────────────────────────────────
 --
