@@ -88,10 +88,28 @@ if [ "$SECO" = "--seco" ]; then
   exit 0
 fi
 
-# A semente é do catálogo de funções, e é idempotente (on conflict do update).
-# O marcador de ambiente de teste NÃO entra: em remoto o relógio nunca é sobreponível.
+# Só o `seed.sql`, que é o catálogo de funções e é idempotente.
+#
+# A conferência seguinte é redundante por desenho: o marcador de ambiente de teste não
+# mora em arquivo nenhum, então não há caminho que o traga para cá. Ela fica porque é
+# barata e porque a propriedade importa demais para depender de ninguém ter reintroduzido
+# um arquivo de semente sem pensar.
 echo "▸ Semente do catálogo"
 rodar "$(cat supabase/seed.sql)" >/dev/null && echo "  ✓"
+
+echo "▸ O relógio remoto não é sobreponível"
+if rodar "select count(*) as n from privado.ambiente where eh_teste" 2>/dev/null \
+     | grep -q '"n":0'; then
+  echo "  ✓ privado.ambiente sem marcador de teste"
+else
+  echo "  ✗ ESTE AMBIENTE ESTÁ MARCADO COMO DE TESTE"
+  echo
+  echo "  privado.agora() aceita sobreposição aqui, e com ela todo prazo do produto"
+  echo "  pode ser burlado: os 7 dias do contato (RN10), as 24 h do modo seleção"
+  echo "  (RN24), o fim previsto que libera a avaliação (RN07)."
+  echo "  Limpe com: delete from privado.ambiente;"
+  exit 1
+fi
 
 echo
 echo "▸ Conferindo"

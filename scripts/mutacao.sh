@@ -72,7 +72,55 @@ adicionar < <(psql -tAc "
    where n.nspname = 'public' and not t.tgisinternal
    order by t.tgname")
 
+# Política de RLS, por dois caminhos opostos, porque as falhas são opostas.
+#
+#   **ausente**  — a política some e a tabela fecha. Mata o teste que afirma que alguém
+#                  LÊ algo. Pega a política sem nenhuma asserção positiva.
+#   **frouxa**   — o `using` vira `true` e a tabela abre inteira. Mata o teste que afirma
+#                  que alguém NÃO lê algo. Pega o `using (true)` posto por engano, que a
+#                  mutação por ausência não enxerga: toda asserção de "fulano lê o
+#                  próprio" continua verdadeira com a tabela escancarada.
+#
+# A segunda existe porque uma revisão mediu seis políticas que sobreviviam a ela, com a
+# suíte verde — e o que passaria era token de push, distância de check-in e valor de
+# turno de terceiros.
+adicionar < <(psql -tAc "
+  select 'frouxa|' || p.polname || '|' ||
+         'alter policy ' || quote_ident(p.polname) || ' on ' || p.polrelid::regclass ||
+           ' using (true)' || '|' ||
+         'alter policy ' || quote_ident(p.polname) || ' on ' || p.polrelid::regclass ||
+           ' using (' || pg_get_expr(p.polqual, p.polrelid) || ')'
+    from pg_policy p
+    join pg_class c on c.oid = p.polrelid
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public'
+     and p.polqual is not null
+     -- A política do catálogo de funções é using(true) por definição: ele é aberto a
+     -- quem está logado. Afrouxá-la não muda nada, e cobrá-la seria cobrar um teste
+     -- impossível.
+     and pg_get_expr(p.polqual, p.polrelid) <> 'true'
+   order by p.polname")
+
+adicionar < <(psql -tAc "
+  select 'ausente|' || p.polname || '|' ||
+         'drop policy ' || quote_ident(p.polname) || ' on ' || p.polrelid::regclass || '|' ||
+         'create policy ' || quote_ident(p.polname) || ' on ' || p.polrelid::regclass ||
+           ' as ' || case when p.polpermissive then 'permissive' else 'restrictive' end ||
+           ' for ' || case p.polcmd when 'r' then 'select' when 'a' then 'insert'
+                                    when 'w' then 'update' when 'd' then 'delete'
+                                    else 'all' end ||
+           ' to ' || coalesce((select string_agg(quote_ident(r.rolname), ', ')
+                                 from pg_roles r where r.oid = any (p.polroles)), 'public') ||
+           coalesce(' using (' || pg_get_expr(p.polqual, p.polrelid) || ')', '') ||
+           coalesce(' with check (' || pg_get_expr(p.polwithcheck, p.polrelid) || ')', '')
+    from pg_policy p
+    join pg_class c on c.oid = p.polrelid
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public'
+   order by p.polname")
+
 sobreviventes=()
+pulados=()
 mortos=0
 
 for alvo in ${alvos[@]+"${alvos[@]}"}; do
@@ -82,8 +130,12 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
 
   printf '  %-9s %-40s ' "$tipo" "$nome"
 
+  # Alvo que não se consegue mutar é alvo **não medido**, e não medido nunca conta como
+  # coberto. Regra geral deste repositório para portão: qualquer caminho que não seja
+  # "medi e o resultado foi X" tem que sair diferente de zero.
   if ! psql -q -c "$derrubar" >/dev/null 2>&1; then
-    echo "não consegui derrubar — pulando"
+    echo "NÃO CONSEGUI MUTAR — não medido"
+    pulados+=("$tipo $nome")
     continue
   fi
 
@@ -110,11 +162,23 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
 done
 
 echo
-echo "cobertas: $mortos · sem cobertura: ${#sobreviventes[@]}"
+echo "cobertas: $mortos · sem cobertura: ${#sobreviventes[@]} · não medidas: ${#pulados[@]}"
+
+falta=0
 
 if [ "${#sobreviventes[@]}" -gt 0 ]; then
-  printf '  %s\n' "${sobreviventes[@]}"
   echo
-  echo "Cada uma dessas precisa de uma asserção que fique vermelha sem ela."
-  exit 1
+  echo "Sem cobertura — cada uma precisa de uma asserção que fique vermelha sem ela:"
+  printf '  %s\n' "${sobreviventes[@]}"
+  falta=1
 fi
+
+if [ "${#pulados[@]}" -gt 0 ]; then
+  echo
+  echo "Não medidas — o comando de mutação falhou, então o portão não sabe nada sobre elas:"
+  printf '  %s\n' "${pulados[@]}"
+  falta=1
+fi
+
+[ "$falta" -ne 0 ] && exit 1
+exit 0
