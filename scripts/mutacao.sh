@@ -62,7 +62,7 @@ done
 echo
 echo "cobertas: $mortos · sem cobertura: ${#sobreviventes[@]}"
 
-if [ ${#sobreviventes[@]+x} ] && [ ${#sobreviventes[@]} -gt 0 ]; then
+if [ "${#sobreviventes[@]}" -gt 0 ]; then
   printf '  %s\n' "${sobreviventes[@]}"
   echo
   echo "Cada uma dessas precisa de uma asserção que fique vermelha sem ela."
