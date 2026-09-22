@@ -18,10 +18,21 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # função|sqlState — um por linha.
-CONHECIDOS="privado.exigir_perfil|PGRST"
+# Vazio: hoje o lint está limpo. O primeiro achado que aparecer reprova, e quem for
+# adicioná-lo aqui tem que justificar por que é artefato da ferramenta e não defeito.
+CONHECIDOS=""
 
+# A versão da CLI muda o conjunto de checagens do plpgsql_check. Rodar uma versão
+# antiga aqui e `latest` na integração contínua faz o portão abrir na máquina e fechar
+# no servidor — foi o que aconteceu no primeiro dia: a CI viu que `public.erro` estava
+# marcada IMMUTABLE sem ser, e a máquina não. Imprimir a versão torna a divergência
+# visível em vez de misteriosa.
+echo "  supabase CLI $(supabase --version 2>/dev/null | head -1)"
+
+# A CLI mudou o formato entre versões: era um array cru, virou {"results": [...]}.
+# O parser aceita os dois, senão o portão passa a abrir em silêncio na próxima troca.
 saida=$(supabase db lint --level warning --schema public,privado 2>/dev/null \
-        | sed -n '/^\[/,$p')
+        | sed -n '/^[[{]/,$p')
 
 achados=$(printf '%s' "$saida" | python3 -c "
 import json, sys
@@ -29,6 +40,8 @@ try:
     d = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
+if isinstance(d, dict):
+    d = d.get('results', [])
 for f in d:
     for i in f.get('issues', []):
         print(f\"{f['function']}|{i.get('sqlState','?')}\")
