@@ -1,0 +1,75 @@
+-- As tabelas da v1 existem, com os nomes de coluna da Modelagem.
+--
+-- Este arquivo não testa comportamento: testa que o contrato entre a Modelagem e o
+-- esquema não se desfez em silêncio. Renomear uma coluna "para ficar melhor" quebra os
+-- três clientes, e é o tipo de mudança que passa numa revisão apressada.
+
+begin;
+select plan(32);
+
+-- ── As 19 tabelas marcadas v1 ──────────────────────────────────────────────────
+select has_table('public', 'usuario',                'usuario existe');
+select has_table('public', 'profissional',           'profissional existe');
+select has_table('public', 'estabelecimento',        'estabelecimento existe');
+select has_table('public', 'membro_estabelecimento', 'membro_estabelecimento existe');
+select has_table('public', 'equipe_confianca',       'equipe_confianca existe');
+select has_table('public', 'funcao',                 'funcao existe');
+select has_table('public', 'profissional_funcao',    'profissional_funcao existe');
+select has_table('public', 'disponibilidade',        'disponibilidade existe');
+select has_table('public', 'evento',                 'evento existe');
+select has_table('public', 'vaga',                   'vaga existe');
+select has_table('public', 'posicao',                'posicao existe');
+select has_table('public', 'dispositivo',            'dispositivo existe');
+select has_table('public', 'notificacao',            'notificacao existe');
+select has_table('public', 'despacho',               'despacho existe');
+select has_table('public', 'candidatura',            'candidatura existe');
+select has_table('public', 'turno',                  'turno existe');
+select has_table('public', 'avaliacao',              'avaliacao existe');
+select has_table('public', 'bloqueio',               'bloqueio existe');
+select has_table('public', 'ocorrencia',             'ocorrencia existe');
+
+-- ── Colunas cujo nome o contrato promete ao cliente ────────────────────────────
+select columns_are('public', 'vaga', array[
+  'id','estabelecimento_id','evento_id','funcao_id','inicio_em','fim_em','local','ponto',
+  'valor_centavos','posicoes','inclui_refeicao','inclui_transporte','exige_material_proprio',
+  'responsavel_local','traje','participa_rateio','observacoes','modo','alerta_antecedencia',
+  'estado','publicado_em','chave_cliente'
+], 'vaga tem exatamente as colunas da Modelagem');
+
+select columns_are('public', 'turno', array[
+  'id','posicao_id','checkin_em','checkin_tipo','checkin_distancia_m','checkin_confirmado_em',
+  'checkout_em','checkout_distancia_m','verificacao','valor_acordado_centavos'
+], 'turno tem exatamente as colunas da Modelagem');
+
+select columns_are('public', 'posicao', array[
+  'id','vaga_id','estado','profissional_id','confirmado_em','falta','inicio_em','fim_em'
+], 'posicao tem exatamente as colunas da Modelagem');
+
+-- ── O que NÃO pode existir ─────────────────────────────────────────────────────
+--
+-- A ausência é decisão, não lacuna. Um marketplace normalmente teria estas tabelas; a
+-- ausência delas é o que honra RN01, RN07, RN09 e RN10 no lugar onde a regra não se
+-- perde: não há onde representar o proibido.
+select hasnt_table('public', 'pagamento',  'RN09: o Frila registra o valor, não custodia dinheiro');
+select hasnt_table('public', 'carteira',   'RN09: sem carteira');
+select hasnt_table('public', 'comissao',   'RN01: não há onde descontar do valor do turno');
+select hasnt_table('public', 'mensagem',   'RN10: o contato é por WhatsApp ou e-mail, não por chat interno');
+select hasnt_table('public', 'nota',       'RN07: avaliação é binária, nunca nota de 1 a 5');
+select hasnt_table('public', 'comentario', 'RN07: sem comentário aberto');
+
+-- Rastreamento contínuo está no escopo não contemplado, com a marca mais dura do
+-- documento. O check-in guarda a distância do toque, e nada mais.
+select hasnt_column('public', 'turno', 'checkin_latitude',
+  'RN22: a coordenada do profissional não trafega e não é gravada');
+select hasnt_column('public', 'turno', 'checkin_longitude',
+  'RN22: a coordenada do profissional não trafega e não é gravada');
+
+-- RN06: notificação e posição na lista não podem ser compradas. O jeito de garantir é
+-- não existir coluna onde guardar o que foi comprado.
+select hasnt_column('public', 'vaga', 'patrocinada',
+  'RN06: não há coluna de patrocínio');
+select hasnt_column('public', 'vaga', 'prioridade',
+  'RN06: não há coluna de prioridade');
+
+select * from finish();
+rollback;
