@@ -205,12 +205,14 @@ double_confirm_changes = true
 enable_confirmations = false
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
-# Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
-max_frequency = "1s"
-# Number of characters used in the email OTP.
+# Reenvio no mínimo a cada 60 s: mais que isso vira torneira de e-mail para quem
+# insiste no botão, e a caixa de quem tenta entrar não é lugar para isso.
+max_frequency = "60s"
+# Código de 6 dígitos, como o contrato promete em /verify.
 otp_length = 6
-# Number of seconds before the email OTP expires (defaults to 1 hour).
-otp_expiry = 3600
+# Dez minutos. O padrão é uma hora, e um código de entrada que vale uma hora é um
+# código que sobrevive ao e-mail encaminhado por engano.
+otp_expiry = 600
 
 # Use a production-ready SMTP server
 # [auth.email.smtp]
@@ -221,6 +223,23 @@ otp_expiry = 3600
 # pass = "env(SENDGRID_API_KEY)"
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
+
+# Os dois modelos usados pela entrada por código. São o mesmo texto de propósito: quem
+# entra não precisa saber se a conta já existia, e a diferença vazaria para quem digita
+# o e-mail de outra pessoa se o endereço tem cadastro no Frila.
+#
+# `{{ .Token }}` é o código. `{{ .ConfirmationURL }}` seria o link mágico, e não entra:
+# link abre o navegador, sai do aplicativo e quebra o fluxo em Android de entrada, que é
+# onde está a maior parte da oferta.
+#
+# Provisórios até o cartão de modelos de e-mail, no Sprint 1.
+[auth.email.template.magic_link]
+subject = "Seu código de entrada no Frila"
+content_path = "./supabase/templates/codigo-de-entrada.html"
+
+[auth.email.template.confirmation]
+subject = "Seu código de entrada no Frila"
+content_path = "./supabase/templates/codigo-de-entrada.html"
 
 # Uncomment to customize email template
 # [auth.email.template.invite]

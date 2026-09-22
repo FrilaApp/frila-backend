@@ -1,0 +1,26 @@
+<!-- Modelo do código de entrada. Provisório: o cartão de modelos de e-mail, no
+     Sprint 1, refaz os quatro com a voz do produto.
+
+     O código, e não um link. Link mágico abre em navegador, sai do app e quebra o
+     fluxo em Android de entrada, que é onde está a maior parte da oferta. `{{ .Token }}`
+     é o código de seis dígitos; `{{ .ConfirmationURL }}` seria o link, e não entra. -->
+<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; color: #1a1a1a;">
+
+  <p style="font-size: 15px; line-height: 1.5; margin: 0 0 24px;">
+    Seu código de entrada no Frila:
+  </p>
+
+  <p style="font-size: 34px; font-weight: 600; letter-spacing: 6px; margin: 0 0 24px; font-variant-numeric: tabular-nums;">
+    {{ .Token }}
+  </p>
+
+  <p style="font-size: 15px; line-height: 1.5; margin: 0 0 8px;">
+    Ele vale por 10 minutos e serve uma vez só.
+  </p>
+
+  <p style="font-size: 13px; line-height: 1.5; color: #666; margin: 24px 0 0;">
+    Se não foi você que pediu, ignore este e-mail. Ninguém entra na sua conta só com
+    o seu endereço.
+  </p>
+
+</div>

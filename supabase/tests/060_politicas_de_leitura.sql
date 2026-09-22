@@ -28,12 +28,12 @@ end $$;
 -- Dois estabelecimentos, três profissionais. O Bar do Zé publica duas vagas, uma
 -- aberta e uma já encerrada. A Ana se candidata à aberta. O Bar bloqueia o Caio.
 
-insert into public.usuario (id, perfil, nome, telefone, email, nascimento) values
-  ('11111111-0000-0000-0000-000000000001','profissional','Ana',  '+5561999990001','ana@t.test','1995-01-01'),
-  ('11111111-0000-0000-0000-000000000002','profissional','Beto', '+5561999990002','beto@t.test','1995-01-01'),
-  ('11111111-0000-0000-0000-000000000003','profissional','Caio', '+5561999990003','caio@t.test','1995-01-01'),
-  ('22222222-0000-0000-0000-000000000001','contratante', 'Zé',   '+5561999990011','ze@t.test','1980-01-01'),
-  ('22222222-0000-0000-0000-000000000002','contratante', 'Rita', '+5561999990012','rita@t.test','1980-01-01');
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em) values
+  ('11111111-0000-0000-0000-000000000001','profissional','Ana',  '+5561999990001','ana@t.test','1995-01-01', '2026-09-22', now()),
+  ('11111111-0000-0000-0000-000000000002','profissional','Beto', '+5561999990002','beto@t.test','1995-01-01', '2026-09-22', now()),
+  ('11111111-0000-0000-0000-000000000003','profissional','Caio', '+5561999990003','caio@t.test','1995-01-01', '2026-09-22', now()),
+  ('22222222-0000-0000-0000-000000000001','contratante', 'Zé',   '+5561999990011','ze@t.test','1980-01-01', '2026-09-22', now()),
+  ('22222222-0000-0000-0000-000000000002','contratante', 'Rita', '+5561999990012','rita@t.test','1980-01-01', '2026-09-22', now());
 
 insert into public.profissional (usuario_id, ponto_base) values
   ('11111111-0000-0000-0000-000000000001','POINT(-47.88 -15.79)'::extensions.geography),
@@ -474,8 +474,8 @@ select is(
 -- O papel separa quem **faz** certas coisas, não quem enxerga. Sem um operador no
 -- cenário, essa propriedade não era medida — e alguém "endureceria" as políticas por
 -- reflexo, tirando o operador da leitura do próprio estabelecimento.
-insert into public.usuario (id, perfil, nome, telefone, email, nascimento)
-values ('22222222-0000-0000-0000-000000000003','contratante','Nina','+5561999990013','nina@t.test','1990-01-01');
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
+values ('22222222-0000-0000-0000-000000000003','contratante','Nina','+5561999990013','nina@t.test','1990-01-01', '2026-09-22', now());
 insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
 values ('22222222-0000-0000-0000-000000000003','33333333-0000-0000-0000-000000000001','operador');
 

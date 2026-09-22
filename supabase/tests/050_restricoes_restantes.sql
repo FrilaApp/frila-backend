@@ -9,8 +9,8 @@ select plan(13);
 
 create function pg_temp.conta(p_id uuid, p_perfil public.perfil_conta)
 returns uuid language sql as $$
-  insert into public.usuario (id, perfil, nome, telefone, email, nascimento)
-  values (p_id, p_perfil, 'Fulano', '+5561999990000', p_id::text || '@t.test', '1990-01-01')
+  insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
+  values (p_id, p_perfil, 'Fulano', '+5561999990000', p_id::text || '@t.test', '1990-01-01', '2026-09-22', now())
   returning id;
 $$;
 
@@ -128,8 +128,8 @@ select throws_ok(
 create temp table pos as
   select p.id from public.posicao p limit 0;
 
-insert into public.usuario (id, perfil, nome, telefone, email, nascimento)
-values ('eeeeeeee-0000-0000-0000-000000000003','profissional','Ana','+5561999990003','ana@t.test','1995-01-01');
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
+values ('eeeeeeee-0000-0000-0000-000000000003','profissional','Ana','+5561999990003','ana@t.test','1995-01-01', '2026-09-22', now());
 insert into public.profissional (usuario_id, ponto_base)
 values ('eeeeeeee-0000-0000-0000-000000000003','POINT(-47.88 -15.79)'::extensions.geography);
 

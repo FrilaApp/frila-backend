@@ -3,9 +3,9 @@
 begin;
 select plan(11);
 
-insert into public.usuario (id, perfil, nome, telefone, email, nascimento) values
-  ('cccccccc-0000-0000-0000-000000000001','profissional','Ana','+5561999990001','ana@t.test','1995-01-01'),
-  ('cccccccc-0000-0000-0000-000000000002','profissional','Beto','+5561999990002','beto@t.test','1995-01-01');
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em) values
+  ('cccccccc-0000-0000-0000-000000000001','profissional','Ana','+5561999990001','ana@t.test','1995-01-01', '2026-09-22', now()),
+  ('cccccccc-0000-0000-0000-000000000002','profissional','Beto','+5561999990002','beto@t.test','1995-01-01', '2026-09-22', now());
 
 insert into public.profissional (usuario_id, ponto_base) values
   ('cccccccc-0000-0000-0000-000000000001','POINT(-47.88 -15.79)'::extensions.geography),

@@ -49,9 +49,13 @@ select columns_are('public', 'posicao', array[
   'id','vaga_id','estado','profissional_id','confirmado_em','falta','inicio_em','fim_em'
 ], 'posicao tem exatamente as colunas da Modelagem');
 
+-- `termos_versao` e `termos_aceite_em` não estão na Modelagem: vieram do cartão da
+-- entrada por código, que manda gravar o aceite. Guardar "aceitou" como booleano não
+-- responde a pergunta que a LGPD e a App Store fazem, que é *o que* e *quando*.
 select columns_are('public', 'usuario', array[
-  'id','perfil','nome','telefone','email','nascimento','estado','criado_em','anonimizado_em'
-], 'usuario tem exatamente as colunas da Modelagem');
+  'id','perfil','nome','telefone','email','nascimento','estado','criado_em','anonimizado_em',
+  'termos_versao','termos_aceite_em'
+], 'usuario tem exatamente as colunas da Modelagem, mais o aceite dos termos');
 
 -- `perfil` repetido aqui é RN25: a coluna existe para a chave estrangeira composta
 -- apontar para o par (id, perfil) de usuario. Remover "porque é redundante" desliga a

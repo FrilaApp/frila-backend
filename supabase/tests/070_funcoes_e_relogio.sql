@@ -7,7 +7,7 @@
 -- teste que varre o catálogo.
 
 begin;
-select plan(11);
+select plan(12);
 
 -- ── Toda security definer carrega search_path vazio ────────────────────────────
 select is(
@@ -69,6 +69,20 @@ select is(
       and grantee in ('anon','authenticated')),
   0,
   'POST /rpc/erro é recusado: nem anon nem authenticated executam');
+
+-- ── O envelope de erro precisa das duas chaves ────────────────────────────────
+--
+-- O PostgREST recusa o `DETAIL` sem `headers` e devolve `500 PGRST121` no lugar do
+-- status que a regra levantou — ou seja, toda recusa de regra de negócio chegaria ao
+-- aplicativo como "erro interno". Um teste que só confere o `sqlstate` não pega isso,
+-- porque dentro do banco a exceção está certa; quem pega é o `ciclo-completo.sh`,
+-- chamando por HTTP. Esta asserção traz o mesmo alarme para dentro da suíte.
+select is(
+  (select (regexp_match(pg_get_functiondef(p.oid), '''headers''')) is not null
+     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'erro'),
+  true,
+  'o envelope de erro monta DETAIL com status e headers, como o PostgREST exige');
 
 -- ── O relógio ──────────────────────────────────────────────────────────────────
 --
