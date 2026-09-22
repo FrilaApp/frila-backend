@@ -41,12 +41,21 @@ if ! bruto=$(supabase db lint --level warning --schema public,privado 2>&1); the
   exit 1
 fi
 
+# A CLI tem três saídas possíveis, e confundi-las já custou uma CI vermelha:
+#   1. JSON, quando há achado — no formato antigo (array) ou no novo ({"results":[…]})
+#   2. só "No schema errors found", quando não há. Na máquina ela imprime as duas
+#      linhas; no servidor, sem terminal, só esta.
+#   3. qualquer outra coisa, que é falha e sai diferente de zero.
 saida=$(printf '%s' "$bruto" | sed -n '/^[[{]/,$p')
 
 if [ -z "$saida" ]; then
-  echo "  A CLI não devolveu JSON — o formato da saída mudou"
-  printf '%s\n' "$bruto"
-  exit 1
+  if printf '%s' "$bruto" | grep -q 'No schema errors found'; then
+    saida='[]'
+  else
+    echo "  A CLI não devolveu nem JSON nem 'No schema errors found'"
+    printf '%s\n' "$bruto"
+    exit 1
+  fi
 fi
 
 # Saída ilegível também é falha: sair 0 aqui é dizer "está limpo" sobre o que não
