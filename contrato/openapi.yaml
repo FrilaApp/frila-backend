@@ -1,0 +1,2548 @@
+openapi: 3.1.0
+info:
+  title: Frila API
+  version: 0.2.0
+  summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
+  description: |
+    Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
+    sejam construídos em paralelo contra a mesma especificação. É a fonte de onde saem os modelos
+    de cada cliente. Regras, requisitos e casos de uso citados (RN, RF, UC) estão no Documento de
+    Requisitos v1.3.0; o esquema do banco, na Modelagem de Banco de Dados.
+
+    ## Como o contrato funciona no Supabase
+
+    - **Quase tudo é função RPC.** Cada operação que carrega regra de negócio — publicar, candidatar,
+      confirmar, check-in, avaliar, denunciar — é uma função no Postgres, chamada em
+      `POST /rest/v1/rpc/<nome>` (leituras em `GET`). A regra é escrita uma vez, no banco, e vale igual
+      para os três clientes. Os apps não escrevem direto nas tabelas.
+    - **Leitura sob Row Level Security; escrita só por função.** Toda tabela tem política de leitura,
+      e nenhuma tem política de escrita para os clientes. As funções que gravam são `SECURITY DEFINER`:
+      conferem por dentro quem chama, o perfil (RN25) e o papel, e só então escrevem. O que é da outra
+      parte (perfil público, contato) também sai por função, só com as colunas permitidas. As políticas
+      estão na Modelagem de Banco de Dados.
+    - **Três portas.** `rest/v1` (tabelas e RPC), `auth/v1` (Supabase Auth, pelo SDK) e `functions/v1`
+      (Edge Functions, só onde o Postgres não basta: arquivos de exportação e exclusão de conta).
+    - **O despacho não aparece aqui.** Notificar os elegíveis, agrupar, respeitar o teto, lembrar,
+      alertar e fechar o modo seleção é trabalho do agendador (`pg_cron` + fila `pgmq` + Edge
+      Function), fora da requisição (B15). Os clientes só registram o dispositivo e recebem o push.
+
+    ## Convenções
+
+    | Convenção | Regra |
+    |---|---|
+    | Dinheiro | Inteiro em centavos: `"valor_centavos": 12000` (RN18). Nunca `120.00` |
+    | Tempo | UTC em ISO-8601: `"inicio_em": "2026-09-19T21:00:00Z"` (RN18). O fuso `America/Sao_Paulo` é da tela |
+    | Identificadores | `uuid` |
+    | Nomes | `snake_case`, iguais às colunas do banco |
+    | Idempotência | Reenviar a mesma escrita devolve o mesmo resultado. Onde há chave natural (candidatura por vaga e profissional, check-in por turno, avaliação por turno e autor, bloqueio por par), ela basta. `publicar_vaga` e `denunciar`, que não têm chave natural, recebem `chave` (uuid gerado pelo app) |
+    | Versão | Mudança incompatível vira função nova (`publicar_vaga_v2`); a antiga continua no ar enquanto houver app antigo na loja |
+
+    ## Erros
+
+    O envelope é o do PostgREST: `code`, `message`, `details` e `hint`. Nas recusas de regra de
+    negócio, **`code` é um código estável em `snake_case`**, que o cliente compara sem traduzir;
+    `details` traz o motivo complementar, também estável, quando houver; `message` é texto para log e
+    nunca vai para a tela. As funções levantam o erro por um auxiliar único:
+
+    ```sql
+    create or replace function erro(status int, codigo text, motivo text default null)
+    returns void language plpgsql as $$
+    begin
+      raise sqlstate 'PGRST' using
+        message = json_build_object('code', codigo, 'message', codigo,
+                                    'details', motivo, 'hint', null)::text,
+        detail  = json_build_object('status', status)::text;
+    end $$;
+    ```
+
+    | HTTP | `code` | Quando |
+    |---|---|---|
+    | 401 | `PGRST301` e afins | Token ausente, expirado ou inválido (vem do PostgREST) |
+    | 403 | `sem_permissao` | Autenticado, mas sem papel para a ação (RF21) |
+    | 403 | `contato_expirado` | Contato pedido depois de 7 dias do fim do turno (RN10) |
+    | 404 | `nao_encontrado` | O recurso não existe ou não é visível para quem pede (inclui bloqueio, RF26) |
+    | 409 | `posicao_ja_preenchida` | Alguém chegou antes (RN19). **Funcionamento normal no modo urgência** |
+    | 409 | `vaga_encerrada` | A vaga fechou, foi cancelada ou já começou |
+    | 409 | `candidatura_indisponivel` | A candidatura foi retirada, expirou ou já foi escolhida |
+    | 409 | `avaliacao_ja_registrada` | Já existe avaliação deste autor para o turno, com outra resposta |
+    | 409 | `conta_existente`, `documento_ja_cadastrado` | Cadastro repetido |
+    | 409 | `administrador_unico` | Exclusão de conta de quem é o único administrador (UC16) |
+    | 422 | `campo_obrigatorio` | Falta campo exigido; `details` diz qual (RN02) |
+    | 422 | `menor_de_idade` | Nascimento com menos de 18 anos (RN20) |
+    | 422 | `perfil_incompativel` | A ação é do outro perfil: conta de contratante criando perfil de profissional, ou conta de profissional cadastrando estabelecimento (RN25) |
+    | 422 | `selecao_sem_antecedencia` | Modo seleção em vaga que começa em menos de 24 h (RN24) |
+    | 422 | `horario_invalido` | Fim antes do início, ou turno no passado |
+    | 422 | `inelegivel` | `details`: `turno_sobreposto` (RN21) ou `perfil_suspenso` (RN13) |
+    | 422 | `avaliacao_indisponivel` | `details`: `antes_do_fim` ou `sem_presenca_verificada` (RN07) |
+    | 422 | `reabertura_antes_da_tolerancia` | Reabrir por atraso antes dos 15 minutos (D06) |
+    | 422 | `sem_suspensao_ativa` | Contestação sem suspensão em vigor (RF24) |
+    | 429 | `limite_excedido` | Limite de requisições |
+
+    ## Estado
+
+    Versão 0.2.0, rascunho de 22/09/2026. Em relação à 0.1.0, do mesmo dia: a entrada passa a ser
+    por código no e-mail, a conta ganha um perfil fixo (RN25) e o "disponível agora" sai. Fica para a
+    próxima versão: escala de evento em lote (RF19), convite de membros do estabelecimento (RF21) e
+    verificação progressiva de identidade (RN14).
+  contact:
+    name: BlendOps — Challenge 18
+servers:
+  - url: https://{projeto}.supabase.co/rest/v1
+    description: API REST do Supabase (PostgREST) — tabelas e funções RPC.
+    variables:
+      projeto:
+        default: frila
+        description: Identificador do projeto no Supabase.
+security:
+  - chaveDoProjeto: []
+    tokenDoUsuario: []
+tags:
+  - name: Autenticação
+    description: Supabase Auth, usado pelo SDK de cada plataforma. Entrada por código de uso único enviado ao e-mail, sem senha e sem SMS (RF01).
+  - name: Cadastro e perfil
+    description: Conta, perfil do profissional, disponibilidade e explicação do despacho (RF01, RF03, RF27).
+  - name: Estabelecimento
+    description: Cadastro do estabelecimento e equipe de confiança (RF02, RF18).
+  - name: Vagas
+    description: Publicação e lista de vagas (RF04, RF05, RF07, RF09).
+  - name: Candidatura e confirmação
+    description: Candidatura sem formulário e confirmação sem duplicidade (RF08, RF09, RF10, RN19, RN24).
+  - name: Turno
+    description: Contato, check-in, check-out, cancelamento e reabertura (RF11, RF13, RF14, RN10, RN22).
+  - name: Avaliação e reputação
+    description: Avaliação binária e perfil público com denominador (RF15, RF16, RN07, RN08).
+  - name: Painel do gestor
+    description: Acompanhamento de vagas e turnos pelo estabelecimento, no app e na web (RF20, UC07).
+  - name: Confiança e direitos
+    description: Denúncia, bloqueio, suspensão e contestação (RF24, RF26, RN13).
+  - name: Dispositivos
+    description: Registro do token de push (FCM) de cada aparelho.
+  - name: Exportação e conta
+    description: Exportação de turnos e de dados pessoais, e exclusão da conta (RF22, RF25).
+  - name: Catálogo
+    description: Dados de referência lidos direto da tabela.
+
+paths:
+
+  # ───────────────────────────────────────────── Autenticação (Supabase Auth)
+
+  /otp:
+    servers:
+      - url: https://{projeto}.supabase.co/auth/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Autenticação]
+      operationId: pedirCodigo
+      summary: Pedir o código de entrada por e-mail
+      description: |
+        Envia um código de uso único ao e-mail. Os apps chamam pelo SDK do Supabase (`signInWithOtp`
+        com `email`); a rota está aqui para o contrato ficar completo. Cria a conta de autenticação se
+        ela ainda não existir. O modelo de e-mail do Supabase leva o código (`{{ .Token }}`), e não o
+        link. O envio de e-mail embutido do Supabase serve só para teste; o piloto usa um provedor de
+        e-mail próprio (SMTP).
+      security:
+        - chaveDoProjeto: []
+      x-requisitos: [RF01, UC09, UC10]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Código enviado.
+        '429':
+          $ref: '#/components/responses/LimiteExcedido'
+
+  /verify:
+    servers:
+      - url: https://{projeto}.supabase.co/auth/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Autenticação]
+      operationId: confirmarCodigo
+      summary: Confirmar o código e abrir a sessão
+      description: |
+        Troca o código recebido no e-mail por uma sessão. O token de acesso é curto e o de renovação é
+        longo; os dois ficam no Keychain (iOS), no Keystore (Android) ou em cookie `HttpOnly` (web),
+        nunca em `UserDefaults` ou `localStorage` (RNF07).
+      security:
+        - chaveDoProjeto: []
+      x-requisitos: [RF01, RNF07]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, token, type]
+              properties:
+                email:
+                  type: string
+                  format: email
+                token:
+                  type: string
+                  description: Código recebido no e-mail.
+                  example: '123456'
+                type:
+                  type: string
+                  const: email
+      responses:
+        '200':
+          description: Sessão aberta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sessao'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /token:
+    servers:
+      - url: https://{projeto}.supabase.co/auth/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Autenticação]
+      operationId: renovarSessao
+      summary: Renovar o token de acesso
+      security:
+        - chaveDoProjeto: []
+      parameters:
+        - name: grant_type
+          in: query
+          required: true
+          schema:
+            type: string
+            const: refresh_token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Nova sessão.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sessao'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  # ───────────────────────────────────────────── Cadastro e perfil
+
+  /rpc/criar_conta:
+    post:
+      tags: [Cadastro e perfil]
+      operationId: criarConta
+      summary: Criar a conta do usuário depois de confirmar o e-mail
+      description: |
+        Cria a linha de `usuario` ligada à conta de autenticação do chamador. O e-mail vem da conta
+        já confirmada pelo código. O perfil (`profissional` ou `contratante`) é gravado aqui e não
+        muda depois (RN25): para usar o outro perfil, a pessoa cria outra conta, com outro e-mail. O
+        telefone é obrigatório, porque é o contato do turno (RN10); o banco confere só o formato, sem
+        verificação por SMS, e o mesmo número pode estar em outra conta. A maioridade é verificada
+        no banco pela data de nascimento, e não por um booleano enviado pela tela (RN20). Nenhum
+        documento é pedido aqui (RN14).
+      x-requisitos: [RF01, RN14, RN20, RN25, UC09, UC10]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [perfil, nome, telefone, nascimento]
+              properties:
+                perfil:
+                  $ref: '#/components/schemas/PerfilConta'
+                nome:
+                  type: string
+                  minLength: 2
+                telefone:
+                  $ref: '#/components/schemas/Telefone'
+                nascimento:
+                  type: string
+                  format: date
+                  example: '1998-04-12'
+      responses:
+        '200':
+          description: Conta criada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Usuario'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/criar_perfil_profissional:
+    post:
+      tags: [Cadastro e perfil]
+      operationId: criarPerfilProfissional
+      summary: Criar o perfil de profissional
+      description: |
+        Declara funções, ponto base e disponibilidade. Não há distância para configurar: a
+        notificação vai para quem está a até 15 km do local da vaga (RN05). O perfil passa a receber
+        notificações assim que tiver ao menos uma função e o ponto base. Conta de contratante é
+        recusada com `422 perfil_incompativel` (RN25).
+      x-requisitos: [RF01, RF03, RN05, RN25, UC09]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DadosDoPerfilProfissional'
+      responses:
+        '200':
+          description: Perfil criado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerfilProfissional'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/meu_perfil_profissional:
+    get:
+      tags: [Cadastro e perfil]
+      operationId: meuPerfilProfissional
+      summary: Ler o próprio perfil de profissional
+      x-requisitos: [RF03, RF16]
+      responses:
+        '200':
+          description: Perfil do chamador.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerfilProfissional'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /rpc/atualizar_perfil_profissional:
+    post:
+      tags: [Cadastro e perfil]
+      operationId: atualizarPerfilProfissional
+      summary: Alterar funções, ponto base ou disponibilidade
+      description: |
+        Os campos enviados substituem os atuais; os omitidos ficam como estão. A mudança vale na
+        próxima notificação, sem novo login (RF03).
+      x-requisitos: [RF03, UC09]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlteracaoDoPerfilProfissional'
+      responses:
+        '200':
+          description: Perfil atualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerfilProfissional'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/criterios_de_notificacao:
+    get:
+      tags: [Cadastro e perfil]
+      operationId: criteriosDeNotificacao
+      summary: Dados da tela "Por que recebo vagas"
+      description: |
+        Os critérios que decidem se o profissional recebe a notificação de uma vaga: função, grade
+        semanal de disponibilidade e distância de até 15 km do ponto base, mais as equipes de confiança de que ele
+        faz parte. O texto da tela é do app; a função devolve os dados (RF27, LGPD art. 20).
+      x-requisitos: [RF27, RN05, RN06, RN23]
+      responses:
+        '200':
+          description: Critérios em vigor para o chamador.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CriteriosDeNotificacao'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /rpc/pedir_revisao_despacho:
+    post:
+      tags: [Cadastro e perfil]
+      operationId: pedirRevisaoDespacho
+      summary: Contestar o despacho ("Contestar" na tela "Por que recebo vagas")
+      description: Registra o pedido de revisão; a Equipe Frila responde por e-mail em até 5 dias úteis (RF27).
+      x-requisitos: [RF27]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [relato]
+              properties:
+                relato:
+                  type: string
+                  minLength: 10
+      responses:
+        '200':
+          description: Pedido registrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Protocolo'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  # ───────────────────────────────────────────── Estabelecimento
+
+  /rpc/cadastrar_estabelecimento:
+    post:
+      tags: [Estabelecimento]
+      operationId: cadastrarEstabelecimento
+      summary: Cadastrar o estabelecimento
+      description: |
+        Cria o estabelecimento com o chamador como administrador. Aceita CNPJ ou CPF, porque serviço
+        doméstico também contrata pelo Frila. `tipo` serve para leitura e filtro, nunca para barrar
+        ninguém. Conta de profissional é recusada com `422 perfil_incompativel` (RN25).
+      x-requisitos: [RF02, RF21, RN25, UC10]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome, documento, tipo, endereco, ponto]
+              properties:
+                nome:
+                  type: string
+                documento:
+                  type: string
+                  pattern: '^([0-9]{11}|[0-9]{14})$'
+                  description: CPF (11) ou CNPJ (14), só dígitos.
+                tipo:
+                  $ref: '#/components/schemas/TipoEstabelecimento'
+                endereco:
+                  type: string
+                ponto:
+                  $ref: '#/components/schemas/Coordenada'
+      responses:
+        '200':
+          description: Estabelecimento criado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Estabelecimento'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/equipe_de_confianca:
+    get:
+      tags: [Estabelecimento]
+      operationId: equipeDeConfianca
+      summary: Listar a equipe de confiança
+      x-requisitos: [RF18, UC11]
+      parameters:
+        - $ref: '#/components/parameters/EstabelecimentoId'
+      responses:
+        '200':
+          description: Profissionais da equipe.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PerfilPublico'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  /rpc/incluir_na_equipe:
+    post:
+      tags: [Estabelecimento]
+      operationId: incluirNaEquipe
+      summary: Incluir profissional na equipe de confiança
+      description: |
+        O profissional da equipe recebe a notificação das vagas do estabelecimento mesmo além de 15 km,
+        desde que tenha a função e esteja disponível (RF18). Não há exclusividade de tempo nem ordem.
+        Idempotente.
+      x-requisitos: [RF18, RN05, UC11]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MembroDaEquipe'
+      responses:
+        '200':
+          description: Profissional na equipe.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MembroDaEquipe'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /rpc/remover_da_equipe:
+    post:
+      tags: [Estabelecimento]
+      operationId: removerDaEquipe
+      summary: Remover profissional da equipe de confiança
+      description: Sem penalidade nem aviso ao profissional (RN16). Idempotente.
+      x-requisitos: [RF18, RN16, UC11]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MembroDaEquipe'
+      responses:
+        '200':
+          description: Profissional fora da equipe.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MembroDaEquipe'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  # ───────────────────────────────────────────── Catálogo
+
+  /funcao:
+    get:
+      tags: [Catálogo]
+      operationId: listarFuncoes
+      summary: Catálogo de funções
+      description: |
+        Leitura direta da tabela (PostgREST), aberta a qualquer usuário autenticado. Catálogo fechado:
+        função nunca é texto livre, para a elegibilidade de RN05 não virar busca por aproximação.
+      x-requisitos: [RF03, RF04, RN05]
+      parameters:
+        - name: select
+          in: query
+          schema:
+            type: string
+            default: id,nome,categoria
+        - name: ativo
+          in: query
+          description: 'Filtro do PostgREST. Use `eq.true`.'
+          schema:
+            type: string
+            example: eq.true
+      responses:
+        '200':
+          description: Funções.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Funcao'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  # ───────────────────────────────────────────── Vagas
+
+  /rpc/publicar_vaga:
+    post:
+      tags: [Vagas]
+      operationId: publicarVaga
+      summary: Publicar uma vaga
+      description: |
+        Grava a vaga, cria uma posição por unidade pedida e responde na hora. A notificação sai depois,
+        pelo agendador, em até 30 segundos (RNF03); publicar não espera o despacho (B15).
+
+        Recusas: campo obrigatório ausente (`campo_obrigatorio`, com o nome do campo em `details`,
+        RN02), horário inválido, e modo seleção em vaga que começa em menos de 24 horas
+        (`selecao_sem_antecedencia`, RN24). `chave` torna o reenvio seguro: a mesma chave devolve a
+        mesma vaga.
+      x-requisitos: [RF04, RF09, RN02, RN03, RN04, RN18, RN24, UC01]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NovaVaga'
+      responses:
+        '200':
+          description: Vaga publicada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VagaPublicada'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/republicar_vaga:
+    post:
+      tags: [Vagas]
+      operationId: republicarVaga
+      summary: Republicar uma vaga anterior com nova data e horário
+      description: Copia todos os campos da vaga de origem e muda só início e fim (RF05). Mesmas recusas de `publicar_vaga`.
+      x-requisitos: [RF05, UC01]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vaga_id, inicio_em, fim_em, chave]
+              properties:
+                vaga_id:
+                  $ref: '#/components/schemas/Uuid'
+                inicio_em:
+                  $ref: '#/components/schemas/Instante'
+                fim_em:
+                  $ref: '#/components/schemas/Instante'
+                chave:
+                  $ref: '#/components/schemas/ChaveDeIdempotencia'
+      responses:
+        '200':
+          description: Nova vaga publicada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VagaPublicada'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/cancelar_vaga:
+    post:
+      tags: [Vagas]
+      operationId: cancelarVaga
+      summary: Cancelar a vaga inteira
+      description: |
+        Cancela as posições abertas e as confirmadas, com motivo registrado (RN12). Profissionais já
+        confirmados são avisados. Cancelamento pelo contratante não gera falta para ninguém.
+      x-requisitos: [RF14, RN12]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vaga_id, motivo]
+              properties:
+                vaga_id:
+                  $ref: '#/components/schemas/Uuid'
+                motivo:
+                  type: string
+                  minLength: 3
+      responses:
+        '200':
+          description: Vaga cancelada.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [vaga_id, estado, posicoes_canceladas]
+                properties:
+                  vaga_id:
+                    $ref: '#/components/schemas/Uuid'
+                  estado:
+                    $ref: '#/components/schemas/EstadoVaga'
+                  posicoes_canceladas:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '409':
+          $ref: '#/components/responses/Conflito'
+
+  /rpc/vagas_abertas:
+    get:
+      tags: [Vagas]
+      operationId: vagasAbertas
+      summary: Lista de vagas abertas do DF, das mais próximas para as mais distantes
+      description: |
+        Todas as vagas abertas, ordenadas pela distância até o ponto informado (ou até o ponto base do
+        profissional, se nenhum for enviado). A distância aqui **ordena**, não filtra: o limite de
+        15 km vale só para a notificação (B07). Vagas de estabelecimentos com bloqueio entre as partes
+        não aparecem (RF26). A ordem não pode ser comprada (RN06).
+      x-requisitos: [RF07, RN05, RN06, RF26, UC03]
+      parameters:
+        - name: latitude
+          in: query
+          description: Posição de referência. Sem ela, vale o ponto base.
+          schema:
+            type: number
+            minimum: -90
+            maximum: 90
+        - name: longitude
+          in: query
+          schema:
+            type: number
+            minimum: -180
+            maximum: 180
+        - name: funcao_id
+          in: query
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: data
+          in: query
+          description: Dia do início, no fuso America/Sao_Paulo.
+          schema:
+            type: string
+            format: date
+        - name: distancia_max_km
+          in: query
+          description: Filtro opcional escolhido pelo profissional na busca.
+          schema:
+            type: number
+            minimum: 0
+        - name: limite
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 30
+        - name: deslocamento
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: Página da lista.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VagaNaLista'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /rpc/detalhe_vaga:
+    get:
+      tags: [Vagas]
+      operationId: detalheVaga
+      summary: Detalhe de uma vaga
+      description: Tudo o que o profissional vê antes de se candidatar (UC03, passo 2).
+      x-requisitos: [RF04, RF16, RN02, UC03]
+      parameters:
+        - name: vaga_id
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Vaga.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vaga'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  # ───────────────────────────────────────────── Candidatura e confirmação
+
+  /rpc/candidatar:
+    post:
+      tags: [Candidatura e confirmação]
+      operationId: candidatar
+      summary: Candidatar-se a uma vaga
+      description: |
+        O profissional se candidata à vaga; o servidor escolhe a posição.
+
+        - **Modo urgência:** o primeiro elegível que aceita é confirmado na hora, por escrita
+          condicional no banco (RN19). A resposta já traz o turno e o contato da outra parte (RN10).
+        - **Modo seleção:** a candidatura fica pendente até o contratante escolher. Ela vale até a vaga
+          fechar, e a vaga fecha sozinha 24 horas antes do início se ninguém for escolhido (RN24).
+
+        As três respostas são normais: `200` (entrou), `409 posicao_ja_preenchida` (alguém chegou
+        antes — a tela diz "que pena, foi rápido", não "algo deu errado") e `422 inelegivel`
+        (`turno_sobreposto` ou `perfil_suspenso`). Reenviar para a mesma vaga devolve o mesmo resultado.
+      x-requisitos: [RF08, RF09, RF10, RF11, RN03, RN10, RN19, RN21, RN24, UC03, UC04]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vaga_id]
+              properties:
+                vaga_id:
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Candidatura registrada; no modo urgência, já confirmada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoCandidatura'
+              examples:
+                urgencia:
+                  summary: Modo urgência — ganhou a corrida
+                  value:
+                    estado: confirmada
+                    candidatura_id: 6f1c2a4e-2b7d-4c5e-9a1f-3d2e1c0b9a88
+                    posicao_id: 0b8a7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+                    turno_id: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f0b8a7c6d
+                    contato:
+                      nome: Bar do Zé
+                      telefone: '+5561999990000'
+                      whatsapp_url: https://wa.me/5561999990000
+                      visivel_ate: '2026-09-27T06:00:00Z'
+                selecao:
+                  summary: Modo seleção — aguardando a escolha
+                  value:
+                    estado: pendente
+                    candidatura_id: 6f1c2a4e-2b7d-4c5e-9a1f-3d2e1c0b9a88
+                    posicao_id: null
+                    turno_id: null
+                    contato: null
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/retirar_candidatura:
+    post:
+      tags: [Candidatura e confirmação]
+      operationId: retirarCandidatura
+      summary: Retirar a candidatura antes de ser escolhido
+      description: Sem penalidade (RN24). Candidatura já escolhida não se retira; vira cancelamento (`cancelar_posicao`).
+      x-requisitos: [RN16, RN24, UC04]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [candidatura_id]
+              properties:
+                candidatura_id:
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Candidatura retirada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Candidatura'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          $ref: '#/components/responses/Conflito'
+
+  /rpc/minhas_candidaturas:
+    get:
+      tags: [Candidatura e confirmação]
+      operationId: minhasCandidaturas
+      summary: Candidaturas do profissional
+      x-requisitos: [RF08, UC04]
+      parameters:
+        - name: estado
+          in: query
+          schema:
+            $ref: '#/components/schemas/EstadoCandidatura'
+      responses:
+        '200':
+          description: Candidaturas.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Candidatura'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /rpc/candidatos_da_vaga:
+    get:
+      tags: [Candidatura e confirmação]
+      operationId: candidatosDaVaga
+      summary: Candidatos de uma vaga no modo seleção
+      description: Com reputação, denominador e taxa de comparecimento de cada um (RN08, UC04).
+      x-requisitos: [RF09, RF16, RN08, UC04]
+      parameters:
+        - name: vaga_id
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Candidatos pendentes.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Candidato'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /rpc/escolher_candidato:
+    post:
+      tags: [Candidatura e confirmação]
+      operationId: escolherCandidato
+      summary: Escolher um candidato no modo seleção
+      description: |
+        Confirma o candidato numa posição aberta da vaga, com a mesma escrita condicional do modo
+        urgência (RN19). Respostas: `200` com o turno e o contato do profissional; `409
+        posicao_ja_preenchida` se todas as posições já foram ocupadas; `409 candidatura_indisponivel`
+        se o candidato retirou ou a candidatura expirou; `422 inelegivel` com `turno_sobreposto` se ele
+        foi confirmado em outro turno que se cruza com este (RN21).
+      x-requisitos: [RF09, RF10, RF11, RN10, RN19, RN21, UC04]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [candidatura_id]
+              properties:
+                candidatura_id:
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Profissional confirmado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoConfirmacao'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  # ───────────────────────────────────────────── Turno
+
+  /rpc/meus_turnos:
+    get:
+      tags: [Turno]
+      operationId: meusTurnos
+      summary: Turnos do chamador, como profissional ou como estabelecimento
+      description: Base do histórico (UC13) e da leitura offline por 24 horas (RNF06).
+      x-requisitos: [RF13, RF22, RNF06, UC13]
+      parameters:
+        - name: de
+          in: query
+          schema:
+            $ref: '#/components/schemas/Instante'
+        - name: ate
+          in: query
+          schema:
+            $ref: '#/components/schemas/Instante'
+        - name: estabelecimento_id
+          in: query
+          description: Para membros de estabelecimento. Sem ele, valem os turnos do chamador como profissional.
+          schema:
+            $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Turnos.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Turno'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  /rpc/contato_do_turno:
+    get:
+      tags: [Turno]
+      operationId: contatoDoTurno
+      summary: Contato da outra parte do turno
+      description: |
+        Só existe depois da confirmação e só até 7 dias depois do fim do turno (RN10). A base legal é
+        a execução do contrato (LGPD, art. 7º, V). Depois do prazo, `403 contato_expirado`.
+      x-requisitos: [RF11, RN10]
+      parameters:
+        - name: turno_id
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Contato.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contato'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /rpc/fazer_checkin:
+    post:
+      tags: [Turno]
+      operationId: fazerCheckin
+      summary: Registrar o check-in
+      description: |
+        O app lê a localização **só no toque**, nunca em segundo plano, calcula no aparelho a distância
+        até o endereço da vaga e envia só a distância, nunca a coordenada (RN22, minimização da LGPD).
+
+        - Distância de até 200 m: check-in `geolocalizado`, presença `verificado` na hora.
+        - Sem localização (sem sinal, permissão negada, GPS impreciso) ou a mais de 200 m: envie
+          `distancia_m` nulo ou a distância medida; o check-in vira `manual` e a presença fica
+          `pendente` até o contratante confirmar (`confirmar_checkin_manual`).
+
+        `registrado_em` é a hora do toque, e não a da sincronização: o check-in feito sem rede entra na
+        fila do app e sai depois com a hora certa. O banco recusa hora no futuro. Reenviar devolve o
+        registro já gravado.
+      x-requisitos: [RF13, RN11, RN22, UC05]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistroDePresenca'
+      responses:
+        '200':
+          description: Check-in registrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoRegistro'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/confirmar_checkin_manual:
+    post:
+      tags: [Turno]
+      operationId: confirmarCheckinManual
+      summary: Contratante confirma o check-in manual
+      description: Um toque, no app ou no Painel web. Só então o check-in manual conta como presença (RN22).
+      x-requisitos: [RF13, RF20, RN22, UC05, UC07]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [turno_id]
+              properties:
+                turno_id:
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Presença verificada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoRegistro'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '409':
+          $ref: '#/components/responses/Conflito'
+
+  /rpc/fazer_checkout:
+    post:
+      tags: [Turno]
+      operationId: fazerCheckout
+      summary: Registrar o check-out
+      description: |
+        Mesma regra do check-in: localização lida só no toque e só a distância enviada. Sem
+        localização, `distancia_m` vai nulo. O Frila não calcula hora extra: se o fim previsto passou,
+        os dois já foram avisados pelo agendador, e o valor fica entre as partes (A09).
+      x-requisitos: [RF13, RN11, RN22, UC05]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistroDePresenca'
+      responses:
+        '200':
+          description: Check-out registrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoRegistro'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/cancelar_posicao:
+    post:
+      tags: [Turno]
+      operationId: cancelarPosicao
+      summary: Cancelar uma posição confirmada
+      description: |
+        Qualquer das partes, com motivo (RN12). Antes do início, a posição cancelada é substituída por
+        uma nova, aberta, e a notificação sai de novo em até 30 segundos. Depois do início, não há
+        reabertura, e o contratante é avisado de que o turno ficou descoberto.
+
+        Cancelamento do profissional com menos de 24 horas do início conta como falta; com mais de 24
+        horas, sai da taxa de comparecimento. Nenhum cancelamento suspende ninguém (RN13).
+      x-requisitos: [RF14, RN12, RN13, RN16, UC08]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [posicao_id, motivo]
+              properties:
+                posicao_id:
+                  $ref: '#/components/schemas/Uuid'
+                motivo:
+                  type: string
+                  minLength: 3
+      responses:
+        '200':
+          description: Cancelamento registrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoCancelamento'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '409':
+          $ref: '#/components/responses/Conflito'
+
+  /rpc/reabrir_por_atraso:
+    post:
+      tags: [Turno]
+      operationId: reabrirPorAtraso
+      summary: Reabrir a vaga quando o profissional não chegou
+      description: |
+        Aos 15 minutos do início sem check-in, o contratante recebe o alerta e decide esperar ou
+        reabrir (D06). Reabrir marca falta do profissional e abre uma nova posição, que é notificada de
+        novo. Antes dos 15 minutos: `422 reabertura_antes_da_tolerancia`. Com check-in já feito: `409`.
+      x-requisitos: [RF13, RF14, RN12, UC05, UC08]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [posicao_id]
+              properties:
+                posicao_id:
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Vaga reaberta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoCancelamento'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  # ───────────────────────────────────────────── Avaliação e reputação
+
+  /rpc/avaliar:
+    post:
+      tags: [Avaliação e reputação]
+      operationId: avaliar
+      summary: Avaliação binária depois do turno
+      description: |
+        Uma pergunta só: "Você chamaria essa pessoa de novo?" (contratante) ou "Você trabalharia nesse
+        local de novo?" (profissional). Sim ou não; nunca nota de 1 a 5 (RN07).
+
+        Só abre depois do fim previsto e só para turno com presença verificada — check-in
+        geolocalizado ou manual confirmado. Quem faltou não é avaliado. Recusas: `422
+        avaliacao_indisponivel` com `antes_do_fim` ou `sem_presenca_verificada`. Reenviar a mesma
+        resposta devolve a avaliação gravada; resposta diferente dá `409 avaliacao_ja_registrada`.
+      x-requisitos: [RF15, RN07, RN08, RN22, UC06]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [turno_id, resposta]
+              properties:
+                turno_id:
+                  $ref: '#/components/schemas/Uuid'
+                resposta:
+                  type: boolean
+      responses:
+        '200':
+          description: Avaliação registrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Avaliacao'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/perfil_publico:
+    get:
+      tags: [Avaliação e reputação]
+      operationId: perfilPublico
+      summary: Perfil público de um profissional ou estabelecimento
+      description: |
+        Reputação sempre com denominador ("7 de 7 chamariam de novo") e taxa de comparecimento com o
+        total de turnos considerados (RN08, RF16). Perfil sem histórico vem com `total = 0` e taxa nula
+        — a tela mostra "Sem histórico", nunca nota zero. Nenhum dado de contato aparece aqui (RN10).
+      x-requisitos: [RF16, RN08]
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: Id do profissional ou do estabelecimento.
+          schema:
+            $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Perfil.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerfilPublico'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  # ───────────────────────────────────────────── Painel do gestor
+
+  /rpc/painel_estabelecimento:
+    get:
+      tags: [Painel do gestor]
+      operationId: painelEstabelecimento
+      summary: Vagas, candidatos, contratados, check-ins e turnos do estabelecimento
+      description: |
+        A mesma leitura atende o Painel da versão web e a tela de acompanhamento do app. Traz os
+        alertas que o agendador já disparou por notificação: vaga ainda vazia dentro da janela crítica
+        (padrão de 3 horas antes do início, ajustável na publicação) e atraso de 15 minutos sem
+        check-in. Não existe operador do Frila olhando esta tela (D01).
+      x-requisitos: [RF20, RF13, UC07]
+      parameters:
+        - $ref: '#/components/parameters/EstabelecimentoId'
+        - name: de
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Instante'
+        - name: ate
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Instante'
+      responses:
+        '200':
+          description: Painel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Painel'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  # ───────────────────────────────────────────── Confiança e direitos
+
+  /rpc/denunciar:
+    post:
+      tags: [Confiança e direitos]
+      operationId: denunciar
+      summary: Denunciar outro usuário
+      description: |
+        Registra a denúncia e a envia à Equipe Frila, que responde por e-mail em até 5 dias úteis.
+        Denúncia grave confirmada (assédio, fraude ou documento falso) leva à suspensão, com motivo
+        registrado e direito de contestar (RN13). Em risco imediato, o app mostra os atalhos para o 190
+        e o 180 sem esperar a resposta. Exigência da diretriz 1.2 da App Store.
+      x-requisitos: [RF26, RN13, RN15, UC17]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [alvo_usuario_id, motivo, relato, chave]
+              properties:
+                alvo_usuario_id:
+                  $ref: '#/components/schemas/Uuid'
+                turno_id:
+                  oneOf:
+                    - $ref: '#/components/schemas/Uuid'
+                    - type: 'null'
+                motivo:
+                  $ref: '#/components/schemas/MotivoDenuncia'
+                relato:
+                  type: string
+                  minLength: 10
+                chave:
+                  $ref: '#/components/schemas/ChaveDeIdempotencia'
+      responses:
+        '200':
+          description: Denúncia registrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Protocolo'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+
+  /rpc/bloquear:
+    post:
+      tags: [Confiança e direitos]
+      operationId: bloquear
+      summary: Bloquear outro usuário
+      description: |
+        Imediato e automático, sem depender da Equipe Frila. Vale nos dois sentidos: as partes não
+        voltam a se cruzar em notificação, lista ou candidatura. Quando uma delas é membro de
+        estabelecimento, vale para as vagas do estabelecimento inteiro. Idempotente.
+      x-requisitos: [RF26, UC17]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [alvo_usuario_id]
+              properties:
+                alvo_usuario_id:
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Bloqueio em vigor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bloqueio'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/situacao_da_conta:
+    get:
+      tags: [Confiança e direitos]
+      operationId: situacaoDaConta
+      summary: Situação da conta e da suspensão, se houver
+      description: Mostra ao titular o motivo e a data da suspensão, e a contestação em andamento (RF24, RN13).
+      x-requisitos: [RF24, RN13, UC15]
+      responses:
+        '200':
+          description: Situação.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SituacaoDaConta'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /rpc/contestar_suspensao:
+    post:
+      tags: [Confiança e direitos]
+      operationId: contestarSuspensao
+      summary: Contestar a suspensão
+      description: |
+        Vai à Equipe Frila, com resposta em até 5 dias úteis. Se a contestação for aceita, a conta volta
+        na hora (RN13). Sem suspensão em vigor: `422 sem_suspensao_ativa`.
+      x-requisitos: [RF24, RN13, UC15]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [relato]
+              properties:
+                relato:
+                  type: string
+                  minLength: 10
+      responses:
+        '200':
+          description: Contestação registrada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Protocolo'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  # ───────────────────────────────────────────── Dispositivos
+
+  /rpc/registrar_dispositivo:
+    post:
+      tags: [Dispositivos]
+      operationId: registrarDispositivo
+      summary: Registrar o token de push do aparelho
+      description: |
+        O agendador manda o push pelo FCM, que no iOS entrega pelo APNs (B17). Chamar a cada abertura do
+        app e sempre que o token mudar. O mesmo token reenviado só atualiza a data. Quem recusou a
+        permissão de notificação não registra token e, para o despacho, não é alcançável.
+      x-requisitos: [RF06, RNF02]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token_fcm, plataforma]
+              properties:
+                token_fcm:
+                  type: string
+                  minLength: 20
+                plataforma:
+                  $ref: '#/components/schemas/Plataforma'
+      responses:
+        '200':
+          description: Dispositivo registrado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dispositivo'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  # ───────────────────────────────────────────── Exportação e conta (Edge Functions)
+
+  /exportar-turnos:
+    servers:
+      - url: https://{projeto}.supabase.co/functions/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Exportação e conta]
+      operationId: exportarTurnos
+      summary: Exportar os turnos de um período em CSV ou PDF
+      description: |
+        Data, função, horários registrados, valor acordado e contraparte de cada turno (RF22, RN17). O
+        valor é o acordado e registrado, nunca um pagamento processado pelo Frila (RN09). Turno "não
+        verificado" sai marcado como tal.
+      x-requisitos: [RF22, RN09, RN17, UC13]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [de, ate, formato]
+              properties:
+                de:
+                  $ref: '#/components/schemas/Instante'
+                ate:
+                  $ref: '#/components/schemas/Instante'
+                formato:
+                  type: string
+                  enum: [csv, pdf]
+                estabelecimento_id:
+                  description: Para membros de estabelecimento. Sem ele, valem os turnos do chamador como profissional.
+                  oneOf:
+                    - $ref: '#/components/schemas/Uuid'
+                    - type: 'null'
+      responses:
+        '200':
+          description: Arquivo gerado.
+          content:
+            text/csv:
+              schema:
+                type: string
+            application/pdf:
+              schema:
+                type: string
+                contentMediaType: application/pdf
+        '204':
+          description: O período não tem turnos; nenhum arquivo vazio é gerado (UC13, 1a).
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  /exportar-meus-dados:
+    servers:
+      - url: https://{projeto}.supabase.co/functions/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Exportação e conta]
+      operationId: exportarMeusDados
+      summary: Exportar os dados pessoais do titular
+      x-requisitos: [RF25, RNF08, UC16]
+      responses:
+        '200':
+          description: Arquivo com os dados pessoais do chamador.
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Conta, perfis, disponibilidade, turnos, avaliações dadas e recebidas, dispositivos.
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /excluir-conta:
+    servers:
+      - url: https://{projeto}.supabase.co/functions/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Exportação e conta]
+      operationId: excluirConta
+      summary: Excluir a conta de dentro do app
+      description: |
+        Obrigatória no MVP, nos dois perfis (App Store 5.1.1(v)). O perfil sai do despacho e da busca na
+        hora e as sessões são encerradas; os dados pessoais são apagados em até 15 dias, e os turnos já
+        realizados são anonimizados, preservando o histórico da contraparte. Turnos confirmados no
+        futuro são cancelados com o motivo "exclusão de conta". O único administrador de um
+        estabelecimento com outros usuários precisa transferir a administração antes (`409
+        administrador_unico`). Roda como Edge Function porque apaga a credencial no Supabase Auth.
+      x-requisitos: [RF25, RNF08, UC16]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmar]
+              properties:
+                confirmar:
+                  type: boolean
+                  const: true
+      responses:
+        '202':
+          description: Exclusão em andamento.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExclusaoDeConta'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '409':
+          $ref: '#/components/responses/Conflito'
+
+components:
+
+  securitySchemes:
+    chaveDoProjeto:
+      type: apiKey
+      in: header
+      name: apikey
+      description: Chave publicável do projeto no Supabase. Vai em toda requisição; não identifica o usuário.
+    tokenDoUsuario:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token de acesso da sessão do Supabase Auth. É ele que as políticas de RLS leem.
+
+  parameters:
+    EstabelecimentoId:
+      name: estabelecimento_id
+      in: query
+      required: true
+      schema:
+        $ref: '#/components/schemas/Uuid'
+
+  responses:
+    NaoAutenticado:
+      description: Token ausente, expirado ou inválido.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            code: PGRST301
+            message: JWT expired
+            details: null
+            hint: null
+    SemPermissao:
+      description: Autenticado, mas sem papel para a ação, ou prazo de acesso vencido.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          examples:
+            sem_permissao:
+              value:
+                code: sem_permissao
+                message: sem_permissao
+                details: null
+                hint: null
+            contato_expirado:
+              value:
+                code: contato_expirado
+                message: contato_expirado
+                details: null
+                hint: null
+    NaoEncontrado:
+      description: Não existe, ou não é visível para quem pede.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            code: nao_encontrado
+            message: nao_encontrado
+            details: null
+            hint: null
+    Conflito:
+      description: Conflito legítimo de estado. No modo urgência, é o funcionamento normal para quem chegou depois.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          examples:
+            posicao_ja_preenchida:
+              value:
+                code: posicao_ja_preenchida
+                message: posicao_ja_preenchida
+                details: null
+                hint: null
+            vaga_encerrada:
+              value:
+                code: vaga_encerrada
+                message: vaga_encerrada
+                details: null
+                hint: null
+    RegraRecusou:
+      description: Uma regra de negócio recusou a operação.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          examples:
+            inelegivel:
+              value:
+                code: inelegivel
+                message: inelegivel
+                details: turno_sobreposto
+                hint: null
+            campo_obrigatorio:
+              value:
+                code: campo_obrigatorio
+                message: campo_obrigatorio
+                details: responsavel_local
+                hint: null
+            selecao_sem_antecedencia:
+              value:
+                code: selecao_sem_antecedencia
+                message: selecao_sem_antecedencia
+                details: null
+                hint: null
+    LimiteExcedido:
+      description: Limite de requisições.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            code: limite_excedido
+            message: limite_excedido
+            details: null
+            hint: null
+
+  schemas:
+
+    # ── Tipos base
+
+    Uuid:
+      type: string
+      format: uuid
+    Instante:
+      type: string
+      format: date-time
+      description: UTC, ISO-8601 (RN18).
+      example: '2026-09-19T21:00:00Z'
+    Centavos:
+      type: integer
+      minimum: 1
+      description: Valor em centavos de real, inteiro (RN18).
+      example: 12000
+    Telefone:
+      type: string
+      pattern: '^\+[1-9][0-9]{7,14}$'
+      description: Formato E.164.
+      example: '+5561999990000'
+    Coordenada:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude:
+          type: number
+          minimum: -90
+          maximum: 90
+        longitude:
+          type: number
+          minimum: -180
+          maximum: 180
+      example:
+        latitude: -15.7942
+        longitude: -47.8822
+    ChaveDeIdempotencia:
+      type: string
+      format: uuid
+      description: Gerada pelo app uma vez por ação. Reenviar com a mesma chave devolve o mesmo resultado.
+    HoraDoDia:
+      type: string
+      pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+      description: Hora local em America/Sao_Paulo, HH:MM.
+      example: '18:00'
+
+    # ── Enumerações (iguais às do banco)
+
+    ModoPreenchimento:
+      type: string
+      enum: [urgencia, selecao]
+    EstadoVaga:
+      type: string
+      enum: [publicada, preenchida, encerrada, cancelada]
+    EstadoPosicao:
+      type: string
+      enum: [aberta, confirmada, cumprida, cancelada]
+    EstadoCandidatura:
+      type: string
+      enum: [pendente, aceita, recusada, retirada, expirada]
+    TipoRegistro:
+      type: string
+      enum: [geolocalizado, manual]
+    Verificacao:
+      type: string
+      enum: [pendente, verificado, nao_verificado]
+      description: |
+        `verificado` só com prova: check-in geolocalizado a até 200 m, ou manual confirmado pelo
+        contratante. `nao_verificado` não conta a favor nem contra na taxa de comparecimento (RN22).
+    TipoEstabelecimento:
+      type: string
+      enum: [food_service, evento, varejo, logistica, servico_domestico, outro]
+    PapelMembro:
+      type: string
+      enum: [administrador, operador]
+    MotivoDenuncia:
+      type: string
+      enum: [assedio, discriminacao, risco_seguranca, outro]
+    Plataforma:
+      type: string
+      enum: [ios, android, web]
+    PerfilConta:
+      type: string
+      enum: [profissional, contratante]
+      description: Perfil da conta, escolhido no cadastro e fixo (RN25).
+    EstadoConta:
+      type: string
+      enum: [ativa, suspensa]
+
+    # ── Erro
+
+    Erro:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: |
+            Código estável em `snake_case` nas recusas de regra (ver o catálogo na descrição da API), ou
+            código do PostgREST/Postgres nos demais casos (`PGRST301`, `23505`...).
+        message:
+          type: string
+          description: Texto para log. Nunca exibir na tela.
+        details:
+          type: [string, 'null']
+          description: 'Motivo complementar estável, quando houver (por exemplo, `turno_sobreposto`).'
+        hint:
+          type: [string, 'null']
+
+    # ── Conta e perfis
+
+    Sessao:
+      type: object
+      required: [access_token, token_type, expires_in, refresh_token]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          const: bearer
+        expires_in:
+          type: integer
+          description: Segundos até o token de acesso expirar.
+        refresh_token:
+          type: string
+        user:
+          type: object
+          properties:
+            id:
+              $ref: '#/components/schemas/Uuid'
+            email:
+              type: string
+              format: email
+    Usuario:
+      type: object
+      required: [id, perfil, nome, telefone, email, nascimento, estado]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        perfil:
+          $ref: '#/components/schemas/PerfilConta'
+        nome:
+          type: string
+        telefone:
+          $ref: '#/components/schemas/Telefone'
+        email:
+          type: string
+          format: email
+        nascimento:
+          type: string
+          format: date
+        estado:
+          $ref: '#/components/schemas/EstadoConta'
+    JanelaDeDisponibilidade:
+      type: object
+      required: [dia_semana, hora_inicio, hora_fim]
+      description: |
+        Janela semanal em que o profissional aceita trabalhar. `hora_fim` pode ser menor que
+        `hora_inicio`: 18:00–02:00 atravessa a meia-noite e é a janela mais comum do setor.
+      properties:
+        dia_semana:
+          type: integer
+          minimum: 0
+          maximum: 6
+          description: 0 = domingo.
+        hora_inicio:
+          $ref: '#/components/schemas/HoraDoDia'
+        hora_fim:
+          $ref: '#/components/schemas/HoraDoDia'
+    DadosDoPerfilProfissional:
+      type: object
+      required: [funcoes, ponto_base, disponibilidades]
+      properties:
+        funcoes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/Uuid'
+        ponto_base:
+          $ref: '#/components/schemas/Coordenada'
+        disponibilidades:
+          type: array
+          items:
+            $ref: '#/components/schemas/JanelaDeDisponibilidade'
+    AlteracaoDoPerfilProfissional:
+      type: object
+      minProperties: 1
+      properties:
+        funcoes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/Uuid'
+        ponto_base:
+          $ref: '#/components/schemas/Coordenada'
+        disponibilidades:
+          type: array
+          items:
+            $ref: '#/components/schemas/JanelaDeDisponibilidade'
+    PerfilProfissional:
+      type: object
+      required: [id, usuario_id, funcoes, ponto_base, disponibilidades, reputacao]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        usuario_id:
+          $ref: '#/components/schemas/Uuid'
+        funcoes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Funcao'
+        ponto_base:
+          $ref: '#/components/schemas/Coordenada'
+        disponibilidades:
+          type: array
+          items:
+            $ref: '#/components/schemas/JanelaDeDisponibilidade'
+        reputacao:
+          $ref: '#/components/schemas/Reputacao'
+    CriteriosDeNotificacao:
+      type: object
+      required: [funcoes, disponibilidades, distancia_maxima_km, equipes_de_confianca, notificacoes_no_maximo_a_cada_min]
+      properties:
+        funcoes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Funcao'
+        disponibilidades:
+          type: array
+          items:
+            $ref: '#/components/schemas/JanelaDeDisponibilidade'
+        distancia_maxima_km:
+          type: number
+          description: Parâmetro do sistema; hoje, 15 (RN05).
+          example: 15
+        equipes_de_confianca:
+          type: array
+          description: Estabelecimentos cuja equipe de confiança inclui o profissional; as vagas deles chegam mesmo além dos 15 km.
+          items:
+            type: object
+            required: [estabelecimento_id, nome]
+            properties:
+              estabelecimento_id:
+                $ref: '#/components/schemas/Uuid'
+              nome:
+                type: string
+        notificacoes_no_maximo_a_cada_min:
+          type: integer
+          description: Teto de RN23; hoje, 30.
+          example: 30
+    Estabelecimento:
+      type: object
+      required: [id, nome, documento, tipo, endereco, ponto, papel]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        nome:
+          type: string
+        documento:
+          type: string
+        tipo:
+          $ref: '#/components/schemas/TipoEstabelecimento'
+        endereco:
+          type: string
+        ponto:
+          $ref: '#/components/schemas/Coordenada'
+        papel:
+          $ref: '#/components/schemas/PapelMembro'
+    MembroDaEquipe:
+      type: object
+      required: [estabelecimento_id, profissional_id]
+      properties:
+        estabelecimento_id:
+          $ref: '#/components/schemas/Uuid'
+        profissional_id:
+          $ref: '#/components/schemas/Uuid'
+    Funcao:
+      type: object
+      required: [id, nome, categoria]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        nome:
+          type: string
+          example: garçom
+        categoria:
+          type: string
+          example: Salão
+
+    # ── Reputação
+
+    Reputacao:
+      type: object
+      required: [positivas, total, taxa_comparecimento, turnos_considerados]
+      description: |
+        Sempre exibida com o denominador: "7 de 7 chamariam de novo" (RN08). Não existe média, e não
+        deve existir (RN07). Sem histórico, `total = 0` e taxa nula: a tela mostra "Sem histórico".
+      properties:
+        positivas:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+        taxa_comparecimento:
+          description: |
+            Turnos com presença ÷ turnos confirmados. Falta = não aparecer ou cancelar com menos de 24 h.
+            Ficam fora: candidatura não escolhida, cancelamento com mais de 24 h e turno não verificado.
+            Só para profissional; aparece no perfil e não altera quem recebe notificação (RN06).
+          oneOf:
+            - type: number
+              minimum: 0
+              maximum: 1
+            - type: 'null'
+        turnos_considerados:
+          type: integer
+          minimum: 0
+    PerfilPublico:
+      type: object
+      required: [id, tipo, nome, reputacao]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        tipo:
+          type: string
+          enum: [profissional, estabelecimento]
+        nome:
+          type: string
+        funcoes:
+          type: array
+          description: Só para profissional.
+          items:
+            type: string
+        reputacao:
+          $ref: '#/components/schemas/Reputacao'
+
+    # ── Vagas
+
+    NovaVaga:
+      type: object
+      required:
+        - estabelecimento_id
+        - funcao_id
+        - inicio_em
+        - fim_em
+        - local
+        - ponto
+        - valor_centavos
+        - posicoes
+        - inclui_refeicao
+        - inclui_transporte
+        - exige_material_proprio
+        - responsavel_local
+        - modo
+        - chave
+      description: Campos obrigatórios de RN02; traje, rateio e observações são opcionais.
+      properties:
+        estabelecimento_id:
+          $ref: '#/components/schemas/Uuid'
+        funcao_id:
+          $ref: '#/components/schemas/Uuid'
+        inicio_em:
+          $ref: '#/components/schemas/Instante'
+        fim_em:
+          $ref: '#/components/schemas/Instante'
+        local:
+          type: string
+          description: Endereço. Vem preenchido com o do estabelecimento.
+        ponto:
+          $ref: '#/components/schemas/Coordenada'
+        valor_centavos:
+          $ref: '#/components/schemas/Centavos'
+        posicoes:
+          type: integer
+          minimum: 1
+          maximum: 200
+        inclui_refeicao:
+          type: boolean
+        inclui_transporte:
+          type: boolean
+        exige_material_proprio:
+          type: boolean
+          description: Sim = o profissional leva o material.
+        responsavel_local:
+          type: string
+          description: Quem recebe o profissional no local.
+        traje:
+          type: [string, 'null']
+        participa_rateio:
+          type: [boolean, 'null']
+          description: Participa do rateio dos 10% da taxa de serviço (Lei 13.419/2017).
+        observacoes:
+          type: [string, 'null']
+        modo:
+          $ref: '#/components/schemas/ModoPreenchimento'
+        alerta_antecedencia_min:
+          type: integer
+          minimum: 1
+          default: 180
+          description: Janela crítica — minutos antes do início em que o contratante é alertado se a posição seguir vaga.
+        chave:
+          $ref: '#/components/schemas/ChaveDeIdempotencia'
+    VagaPublicada:
+      type: object
+      required: [vaga_id, posicoes]
+      properties:
+        vaga_id:
+          $ref: '#/components/schemas/Uuid'
+        posicoes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Uuid'
+    Inclusos:
+      type: object
+      required: [inclui_refeicao, inclui_transporte, exige_material_proprio]
+      properties:
+        inclui_refeicao:
+          type: boolean
+        inclui_transporte:
+          type: boolean
+        exige_material_proprio:
+          type: boolean
+    VagaNaLista:
+      type: object
+      required: [id, funcao, estabelecimento, inicio_em, fim_em, local, distancia_km, valor_centavos, posicoes_abertas, inclusos, modo]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        funcao:
+          $ref: '#/components/schemas/Funcao'
+        estabelecimento:
+          $ref: '#/components/schemas/PerfilPublico'
+        inicio_em:
+          $ref: '#/components/schemas/Instante'
+        fim_em:
+          $ref: '#/components/schemas/Instante'
+        local:
+          type: string
+        distancia_km:
+          type: number
+          minimum: 0
+        valor_centavos:
+          $ref: '#/components/schemas/Centavos'
+        posicoes_abertas:
+          type: integer
+          minimum: 0
+        inclusos:
+          $ref: '#/components/schemas/Inclusos'
+        modo:
+          $ref: '#/components/schemas/ModoPreenchimento'
+    Vaga:
+      type: object
+      required: [id, estabelecimento, funcao, inicio_em, fim_em, local, ponto, valor_centavos, posicoes, posicoes_abertas, inclusos, responsavel_local, modo, estado, publicado_em]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        estabelecimento:
+          $ref: '#/components/schemas/PerfilPublico'
+        funcao:
+          $ref: '#/components/schemas/Funcao'
+        inicio_em:
+          $ref: '#/components/schemas/Instante'
+        fim_em:
+          $ref: '#/components/schemas/Instante'
+        local:
+          type: string
+        ponto:
+          $ref: '#/components/schemas/Coordenada'
+        distancia_km:
+          type: [number, 'null']
+        valor_centavos:
+          $ref: '#/components/schemas/Centavos'
+        posicoes:
+          type: integer
+        posicoes_abertas:
+          type: integer
+        inclusos:
+          $ref: '#/components/schemas/Inclusos'
+        responsavel_local:
+          type: string
+        traje:
+          type: [string, 'null']
+        participa_rateio:
+          type: [boolean, 'null']
+        observacoes:
+          type: [string, 'null']
+        modo:
+          $ref: '#/components/schemas/ModoPreenchimento'
+        estado:
+          $ref: '#/components/schemas/EstadoVaga'
+        publicado_em:
+          $ref: '#/components/schemas/Instante'
+    VagaResumo:
+      type: object
+      required: [id, funcao, local, inicio_em, fim_em, valor_centavos]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        funcao:
+          type: string
+        local:
+          type: string
+        inicio_em:
+          $ref: '#/components/schemas/Instante'
+        fim_em:
+          $ref: '#/components/schemas/Instante'
+        valor_centavos:
+          $ref: '#/components/schemas/Centavos'
+
+    # ── Candidatura e confirmação
+
+    Contato:
+      type: object
+      required: [nome, telefone, whatsapp_url, visivel_ate]
+      description: Liberado só depois da confirmação, até 7 dias depois do fim do turno (RN10).
+      properties:
+        nome:
+          type: string
+        telefone:
+          $ref: '#/components/schemas/Telefone'
+        whatsapp_url:
+          type: string
+          format: uri
+        visivel_ate:
+          $ref: '#/components/schemas/Instante'
+    ResultadoCandidatura:
+      type: object
+      required: [estado, candidatura_id, posicao_id, turno_id, contato]
+      properties:
+        estado:
+          type: string
+          enum: [confirmada, pendente]
+          description: '`confirmada` no modo urgência; `pendente` no modo seleção.'
+        candidatura_id:
+          $ref: '#/components/schemas/Uuid'
+        posicao_id:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+        turno_id:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+        contato:
+          oneOf:
+            - $ref: '#/components/schemas/Contato'
+            - type: 'null'
+    ResultadoConfirmacao:
+      type: object
+      required: [estado, posicao_id, turno_id, contato]
+      properties:
+        estado:
+          type: string
+          const: confirmada
+        posicao_id:
+          $ref: '#/components/schemas/Uuid'
+        turno_id:
+          $ref: '#/components/schemas/Uuid'
+        contato:
+          $ref: '#/components/schemas/Contato'
+    Candidatura:
+      type: object
+      required: [id, vaga, estado, criada_em]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        vaga:
+          $ref: '#/components/schemas/VagaResumo'
+        estado:
+          $ref: '#/components/schemas/EstadoCandidatura'
+        criada_em:
+          $ref: '#/components/schemas/Instante'
+    Candidato:
+      type: object
+      required: [candidatura_id, profissional, criada_em]
+      properties:
+        candidatura_id:
+          $ref: '#/components/schemas/Uuid'
+        profissional:
+          $ref: '#/components/schemas/PerfilPublico'
+        criada_em:
+          $ref: '#/components/schemas/Instante'
+
+    # ── Turno
+
+    RegistroDePresenca:
+      type: object
+      required: [turno_id, distancia_m, registrado_em]
+      properties:
+        turno_id:
+          $ref: '#/components/schemas/Uuid'
+        distancia_m:
+          description: Distância até o endereço da vaga, medida no aparelho no momento do toque. Nulo quando não há localização.
+          oneOf:
+            - type: integer
+              minimum: 0
+            - type: 'null'
+        registrado_em:
+          $ref: '#/components/schemas/Instante'
+    ResultadoRegistro:
+      type: object
+      required: [turno_id, tipo, verificacao, registrado_em, distancia_m]
+      properties:
+        turno_id:
+          $ref: '#/components/schemas/Uuid'
+        tipo:
+          $ref: '#/components/schemas/TipoRegistro'
+        verificacao:
+          $ref: '#/components/schemas/Verificacao'
+        registrado_em:
+          $ref: '#/components/schemas/Instante'
+        distancia_m:
+          oneOf:
+            - type: integer
+              minimum: 0
+            - type: 'null'
+    Turno:
+      type: object
+      required: [id, posicao_id, vaga, contraparte, checkin_em, checkin_tipo, checkin_distancia_m, checkin_confirmado_em, checkout_em, checkout_distancia_m, verificacao, valor_acordado_centavos, pode_avaliar]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        posicao_id:
+          $ref: '#/components/schemas/Uuid'
+        vaga:
+          $ref: '#/components/schemas/VagaResumo'
+        contraparte:
+          $ref: '#/components/schemas/PerfilPublico'
+        checkin_em:
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
+        checkin_tipo:
+          oneOf:
+            - $ref: '#/components/schemas/TipoRegistro'
+            - type: 'null'
+        checkin_distancia_m:
+          type: [integer, 'null']
+        checkin_confirmado_em:
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
+        checkout_em:
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
+        checkout_distancia_m:
+          type: [integer, 'null']
+        verificacao:
+          $ref: '#/components/schemas/Verificacao'
+        valor_acordado_centavos:
+          $ref: '#/components/schemas/Centavos'
+        pode_avaliar:
+          type: boolean
+          description: Verdadeiro depois do fim previsto, com presença verificada e sem avaliação deste lado ainda (RN07).
+    ResultadoCancelamento:
+      type: object
+      required: [posicao_id, falta, reaberta, nova_posicao_id]
+      properties:
+        posicao_id:
+          $ref: '#/components/schemas/Uuid'
+        falta:
+          type: boolean
+          description: Verdadeiro quando conta como falta do profissional (menos de 24 h, ou reabertura por atraso).
+        reaberta:
+          type: boolean
+          description: Falso quando o início já passou e o turno ficou descoberto.
+        nova_posicao_id:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+    Avaliacao:
+      type: object
+      required: [turno_id, resposta, criada_em]
+      properties:
+        turno_id:
+          $ref: '#/components/schemas/Uuid'
+        resposta:
+          type: boolean
+        criada_em:
+          $ref: '#/components/schemas/Instante'
+
+    # ── Painel
+
+    Painel:
+      type: object
+      required: [estabelecimento_id, vagas, checkins_pendentes]
+      properties:
+        estabelecimento_id:
+          $ref: '#/components/schemas/Uuid'
+        vagas:
+          type: array
+          items:
+            $ref: '#/components/schemas/VagaNoPainel'
+        checkins_pendentes:
+          type: array
+          description: Turnos com check-in manual esperando a confirmação do contratante.
+          items:
+            $ref: '#/components/schemas/Uuid'
+    VagaNoPainel:
+      type: object
+      required: [vaga, modo, estado, alerta_vaga_vazia, candidatos_pendentes, posicoes]
+      properties:
+        vaga:
+          $ref: '#/components/schemas/VagaResumo'
+        modo:
+          $ref: '#/components/schemas/ModoPreenchimento'
+        estado:
+          $ref: '#/components/schemas/EstadoVaga'
+        alerta_vaga_vazia:
+          type: boolean
+          description: Há posição aberta dentro da janela crítica.
+        candidatos_pendentes:
+          type: integer
+          minimum: 0
+        posicoes:
+          type: array
+          items:
+            $ref: '#/components/schemas/PosicaoNoPainel'
+    PosicaoNoPainel:
+      type: object
+      required: [id, estado, profissional, turno_id, verificacao, em_atraso]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        estado:
+          $ref: '#/components/schemas/EstadoPosicao'
+        profissional:
+          oneOf:
+            - $ref: '#/components/schemas/PerfilPublico'
+            - type: 'null'
+        turno_id:
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
+        verificacao:
+          oneOf:
+            - $ref: '#/components/schemas/Verificacao'
+            - type: 'null'
+        em_atraso:
+          type: boolean
+          description: Passou 15 minutos do início sem check-in (D06); o contratante pode esperar ou reabrir.
+
+    # ── Confiança e direitos
+
+    Protocolo:
+      type: object
+      required: [ocorrencia_id, tipo, criada_em, prazo_resposta_ate]
+      description: Registro de algo que a Equipe Frila responde por e-mail em até 5 dias úteis.
+      properties:
+        ocorrencia_id:
+          $ref: '#/components/schemas/Uuid'
+        tipo:
+          type: string
+          enum: [denuncia, contestacao, revisao_despacho]
+        criada_em:
+          $ref: '#/components/schemas/Instante'
+        prazo_resposta_ate:
+          type: string
+          format: date
+    Bloqueio:
+      type: object
+      required: [bloqueado_id, criado_em]
+      properties:
+        bloqueado_id:
+          $ref: '#/components/schemas/Uuid'
+        criado_em:
+          $ref: '#/components/schemas/Instante'
+    SituacaoDaConta:
+      type: object
+      required: [estado, suspensao]
+      properties:
+        estado:
+          $ref: '#/components/schemas/EstadoConta'
+        suspensao:
+          oneOf:
+            - type: object
+              required: [motivo, desde, contestacao]
+              properties:
+                motivo:
+                  type: string
+                desde:
+                  $ref: '#/components/schemas/Instante'
+                contestacao:
+                  oneOf:
+                    - $ref: '#/components/schemas/Protocolo'
+                    - type: 'null'
+            - type: 'null'
+
+    # ── Dispositivos e conta
+
+    Dispositivo:
+      type: object
+      required: [plataforma, atualizado_em]
+      properties:
+        plataforma:
+          $ref: '#/components/schemas/Plataforma'
+        atualizado_em:
+          $ref: '#/components/schemas/Instante'
+    ExclusaoDeConta:
+      type: object
+      required: [perfil_removido_em, dados_apagados_ate, turnos_cancelados]
+      properties:
+        perfil_removido_em:
+          $ref: '#/components/schemas/Instante'
+        dados_apagados_ate:
+          type: string
+          format: date
+          description: Até 15 dias depois do pedido (RF25).
+        turnos_cancelados:
+          type: integer
+          minimum: 0

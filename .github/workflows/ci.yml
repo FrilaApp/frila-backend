@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  banco:
+    name: Migrações e pgTAP
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # Sobe Postgres, Auth e PostgREST. As migrações e o seed entram no start.
+      - name: Subir o ambiente
+        run: supabase start --exclude studio,realtime,storage-api,imgproxy,logflare,vector
+
+      # Roda do zero de novo: prova que a ordem das migrações se sustenta sozinha.
+      - name: Aplicar as migrações do zero
+        run: supabase db reset
+
+      - name: pgTAP
+        run: supabase test db
+
+      # Uma migração já aplicada é imutável (RNF12, migração em duas fases).
+      # Editar arquivo antigo quebra o próximo ambiente em silêncio.
+      - name: Nenhuma migração antiga foi editada
+        if: github.event_name == 'pull_request'
+        run: ./scripts/migracoes-imutaveis.sh "origin/${{ github.base_ref }}"
+
+      - name: Ciclo completo por HTTP
+        run: ./scripts/ciclo-completo.sh
+
+      - name: Diagnóstico ao falhar
+        if: failure()
+        run: supabase status && docker ps -a
+
+  contrato:
+    name: Contrato em dia com o Frila
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: O espelho não divergiu do original
+        run: ./scripts/contrato-em-dia.sh
