@@ -5,9 +5,13 @@
 -- três clientes, e é o tipo de mudança que passa numa revisão apressada.
 
 begin;
-select plan(32);
+select plan(36);
 
--- ── As 19 tabelas marcadas v1 ──────────────────────────────────────────────────
+-- ── As dezoito tabelas marcadas v1, mais `evento` ──────────────────────────────
+--
+-- `evento` está como "Depois" na tabela v1/v2 da Modelagem: só a escala em lote (RF19)
+-- agrupa vagas, e isso é pós-MVP. A tabela entra agora porque `vaga.evento_id` aponta
+-- para ela, e uma chave estrangeira pendurada no ar seria pior que uma tabela vazia.
 select has_table('public', 'usuario',                'usuario existe');
 select has_table('public', 'profissional',           'profissional existe');
 select has_table('public', 'estabelecimento',        'estabelecimento existe');
@@ -44,6 +48,26 @@ select columns_are('public', 'turno', array[
 select columns_are('public', 'posicao', array[
   'id','vaga_id','estado','profissional_id','confirmado_em','falta','inicio_em','fim_em'
 ], 'posicao tem exatamente as colunas da Modelagem');
+
+select columns_are('public', 'usuario', array[
+  'id','perfil','nome','telefone','email','nascimento','estado','criado_em','anonimizado_em'
+], 'usuario tem exatamente as colunas da Modelagem');
+
+-- `perfil` repetido aqui é RN25: a coluna existe para a chave estrangeira composta
+-- apontar para o par (id, perfil) de usuario. Remover "porque é redundante" desliga a
+-- última linha de defesa da regra.
+select columns_are('public', 'profissional', array[
+  'id','usuario_id','perfil','ponto_base','taxa_comparecimento','turnos_realizados',
+  'aval_positivas','aval_total'
+], 'profissional tem exatamente as colunas da Modelagem');
+
+select columns_are('public', 'candidatura', array[
+  'id','posicao_id','profissional_id','criada_em','estado'
+], 'candidatura tem exatamente as colunas da Modelagem');
+
+select columns_are('public', 'avaliacao', array[
+  'id','turno_id','autor_id','alvo_tipo','alvo_id','resposta','criada_em'
+], 'avaliacao tem exatamente as colunas da Modelagem');
 
 -- ── O que NÃO pode existir ─────────────────────────────────────────────────────
 --

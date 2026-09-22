@@ -30,6 +30,10 @@ create table public.vaga (
   -- RN18: centavo inteiro não acumula erro de arredondamento, e bigint não estoura
   -- em escala de evento — quarenta posições de uma formatura somadas cabem com folga.
   valor_centavos         bigint  not null check (valor_centavos > 0),
+  -- O teto de 200 vem do contrato (NovaVaga.posicoes, maximum 200), não da Modelagem,
+  -- que traz só `> 0`. Existe para que um erro de digitação na publicação não gere
+  -- duzentas mil posições e, com elas, duzentas mil notificações. A escala real que o
+  -- produto mira é a formatura de 40 pessoas.
   posicoes               smallint not null check (posicoes between 1 and 200),
 
   -- RN02 escrita em SQL. Boolean e não texto: marcar sim ou não é um toque cada,
