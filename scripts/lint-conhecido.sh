@@ -31,21 +31,40 @@ echo "  supabase CLI $(supabase --version 2>/dev/null | head -1)"
 
 # A CLI mudou o formato entre versões: era um array cru, virou {"results": [...]}.
 # O parser aceita os dois, senão o portão passa a abrir em silêncio na próxima troca.
-saida=$(supabase db lint --level warning --schema public,privado 2>/dev/null \
-        | sed -n '/^[[{]/,$p')
+# `supabase db lint` que falha é lint **não rodado**, e não lint limpo. Regra geral
+# deste repositório para portão: qualquer caminho que não seja "medi e o resultado foi
+# X" tem que sair diferente de zero. Sem isto, a própria divergência de versão de CLI
+# que motivou este script passaria verde.
+if ! bruto=$(supabase db lint --level warning --schema public,privado 2>&1); then
+  echo "  NÃO CONSEGUI RODAR O LINT — isto não é lint limpo"
+  printf '%s\n' "$bruto"
+  exit 1
+fi
 
-achados=$(printf '%s' "$saida" | python3 -c "
+saida=$(printf '%s' "$bruto" | sed -n '/^[[{]/,$p')
+
+if [ -z "$saida" ]; then
+  echo "  A CLI não devolveu JSON — o formato da saída mudou"
+  printf '%s\n' "$bruto"
+  exit 1
+fi
+
+# Saída ilegível também é falha: sair 0 aqui é dizer "está limpo" sobre o que não
+# foi lido.
+if ! achados=$(printf '%s' "$saida" | python3 -c "
 import json, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
+d = json.load(sys.stdin)
 if isinstance(d, dict):
     d = d.get('results', [])
 for f in d:
     for i in f.get('issues', []):
         print(f\"{f['function']}|{i.get('sqlState','?')}\")
-")
+" 2>&1); then
+  echo "  NÃO CONSEGUI LER A SAÍDA DO LINT"
+  printf '%s\n' "$achados"
+  printf '%s\n' "$saida"
+  exit 1
+fi
 
 falta=0
 for a in $achados; do

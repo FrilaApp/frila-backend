@@ -56,7 +56,7 @@ begin
 end $$;
 
 comment on function privado.agora() is
-  'O relógio do produto. Sobreponível por frila.agora apenas onde privado.ambiente.eh_teste, que só a semente liga.';
+  'O relógio do produto: todo prazo passa por aqui (RN07, RN10, RN24). Sobreponível por frila.agora apenas onde privado.ambiente.eh_teste — linha que nenhum arquivo do repositório grava, escrita só dentro da transação de um teste e desfeita no rollback. Sem arquivo, não há caminho para um ambiente publicado.';
 
 -- ── Quem é quem ────────────────────────────────────────────────────────────────
 

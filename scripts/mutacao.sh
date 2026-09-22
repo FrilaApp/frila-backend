@@ -120,6 +120,7 @@ adicionar < <(psql -tAc "
    order by p.polname")
 
 sobreviventes=()
+pulados=()
 mortos=0
 
 for alvo in ${alvos[@]+"${alvos[@]}"}; do
@@ -129,8 +130,12 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
 
   printf '  %-9s %-40s ' "$tipo" "$nome"
 
+  # Alvo que não se consegue mutar é alvo **não medido**, e não medido nunca conta como
+  # coberto. Regra geral deste repositório para portão: qualquer caminho que não seja
+  # "medi e o resultado foi X" tem que sair diferente de zero.
   if ! psql -q -c "$derrubar" >/dev/null 2>&1; then
-    echo "não consegui derrubar — pulando"
+    echo "NÃO CONSEGUI MUTAR — não medido"
+    pulados+=("$tipo $nome")
     continue
   fi
 
@@ -157,11 +162,23 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
 done
 
 echo
-echo "cobertas: $mortos · sem cobertura: ${#sobreviventes[@]}"
+echo "cobertas: $mortos · sem cobertura: ${#sobreviventes[@]} · não medidas: ${#pulados[@]}"
+
+falta=0
 
 if [ "${#sobreviventes[@]}" -gt 0 ]; then
-  printf '  %s\n' "${sobreviventes[@]}"
   echo
-  echo "Cada uma dessas precisa de uma asserção que fique vermelha sem ela."
-  exit 1
+  echo "Sem cobertura — cada uma precisa de uma asserção que fique vermelha sem ela:"
+  printf '  %s\n' "${sobreviventes[@]}"
+  falta=1
 fi
+
+if [ "${#pulados[@]}" -gt 0 ]; then
+  echo
+  echo "Não medidas — o comando de mutação falhou, então o portão não sabe nada sobre elas:"
+  printf '  %s\n' "${pulados[@]}"
+  falta=1
+fi
+
+[ "$falta" -ne 0 ] && exit 1
+exit 0
