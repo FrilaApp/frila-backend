@@ -1,4 +1,4 @@
-# Estado do backend — 22/09/2026
+# Estado do backend — 23/09/2026
 
 Onde o trabalho parou e o que a próxima sessão precisa saber. As regras duráveis estão
 no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
@@ -7,15 +7,22 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-O esquema do Frila está de pé e fechado, no local e no `frila-dev`, com a entrada por
-código no e-mail funcionando de ponta a ponta. **Três cartões de Backend do Sprint 0
-fechados**; faltam três, e o próximo livre é o de cenários de desenvolvimento.
+O esquema está de pé e fechado, a entrada por código funciona de ponta a ponta, o banco
+nasce povoado com cenários que cobrem a RN05, e o contrato fechou as divergências com o
+quadro. **Cinco dos seis cartões de Backend do Sprint 0 estão em Revisão**; o último
+(`CvopSHh6`, versão mínima do app) é do João Paulo e já está com alguém.
+
+**Seis PRs abertos, nenhum mergeado**, e três deles empilhados — ver *Os PRs* abaixo.
+
+**A CI não rodou um teste sequer em 23/09.** Cinco execuções em três branches caíram em
+`toomanyrequests` do `ghcr.io` antes de subir o ambiente. Tudo o que está afirmado aqui
+foi medido na máquina, com a saída olhada.
 
 ## Ambientes
 
 | | |
 |---|---|
-| local | `supabase start` · Postgres 17 · 20 migrações |
+| local | `supabase start` · Postgres 17 · 19 migrações no `main`, 20 com o filtro |
 | `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · org `Frila'orgs` |
 | `frila-prod` | não existe. Sprint 3 |
 
@@ -34,10 +41,32 @@ inteira: serve para a Management API e para o advisor, e não precisa no dia a d
 | `JuD3ytg1` Migrações iniciais | **Concluído** · PR #1 |
 | `v7b5sLYv` Políticas de acesso (RLS) | **Concluído** · PR #2 |
 | `MPFZagWG` Entrada por código e `criar_conta` | **Concluído** · PR #3 |
-| `Cc2XYCi0` Dados de teste e cenários | **Em andamento** · não começado |
-| `ggEzge6h` Filtro de texto ofensivo | a fazer · depende do contrato 0.2.1 |
-| `oUwDEP8Q` Contrato 0.2.1 | a fazer · depende de `MwtmdDQ9`, do Cauê |
-| `CvopSHh6` Versão mínima do app | a fazer · do João Paulo |
+| `Cc2XYCi0` Dados de teste e cenários | **Revisão** · PR #4 |
+| `oUwDEP8Q` Contrato (saiu como 0.2.2) | **Revisão** · PR #7 e Frila#2 |
+| `ggEzge6h` Filtro de texto ofensivo | **Revisão** · PR #8 e Frila#3 · *falta a revisão da Júlia na lista* |
+| `CvopSHh6` Versão mínima do app | do João Paulo · em andamento com ele. `configuracao_do_app` já está no contrato |
+
+Onze cartões de iOS entraram em "Em andamento" na madrugada de 23/09. Dois deles
+consomem o contrato: `bP2WKgG0` (dublês da API) e `9FRaLndF` (cliente da API). Os dois
+foram avisados por comentário da troca de `alvo_usuario_id` por `alvo_tipo` + `alvo_id`.
+
+## Os PRs
+
+Três pilhas. A ordem de merge importa: mergear o espelho antes do contrato deixa o
+espelho à frente do original.
+
+```
+BlendOps/Frila#2  contrato 0.2.2          ← mergear primeiro
+  └ #3            contrato 0.2.3
+
+frila-backend#4   cenários                 ← independente, pode ir a qualquer hora
+frila-backend#5   ponte com a Bancada      ← independente
+frila-backend#7   espelho 0.2.2 + portão   ← só depois de Frila#2
+  └ #8            filtro de texto          ← só depois de Frila#3
+```
+
+**A ponte (#5) depende de um push no `BlendOps/Bancada`**, que exige Touch ID: a forma
+`externo` do `registrar-fato.sh` mora lá.
 
 `./scripts/trello.sh` faz tudo: `ver`, `lista`, `pegar`, `revisao`, `concluir`, `comentar`.
 
@@ -48,12 +77,28 @@ está construída — está comentado no cartão, para o Cauê não recomeçar.
 
 ## O que existe no banco
 
-19 tabelas, 31 restrições `CHECK`, 1 de exclusão (RN21), 3 triggers, 19 políticas de
-leitura, 12 auxiliares no schema `privado`, e nenhuma política de escrita em lugar
-nenhum — toda escrita passa por função `security definer`.
+19 tabelas em `public`, 31 restrições `CHECK`, 1 de exclusão (RN21), 3 triggers, 19
+políticas de leitura, 14 auxiliares no schema `privado`, e nenhuma política de escrita em
+lugar nenhum — toda escrita passa por função `security definer`.
+
+`privado` ganhou a primeira tabela: `termo_bloqueado`, a lista do filtro da diretriz 1.2.
+Ela não tem política de leitura, por decisão — publicar a lista é publicar o mapa de como
+contorná-la.
+
+Depois do `db reset` o banco **não nasce vazio**: `cenarios.sql` põe 12 profissionais, 4
+contratantes, 3 estabelecimentos, 7 vagas, 7 turnos, 6 avaliações, 1 bloqueio e 2
+ocorrências. Teste novo que consulte `public.vaga` ou `public.turno` sem filtro está
+medindo o cenário junto — três asserções já precisaram de escopo por isso. O mapa está em
+[`supabase/README.md`](../supabase/README.md).
 
 RPCs prontas: `criar_conta`, `minha_conta`. As treze do ciclo (publicar, candidatar,
 check-in, avaliar…) são o Sprint 1 e não existem ainda.
+
+**O filtro de texto já existe e o primeiro ponto de uso é `criar_conta`.** Toda RPC nova
+que aceite texto livre — `publicar_vaga`, `republicar_vaga`, `cadastrar_estabelecimento`
+— tem de chamar `privado.texto_aceitavel` e recusar com `422 campo_invalido`, com o campo
+no `details`. Não é opcional: é a diretriz 1.2 da App Store, e a recusa de cada RPC entra
+no `ciclo-completo.sh`, porque o pgTAP vê o código e não vê o status.
 
 **`privado.agora()` é o relógio do produto.** Todo prazo passa por ele: os 7 dias do
 contato (RN10), o fim previsto que libera a avaliação (RN07), as 24 h do modo seleção
@@ -65,16 +110,19 @@ o teste, dentro da transação. Nenhuma RPC nova deve usar `now()` direto.
 
 | Comando | O que garante |
 |---|---|
-| `supabase test db` | 196 asserções pgTAP |
-| `./scripts/mutacao.sh` | 71 regras derrubadas uma a uma, todas matam um teste |
+| `supabase test db` | **223** asserções no filtro, 232 nos cenários (as duas branches ainda não se encontraram) |
+| `./scripts/mutacao.sh` | **74** regras derrubadas uma a uma, todas matam um teste. Varre `public` **e** `privado` desde 23/09 |
+| `./scripts/contrato-acompanha-o-codigo.sh` | recusa PR que muda função de `public` sem levar o contrato e sem subir a versão |
 | `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código de erro |
 | `./scripts/lint-conhecido.sh` | `plpgsql_check` sem achado novo |
 | `./scripts/advisor-conhecido.sh` | advisor do Supabase sem alerta além dos declarados |
 | `./scripts/contrato-em-dia.sh` | o espelho do `openapi.yaml` não divergiu do original |
 | `./scripts/migracoes-imutaveis.sh` | nenhuma migração aplicada foi editada |
 
-Os quatro primeiros e os dois últimos rodam na CI. O advisor não, porque exige o token de
-conta, que não vai para segredo de repositório.
+Todos rodam na CI menos o advisor, que exige o token de conta e não vai para segredo de
+repositório. O portão do contrato fica em **job próprio**, e não atrás do `supabase
+start`: ele é `git` e `sed`, e amarrá-lo ao job do banco fez com que, por duas
+execuções, ele nem chegasse a rodar — a CI ficava vermelha pelo motivo errado.
 
 **A regra que vale para qualquer portão novo:** um caminho que não seja *"medi e o
 resultado foi X"* tem que sair diferente de zero. Ela existe porque a mesma falha
@@ -124,27 +172,47 @@ tratava suíte já vermelha como detecção.
 
 ## Pendências fora do código
 
-1. **PAT com leitura em `BlendOps/Frila`**, gravado como secret `FRILA_DOCS_TOKEN`. Sem
+1. **`supabase login`.** O `SUPABASE_ACCESS_TOKEN` do `.env` responde **401** na
+   Management API — medido em 23/09. O advisor de segurança do `frila-dev` não é
+   verificado por ninguém desde que ele venceu, e isso não aparecia porque o portão lia
+   o corpo de erro como "nenhum achado". O portão foi corrigido para reprovar; o token
+   depende de alguém presente.
+2. **PAT com leitura em `BlendOps/Frila`**, gravado como secret `FRILA_DOCS_TOKEN`. Sem
    ele, o job do contrato confere só a integridade do espelho e avisa em voz alta que não
    conferiu o original. Fine-grained, *Resource owner* `BlendOps`, *Contents: Read-only*.
-2. **`git push` no `monorepo`**, que exige Touch ID. A T-0025 e o diário de 22/09 estão
-   commitados esperando.
-3. **Os hooks do vault estão desligados no monorepo.** `core.hooksPath` vazio: o
-   `bootstrap.sh` do doc-harness aponta para `scripts/git-hooks` relativo à raiz, e na
-   raiz do monorepo esse caminho não existe. Na prática o Touch ID no push e o registro
-   automático de fato não rodam. É do Cauê, que fez a migração para monorepo.
-4. **Avisar o Cauê** que o projeto Supabase que ele criou em 22/09 virou o `frila-dev` e
+3. **`git push` no `BlendOps/Bancada`**, que exige Touch ID. Esperando: a forma `externo`
+   do `registrar-fato.sh`, o conserto dos hooks, as notas de 22 e 23/09 e a T-0025
+   atualizada. Sem esse push, o PR #5 do backend não tem como funcionar na máquina de
+   ninguém, e o site da Bancada não republica.
+4. **Revisão da Júlia** na lista de termos bloqueados do filtro da diretriz 1.2. É
+   decisão de produto e de jurídico. Sem ela, o `ggEzge6h` não fecha.
+5. **Reexecutar a CI** quando o `ghcr.io` estabilizar. Nenhum dos seis PRs teve teste
+   rodado lá.
+6. **Decidir as 11 operações do contrato sem cartão no quadro** — `renovarSessao`,
+   `minhaConta`, `criteriosDeNotificacao`, `pedirRevisaoDespacho`, `equipeDeConfianca`,
+   `incluirNaEquipe`, `removerDaEquipe`, `listarFuncoes`, `candidatosDaVaga`,
+   `escolherCandidato`, `exportarTurnos`. Contrato a mais ou cartão faltando.
+7. **Avisar o Cauê** que o projeto Supabase que ele criou em 22/09 virou o `frila-dev` e
    tem esquema dentro.
+
+> **Corrigido de 22/09:** os hooks do vault estavam desligados por um motivo que a
+> entrada anterior atribuía ao monorepo em geral. A causa era precisa: `bootstrap.sh`
+> fixava `core.hooksPath` em `scripts/git-hooks`, caminho que não existe na raiz do
+> monorepo — e o git não reclama de `hooksPath` inexistente, simplesmente não roda hook.
+> Os hooks e o `lib.sh` passaram a resolver o vault como subdiretório. Também estava
+> errado que "a T-0025 e o diário de 22/09 estão commitados esperando": a T-0025 existia,
+> o diário de 22/09 existia, e o que faltava era o push.
 
 ## Por onde continuar
 
-1. `Cc2XYCi0` — cenários de desenvolvimento. **Atenção:** a descrição manda pôr os dados
-   em `supabase/seed.sql`, e isso contraria a convenção do repositório e o próprio
-   critério de aceite do cartão (*"o pipeline do frila-prod nunca aplica o seed.sql"*).
-   `seed.sql` é o único arquivo que `aplicar-remoto.sh` executa contra o `frila-dev`. O
-   conflito está comentado no cartão; os cenários vão num arquivo à parte, carregado só
-   pelo `db reset`.
+1. **Fazer os seis PRs andarem**, na ordem da seção *Os PRs*. Nenhum tem CI verde, e o
+   motivo é o `ghcr.io`, não o código. Reexecutar antes de mergear.
 2. Sprint 1: `publicar_vaga` primeiro, porque `candidatar` depende dela. `candidatar` é
    o cartão onde o produto quebra se errar — `UPDATE` condicional com
    `FOR UPDATE SKIP LOCKED`, e teste de corrida com **pgbench**, porque o pgTAP roda numa
    sessão só e não testa concorrência.
+3. Toda RPC nova do Sprint 1 nasce com quatro coisas, e nenhuma delas é negociável:
+   o filtro de texto nos campos livres, a recusa correspondente no `ciclo-completo.sh`,
+   a linha no `openapi.yaml` com a versão subindo, e a asserção de mutação que morre
+   quando a regra some. O portão do contrato cobra a terceira; as outras três dependem
+   de quem escreve.
