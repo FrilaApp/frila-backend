@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.1
+  version: 0.2.2
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -63,7 +63,7 @@ info:
     | HTTP | `code` | Quando |
     |---|---|---|
     | 401 | `PGRST301` e afins | Token ausente, expirado ou inválido (vem do PostgREST) |
-    | 403 | `sem_permissao` | Autenticado, mas sem papel para a ação (RF21) |
+    | 403 | `sem_permissao` | Autenticado, mas sem papel para a ação (RF21). `details`: `conta_suspensa` quando a conta está suspensa e a ação exige conta ativa (RN13) |
     | 403 | `contato_expirado` | Contato pedido depois de 7 dias do fim do turno (RN10) |
     | 404 | `nao_encontrado` | O recurso não existe ou não é visível para quem pede (inclui bloqueio, RF26) |
     | 409 | `posicao_ja_preenchida` | Alguém chegou antes (RN19). **Funcionamento normal no modo urgência** |
@@ -72,23 +72,60 @@ info:
     | 409 | `avaliacao_ja_registrada` | Já existe avaliação deste autor para o turno, com outra resposta |
     | 409 | `conta_existente`, `documento_ja_cadastrado` | Cadastro repetido |
     | 409 | `administrador_unico` | Exclusão de conta de quem é o único administrador (UC16) |
+    | 409 | `contestacao_ja_aberta` | Já existe contestação em análise para a suspensão em vigor (RF24) |
     | 422 | `campo_obrigatorio` | Falta campo exigido; `details` diz qual (RN02) |
+    | 422 | `campo_invalido` | O campo veio, e o valor é recusado pela regra; `details` diz qual campo. Distinto de `campo_obrigatorio`, que é ausência — a tela destaca o mesmo campo, com texto diferente |
     | 422 | `menor_de_idade` | Nascimento com menos de 18 anos (RN20) |
     | 422 | `perfil_incompativel` | A ação é do outro perfil: conta de contratante criando perfil de profissional, ou conta de profissional cadastrando estabelecimento (RN25) |
     | 422 | `selecao_sem_antecedencia` | Modo seleção em vaga que começa em menos de 24 h (RN24) |
     | 422 | `horario_invalido` | Fim antes do início, ou turno no passado |
-    | 422 | `inelegivel` | `details`: `turno_sobreposto` (RN21) ou `perfil_suspenso` (RN13) |
+    | 422 | `inelegivel` | `details`: `turno_sobreposto` (RN21), `perfil_suspenso` (RN13) ou `funcao_incompativel` (RN05) |
     | 422 | `avaliacao_indisponivel` | `details`: `antes_do_fim` ou `sem_presenca_verificada` (RN07) |
+    | 422 | `fora_da_janela` | Check-in ou check-out fora da janela que a regra permite para o turno (RN22) |
+    | 422 | `registro_no_futuro` | Instante de check-in ou check-out adiante do relógio do servidor. O relógio que vale é o do servidor, nunca o do aparelho |
     | 422 | `reabertura_antes_da_tolerancia` | Reabrir por atraso antes dos 15 minutos (D06) |
     | 422 | `sem_suspensao_ativa` | Contestação sem suspensão em vigor (RF24) |
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
 
-    Versão 0.2.0, rascunho de 22/09/2026. Em relação à 0.1.0, do mesmo dia: a entrada passa a ser
-    por código no e-mail, a conta ganha um perfil fixo (RN25) e o "disponível agora" sai. Fica para a
-    próxima versão: escala de evento em lote (RF19), convite de membros do estabelecimento (RF21) e
-    verificação progressiva de identidade (RN14).
+    **Versão 0.2.2, de 23/09/2026.** Só adições e uma troca de parâmetro; nenhuma operação saiu.
+
+    Em relação à 0.2.1: entram `meus_estabelecimentos`, `remover_dispositivo`,
+    `configuracao_do_app`, `registrar_evento` e a Edge Function `entrar-demonstracao`; `Turno`
+    ganha `contato_visivel_ate`; `Reputacao` ganha `turnos_realizados` ao lado de
+    `turnos_considerados`, que passam a ter definição escrita; `exportar-meus-dados` ganha o
+    schema do que devolve; e o catálogo de erros ganha `campo_invalido`, `fora_da_janela`,
+    `registro_no_futuro`, `contestacao_ja_aberta`, o `details` `conta_suspensa` em
+    `sem_permissao` e o `funcao_incompativel` em `inelegivel`.
+
+    **A única mudança que quebra cliente:** `bloquear` e `denunciar` trocam `alvo_usuario_id` por
+    `alvo_tipo` + `alvo_id`. O campo antigo era impreenchível — nenhuma resposta do contrato devolve
+    o id de *conta* da outra parte, então o app não tinha como preenchê-lo. O que ele recebe é o
+    `PerfilPublico`, que traz `id` e `tipo`; o servidor resolve a conta a partir daí. Como não
+    havia cliente capaz de chamar as duas operações, a troca não deixa ninguém para trás e não
+    vira `_v2`.
+
+    A 0.2.1, de 22/09, tinha trazido o aceite dos termos em `criar_conta`, a criação de
+    `minha_conta` e a chave `headers` no trecho de `erro()`, sem a qual o PostgREST devolve 500 em
+    toda recusa de regra de negócio.
+
+    Fica para a próxima versão: escala de evento em lote (RF19), convite de membros do
+    estabelecimento (RF21) e verificação progressiva de identidade (RN14).
+
+    ### Divergências conhecidas com o quadro
+
+    Levantadas na conferência de 23/09 contra os 83 cartões do Sprint 1 e do Sprint 2. Aqui está o
+    que o contrato decidiu, e por quê — quem lê o cartão e o contrato juntos precisa saber qual dos
+    dois está atrasado.
+
+    - **`criar_conta` não recebe a data do aceite.** O cartão pede "versão e data". A versão vem do
+      cliente; o instante é carimbado pelo servidor, porque data de aceite enviada pelo app é
+      forjável — e um registro de consentimento que a parte interessada pode escrever não vale como
+      registro. O cartão é que precisa mudar.
+    - **`meus_turnos` filtra por `de` e `ate`, não por `periodo`.** Um enum de período ("semana",
+      "mês") obriga o servidor a adivinhar o fuso de quem pergunta, e o produto tem turno que vira a
+      noite. O intervalo explícito não tem essa ambiguidade.
   contact:
     name: BlendOps — Challenge 18
 servers:
@@ -124,6 +161,10 @@ tags:
     description: Registro do token de push (FCM) de cada aparelho.
   - name: Exportação e conta
     description: Exportação de turnos e de dados pessoais, e exclusão da conta (RF22, RF25).
+  - name: Aplicativo
+    description: Configuração que o app precisa antes de ter sessão — versão mínima e aviso de atualização.
+  - name: Telemetria
+    description: Eventos do dicionário de métricas, só com identificadores (RN15).
   - name: Catálogo
     description: Dados de referência lidos direto da tabela.
 
@@ -252,6 +293,49 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
 
   # ───────────────────────────────────────────── Cadastro e perfil
+
+  /rpc/configuracao_do_app:
+    get:
+      tags: [Aplicativo]
+      operationId: configuracaoDoApp
+      summary: Versão mínima do app e aviso de atualização obrigatória
+      description: |
+        Chamada na abertura, **antes de haver sessão**: um app abaixo da versão mínima precisa
+        conseguir descobrir isso mesmo sem conseguir entrar. Por isso é a única operação de
+        `rest/v1` que dispensa o token do usuário — a chave publicável basta.
+
+        `versao_minima` é por plataforma e é comparada pelo app contra a própria versão de build.
+        Abaixo dela, a tela de bloqueio substitui o app inteiro e leva à loja; a partir de
+        `versao_recomendada`, o aviso é dispensável e aparece uma vez por versão.
+
+        Existe porque a v1.1 sai com o piloto rodando e o app antigo continua nos aparelhos. Sem
+        este canal, um defeito grave não sai de circulação e o backend fica preso à compatibilidade
+        com ele para sempre.
+      security:
+        - chaveDoProjeto: []
+      x-requisitos: [RNF12]
+      parameters:
+        - name: plataforma
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Plataforma'
+      responses:
+        '200':
+          description: Configuração em vigor para a plataforma.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfiguracaoDoApp'
+        '422':
+          description: |
+            `plataforma` ausente ou fora do enum. É a única recusa possível aqui — não há
+            autenticação a falhar, porque esta operação existe justamente para o app que ainda
+            não conseguiu entrar.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
 
   /rpc/criar_conta:
     post:
@@ -500,6 +584,37 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '409':
           $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/meus_estabelecimentos:
+    get:
+      tags: [Estabelecimento]
+      operationId: meusEstabelecimentos
+      summary: Estabelecimentos de que a conta é membro
+      description: |
+        A conta de contratante pode operar mais de um estabelecimento — a mesma pessoa cuida do bar
+        e do buffet —, e toda tela do contratante precisa saber por qual delas está falando antes de
+        chamar qualquer outra coisa. Sem esta operação, o app só descobre o `estabelecimento_id`
+        cadastrando um novo, que é o caminho errado para quem já tem.
+
+        Devolve o papel junto: `operador` não cadastra vaga em nome da casa nem mexe na equipe, e a
+        tela precisa esconder o que o servidor vai recusar com `403 sem_permissao` (RF21).
+
+        Lista vazia é resposta legítima: conta de contratante recém-criada, antes do primeiro
+        cadastro.
+      x-requisitos: [RF02, RF21, UC07]
+      responses:
+        '200':
+          description: Estabelecimentos da conta, com o papel em cada um.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EstabelecimentoDaConta'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
@@ -1386,9 +1501,14 @@ paths:
           application/json:
             schema:
               type: object
-              required: [alvo_usuario_id, motivo, relato, chave]
+              required: [alvo_tipo, alvo_id, motivo, relato, chave]
               properties:
-                alvo_usuario_id:
+                alvo_tipo:
+                  $ref: '#/components/schemas/TipoDeAlvo'
+                alvo_id:
+                  description: |
+                    O `id` do `PerfilPublico` da outra parte, como ele chegou ao app. O servidor
+                    resolve a conta a partir do par `alvo_tipo` + `alvo_id`.
                   $ref: '#/components/schemas/Uuid'
                 turno_id:
                   oneOf:
@@ -1429,9 +1549,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [alvo_usuario_id]
+              required: [alvo_tipo, alvo_id]
               properties:
-                alvo_usuario_id:
+                alvo_tipo:
+                  $ref: '#/components/schemas/TipoDeAlvo'
+                alvo_id:
+                  description: O `id` do `PerfilPublico` da outra parte, como ele chegou ao app.
                   $ref: '#/components/schemas/Uuid'
       responses:
         '200':
@@ -1531,6 +1654,104 @@ paths:
         '401':
           $ref: '#/components/responses/NaoAutenticado'
 
+  /rpc/remover_dispositivo:
+    post:
+      tags: [Dispositivos]
+      operationId: removerDispositivo
+      summary: Tirar o token de push do aparelho
+      description: |
+        Chamada no logout, e em todo caminho que encerra a sessão naquele aparelho. Sem ela, o
+        token continua registrado para a conta anterior: o aparelho passa a receber push de vagas
+        de alguém que não está mais logado nele — que é vazamento de dado pessoal por notificação,
+        e RN15 proíbe.
+
+        Idempotente: token que não está registrado devolve `200` igual. O app não precisa saber se
+        chegou a registrar.
+      x-requisitos: [RF06, RN15, RNF02]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token_fcm]
+              properties:
+                token_fcm:
+                  type: string
+                  minLength: 20
+      responses:
+        '200':
+          description: O token não está mais registrado para esta conta.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [removido]
+                properties:
+                  removido:
+                    type: boolean
+                    description: Falso quando o token já não estava registrado. A ação deu no mesmo.
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /rpc/registrar_evento:
+    post:
+      tags: [Telemetria]
+      operationId: registrarEvento
+      summary: Registrar um evento do dicionário de métricas
+      description: |
+        Só eventos do dicionário fechado (`EventoDeTelemetria`), e só identificadores no corpo.
+        Texto livre não entra: RN15 proíbe dado pessoal em log, e um campo aberto de telemetria é
+        por onde o dado pessoal entra — alguém manda o nome do profissional "só para depurar" e
+        ninguém revisa de novo.
+
+        A lista fechada não é burocracia: é o que torna a proibição verificável. Evento fora dela é
+        recusado com `422 campo_invalido`, `details: evento`.
+
+        Não substitui o log do servidor. Serve para o que só o app sabe: que a tela apareceu, que a
+        permissão foi negada, que a ação entrou na fila offline.
+      x-requisitos: [RN15, RNF08]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [evento]
+              properties:
+                evento:
+                  $ref: '#/components/schemas/EventoDeTelemetria'
+                vaga_id:
+                  oneOf:
+                    - $ref: '#/components/schemas/Uuid'
+                    - type: 'null'
+                turno_id:
+                  oneOf:
+                    - $ref: '#/components/schemas/Uuid'
+                    - type: 'null'
+                ocorrido_em:
+                  description: |
+                    Quando o app registrou o evento. Existe por causa da fila offline, que envia
+                    depois — sem ele, um dia inteiro de uso sem rede chegaria carimbado com a hora
+                    da reconexão. O servidor recusa instante adiante do próprio relógio com
+                    `422 registro_no_futuro`.
+                  $ref: '#/components/schemas/Instante'
+      responses:
+        '200':
+          description: Evento registrado.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [registrado]
+                properties:
+                  registrado:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
   # ───────────────────────────────────────────── Exportação e conta (Edge Functions)
 
   /exportar-turnos:
@@ -1596,17 +1817,81 @@ paths:
       tags: [Exportação e conta]
       operationId: exportarMeusDados
       summary: Exportar os dados pessoais do titular
+      description: |
+        Devolve o JSON **no corpo da resposta**, e não um link para baixar depois. Um link é mais
+        um lugar onde o dado pessoal fica em repouso, com prazo de validade que alguém precisa
+        lembrar de configurar; o corpo da resposta morre com a conexão.
+
+        O conteúdo é o que a LGPD chama de portabilidade: o que o titular forneceu e o que o
+        sistema registrou sobre ele. As avaliações **recebidas** entram sem o autor — a resposta
+        individual não é do titular, e revelá-la convidaria à retaliação, que é o que RN07 evita
+        ao manter a avaliação binária e agregada.
       x-requisitos: [RF25, RNF08, UC16]
       responses:
         '200':
-          description: Arquivo com os dados pessoais do chamador.
+          description: Os dados pessoais do chamador, no corpo.
           content:
             application/json:
               schema:
-                type: object
-                description: Conta, perfis, disponibilidade, turnos, avaliações dadas e recebidas, dispositivos.
+                $ref: '#/components/schemas/MeusDados'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+
+  /entrar-demonstracao:
+    servers:
+      - url: https://{projeto}.supabase.co/functions/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Exportação e conta]
+      operationId: entrarDemonstracao
+      summary: Entrada da conta de demonstração da revisão da App Store
+      description: |
+        A App Store exige que o revisor consiga usar o app inteiro, e o Frila entra por código no
+        e-mail — o revisor não tem acesso à caixa de entrada de ninguém. Sem esta porta, a revisão
+        para na primeira tela (diretriz 2.1).
+
+        Aceita **um** e-mail, declarado no App Store Connect, com um código fixo guardado como
+        segredo da função. Devolve a mesma `Sessao` do fluxo normal; daí para a frente o app não
+        sabe que a conta é de demonstração.
+
+        **O que esta porta não faz:** não cria conta, não aceita e-mail que não seja o declarado, e
+        não existe fora da Edge Function — não há RPC equivalente, porque uma função do Postgres
+        com esse poder ficaria exposta em `rest/v1` para qualquer um tentar. A conta é de
+        profissional, tem dados de demonstração e não recebe push.
+
+        Roda como Edge Function porque emite sessão, e emitir sessão é trabalho do Supabase Auth,
+        não do Postgres.
+      security:
+        - chaveDoProjeto: []
+      x-requisitos: [RF01, RNF08]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, codigo]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  description: O endereço declarado no App Store Connect. Qualquer outro recebe `404 nao_encontrado`.
+                codigo:
+                  type: string
+                  description: Código fixo da revisão, guardado como segredo da função. Não é o código de 6 dígitos do e-mail.
+      responses:
+        '200':
+          description: Sessão da conta de demonstração.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sessao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '429':
+          $ref: '#/components/responses/LimiteExcedido'
 
   /excluir-conta:
     servers:
@@ -1851,6 +2136,33 @@ components:
     Plataforma:
       type: string
       enum: [ios, android, web]
+    TipoDeAlvo:
+      description: |
+        O que o par `alvo_tipo` + `alvo_id` aponta. São os mesmos dois valores de
+        `PerfilPublico.tipo`, e é essa igualdade que permite ao app denunciar ou bloquear com o
+        que ele já tem na tela.
+      type: string
+      enum: [profissional, estabelecimento]
+    EventoDeTelemetria:
+      description: |
+        Dicionário fechado. Acrescentar evento é mudança de contrato, com versão subindo — é o
+        preço de garantir que nenhum campo aberto entre por aqui (RN15).
+      type: string
+      enum:
+        - app_aberto
+        - cadastro_concluido
+        - permissao_push_negada
+        - vaga_vista
+        - vaga_detalhe_aberto
+        - candidatura_enviada
+        - candidatura_retirada
+        - checkin_tentado
+        - checkin_concluido
+        - checkout_concluido
+        - avaliacao_enviada
+        - contato_aberto
+        - acao_enfileirada_offline
+        - atualizacao_obrigatoria_exibida
     PerfilConta:
       type: string
       enum: [profissional, contratante]
@@ -2065,7 +2377,7 @@ components:
 
     Reputacao:
       type: object
-      required: [positivas, total, taxa_comparecimento, turnos_considerados]
+      required: [positivas, total, taxa_comparecimento, turnos_considerados, turnos_realizados]
       description: |
         Sempre exibida com o denominador: "7 de 7 chamariam de novo" (RN08). Não existe média, e não
         deve existir (RN07). Sem histórico, `total = 0` e taxa nula: a tela mostra "Sem histórico".
@@ -2087,6 +2399,21 @@ components:
               maximum: 1
             - type: 'null'
         turnos_considerados:
+          description: |
+            O **denominador** da taxa de comparecimento: turnos confirmados cujo desfecho já é
+            conhecido. Entram o turno cumprido e a falta; ficam de fora a candidatura não
+            escolhida, o cancelamento com mais de 24 h de antecedência e o turno ainda por
+            acontecer. É este número que `taxa_comparecimento` divide.
+          type: integer
+          minimum: 0
+        turnos_realizados:
+          description: |
+            Turnos que a pessoa **cumpriu**, com presença verificada. É o número que a tela mostra
+            como experiência ("12 turnos realizados"), e não se confunde com `turnos_considerados`:
+            quem faltou a dois de dez tem `turnos_realizados: 8` e `turnos_considerados: 10`.
+
+            Os dois existem separados porque a tela usa um e a regra usa o outro, e um único campo
+            chamado "turnos" seria lido como o que cada leitor precisasse naquele dia.
           type: integer
           minimum: 0
     PerfilPublico:
@@ -2390,7 +2717,7 @@ components:
             - type: 'null'
     Turno:
       type: object
-      required: [id, posicao_id, vaga, contraparte, checkin_em, checkin_tipo, checkin_distancia_m, checkin_confirmado_em, checkout_em, checkout_distancia_m, verificacao, valor_acordado_centavos, pode_avaliar]
+      required: [id, posicao_id, vaga, contraparte, contato_visivel_ate, checkin_em, checkin_tipo, checkin_distancia_m, checkin_confirmado_em, checkout_em, checkout_distancia_m, verificacao, valor_acordado_centavos, pode_avaliar]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -2400,6 +2727,14 @@ components:
           $ref: '#/components/schemas/VagaResumo'
         contraparte:
           $ref: '#/components/schemas/PerfilPublico'
+        contato_visivel_ate:
+          description: |
+            Fim previsto do turno mais 7 dias (RN10). Depois disso `contato_do_turno` responde
+            `403 contato_expirado`, e a tela precisa saber disso **antes** de oferecer o botão —
+            senão o profissional toca em "falar com o contratante" e recebe um erro que ele não
+            tem como prever. É o mesmo instante que `Contato.visivel_ate` carrega; aparece aqui
+            para que a tela do turno não precise pedir o contato só para descobrir se pode.
+          $ref: '#/components/schemas/Instante'
         checkin_em:
           oneOf:
             - $ref: '#/components/schemas/Instante'
@@ -2534,9 +2869,15 @@ components:
           format: date
     Bloqueio:
       type: object
-      required: [bloqueado_id, criado_em]
+      required: [alvo_tipo, alvo_id, criado_em]
+      description: |
+        Devolve o mesmo par que a chamada recebeu, e não o id de conta da outra parte: o app não
+        tem o que fazer com um id que nenhuma outra resposta menciona, e devolvê-lo abriria um
+        caminho de leitura que RN10 fecha em todos os outros.
       properties:
-        bloqueado_id:
+        alvo_tipo:
+          $ref: '#/components/schemas/TipoDeAlvo'
+        alvo_id:
           $ref: '#/components/schemas/Uuid'
         criado_em:
           $ref: '#/components/schemas/Instante'
@@ -2561,7 +2902,103 @@ components:
                     - type: 'null'
             - type: 'null'
 
+    # ── Aplicativo
+
+    ConfiguracaoDoApp:
+      type: object
+      required: [plataforma, versao_minima, versao_recomendada, url_da_loja]
+      description: |
+        Lida sem sessão, na abertura. As versões são strings de build comparadas por ordem natural
+        de versão (`1.2.10` é maior que `1.2.9`), e não números — um `double` transformaria
+        `1.2.10` em `1.21`.
+      properties:
+        plataforma:
+          $ref: '#/components/schemas/Plataforma'
+        versao_minima:
+          type: string
+          description: Abaixo desta, o app bloqueia e leva à loja. Nenhuma tela do produto abre.
+          example: "1.0.0"
+        versao_recomendada:
+          type: string
+          description: Aviso dispensável, uma vez por versão.
+          example: "1.1.0"
+        url_da_loja:
+          type: string
+          format: uri
+        mensagem:
+          type: [string, 'null']
+          description: |
+            Texto opcional para a tela de bloqueio. Nulo na maior parte do tempo: o app tem um
+            texto padrão, e depender deste campo para a tela funcionar faria uma falha de rede
+            virar tela vazia.
+
     # ── Dispositivos e conta
+
+    EstabelecimentoDaConta:
+      type: object
+      required: [id, nome, papel]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        nome:
+          type: string
+        papel:
+          $ref: '#/components/schemas/PapelMembro'
+        tipo:
+          $ref: '#/components/schemas/TipoEstabelecimento'
+        reputacao:
+          $ref: '#/components/schemas/Reputacao'
+
+    MeusDados:
+      type: object
+      required: [gerado_em, conta, turnos, avaliacoes_dadas, avaliacoes_recebidas, dispositivos]
+      description: |
+        Portabilidade da LGPD: o que o titular forneceu e o que o sistema registrou sobre ele.
+      properties:
+        gerado_em:
+          $ref: '#/components/schemas/Instante'
+        conta:
+          $ref: '#/components/schemas/Usuario'
+        perfil_profissional:
+          oneOf:
+            - $ref: '#/components/schemas/PerfilProfissional'
+            - type: 'null'
+        estabelecimentos:
+          type: array
+          items:
+            $ref: '#/components/schemas/EstabelecimentoDaConta'
+        disponibilidade:
+          type: array
+          items:
+            $ref: '#/components/schemas/JanelaDeDisponibilidade'
+        turnos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Turno'
+        avaliacoes_dadas:
+          type: array
+          items:
+            $ref: '#/components/schemas/Avaliacao'
+        avaliacoes_recebidas:
+          description: |
+            **Sem o autor.** A resposta individual não pertence ao titular, e devolvê-la aqui
+            abriria pela porta da portabilidade o que RN07 fecha em todas as outras: a avaliação é
+            binária e agregada justamente para que ninguém responda com medo de retaliação.
+          type: array
+          items:
+            type: object
+            required: [turno_id, resposta, criada_em]
+            properties:
+              turno_id:
+                $ref: '#/components/schemas/Uuid'
+              resposta:
+                type: boolean
+              criada_em:
+                $ref: '#/components/schemas/Instante'
+        dispositivos:
+          type: array
+          items:
+            $ref: '#/components/schemas/Dispositivo'
 
     Dispositivo:
       type: object

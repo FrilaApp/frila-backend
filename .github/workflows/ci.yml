@@ -52,6 +52,13 @@ jobs:
       - name: Lint do plpgsql sem achado novo
         run: ./scripts/lint-conhecido.sh
 
+      # O contrato é a fonte dos modelos de três clientes nativos. Uma RPC que muda
+      # aqui e não muda lá é um cliente gerando o modelo antigo até a chamada falhar
+      # no aparelho de alguém.
+      - name: O contrato acompanhou o código
+        if: github.event_name == 'pull_request'
+        run: ./scripts/contrato-acompanha-o-codigo.sh "origin/${{ github.base_ref }}"
+
       - name: Diagnóstico ao falhar
         if: failure()
         run: supabase status && docker ps -a
