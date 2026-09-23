@@ -23,9 +23,9 @@ begin
   select id into v_prof from public.profissional
    where usuario_id = 'bbbbbbbb-0000-0000-0000-000000000001';
   if v_prof is null then
-    insert into public.usuario (id, perfil, nome, telefone, email, nascimento)
+    insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
     values ('bbbbbbbb-0000-0000-0000-000000000001','profissional','Ana',
-            '+5561999990001','ana@t.test','1995-01-01');
+            '+5561999990001','ana@t.test','1995-01-01', '2026-09-22', now());
     insert into public.profissional (usuario_id, ponto_base)
     values ('bbbbbbbb-0000-0000-0000-000000000001','POINT(-47.88 -15.79)'::extensions.geography)
     returning id into v_prof;

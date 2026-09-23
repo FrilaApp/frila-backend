@@ -45,9 +45,9 @@ select is(
 
 select throws_ok(
   $$ select pg_temp.como('anon', $x$
-       insert into public.usuario (id, perfil, nome, telefone, email, nascimento)
+       insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
        values (gen_random_uuid(), 'profissional', 'Invasor',
-               '+5561999990000', 'x@y.test', '1990-01-01') $x$) $$,
+               '+5561999990000', 'x@y.test', '1990-01-01', '2026-09-22', now()) $x$) $$,
   '42501',
   null,
   'a chave publicável do app não cria conta direto na tabela');

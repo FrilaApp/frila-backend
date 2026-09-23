@@ -8,9 +8,9 @@ create function pg_temp.conta(p_id uuid, p_perfil public.perfil_conta,
                               p_nasc date default '1990-01-01',
                               p_email text default null)
 returns uuid language sql as $$
-  insert into public.usuario (id, perfil, nome, telefone, email, nascimento)
+  insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
   values (p_id, p_perfil, 'Fulano', '+5561999990000',
-          coalesce(p_email, p_id::text || '@exemplo.test'), p_nasc)
+          coalesce(p_email, p_id::text || '@exemplo.test'), p_nasc, '2026-09-22', now())
   returning id;
 $$;
 
@@ -62,17 +62,17 @@ select throws_ok(
 
 -- ── Contato e e-mail ───────────────────────────────────────────────────────────
 select throws_ok(
-  $$ insert into public.usuario (id, perfil, nome, telefone, email, nascimento)
+  $$ insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
      values ('00000000-0000-0000-0000-000000000020', 'profissional', 'Fulano',
-             '61999990000', 'a@b.test', '1990-01-01') $$,
+             '61999990000', 'a@b.test', '1990-01-01', '2026-09-22', now()) $$,
   '23514',
   null,
   'telefone fora do formato E.164 é recusado');
 
 select lives_ok(
-  $$ insert into public.usuario (id, perfil, nome, telefone, email, nascimento)
+  $$ insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
      values ('00000000-0000-0000-0000-000000000021', 'contratante', 'Fulana',
-             '+5561999990000', 'outra@b.test', '1990-01-01') $$,
+             '+5561999990000', 'outra@b.test', '1990-01-01', '2026-09-22', now()) $$,
   'RN25: o mesmo telefone pode estar nas duas contas da mesma pessoa');
 
 select pg_temp.conta('00000000-0000-0000-0000-000000000030', 'profissional', '1990-01-01', 'igual@b.test');

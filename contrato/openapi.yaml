@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.0
+  version: 0.2.1
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -51,9 +51,14 @@ info:
       raise sqlstate 'PGRST' using
         message = json_build_object('code', codigo, 'message', codigo,
                                     'details', motivo, 'hint', null)::text,
-        detail  = json_build_object('status', status)::text;
+        detail  = json_build_object('status', status,
+                                  'headers', json_build_object())::text;
     end $$;
     ```
+
+    `headers` é obrigatório no `detail`: sem ele o PostgREST responde `500 PGRST121` no
+    lugar do status que a regra levantou, e toda recusa de regra de negócio chega ao app
+    como erro interno. A 0.2.0 trazia o trecho sem essa chave.
 
     | HTTP | `code` | Quando |
     |---|---|---|
@@ -268,7 +273,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [perfil, nome, telefone, nascimento]
+              required: [perfil, nome, telefone, nascimento, termos_versao]
               properties:
                 perfil:
                   $ref: '#/components/schemas/PerfilConta'
@@ -281,6 +286,16 @@ paths:
                   type: string
                   format: date
                   example: '1998-04-12'
+                termos_versao:
+                  type: string
+                  minLength: 1
+                  description: |
+                    Versão dos termos de uso e da política de privacidade que a tela exibiu.
+                    Guardar só um booleano não responde o que a pessoa aceitou, que é o que a
+                    LGPD e a diretriz da App Store perguntam. **Não há campo de data**: o
+                    instante é carimbado pelo servidor, porque data de aceite enviada pelo
+                    cliente é forjável e não vale como registro de consentimento.
+                  example: '2026-09-22'
       responses:
         '200':
           description: Conta criada.
@@ -294,6 +309,29 @@ paths:
           $ref: '#/components/responses/Conflito'
         '422':
           $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/minha_conta:
+    get:
+      tags: [Cadastro e perfil]
+      operationId: minhaConta
+      summary: Ler a própria conta
+      description: |
+        O app chama ao abrir, para saber se a sessão já tem conta no produto. Depois de
+        confirmar o código existe sessão e pode não existir conta: `404 nao_encontrado` é
+        como o app sabe que precisa mandar a pessoa para o cadastro, em vez de mandar de
+        novo quem já cadastrou.
+      x-requisitos: [RF01, UC09, UC10]
+      responses:
+        '200':
+          description: Conta do chamador.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Usuario'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
 
   /rpc/criar_perfil_profissional:
     post:
