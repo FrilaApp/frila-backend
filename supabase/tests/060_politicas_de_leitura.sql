@@ -167,9 +167,15 @@ select is(
   0,
   'o contratante de outro estabelecimento não vê vaga nenhuma da casa do vizinho');
 
+-- Filtrado pelas duas casas deste arquivo porque `supabase/cenarios.sql` povoa o banco
+-- no `db reset`, e o profissional enxerga as vagas publicadas do cenário também — o
+-- que é justamente a política funcionando. Sem o filtro, esta asserção mediria quantas
+-- vagas o arquivo de cenários publicou.
 select is(
   pg_temp.contar_como('11111111-0000-0000-0000-000000000002',
-    'select count(*)::int from public.vaga'),
+    $$ select count(*)::int from public.vaga
+        where estabelecimento_id in ('33333333-0000-0000-0000-000000000001',
+                                     '33333333-0000-0000-0000-000000000002') $$),
   2,
   'o profissional vê as vagas publicadas — as duas casas — e não a encerrada');
 
@@ -291,10 +297,13 @@ insert into public.turno (posicao_id, checkin_em, checkin_tipo, checkin_distanci
                           verificacao, valor_acordado_centavos)
 select posicao, now() - interval '10 h', 'geolocalizado', 50, 'verificado', 12000 from ids;
 
+-- Só o turno deste arquivo: os sete do cenário de desenvolvimento estão no mesmo
+-- banco, e dois deles ainda não terminaram — o trigger de RN07 recusaria, com razão.
 insert into public.avaliacao (turno_id, autor_id, alvo_tipo, alvo_id, resposta)
 select t.id, '11111111-0000-0000-0000-000000000001', 'estabelecimento',
        '33333333-0000-0000-0000-000000000001', true
-  from public.turno t;
+  from public.turno t, ids
+ where t.posicao_id = ids.posicao;
 
 select is(
   pg_temp.contar_como('11111111-0000-0000-0000-000000000001',
@@ -511,7 +520,10 @@ select is(
 
 select is(
   pg_temp.contar_como('11111111-0000-0000-0000-000000000002',
-    $$ select count(*)::int from public.vaga where estado = 'publicada' $$),
+    $$ select count(*)::int from public.vaga
+        where estado = 'publicada'
+          and estabelecimento_id in ('33333333-0000-0000-0000-000000000001',
+                                     '33333333-0000-0000-0000-000000000002') $$),
   2,
   'e continua vendo as vagas: a recusa é no ato de se candidatar, não na leitura');
 

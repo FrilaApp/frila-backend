@@ -50,6 +50,18 @@ end $$;
 create temp table t as
   select pg_temp.montar(now() - interval '10 h', now() - interval '2 h') as posicao_id;
 
+-- Desde que `supabase/cenarios.sql` povoa o banco no `db reset`, `from public.turno`
+-- sem filtro deixou de significar "o turno deste teste": significa oito turnos, sete
+-- deles do cenário. O mesmo vale para os `limit 1` sem `order by` que escolhiam um
+-- profissional e um estabelecimento quaisquer.
+--
+-- Daqui para baixo, toda consulta se limita ao que este arquivo criou. A alternativa
+-- seria manter o banco vazio depois do reset, e aí o cenário de desenvolvimento não
+-- existiria.
+create temp table meu as select
+  (select id from public.estabelecimento where documento = '11222333000181') as estab,
+  'bbbbbbbb-0000-0000-0000-000000000001'::uuid                                as prof_usuario;
+
 -- ── RN22: 'verificado' só com prova ────────────────────────────────────────────
 select throws_ok(
   $$ insert into public.turno (posicao_id, verificacao, valor_acordado_centavos)
@@ -97,24 +109,25 @@ select lives_ok(
   'manual sem confirmação fica pendente, que é o estado certo');
 
 select throws_ok(
-  $$ update public.turno set checkin_confirmado_em = now() $$,
+  $$ update public.turno set checkin_confirmado_em = now()
+      where posicao_id = (select posicao_id from t) $$,
   '23514',
   null,
   'confirmar o manual sem passar a verificacao para verificado é incoerente');
 
-update public.turno set checkin_confirmado_em = now(), verificacao = 'verificado';
+update public.turno set checkin_confirmado_em = now(), verificacao = 'verificado'
+ where posicao_id = (select posicao_id from t);
 
 select is(
-  (select verificacao from public.turno)::text,
+  (select verificacao from public.turno where posicao_id = (select posicao_id from t))::text,
   'verificado',
   'RN22: manual confirmado pelo contratante vale como presença');
 
 -- ── RN07: a avaliação ──────────────────────────────────────────────────────────
 create temp table ids as
-  select t.id as turno_id,
-         (select usuario_id from public.profissional limit 1) as prof_usuario,
-         (select id from public.estabelecimento limit 1)      as estab
-    from public.turno t;
+  select tu.id as turno_id, m.prof_usuario, m.estab
+    from public.turno tu, t, meu m
+   where tu.posicao_id = t.posicao_id;
 
 select lives_ok(
   $$ insert into public.avaliacao (turno_id, autor_id, alvo_tipo, alvo_id, resposta)
@@ -129,7 +142,8 @@ select throws_ok(
   'RN07: um autor avalia um turno uma vez só');
 
 select is(
-  (select pg_typeof(resposta)::text from public.avaliacao limit 1),
+  (select pg_typeof(a.resposta)::text from public.avaliacao a, ids
+    where a.turno_id = ids.turno_id limit 1),
   'boolean',
   'RN07: a resposta é binária. Não existe caminho no esquema que aceite nota de 1 a 5');
 
@@ -150,9 +164,8 @@ select posicao_id, now(), 'geolocalizado', 50, 'verificado', 12000 from futuro;
 
 select throws_ok(
   $$ insert into public.avaliacao (turno_id, autor_id, alvo_tipo, alvo_id, resposta)
-     select t.id, (select usuario_id from public.profissional limit 1), 'estabelecimento',
-            (select id from public.estabelecimento limit 1), true
-       from public.turno t join futuro f on f.posicao_id = t.posicao_id $$,
+     select tu.id, m.prof_usuario, 'estabelecimento', m.estab, true
+       from public.turno tu join futuro f on f.posicao_id = tu.posicao_id, meu m $$,
   'PGRST',
   null,
   'RN07: antes do fim previsto a avaliação é recusada, com o código do contrato');
@@ -170,9 +183,8 @@ update public.posicao p set inicio_em = now() - interval '30 h', fim_em = now() 
 
 select throws_ok(
   $$ insert into public.avaliacao (turno_id, autor_id, alvo_tipo, alvo_id, resposta)
-     select t.id, (select usuario_id from public.profissional limit 1), 'estabelecimento',
-            (select id from public.estabelecimento limit 1), true
-       from public.turno t join futuro f on f.posicao_id = t.posicao_id $$,
+     select tu.id, m.prof_usuario, 'estabelecimento', m.estab, true
+       from public.turno tu join futuro f on f.posicao_id = tu.posicao_id, meu m $$,
   'PGRST',
   null,
   'RN07: quem faltou não é avaliado — a falta já pesa na taxa, e não deve pesar duas vezes');
