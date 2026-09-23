@@ -28,7 +28,9 @@ falhou(){ printf '  ✗ %s\n' "$1" >&2; exit 1; }
 
 # Um endereço novo por execução: o script não pode depender de estado deixado pela
 # execução anterior, senão passa na segunda vez por motivo errado.
-EMAIL="ciclo-$(date +%s)@frila.test"
+# `date +%s` colide se o script rodar duas vezes no mesmo segundo, e aí a segunda
+# execução passa por motivo errado — a conta da primeira já existe.
+EMAIL="ciclo-$(date +%s)-$$-$RANDOM@frila.test"
 
 echo "▸ Entrada por código no e-mail"
 
@@ -100,15 +102,6 @@ email_gravado=$(printf '%s' "$conta" | python3 -c "import json,sys; print(json.l
 [ "$email_gravado" = "$EMAIL" ] || falhou "o e-mail gravado ($email_gravado) não é o da sessão"
 ok "o e-mail gravado é o da credencial confirmada"
 
-# RN20 pelo caminho real, com o código de erro que o aplicativo compara sem traduzir.
-erro=$(curl -s -X POST "$URL/rest/v1/rpc/criar_conta" \
-  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"perfil":"contratante","nome":"Outro","telefone":"+5561999990000",
-       "nascimento":"1995-01-01","termos_versao":"2026-09-22"}')
-cod=$(printf '%s' "$erro" | python3 -c "import json,sys; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || true)
-[ "$cod" = "conta_existente" ] || falhou "reenvio com outro perfil devolveu '$cod', esperado conta_existente"
-ok "RN25: reenviar com outro perfil → conta_existente"
-
 echo
 echo "▸ Os erros, com status e código"
 #
@@ -130,9 +123,14 @@ recusa() {
   ok "$desc → $http $code"
 }
 
+# O 409 primeiro, enquanto $TOKEN ainda é o da sessão que **já tem** conta. Depois ele
+# passa a ser o da segunda sessão, que é de onde saem os 422.
+recusa "RN25: reenviar com outro perfil" 409 conta_existente \
+  '{"perfil":"contratante","nome":"Outro","telefone":"+5561999990000","nascimento":"1995-01-01","termos_versao":"2026-09-22"}'
+
 # Uma sessão nova, ainda sem conta: é dela que saem os 422, porque a sessão anterior já
 # tem conta e cairia sempre no 409.
-EMAIL2="ciclo-b-$(date +%s)@frila.test"
+EMAIL2="ciclo-b-$(date +%s)-$$-$RANDOM@frila.test"
 curl -s -o /dev/null -X POST "$URL/auth/v1/otp" -H "apikey: $ANON" \
   -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL2\"}"
 MID2=$(curl -s "$CAIXA/api/v1/search?query=to:$EMAIL2" | python3 -c "
