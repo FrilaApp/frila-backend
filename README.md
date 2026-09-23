@@ -12,7 +12,7 @@ publicar → notificar → candidatar → confirmar → executar → avaliar
 ```
 
 Loja em 13/11/2026. O que entra em cada versão está em
-[`05-ESCOPO-DO-MVP.md`](https://github.com/BlendOps/Frila/blob/main/Documentos/MD/05-ESCOPO-DO-MVP.md);
+[`05-ESCOPO-DO-MVP.md`](https://github.com/FrilaApp/frila-docs/blob/main/Documentos/MD/05-ESCOPO-DO-MVP.md);
 o plano de trabalho, no [quadro do Trello](https://trello.com/b/0eyqvbRJ/frila).
 
 ## Rodar
@@ -65,10 +65,10 @@ A chave de serviço fica fora do app e fora do git: só o agendador e a CI a usa
 
 | O quê | Onde |
 |---|---|
-| Documentos de produto, contrato da API, requisitos | [`BlendOps/Frila`](https://github.com/BlendOps/Frila) |
-| Modelagem de banco, diagramas, decisões técnicas | [`BlendOps/Bancada`](https://github.com/BlendOps/Bancada) · `doc-harness/07 - Arquitetura/` |
+| Documentos de produto, contrato da API, requisitos | [`FrilaApp/frila-docs`](https://github.com/FrilaApp/frila-docs) |
+| Modelagem de banco, diagramas, decisões técnicas | [`FrilaApp/Bancada`](https://github.com/FrilaApp/Bancada) · `doc-harness/07 - Arquitetura/` |
 | Registro do processo, para os mentores | https://bancada-buu.pages.dev |
-| App iOS | `BlendOps/Frila` · `ios/` |
+| App iOS | `FrilaApp/frila-docs` · `ios/` |
 
 > O cartão `S0 · Infra · Criar o projeto no Supabase` diz que o backend fica em
 > `Frila/supabase/`. Mudou em 22/09: o código do backend vive aqui. O contrato continua
@@ -82,4 +82,4 @@ o código segue estão em [`CLAUDE.md`](CLAUDE.md).
 ## Time
 
 Cauê Carneiro · Fabrício Tosta · João Paulo Albuquerque · Júlia Clovandi · Matheus Silva
-— BlendOps, Challenge 18 do Apple Developer Academy.
+— FrilaApp (antes BlendOps), Challenge 18 do Apple Developer Academy.

@@ -1,5 +1,15 @@
 # frila-backend — como se trabalha aqui
 
+> **A organização mudou de nome em 23/09: `BlendOps` virou `FrilaApp`**, e os três
+> repositórios foram junto — `Frila` virou `frila-docs`, `frila-backend` e `Bancada`
+> mantiveram o nome sob a org nova. O GitHub redireciona o nome antigo, então nada
+> quebra de imediato; por isso mesmo é fácil deixar a referência velha envelhecer até o
+> dia em que o redirect sai. As referências deste repositório foram atualizadas.
+>
+> O repositório avulso `doc-harness` **não existe mais**. O vault vivo é
+> `FrilaApp/Bancada`, no subdiretório `doc-harness/`.
+
+
 Backend do **Frila**: plataforma de contratação por turno avulso, começando pelo
 Distrito Federal. O ciclo que este repositório existe para fechar é
 `publicar → notificar → candidatar → confirmar → executar → avaliar`.
@@ -36,11 +46,11 @@ discordar do documento, **o documento ganha** — ou o documento muda primeiro.
 
 | O quê | Onde |
 |---|---|
-| **Contrato da API** | `contrato/openapi.yaml` — espelho de `BlendOps/Frila · Documentos/API/openapi.yaml`. Nome de campo, código de erro e status HTTP saem daqui |
-| **Modelagem de Banco** | vault `BlendOps/Bancada · doc-harness/07 - Arquitetura/Modelagem de Banco de Dados.md` — o DDL, as 19 políticas de RLS, a definição canônica da taxa de comparecimento |
+| **Contrato da API** | `contrato/openapi.yaml` — espelho de `FrilaApp/frila-docs · Documentos/API/openapi.yaml`. Nome de campo, código de erro e status HTTP saem daqui |
+| **Modelagem de Banco** | vault `FrilaApp/Bancada · doc-harness/07 - Arquitetura/Modelagem de Banco de Dados.md` — o DDL, as 19 políticas de RLS, a definição canônica da taxa de comparecimento |
 | **Decisões técnicas** | mesmo vault, `Pendências Técnicas Para Codar.md` — D1 a D13 |
-| **Escopo e sprints** | `BlendOps/Frila · Documentos/MD/05-ESCOPO-DO-MVP.md` |
-| **Requisitos (RN, RF, RNF, UC)** | `BlendOps/Frila · Documentos/Diagramas:Documentos/Frila_Documento_de_Requisitos.docx` |
+| **Escopo e sprints** | `FrilaApp/frila-docs · Documentos/MD/05-ESCOPO-DO-MVP.md` |
+| **Requisitos (RN, RF, RNF, UC)** | `FrilaApp/frila-docs · Documentos/Diagramas:Documentos/Frila_Documento_de_Requisitos.docx` |
 | **O quadro** | https://trello.com/b/0eyqvbRJ/frila — 221 cartões, 60 com etiqueta Backend |
 
 > O cartão `S0 · Infra · Criar o projeto no Supabase` diz que o código mora em
@@ -195,7 +205,7 @@ Ausência por decisão, não por lacuna. Não crie tabela para nada disto:
 
 ## A ponte com a Bancada
 
-O vault `BlendOps/Bancada · doc-harness/` publica em **https://bancada-buu.pages.dev**,
+O vault `FrilaApp/Bancada · doc-harness/` publica em **https://bancada-buu.pages.dev**,
 e é onde os mentores acompanham o processo. Os commits daqui **não** chegam lá sozinhos:
 o hook do vault só registra commits do próprio repositório.
 

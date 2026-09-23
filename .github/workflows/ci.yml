@@ -100,7 +100,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Sem o secret, confere só a integridade do espelho e avisa em voz alta que o
-      # original não foi conferido. BlendOps/Frila é privado, e o GITHUB_TOKEN do
+      # original não foi conferido. FrilaApp/frila-docs é privado, e o GITHUB_TOKEN do
       # Actions não alcança outro repositório.
       - name: O espelho não divergiu do original
         env:

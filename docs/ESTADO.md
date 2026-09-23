@@ -56,7 +56,7 @@ Três pilhas. A ordem de merge importa: mergear o espelho antes do contrato deix
 espelho à frente do original.
 
 ```
-BlendOps/Frila#2  contrato 0.2.2          ← mergear primeiro
+FrilaApp/frila-docs#2  contrato 0.2.2          ← mergear primeiro
   └ #3            contrato 0.2.3
 
 frila-backend#4   cenários                 ← independente, pode ir a qualquer hora
@@ -65,7 +65,7 @@ frila-backend#7   espelho 0.2.2 + portão   ← só depois de Frila#2
   └ #8            filtro de texto          ← só depois de Frila#3
 ```
 
-**A ponte (#5) depende de um push no `BlendOps/Bancada`**, que exige Touch ID: a forma
+**A ponte (#5) depende de um push no `FrilaApp/Bancada`**, que exige Touch ID: a forma
 `externo` do `registrar-fato.sh` mora lá.
 
 `./scripts/trello.sh` faz tudo: `ver`, `lista`, `pegar`, `revisao`, `concluir`, `comentar`.
@@ -177,10 +177,10 @@ tratava suíte já vermelha como detecção.
    verificado por ninguém desde que ele venceu, e isso não aparecia porque o portão lia
    o corpo de erro como "nenhum achado". O portão foi corrigido para reprovar; o token
    depende de alguém presente.
-2. **PAT com leitura em `BlendOps/Frila`**, gravado como secret `FRILA_DOCS_TOKEN`. Sem
+2. **PAT com leitura em `FrilaApp/frila-docs`**, gravado como secret `FRILA_DOCS_TOKEN`. Sem
    ele, o job do contrato confere só a integridade do espelho e avisa em voz alta que não
-   conferiu o original. Fine-grained, *Resource owner* `BlendOps`, *Contents: Read-only*.
-3. **`git push` no `BlendOps/Bancada`**, que exige Touch ID. Esperando: a forma `externo`
+   conferiu o original. Fine-grained, *Resource owner* `FrilaApp`, *Contents: Read-only*.
+3. **`git push` no `FrilaApp/Bancada`**, que exige Touch ID. Esperando: a forma `externo`
    do `registrar-fato.sh`, o conserto dos hooks, as notas de 22 e 23/09 e a T-0025
    atualizada. Sem esse push, o PR #5 do backend não tem como funcionar na máquina de
    ninguém, e o site da Bancada não republica.
