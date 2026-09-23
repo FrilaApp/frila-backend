@@ -52,16 +52,32 @@ jobs:
       - name: Lint do plpgsql sem achado novo
         run: ./scripts/lint-conhecido.sh
 
-      # O contrato é a fonte dos modelos de três clientes nativos. Uma RPC que muda
-      # aqui e não muda lá é um cliente gerando o modelo antigo até a chamada falhar
-      # no aparelho de alguém.
-      - name: O contrato acompanhou o código
-        if: github.event_name == 'pull_request'
-        run: ./scripts/contrato-acompanha-o-codigo.sh "origin/${{ github.base_ref }}"
-
       - name: Diagnóstico ao falhar
         if: failure()
         run: supabase status && docker ps -a
+
+  # Job próprio, e não um passo do job do banco, por dois motivos.
+  #
+  # O primeiro é que este portão é git e `sed`: não precisa de Postgres, e amarrá-lo ao
+  # `supabase start` faz um portão de dois segundos esperar três minutos de `docker
+  # pull`. O segundo é o que aconteceu ao medir: o `ghcr.io` devolveu `toomanyrequests`,
+  # o job caiu em "Subir o ambiente" e o portão **não chegou a rodar** — a CI ficou
+  # vermelha pelo motivo errado, que é indistinguível de vermelha pelo motivo certo para
+  # quem só olha o ✗.
+  #
+  # Portão barato fica fora do caminho do portão caro.
+  contrato-acompanha:
+    name: O contrato acompanhou o código
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # O script precisa da base para comparar, e o checkout de PR traz só o
+          # commit de merge.
+          fetch-depth: 0
+
+      - run: ./scripts/contrato-acompanha-o-codigo.sh "origin/${{ github.base_ref }}"
 
   contrato:
     name: Contrato em dia com o Frila
