@@ -8,8 +8,8 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 ## Em uma linha
 
 O esquema do Frila está de pé e fechado, no local e no `frila-dev`, com a entrada por
-código no e-mail funcionando de ponta a ponta. Três cartões de Backend do Sprint 0
-fechados ou em revisão; faltam três.
+código no e-mail funcionando de ponta a ponta. **Três cartões de Backend do Sprint 0
+fechados**; faltam três, e o próximo livre é o de cenários de desenvolvimento.
 
 ## Ambientes
 
@@ -33,7 +33,7 @@ inteira: serve para a Management API e para o advisor, e não precisa no dia a d
 |---|---|
 | `JuD3ytg1` Migrações iniciais | **Concluído** · PR #1 |
 | `v7b5sLYv` Políticas de acesso (RLS) | **Concluído** · PR #2 |
-| `MPFZagWG` Entrada por código e `criar_conta` | **Revisão** · PR #3 |
+| `MPFZagWG` Entrada por código e `criar_conta` | **Concluído** · PR #3 |
 | `Cc2XYCi0` Dados de teste e cenários | **Em andamento** · não começado |
 | `ggEzge6h` Filtro de texto ofensivo | a fazer · depende do contrato 0.2.1 |
 | `oUwDEP8Q` Contrato 0.2.1 | a fazer · depende de `MwtmdDQ9`, do Cauê |
@@ -93,9 +93,13 @@ tratava suíte já vermelha como detecção.
 - **Teste de banco não substitui chamada HTTP.** O envelope de erro do contrato não tinha
   a chave `headers`, e o PostgREST devolvia 500 em toda recusa de regra. Dentro do
   Postgres a exceção estava certa. Só o `ciclo-completo.sh` pegou.
-- **Conferir só o `sqlstate` não é conferir o erro.** Trocar `erro(422,'menor_de_idade')`
-  por `erro(500,'qualquer_coisa')` deixava a suíte verde. Os testes de RPC casam com o
-  **código**; o **status** só o teste HTTP alcança.
+- **Uma recusa tem três eixos, e conferir dois não basta.** Só o `sqlstate`: trocar
+  `erro(422,'menor_de_idade')` por `erro(500,'qualquer_coisa')` deixava tudo verde. Só o
+  código: um `raise exception 'menor_de_idade'` cru também — a mensagem casava, o
+  `sqlstate` virava `P0001` e o app recebia 400 em vez de 422. Os testes de RPC usam
+  `throws_ok(sql, 'PGRST', '<envelope inteiro>', …)`, que fixa `sqlstate`, `code` e
+  `details`; o **status** só o `ciclo-completo.sh` alcança, e toda recusa nova precisa de
+  uma linha lá.
 - **Rótulo de volatilidade mentiroso passa despercebido.** `IMMUTABLE` numa função que
   levanta exceção, `STABLE` chamando `VOLATILE`. Quem pegou foi o lint, e só porque a CI
   rodava uma CLI mais nova que a da máquina. Mantenha a CLI local igual à da CI.
@@ -134,14 +138,13 @@ tratava suíte já vermelha como detecção.
 
 ## Por onde continuar
 
-1. Fechar o PR #3 quando a revisão aprovar.
-2. `Cc2XYCi0` — cenários de desenvolvimento. **Atenção:** a descrição manda pôr os dados
+1. `Cc2XYCi0` — cenários de desenvolvimento. **Atenção:** a descrição manda pôr os dados
    em `supabase/seed.sql`, e isso contraria a convenção do repositório e o próprio
    critério de aceite do cartão (*"o pipeline do frila-prod nunca aplica o seed.sql"*).
    `seed.sql` é o único arquivo que `aplicar-remoto.sh` executa contra o `frila-dev`. O
    conflito está comentado no cartão; os cenários vão num arquivo à parte, carregado só
    pelo `db reset`.
-3. Sprint 1: `publicar_vaga` primeiro, porque `candidatar` depende dela. `candidatar` é
+2. Sprint 1: `publicar_vaga` primeiro, porque `candidatar` depende dela. `candidatar` é
    o cartão onde o produto quebra se errar — `UPDATE` condicional com
    `FOR UPDATE SKIP LOCKED`, e teste de corrida com **pgbench**, porque o pgTAP roda numa
    sessão só e não testa concorrência.
