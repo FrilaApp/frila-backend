@@ -128,6 +128,10 @@ recusa() {
 recusa "RN25: reenviar com outro perfil" 409 conta_existente \
   '{"perfil":"contratante","nome":"Outro","telefone":"+5561999990000","nascimento":"1995-01-01","termos_versao":"2026-09-22"}'
 
+# O token da primeira sessão, que tem conta de profissional. A partir daqui `$TOKEN`
+# passa a ser o da segunda; as RPCs do perfil precisam da primeira de volta.
+TOKEN_CONTA="$TOKEN"
+
 # Uma sessão nova, ainda sem conta: é dela que saem os 422, porque a sessão anterior já
 # tem conta e cairia sempre no 409.
 EMAIL2="ciclo-b-$(date +%s)-$$-$RANDOM@frila.test"
@@ -164,8 +168,61 @@ recusa "diretriz 1.2: nome com termo bloqueado" 422 campo_invalido \
 recusa "minha_conta sem conta criada" 404 nao_encontrado '{}' minha_conta
 
 echo
+echo "▸ O perfil do profissional"
+#
+# A sessão corrente ($TOKEN) é a segunda, que ainda não tem conta. Volta-se para a
+# primeira, que tem conta de profissional, para exercitar as três RPCs do perfil.
+TOKEN="$TOKEN_CONTA"
+
+chamar() { # chamar <rota> <corpo> → ecoa o JSON da resposta
+  curl -s -X POST "$URL/rest/v1/rpc/$1" \
+    -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' -d "$2"
+}
+
+recusa "perfil antes de existir" 404 nao_encontrado '{}' meu_perfil_profissional
+
+# O catálogo é lido pela rota que o app usa, e não por SQL: é a prova de que a tabela
+# está exposta e legível por quem tem sessão.
+FUNCAO=$(curl -s "$URL/rest/v1/funcao?select=id&nome=eq.gar%C3%A7om" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[0]['id'] if d else '')")
+[ -n "$FUNCAO" ] || falhou "não consegui ler o catálogo de funções por HTTP"
+ok "catálogo de funções legível por HTTP"
+
+perfil=$(chamar criar_perfil_profissional "{\"funcoes\":[\"$FUNCAO\"],
+  \"ponto_base\":{\"latitude\":-15.7650,\"longitude\":-47.8830},
+  \"disponibilidades\":[{\"dia_semana\":5,\"hora_inicio\":\"18:00\",\"hora_fim\":\"02:00\"}]}")
+
+janela=$(printf '%s' "$perfil" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+j=(d.get('disponibilidades') or [{}])[0]
+print(f\"{j.get('hora_inicio')}-{j.get('hora_fim')}\")" 2>/dev/null || true)
+
+[ "$janela" = "18:00-02:00" ] || falhou "a janela 18:00–02:00 não voltou igual: $janela · $perfil"
+ok "criar_perfil_profissional → a janela que atravessa a meia-noite volta igual"
+
+# O ponto base sai como latitude/longitude, e não como WKT: o formato do banco não
+# vaza para o cliente.
+lat=$(printf '%s' "$perfil" | python3 -c "
+import json,sys; print(json.load(sys.stdin).get('ponto_base',{}).get('latitude',''))")
+[ "$lat" = "-15.765" ] || falhou "o ponto base voltou como '$lat', esperado -15.765"
+ok "o ponto base volta como coordenada, não como geography crua"
+
+recusa "criar duas vezes" 409 perfil_ja_existe \
+  "{\"funcoes\":[\"$FUNCAO\"],\"ponto_base\":{\"latitude\":-15.76,\"longitude\":-47.88}}" \
+  criar_perfil_profissional
+
+recusa "atualizar com funcoes vazia" 422 campo_obrigatorio \
+  '{"funcoes":[]}' atualizar_perfil_profissional
+
+recusa "atualizar sem nenhum campo" 422 campo_obrigatorio \
+  '{}' atualizar_perfil_profissional
+
+echo
 echo "▸ O que ainda não existe"
-echo "  ⏭  publicar_vaga, candidatar, check-in e avaliar entram com as RPCs do Sprint 1."
+echo "  ⏭  publicar_vaga, candidatar, check-in e avaliar entram com o resto do Sprint 1."
 echo "     Cada uma acrescenta um passo aqui, com o status HTTP conferido."
 echo
-echo "Ciclo verificado até a criação da conta."
+echo "Ciclo verificado até o perfil do profissional."

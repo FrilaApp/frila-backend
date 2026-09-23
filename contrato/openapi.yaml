@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.3
+  version: 0.2.4
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -72,6 +72,7 @@ info:
     | 409 | `avaliacao_ja_registrada` | Já existe avaliação deste autor para o turno, com outra resposta |
     | 409 | `conta_existente`, `documento_ja_cadastrado` | Cadastro repetido |
     | 409 | `administrador_unico` | Exclusão de conta de quem é o único administrador (UC16) |
+    | 409 | `perfil_ja_existe` | `criar_perfil_profissional` numa conta que já tem perfil. Conflito, e não sobrescrita: sobrescrever apagaria a grade de quem tocasse duas vezes no botão |
     | 409 | `contestacao_ja_aberta` | Já existe contestação em análise para a suspensão em vigor (RF24) |
     | 422 | `campo_obrigatorio` | Falta campo exigido; `details` diz qual (RN02) |
     | 422 | `campo_invalido` | O campo veio, e o valor é recusado pela regra; `details` diz qual campo. Distinto de `campo_obrigatorio`, que é ausência — a tela destaca o mesmo campo, com texto diferente |
@@ -88,6 +89,25 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.4, de 23/09/2026.** Um código de erro novo e uma resposta que faltava.
+
+    As três RPCs do perfil profissional foram implementadas, e duas coisas que o contrato
+    não dizia apareceram na implementação:
+
+    - **`409 perfil_ja_existe`**, em `criar_perfil_profissional`. O contrato já previa a
+      resposta 409; faltava o código. Criar duas vezes é conflito e não sobrescrita —
+      sobrescrever apagaria a grade semanal de quem tocasse duas vezes no botão de
+      cadastrar, e quem quer mudar chama `atualizar_perfil_profissional`.
+    - **`404` em `atualizar_perfil_profissional`.** Atualizar um perfil que não existe não
+      é erro de campo. Sem essa resposta declarada, o cliente não tinha como distinguir
+      "seu perfil sumiu" de "você mandou um campo errado".
+
+    Também ficou escrito o que `atualizar_perfil_profissional` faz com uma chamada sem
+    nenhum campo: `422 campo_obrigatorio` com `details: nenhum_campo`. É o mesmo que o
+    `minProperties: 1` do schema já dizia, agora com o código que o cliente compara.
+
+    ---
 
     **Versão 0.2.3, de 23/09/2026.** Uma recusa nova numa operação que já existia.
 
@@ -461,6 +481,19 @@ paths:
         notificação vai para quem está a até 15 km do local da vaga (RN05). O perfil passa a receber
         notificações assim que tiver ao menos uma função e o ponto base. Conta de contratante é
         recusada com `422 perfil_incompativel` (RN25).
+
+        Chamar numa conta que já tem perfil é `409 perfil_ja_existe`, e não sobrescrita: sobrescrever
+        apagaria a grade semanal de quem tocasse duas vezes no botão. Para mudar, use
+        `atualizar_perfil_profissional`.
+
+        **Grade vazia é aceita.** `disponibilidades: []` cadastra o perfil sem nenhuma janela, e cabe
+        ao app avisar que, assim, ele não vai receber notificação. Recusar obrigaria a pessoa a
+        inventar uma grade para terminar o cadastro — e grade inventada é pior que grade vazia,
+        porque produz despacho para quem não vai atender.
+
+        Função fora do catálogo é `422 campo_invalido` com `details: funcoes`; latitude ou longitude
+        fora da faixa, `campo_invalido` com `details: ponto_base`; `dia_semana` fora de 0..6 ou
+        janela de duração zero, `campo_invalido` com `details: disponibilidades`.
       x-requisitos: [RF01, RF03, RN05, RN25, UC09]
       requestBody:
         required: true
@@ -508,6 +541,11 @@ paths:
       description: |
         Os campos enviados substituem os atuais; os omitidos ficam como estão. A mudança vale na
         próxima notificação, sem novo login (RF03).
+
+        **É substituição, não acréscimo.** `disponibilidades: []` limpa a grade; `funcoes: []` é
+        `422 campo_obrigatorio` com `details: funcoes`, porque perfil sem função nenhuma não recebe
+        vaga nenhuma. Chamada sem nenhum campo é `422 campo_obrigatorio` com `details: nenhum_campo`
+        — é o que o `minProperties: 1` do schema já dizia, com o código que o cliente compara.
       x-requisitos: [RF03, UC09]
       requestBody:
         required: true
@@ -524,6 +562,8 @@ paths:
                 $ref: '#/components/schemas/PerfilProfissional'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
