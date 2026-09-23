@@ -32,9 +32,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 #
 # Existem três pastas chamadas `doc-harness` na máquina e só uma é o vault vivo:
 #
-#   monorepo/doc-harness   BlendOps/Bancada · é este. Tem 07 - Arquitetura, e é o que
+#   monorepo/doc-harness   FrilaApp/Bancada · é este. Tem 07 - Arquitetura, e é o que
 #                          publica em bancada-buu.pages.dev a cada push
-#   doc-harness            BlendOps/doc-harness · o repositório avulso de antes da
+#   doc-harness            FrilaApp/Bancada · o repositório avulso de antes da
 #                          migração para o monorepo. Parou em 2026-09-10
 #   Frila/doc-harness      cópia dentro do monorepo do Frila, mais antiga ainda
 #
