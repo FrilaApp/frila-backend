@@ -20,6 +20,21 @@ jobs:
         with:
           version: latest
 
+      # As imagens do Supabase vêm do ghcr.io, e um `docker pull` anônimo divide a cota
+      # com o GitHub Actions inteiro. Em 23/09 isso derrubou quatro execuções seguidas
+      # com `toomanyrequests` antes de qualquer teste rodar — CI vermelha por motivo que
+      # ninguém deste repositório controla, que é o tipo de vermelho que o time aprende
+      # a ignorar.
+      #
+      # O `GITHUB_TOKEN` do próprio job dá uma cota autenticada, e não precisa de
+      # segredo nenhum configurado.
+      - name: Autenticar no ghcr.io, para o pull não cair na cota anônima
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Sobe Postgres, Auth e PostgREST. As migrações e o seed entram no start.
       - name: Subir o ambiente
         run: supabase start --exclude studio,realtime,storage-api,imgproxy,logflare,vector
