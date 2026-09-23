@@ -8,6 +8,15 @@
 begin;
 select plan(19);
 
+-- Os `throws_like` daqui casam com o **código** do erro, não só com o `sqlstate`.
+-- Uma revisão mediu o custo de conferir só o sqlstate: trocando
+-- `erro(422,'menor_de_idade')` por `erro(500,'codigo_totalmente_errado')` a suíte
+-- inteira continuava verde. Como esta é a primeira RPC do projeto e vira molde para as
+-- treze do Sprint 1, o buraco se replicaria treze vezes.
+--
+-- O **status** não dá para conferir aqui: ele viaja no `DETAIL` e quem o traduz é o
+-- PostgREST. Isso é trabalho do `scripts/ciclo-completo.sh`, que chama por HTTP.
+
 -- Cria a credencial de autenticação e chama `criar_conta` como ela. É o mais perto que
 -- um teste de banco chega do que o PostgREST faz: `auth.uid()` lê o `sub` do JWT.
 create function pg_temp.autenticar(conta uuid, email text) returns void
@@ -40,10 +49,9 @@ select pg_temp.autenticar('f0000000-0000-4000-8000-000000000003','menor@t.test')
 select pg_temp.autenticar('f0000000-0000-4000-8000-000000000004','outra@t.test');
 
 -- ── Sem sessão não há conta ────────────────────────────────────────────────────
-select throws_ok(
+select throws_like(
   $$ select public.criar_conta('profissional','Ana','+5561999990001','1995-01-01','2026-09-22') $$,
-  'PGRST',
-  null,
+  '%nao_autenticado%',
   'sem token não se cria conta');
 
 -- ── O caminho feliz ────────────────────────────────────────────────────────────
@@ -85,21 +93,19 @@ select is(
 
 -- RN25: o perfil não muda, nem por um reenvio com outro valor. Sobrescrever em silêncio
 -- seria a pior resposta das três.
-select throws_ok(
+select throws_like(
   $$ select pg_temp.como('f0000000-0000-4000-8000-000000000001',
        $x$ select public.criar_conta('contratante','Ana','+5561999990001','1995-01-01','2026-09-22') $x$) $$,
-  'PGRST',
-  null,
+  '%conta_existente%',
   'RN25: reenviar com outro perfil é conflito, não atualização');
 
 -- ── RN20: a maioridade é do banco, não da tela ─────────────────────────────────
-select throws_ok(
+select throws_like(
   $$ select pg_temp.como('f0000000-0000-4000-8000-000000000003',
        $x$ select public.criar_conta('profissional','Menor','+5561999990003',
              (current_date - interval '17 years')::date, '2026-09-22') $x$) $$,
-  'PGRST',
-  null,
-  'RN20: menos de 18 anos é recusado');
+  '%menor_de_idade%',
+  'RN20: menos de 18 anos é recusado, com o código que o aplicativo compara');
 
 select is(
   (select count(*)::int from public.usuario where id = 'f0000000-0000-4000-8000-000000000003'),
@@ -113,20 +119,18 @@ select lives_ok(
   'RN20: exatamente 18 anos entra');
 
 -- ── Campos obrigatórios ────────────────────────────────────────────────────────
-select throws_ok(
+select throws_like(
   $$ select pg_temp.como('f0000000-0000-4000-8000-000000000004',
        $x$ select public.criar_conta('profissional','Fulano','61999990004','1990-01-01','2026-09-22') $x$) $$,
-  'PGRST',
-  null,
+  '%campo_obrigatorio%',
   'telefone fora do formato E.164 é recusado com código do contrato, não com 23514');
 
 -- O aceite não é opcional: a App Store e a LGPD pedem o registro, e uma conta sem ele
 -- é uma conta que ninguém consegue provar que concordou com nada.
-select throws_ok(
+select throws_like(
   $$ select pg_temp.como('f0000000-0000-4000-8000-000000000004',
        $x$ select public.criar_conta('profissional','Fulano','+5561999990004','1990-01-01','  ') $x$) $$,
-  'PGRST',
-  null,
+  '%campo_obrigatorio%',
   'sem o aceite dos termos não se cria conta');
 
 -- ── RN25 nas duas contas da mesma pessoa ───────────────────────────────────────
@@ -147,11 +151,10 @@ select is(
   'contratante',
   'minha_conta devolve a conta de quem chama');
 
-select throws_ok(
+select throws_like(
   $$ select pg_temp.como('f0000000-0000-4000-8000-000000000004',
        $x$ select public.minha_conta() $x$) $$,
-  'PGRST',
-  null,
+  '%nao_encontrado%',
   'e recusa quem tem sessão mas ainda não criou conta — é assim que o aplicativo sabe mandar para o cadastro');
 
 -- ── O que a resposta não pode trazer ───────────────────────────────────────────

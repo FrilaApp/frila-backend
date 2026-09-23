@@ -63,9 +63,13 @@ ok "e-mail em português"
 
 # Link mágico abre o navegador, sai do aplicativo e quebra o fluxo em Android de
 # entrada, que é onde está a maior parte da oferta.
-printf '%s' "$texto" | grep -qE 'href="https?://[^"]*(verify|confirm)' \
-  && falhou "o e-mail traz link de confirmação; o contrato pede código, não link"
-ok "sem link de confirmação"
+#
+# O padrão é `<a href` e não `verify|confirm`: um deep link ou um encurtador passariam
+# pelo segundo e quebrariam o fluxo igual. O modelo deste e-mail não tem link nenhum, e
+# é assim que ele deve continuar.
+printf '%s' "$texto" | grep -qiE '<a[^>]+href' \
+  && falhou "o e-mail traz link; o contrato pede código, e link nenhum"
+ok "sem link no corpo"
 
 sessao=$(curl -s -X POST "$URL/auth/v1/verify" \
   -H "apikey: $ANON" -H 'Content-Type: application/json' \
@@ -94,7 +98,7 @@ ok "criar_conta → conta de profissional"
 
 email_gravado=$(printf '%s' "$conta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('email',''))")
 [ "$email_gravado" = "$EMAIL" ] || falhou "o e-mail gravado ($email_gravado) não é o da sessão"
-ok "o e-mail vem da credencial confirmada, não da tela"
+ok "o e-mail gravado é o da credencial confirmada"
 
 # RN20 pelo caminho real, com o código de erro que o aplicativo compara sem traduzir.
 erro=$(curl -s -X POST "$URL/rest/v1/rpc/criar_conta" \
@@ -104,6 +108,55 @@ erro=$(curl -s -X POST "$URL/rest/v1/rpc/criar_conta" \
 cod=$(printf '%s' "$erro" | python3 -c "import json,sys; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || true)
 [ "$cod" = "conta_existente" ] || falhou "reenvio com outro perfil devolveu '$cod', esperado conta_existente"
 ok "RN25: reenviar com outro perfil → conta_existente"
+
+echo
+echo "▸ Os erros, com status e código"
+#
+# É a única camada onde o **status** pode ser conferido: ele viaja no `DETAIL` da
+# exceção e quem o traduz é o PostgREST. Um teste de banco vê o código e não vê o
+# status — foi assim que o `DETAIL` sem `headers` passou batido e devolvia 500 em toda
+# recusa de regra.
+recusa() {
+  local desc="$1" esperado_http="$2" esperado_code="$3" corpo="$4" rota="${5:-criar_conta}"
+  local tmp http code
+  tmp=$(mktemp)
+  http=$(curl -s -o "$tmp" -w '%{http_code}' -X POST "$URL/rest/v1/rpc/$rota" \
+    -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' -d "$corpo")
+  code=$(python3 -c "import json,sys; print(json.load(open('$tmp')).get('code',''))" 2>/dev/null || true)
+  rm -f "$tmp"
+  [ "$http" = "$esperado_http" ] || falhou "$desc: HTTP $http, esperado $esperado_http"
+  [ "$code" = "$esperado_code" ] || falhou "$desc: code '$code', esperado '$esperado_code'"
+  ok "$desc → $http $code"
+}
+
+# Uma sessão nova, ainda sem conta: é dela que saem os 422, porque a sessão anterior já
+# tem conta e cairia sempre no 409.
+EMAIL2="ciclo-b-$(date +%s)@frila.test"
+curl -s -o /dev/null -X POST "$URL/auth/v1/otp" -H "apikey: $ANON" \
+  -H 'Content-Type: application/json' -d "{\"email\":\"$EMAIL2\"}"
+MID2=$(curl -s "$CAIXA/api/v1/search?query=to:$EMAIL2" | python3 -c "
+import json,sys; d=json.load(sys.stdin); ms=d.get('messages') or []; print(ms[0]['ID'] if ms else '')")
+OTP2=$(curl -s "$CAIXA/api/v1/message/$MID2" | python3 -c "
+import json,sys; d=json.load(sys.stdin); print((d.get('Text') or '')+(d.get('HTML') or ''))" \
+  | grep -oE '\b[0-9]{6}\b' | head -1)
+TOKEN=$(curl -s -X POST "$URL/auth/v1/verify" -H "apikey: $ANON" -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$EMAIL2\",\"token\":\"$OTP2\",\"type\":\"email\"}" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token',''))")
+[ -n "$TOKEN" ] || falhou "não consegui abrir a segunda sessão"
+
+base='"perfil":"profissional","nome":"Fulano","telefone":"+5561999990000","termos_versao":"2026-09-22"'
+
+recusa "RN20: 17 anos" 422 menor_de_idade \
+  "{$base,\"nascimento\":\"$(date -v-17y +%Y-%m-%d 2>/dev/null || date -d '-17 years' +%Y-%m-%d)\"}"
+
+recusa "telefone fora do E.164" 422 campo_obrigatorio \
+  '{"perfil":"profissional","nome":"Fulano","telefone":"61999990000","nascimento":"1990-01-01","termos_versao":"2026-09-22"}'
+
+recusa "sem o aceite dos termos" 422 campo_obrigatorio \
+  '{"perfil":"profissional","nome":"Fulano","telefone":"+5561999990000","nascimento":"1990-01-01","termos_versao":"  "}'
+
+recusa "minha_conta sem conta criada" 404 nao_encontrado '{}' minha_conta
 
 echo
 echo "▸ O que ainda não existe"
