@@ -10,7 +10,9 @@
 #   ./scripts/bancada-sync.sh --seco              mostra o que faria
 #   ./scripts/bancada-sync.sh --fato <tipo> <descrição…>
 #
-# O vault fica em `../doc-harness` por padrão; `BANCADA_DIR` no `.env` sobrepõe.
+# O vault é procurado em `../monorepo/doc-harness` e depois em `../doc-harness`;
+# `BANCADA_DIR` no `.env` sobrepõe. Ver "Achar o vault", abaixo: são três pastas com o
+# mesmo nome e a mesma estrutura, e só uma é a viva.
 #
 # ── O que este script NÃO faz ─────────────────────────────────────────────────
 #
@@ -26,16 +28,59 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 [ -f .env ] && { set -a; source .env; set +a; }
 
-VAULT="${BANCADA_DIR:-$(cd .. && pwd)/doc-harness}"
+# ── Achar o vault ──────────────────────────────────────────────────────────────
+#
+# Existem três pastas chamadas `doc-harness` na máquina e só uma é o vault vivo:
+#
+#   monorepo/doc-harness   BlendOps/Bancada · é este. Tem 07 - Arquitetura, e é o que
+#                          publica em bancada-buu.pages.dev a cada push
+#   doc-harness            BlendOps/doc-harness · o repositório avulso de antes da
+#                          migração para o monorepo. Parou em 2026-09-10
+#   Frila/doc-harness      cópia dentro do monorepo do Frila, mais antiga ainda
+#
+# Escrever na errada é fácil e silencioso: as três têm a mesma estrutura e os mesmos
+# scripts. Por isso a escolha é por ordem declarada, e não por "a primeira que eu
+# achar" — e `BANCADA_DIR` no `.env` sobrepõe quando a máquina for diferente.
+achar_vault() {
+  local c
+  for c in "$@"; do
+    [ -d "$c/.git" ] || [ -d "$c/05 - Registros" ] || continue
+    [ -x "$c/scripts/registrar-fato.sh" ] || continue
+    printf '%s' "$c"
+    return 0
+  done
+  return 1
+}
+
+ACIMA="$(cd .. && pwd)"
+VAULT="${BANCADA_DIR:-$(achar_vault "$ACIMA/monorepo/doc-harness" "$ACIMA/doc-harness" || true)}"
 SECO=0
 
 ok()     { printf '  ✓ %s\n' "$1"; }
 pulo()   { printf '  · %s\n' "$1"; }
 falhou() { printf '  ✗ %s\n' "$1" >&2; exit 1; }
 
-[ -d "$VAULT/.git" ] || falhou "vault não encontrado em $VAULT — aponte BANCADA_DIR no .env"
+[ -n "$VAULT" ] \
+  || falhou "vault não encontrado em ../monorepo/doc-harness nem em ../doc-harness — aponte BANCADA_DIR no .env"
 [ -x "$VAULT/scripts/registrar-fato.sh" ] \
   || falhou "$VAULT/scripts/registrar-fato.sh ausente ou sem permissão de execução"
+
+# Os hooks do vault ficam desligados sem avisar — `core.hooksPath` apontando para um
+# caminho que não existe faz o git não rodar hook nenhum e não reclamar. Foi o que
+# manteve o registro parado entre 10/09 e 23/09. Aqui o aviso é alto, porque sem hook
+# os fatos que esta ponte escreve nunca são commitados nem publicados.
+raiz_git_vault="$(git -C "$VAULT" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -n "$raiz_git_vault" ]; then
+  hooks="$(git -C "$VAULT" config core.hooksPath 2>/dev/null || true)"
+  if [ -z "$hooks" ] || [ ! -d "$raiz_git_vault/$hooks" ]; then
+    printf '  ⚠ Os hooks do vault não estão instalados (core.hooksPath: %s).\n' "${hooks:-vazio}" >&2
+    printf '    Os fatos escritos agora não serão commitados nem publicados.\n' >&2
+    printf '    Conserte com: (cd %s && ./scripts/bootstrap.sh)\n\n' "$VAULT" >&2
+  fi
+fi
+
+echo "▸ Vault: $VAULT"
+echo
 
 # `registrar-fato.sh` é a única porta de escrita do log, e o hook `PreToolUse` do vault
 # recusa qualquer outro caminho. Este script não tenta nenhum: ele chama o script.
@@ -92,16 +137,21 @@ printf '%s\n' "$DIA" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' \
 
 echo "▸ Commits do backend em $DIA"
 
-# `--all` porque trabalho em branch ainda não mergeada é trabalho feito, e a Bancada
-# registra o processo, não só o que chegou ao main. `--no-merges` porque o merge não é
-# trabalho novo — o que ele traz já foi registrado quando foi commitado.
+# `--branches` e não `--all`: trabalho em branch ainda não mergeada é trabalho feito, e
+# a Bancada registra o processo, não só o que chegou ao main — mas `--all` inclui
+# `refs/stash`, e um `git stash` vira dois commits com assunto "index on <branch>" e
+# "untracked files on <branch>". Eles chegaram a entrar no log antes de isto virar
+# `--branches`. Guardar trabalho não é trabalho.
+#
+# `--no-merges` porque o merge não é trabalho novo: o que ele traz já foi registrado
+# quando foi commitado.
 #
 # Sem `mapfile`: o bash do macOS é 3.2, e o array vem de um arquivo temporário. Um
 # `while read` alimentado por cano rodaria num subshell, e os contadores voltariam
 # zerados — o script diria "0 fatos novos" depois de registrar oito.
 lista=$(mktemp)
 trap 'rm -f "$lista"' EXIT
-git log --all --no-merges \
+git log --branches --no-merges \
   --since="$DIA 00:00" --until="$DIA 23:59:59" \
   --date=format:%H:%M --format='%h%x09%ad%x09%an%x09%s' > "$lista"
 
