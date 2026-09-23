@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.2
+  version: 0.2.3
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -88,6 +88,30 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.3, de 23/09/2026.** Uma recusa nova numa operação que já existia.
+
+    `criar_conta` passa a conferir o `nome` contra a lista de termos bloqueados da
+    diretriz 1.2 da App Store, e recusa com `422 campo_invalido`, `details: nome`. O
+    código já estava no catálogo desde a 0.2.2; o que muda é que `criar_conta` passa a
+    poder devolvê-lo, e a tela do cadastro precisa tratar dois motivos diferentes para o
+    mesmo campo — `campo_obrigatorio` quando falta, `campo_invalido` quando não serve.
+
+    A ordem das duas conferências é parte do contrato: nome vazio continua saindo como
+    `campo_obrigatorio`. Um cliente que trate os dois com o mesmo texto vai dizer
+    "preencha o nome" para quem preencheu.
+
+    O filtro é por palavra inteira sobre o texto sem acento e em minúsculas. Não persegue
+    variação de grafia, e isso é desenho, não limitação: um filtro que persegue grafia
+    vira um filtro que recusa nome de gente, e o custo dos dois erros não é o mesmo —
+    texto ofensivo que escapa tem denúncia e bloqueio atrás dele (RF26), enquanto quem
+    não consegue se cadastrar apenas vai embora.
+
+    `publicar_vaga`, `republicar_vaga` e `cadastrar_estabelecimento` vão chamar o mesmo
+    filtro em `traje`, `observacoes`, `responsavel_local` e `nome` quando forem
+    implementadas, no Sprint 1. Cada uma acrescenta a recusa à sua própria lista aqui.
+
+    ---
 
     **Versão 0.2.2, de 23/09/2026.** Só adições e uma troca de parâmetro; nenhuma operação saiu.
 
@@ -350,6 +374,16 @@ paths:
         verificação por SMS, e o mesmo número pode estar em outra conta. A maioridade é verificada
         no banco pela data de nascimento, e não por um booleano enviado pela tela (RN20). Nenhum
         documento é pedido aqui (RN14).
+
+        O `nome` passa pelo filtro de texto da diretriz 1.2 da App Store: termo da lista de
+        bloqueio, como palavra inteira, é recusado com `422 campo_invalido` e `details: nome`. A
+        conferência vem **depois** da de presença, então nome vazio continua saindo como
+        `campo_obrigatorio` — a tela mostra texto diferente para "faltou" e para "não serve", e
+        tratar os dois com a mesma mensagem diria "preencha o nome" para quem preencheu.
+
+        O filtro compara palavra inteira, o que é por que `Ana Cunha` passa enquanto `cu` sozinho
+        não. Ele não persegue variação de grafia, e isso é desenho: texto ofensivo que escapa tem
+        denúncia e bloqueio atrás dele (RF26); quem não consegue se cadastrar não tem nada atrás.
       x-requisitos: [RF01, RN14, RN20, RN25, UC09, UC10]
       requestBody:
         required: true

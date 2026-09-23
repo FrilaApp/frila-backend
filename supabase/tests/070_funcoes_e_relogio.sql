@@ -7,7 +7,7 @@
 -- teste que varre o catálogo.
 
 begin;
-select plan(12);
+select plan(13);
 
 -- ── Toda security definer carrega search_path vazio ────────────────────────────
 select is(
@@ -101,6 +101,20 @@ select is(
   (select count(*)::int from privado.ambiente),
   0,
   'nenhuma migração e nenhuma semente deixa marcador de teste para trás — é assim que o frila-dev nasce');
+
+-- `privado.ambiente` é tabela de uma linha só, e o `check (id)` sobre a chave booleana
+-- é o que garante isso: com `id = false` haveria uma segunda linha, e
+-- `exists (select 1 ... where eh_teste)` passaria a depender de qual delas alguém
+-- escreveu por último. O relógio do produto ficaria sobreponível conforme a ordem de
+-- escrita — que é o pior jeito de um prazo virar decoração.
+--
+-- Esta asserção entrou em 23/09, quando o verificador de mutação passou a varrer o
+-- schema `privado` e mediu que a restrição não tinha nenhuma.
+select throws_ok(
+  $$ insert into privado.ambiente (id, eh_teste) values (false, true) $$,
+  '23514',
+  null,
+  'privado.ambiente é de uma linha só: id = false é recusado');
 
 insert into privado.ambiente (id, eh_teste) values (true, true);
 

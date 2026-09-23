@@ -50,6 +50,12 @@ alvos=()
 adicionar() { while IFS= read -r l; do [ -n "$l" ] && alvos+=("$l"); done; }
 
 # tipo|rótulo|derrubar|restaurar
+#
+# `public` **e** `privado`. Até 23/09 só `public` era varrido, e a primeira tabela de
+# `privado` com restrição — a lista de termos do filtro da diretriz 1.2 — entrou sem que
+# o total de alvos subisse: o verificador continuou dizendo 71 de 71, que é o jeito mais
+# convincente de um portão mentir. Regra nova em schema que ninguém varre é regra sem
+# cobertura que se apresenta como coberta.
 adicionar < <(psql -tAc "
   select 'restrição|' || c.conname || '|' ||
          'alter table ' || c.conrelid::regclass || ' drop constraint ' || quote_ident(c.conname) || '|' ||
@@ -58,7 +64,7 @@ adicionar < <(psql -tAc "
     from pg_constraint c
     join pg_class t on t.oid = c.conrelid
     join pg_namespace n on n.oid = t.relnamespace
-   where n.nspname = 'public' and c.contype in ('c','x')
+   where n.nspname in ('public','privado') and c.contype in ('c','x')
    order by c.conname")
 
 # Trigger não se derruba e se recria de graça — desabilitar basta e é reversível.
@@ -69,7 +75,7 @@ adicionar < <(psql -tAc "
     from pg_trigger t
     join pg_class c on c.oid = t.tgrelid
     join pg_namespace n on n.oid = c.relnamespace
-   where n.nspname = 'public' and not t.tgisinternal
+   where n.nspname in ('public','privado') and not t.tgisinternal
    order by t.tgname")
 
 # Política de RLS, por dois caminhos opostos, porque as falhas são opostas.

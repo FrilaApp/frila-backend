@@ -154,6 +154,13 @@ recusa "telefone fora do E.164" 422 campo_obrigatorio \
 recusa "sem o aceite dos termos" 422 campo_obrigatorio \
   '{"perfil":"profissional","nome":"Fulano","telefone":"+5561999990000","nascimento":"1990-01-01","termos_versao":"  "}'
 
+# Diretriz 1.2. Está aqui, e não só no pgTAP, porque o pgTAP vê o código e não vê o
+# status — e `campo_invalido` e `campo_obrigatorio` são o mesmo 422 com significados
+# diferentes para a tela. Se um dia a recusa do filtro sair como 500, é esta linha que
+# descobre.
+recusa "diretriz 1.2: nome com termo bloqueado" 422 campo_invalido \
+  '{"perfil":"profissional","nome":"Ana Caralho","telefone":"+5561999990000","nascimento":"1990-01-01","termos_versao":"2026-09-22"}'
+
 recusa "minha_conta sem conta criada" 404 nao_encontrado '{}' minha_conta
 
 echo
