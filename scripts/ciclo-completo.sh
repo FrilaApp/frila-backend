@@ -493,6 +493,28 @@ printf '%s' "$corpo" | grep -qE '"(telefone|whatsapp_url)"' \
 ok "RN10: nenhum telefone sai por meus_turnos"
 
 echo
+echo "▸ O contato, com prazo"
+#
+# RN10 é a primeira regra do ciclo que depende do relógio, e o único lugar onde um
+# telefone sai do servidor. O 403 do prazo não dá para exercitar por HTTP sem esperar
+# sete dias — ele está no pgTAP, com o relógio do produto na mão.
+
+resp=$(get_rpc contato_do_turno "--data-urlencode turno_id=$TURNO")
+http=${resp%% *}; corpo=${resp#* }
+[ "$http" = "200" ] || falhou "GET contato_do_turno devolveu $http: $corpo"
+tel=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('telefone',''))" 2>/dev/null || true)
+[ -n "$tel" ] || falhou "o contato não veio: $corpo"
+ok "GET contato_do_turno → 200, com o telefone da casa"
+
+resp=$(get_rpc contato_do_turno "--data-urlencode turno_id=00000000-0000-4000-8000-000000000000")
+http=${resp%% *}; corpo=${resp#* }
+code=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || true)
+[ "$http" = "404" ] && [ "$code" = "nao_encontrado" ] \
+  || falhou "contato de turno inexistente: HTTP $http code '$code', esperado 404 nao_encontrado"
+ok "GET contato_do_turno de turno que não existe → 404 nao_encontrado"
+
+
+echo
 echo "▸ A presença"
 #
 # O caminho feliz do check-in depende da janela de 60 minutos antes do início, e a vaga
@@ -515,9 +537,10 @@ recusa "check-in em turno que não existe" 404 nao_encontrado \
   '{"turno_id":"00000000-0000-4000-8000-000000000000","distancia_m":10,"registrado_em":"2026-01-01T00:00:00Z"}' \
   fazer_checkin
 
+
 echo
 echo "▸ O que ainda não existe"
-echo "  ⏭  contato_do_turno, avaliar e os cancelamentos entram com o resto do Sprint 1."
+echo "  ⏭  avaliar e os cancelamentos entram com o resto do Sprint 1."
 echo "     Cada uma acrescenta um passo aqui, com o status HTTP conferido."
 echo
 echo "Ciclo verificado até as recusas do registro de presença."
