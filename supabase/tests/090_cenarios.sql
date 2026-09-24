@@ -194,11 +194,21 @@ select ok((select pg_temp.elegivel(vaga_referencia, iara) from ids),
 
 -- ── O cenário está inteiro ─────────────────────────────────────────────────────
 
-select is((select count(*)::int from public.estabelecimento), 3,
-  'três estabelecimentos: Asa Norte, Águas Claras e Lago Sul');
+-- As duas contagens são por id do cenário, e não pela tabela inteira, porque a CI roda
+-- `ciclo-completo.sh` e `corrida-cadastrar-estabelecimento.sh` entre duas execuções da
+-- suíte: os dois falam por HTTP, gravam de verdade e não têm rollback. Contar a tabela
+-- inteira fazia a segunda execução encontrar um estabelecimento a mais e ficar
+-- vermelha — e quem pagava por isso era `mutacao.sh`, que exige linha de base verde e
+-- recusava-se a rodar. Medido em 24/09: `Failed test 21`, depois dos dois scripts.
+select is(
+  (select count(*)::int from public.estabelecimento
+    where id::text like 'c0000000-0000-4000-8000-%'), 3,
+  'três estabelecimentos no cenário: Asa Norte, Águas Claras e Lago Sul');
 
-select is((select count(*)::int from public.profissional), 12,
-  'doze profissionais');
+select is(
+  (select count(*)::int from public.profissional
+    where id::text like 'e0000000-0000-4000-8000-%'), 12,
+  'doze profissionais no cenário');
 
 select is((select count(*)::int from public.funcao), 32,
   'e o catálogo continua com as 32 funções do seed — o cenário não inventa função');
