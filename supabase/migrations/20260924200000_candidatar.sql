@@ -201,11 +201,22 @@ begin
   values (v_pos, v.valor_centavos)
   returning id into v_turno;
 
-  -- A vaga fecha quando não sobra posição aberta. Contado aqui, e não por trigger: o
-  -- fechamento é consequência desta escrita e de nenhuma outra.
+  -- A vaga fecha quando não sobra posição aberta. O `for update` na linha da vaga não é
+  -- zelo: sem ele, as duas últimas confirmações simultâneas contam as posições abertas
+  -- cada uma no próprio snapshot, nenhuma enxerga a escrita da outra, e a vaga fica
+  -- `publicada` com zero posições livres. Medido na CI em 24/09, com vinte conexões —
+  -- a máquina de desenvolvimento não reproduzia, porque o intervalo entre os dois
+  -- commits era grande demais.
+  --
+  -- A ordem de aquisição é sempre posição e depois vaga, em todas as transações, o que
+  -- mantém o caminho livre de impasse. O `skip locked` continua fazendo o seu trabalho
+  -- antes disto: a serialização é só do fechamento, não da disputa.
+  perform 1 from public.vaga g where g.id = candidatar.vaga_id for update;
+
   if not exists (select 1 from public.posicao p
                   where p.vaga_id = candidatar.vaga_id and p.estado = 'aberta') then
-    update public.vaga g set estado = 'preenchida' where g.id = candidatar.vaga_id;
+    update public.vaga g set estado = 'preenchida'
+     where g.id = candidatar.vaga_id and g.estado = 'publicada';
   end if;
 
   return jsonb_build_object(
