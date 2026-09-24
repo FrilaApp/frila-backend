@@ -108,10 +108,10 @@ Medidos na máquina em 24/09 e 25/09, no branch das contas de demonstração já
 
 | Comando | O que garante | Medida |
 |---|---|---|
-| `supabase test db` | pgTAP | A MEDIR |
-| `./scripts/mutacao.sh` | cada regra morre sem teste | A MEDIR |
+| `supabase test db` | pgTAP | **592** asserções em 23 arquivos |
+| `./scripts/mutacao.sh` | cada regra morre sem teste | **75** cobertas, 0 sem cobertura |
 | `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 58 asserções, até o perfil público |
-| `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | 11 asserções, com o teto de tentativas |
+| `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | 10 conferências, com o teto de tentativas |
 | `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
 | `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.11 → 0.2.12 |
 | `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.12 idêntico ao original, conferido com o token |

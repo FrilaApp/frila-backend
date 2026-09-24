@@ -74,6 +74,24 @@ if ! curl -s -o /dev/null --max-time 5 "$PORTA"; then
 fi
 ok "$PORTA responde"
 
+# Este script gasta o teto de tentativas de propósito, na última seção. Sem limpar antes,
+# a segunda execução dentro da mesma janela de 10 minutos começa já no 429 e reprova nas
+# **primeiras** asserções — vermelho pelo motivo errado, que é indistinguível de vermelho
+# pelo motivo certo para quem só olha o ✗. Medido: a segunda execução seguida saía com 9
+# de 11 asserções e exit 1.
+#
+# A limpeza é do registro de tentativas, que é dado de portão e não do produto. Se o
+# contêiner não estiver ao alcance, o script avisa e segue: numa máquina sem Docker
+# local, rodar uma vez por janela continua funcionando.
+DB=${DB_CONTAINER:-supabase_db_frila-backend}
+if docker exec -i "$DB" psql -U postgres -d postgres -q -c \
+     'truncate public.entrada_demonstracao' >/dev/null 2>&1; then
+  ok "registro de tentativas zerado, para o teto não vir gasto da execução anterior"
+else
+  printf '  ⚠ não consegui zerar public.entrada_demonstracao (contêiner %s).\n' "$DB" >&2
+  printf '    Se a execução anterior foi há menos de 10 minutos, o teto ainda está gasto.\n' >&2
+fi
+
 # ── Critério 2: o código fixo não abre nada além do que foi declarado ────────────────
 echo "▸ O que a porta recusa"
 
