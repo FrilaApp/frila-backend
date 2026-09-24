@@ -128,6 +128,11 @@ recusa() {
 recusa "RN25: reenviar com outro perfil" 409 conta_existente \
   '{"perfil":"contratante","nome":"Outro","telefone":"+5561999990000","nascimento":"1995-01-01","termos_versao":"2026-09-22"}'
 
+# A mesma sessão é de profissional: cadastrar estabelecimento é do outro perfil.
+recusa "RN25: profissional cadastrando estabelecimento" 422 perfil_incompativel \
+  '{"nome":"Bar","documento":"11222333000181","tipo":"food_service","endereco":"CLN 201",
+    "ponto":{"latitude":-15.79,"longitude":-47.88}}' cadastrar_estabelecimento
+
 # Uma sessão nova, ainda sem conta: é dela que saem os 422, porque a sessão anterior já
 # tem conta e cairia sempre no 409.
 EMAIL2="ciclo-b-$(date +%s)-$$-$RANDOM@frila.test"
@@ -157,8 +162,83 @@ recusa "sem o aceite dos termos" 422 campo_obrigatorio \
 recusa "minha_conta sem conta criada" 404 nao_encontrado '{}' minha_conta
 
 echo
+echo "▸ O estabelecimento"
+
+# A segunda sessão ainda não tem conta: vira a contratante que cadastra o bar.
+conta=$(curl -s -X POST "$URL/rest/v1/rpc/criar_conta" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"perfil":"contratante","nome":"Dona do Bar","telefone":"+5561999990000",
+       "nascimento":"1980-01-01","termos_versao":"2026-09-22"}')
+perfil=$(printf '%s' "$conta" | python3 -c "import json,sys; print(json.load(sys.stdin).get('perfil',''))" 2>/dev/null || true)
+[ "$perfil" = "contratante" ] || falhou "criar_conta de contratante não devolveu a conta: $conta"
+ok "criar_conta → conta de contratante"
+
+# Um CNPJ novo por execução, com o dígito verificador calculado aqui: o documento é
+# único no banco, e repetir o da execução anterior daria 409 pelo motivo errado.
+CNPJ=$(python3 -c "
+import random
+b=[random.randint(0,9) for _ in range(8)]+[0,0,0,1]
+def dv(ds,ps):
+    r=sum(d*p for d,p in zip(ds,ps))%11
+    return 0 if r<2 else 11-r
+p1=[5,4,3,2,9,8,7,6,5,4,3,2]; b.append(dv(b,p1)); b.append(dv(b,[6]+p1))
+print(''.join(map(str,b)))")
+ERRADO="${CNPJ:0:13}$(( (${CNPJ:13:1} + 1) % 10 ))"
+
+corpo_estab="{\"nome\":\"Bar do Ciclo\",\"documento\":\"$CNPJ\",\"tipo\":\"food_service\",
+  \"endereco\":\"CLN 201\",\"ponto\":{\"latitude\":-15.7942,\"longitude\":-47.8822}}"
+
+estab=$(curl -s -X POST "$URL/rest/v1/rpc/cadastrar_estabelecimento" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "$corpo_estab")
+ESTAB=$(printf '%s' "$estab" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+papel=$(printf '%s' "$estab" | python3 -c "import json,sys; print(json.load(sys.stdin).get('papel',''))" 2>/dev/null || true)
+[ -n "$ESTAB" ] && [ "$papel" = "administrador" ] \
+  || falhou "cadastrar_estabelecimento não devolveu o estabelecimento: $estab"
+ok "cadastrar_estabelecimento → administrador do estabelecimento"
+
+de_novo=$(curl -s -X POST "$URL/rest/v1/rpc/cadastrar_estabelecimento" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "$corpo_estab" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+[ "$de_novo" = "$ESTAB" ] || falhou "reenviar o cadastro devolveu outro estabelecimento ($de_novo)"
+ok "reenviar o cadastro devolve o mesmo estabelecimento"
+
+recusa "RF02: CNPJ com dígito verificador errado" 422 campo_obrigatorio \
+  "{\"nome\":\"Bar\",\"documento\":\"$ERRADO\",\"tipo\":\"food_service\",\"endereco\":\"CLN 201\",
+    \"ponto\":{\"latitude\":-15.79,\"longitude\":-47.88}}" cadastrar_estabelecimento
+
+# O painel é GET no contrato. A função não é `stable` — ela levanta erro por
+# `public.erro`, que é volátil — e o PostgREST a executa numa transação só de leitura.
+# Este passo é o que prova que a rota responde por GET.
+painel_get() {
+  local estab="$1" tmp http
+  tmp=$(mktemp)
+  http=$(curl -s -o "$tmp" -w '%{http_code}' -G "$URL/rest/v1/rpc/painel_estabelecimento" \
+    -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" \
+    --data-urlencode "estabelecimento_id=$estab" \
+    --data-urlencode "de=2026-01-01T00:00:00Z" \
+    --data-urlencode "ate=2027-01-01T00:00:00Z")
+  printf '%s %s' "$http" "$(cat "$tmp")"
+  rm -f "$tmp"
+}
+
+resp=$(painel_get "$ESTAB")
+http=${resp%% *}; corpo=${resp#* }
+[ "$http" = "200" ] || falhou "GET painel_estabelecimento devolveu $http: $corpo"
+eid=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('estabelecimento_id',''))" 2>/dev/null || true)
+[ "$eid" = "$ESTAB" ] || falhou "o painel não é do estabelecimento pedido: $corpo"
+ok "GET painel_estabelecimento → 200, do estabelecimento pedido"
+
+resp=$(painel_get "00000000-0000-4000-8000-000000000000")
+http=${resp%% *}; corpo=${resp#* }
+code=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || true)
+[ "$http" = "403" ] && [ "$code" = "sem_permissao" ] \
+  || falhou "painel de estabelecimento alheio: HTTP $http code '$code', esperado 403 sem_permissao"
+ok "GET painel de estabelecimento alheio → 403 sem_permissao"
+
+echo
 echo "▸ O que ainda não existe"
 echo "  ⏭  publicar_vaga, candidatar, check-in e avaliar entram com as RPCs do Sprint 1."
 echo "     Cada uma acrescenta um passo aqui, com o status HTTP conferido."
 echo
-echo "Ciclo verificado até a criação da conta."
+echo "Ciclo verificado até o cadastro do estabelecimento e o painel."
