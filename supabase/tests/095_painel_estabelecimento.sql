@@ -264,7 +264,8 @@ select is(
 select is(
   (select (x->'profissional') - 'id' from p, pg_temp.posicao_de(j,'d6000000-0000-4000-8000-0000000001b0') x),
   '{"tipo":"profissional","nome":"Beto","funcoes":["garçom"],
-    "reputacao":{"positivas":0,"total":0,"taxa_comparecimento":null,"turnos_considerados":0}}'::jsonb,
+    "reputacao":{"positivas":0,"total":0,"taxa_comparecimento":null,
+                 "turnos_considerados":0,"turnos_realizados":0}}'::jsonb,
   'RN08: o contratado aparece como PerfilPublico — sem histórico é total 0 e taxa nula, nunca nota zero');
 select is(
   (select x->'profissional'->>'id' from p, pg_temp.posicao_de(j,'d6000000-0000-4000-8000-0000000001b0') x),
