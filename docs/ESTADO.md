@@ -7,12 +7,11 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-**O ciclo principal do Sprint 1 fecha de ponta a ponta no `main`:** publicar → candidatar
-→ acompanhar → contato → check-in → check-out → cancelar. Falta `avaliar`, que está com o
-João Paulo, e o despacho, que é o Sprint 2.
+**O ciclo do Sprint 1 fecha inteiro no branch `s1/avaliar`:** publicar → candidatar →
+acompanhar → contato → check-in → check-out → cancelar → **avaliar**. Falta só o despacho,
+que é o Sprint 2.
 
-Dezoito RPCs no ar, 29 migrações, e o contrato em **0.2.11**. **Dezenove PRs mergeados e
-nenhum aberto** — o #22, dos cancelamentos, entrou às 12:13 de 24/09.
+Vinte RPCs, 30 migrações, e o contrato em **0.2.12**.
 
 ## Ambientes
 
@@ -50,7 +49,7 @@ Todos os cartões de Backend do Sprint 0 e do Sprint 1 já mergeados estão **Co
 |---|---|
 | `ggEzge6h` Filtro de texto ofensivo | **Revisão** · o código está no `main`; falta a revisão da Júlia na lista de termos |
 | `7gpPBgTH` Contas de demonstração | a marca no banco já existe; falta a Edge Function, o segredo e as notas da revisão |
-| `zdCpLEVs` `avaliar` e `perfil_publico` | em andamento com o João Paulo |
+| `zdCpLEVs` `avaliar` e `perfil_publico` | **Revisão** · PR #24, assumido do João Paulo em 24/09 |
 | `RTmRTHbo` Republicar vaga | Cortável, não começado |
 | `yKUkCjSU` Testes do ciclo (QA) | o que ele pede já existe em pgTAP e no ciclo por HTTP; vale reler antes de refazer |
 
@@ -63,7 +62,8 @@ virou `api/openapi.yaml`**. O redirect do GitHub cobre o nome antigo da organiza
 não cobre caminho dentro do repositório — quem tiver script ou marcador apontando para o
 caminho antigo precisa ajustar. No backend, o PR #15 ajustou.
 
-Versão vigente: **0.2.5**, espelhada em `contrato/openapi.yaml` e conferida pelo portão.
+Versão vigente: **0.2.12**, espelhada em `contrato/openapi.yaml` e conferida pelo portão
+contra o original de verdade desde 24/09.
 
 ## O que existe no banco
 
@@ -71,7 +71,7 @@ Versão vigente: **0.2.5**, espelhada em `contrato/openapi.yaml` e conferida pel
 leitura, 39 auxiliares no schema `privado`, e nenhuma política de escrita em lugar
 nenhum — toda escrita passa por função `security definer`.
 
-**Dezoito RPCs expostas**, que cobrem o ciclo inteiro menos a avaliação:
+**Vinte RPCs expostas**, que cobrem o ciclo inteiro:
 
 ```
 conta        criar_conta · minha_conta
@@ -80,9 +80,10 @@ casa         cadastrar_estabelecimento · painel_estabelecimento
 vaga         publicar_vaga · vagas_abertas · detalhe_vaga · cancelar_vaga
 turno        candidatar · meus_turnos · contato_do_turno · cancelar_posicao
 presença     fazer_checkin · fazer_checkout · confirmar_checkin_manual
+reputação    avaliar · perfil_publico
 ```
 
-Falta do ciclo: `avaliar` (com o João Paulo) e tudo do despacho, que é o Sprint 2.
+Falta do ciclo: nada. O despacho é o Sprint 2.
 
 **A fila existe.** `pgmq.q_despacho` recebe `{vaga_id, publicada_em}` na publicação e
 `{vaga_id, posicao_id, motivo: reabertura, excluir_conta}` no cancelamento — o
@@ -103,16 +104,16 @@ gatilho de RN07 usava `now()` direto e foi corrigido. Nenhuma RPC nova deve usar
 
 ## Os portões
 
-Medidos na máquina em 24/09, no branch dos cancelamentos, com `db reset` antes:
+Medidos na máquina em 24/09 e 25/09, no branch `s1/avaliar`, com `db reset` antes:
 
 | Comando | O que garante | Medida |
 |---|---|---|
-| `supabase test db` | pgTAP | **540** asserções em 22 arquivos |
-| `./scripts/mutacao.sh` | cada regra morre sem teste | **74** cobertas, 0 sem cobertura |
-| `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 52 asserções, até as recusas da presença |
+| `supabase test db` | pgTAP | **585** asserções em 23 arquivos |
+| `./scripts/mutacao.sh` | cada regra morre sem teste | **75** cobertas, 0 sem cobertura |
+| `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 58 asserções, até o perfil público |
 | `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
-| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.10 → 0.2.11 |
-| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.11 idêntico |
+| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.11 → 0.2.12 |
+| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.12 idêntico ao original, conferido com o token |
 | `./scripts/lint-conhecido.sh` | `plpgsql_check` | sem achado novo |
 | `./scripts/advisor-conhecido.sh` | advisor do Supabase | **não roda**: token vencido |
 | `./scripts/migracoes-imutaveis.sh` | nenhuma migração aplicada foi editada | verde |
@@ -165,6 +166,20 @@ quem precisa reconciliar é o documento:
 
 E mais estas:
 
+- **A avaliação é um voto por LADO do turno, e não por autor.** `public.avaliacao` ganhou
+  `unique (turno_id, alvo_tipo)` ao lado do `unique (turno_id, autor_id)` que já existia.
+  O contrato afirmava as duas coisas: a tabela de erros dizia "avaliação deste autor" e
+  `Turno.pode_avaliar` dizia "sem avaliação deste lado ainda". Venceu o lado, e a 0.2.12
+  corrigiu a tabela de erros. **Consequência para a tela:** o operador que reenvia a
+  resposta que o administrador já gravou recebe `200` com a avaliação do lado dele; com
+  resposta diferente, `409 avaliacao_ja_registrada`. O `CLAUDE.md` foi atualizado junto.
+- **`perfil_publico` não filtra bloqueio (RF26)**, embora o catálogo de erros diga que o
+  `404 nao_encontrado` "inclui bloqueio". O cartão `zdCpLEVs` não pedia, e a decisão é de
+  produto. Está escrito na 0.2.12 como divergência aberta, e é pergunta para a Júlia.
+- **`unique` não é mutada por nenhum portão.** O `mutacao.sh` varre `contype in ('c','x')`
+  e os gatilhos; `contype = 'u'` fica de fora. Na prática isso significa que
+  `um_voto_por_lado` — a regra mais discutível do cartão — é a única sem asserção de
+  mutação. Cartão próprio, não conserto de última hora.
 - **`net.http_post` não entrou no `publicar_vaga`**, como o cartão pedia: a Edge Function
   `despachar` é do Sprint 2 e não existe. A fila é durável.
 - **O modo seleção é recusado na v1.0** com `campo_invalido` e `details: modo`, e não com
