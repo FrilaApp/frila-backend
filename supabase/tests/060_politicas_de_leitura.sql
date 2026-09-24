@@ -6,7 +6,7 @@
 -- telefone de alguém sai por engano.
 
 begin;
-select plan(53);
+select plan(56);
 
 -- Executa `sql` com a identidade de uma conta, como o PostgREST faria: role
 -- `authenticated` e o `sub` do JWT apontando para a conta. `auth.uid()` lê daí.
@@ -529,6 +529,56 @@ select is(
                                      '33333333-0000-0000-0000-000000000002') $$),
   2,
   'e continua vendo as vagas: a recusa é no ato de se candidatar, não na leitura');
+
+-- ── Diretriz 2.1: a marca de demonstração vale na política, não só na RPC ──────
+--
+-- `vagas_abertas` e `detalhe_vaga` já separam as duas populações, mas elas são a porta
+-- da frente. `public.vaga` tem política de leitura e o PostgREST a expõe em
+-- `rest/v1/vaga`: quem chamasse a tabela direto passava ao lado do filtro. Medido em
+-- 25/09 antes da correção — uma conta real enxergava a vaga de uma conta de
+-- demonstração por esse caminho.
+--
+-- As três asserções são positiva e negativas de propósito: derrubar a política fecha
+-- dado, e um teste só negativo aprovaria uma política que não devolve nada.
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, demonstracao) values
+  ('22222222-0000-0000-0000-0000000000dd','contratante', 'Dona Demo','+5561999990021','demo-dona@t.test','1980-01-01','2026-09-22', now(), true),
+  ('11111111-0000-0000-0000-0000000000ed','profissional','Pê Demo',  '+5561999990031','demo-prof@t.test','1995-01-01','2026-09-22', now(), true);
+
+insert into public.profissional (usuario_id, ponto_base) values
+  ('11111111-0000-0000-0000-0000000000ed','POINT(-47.88 -15.79)'::extensions.geography);
+
+insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto) values
+  ('33333333-0000-0000-0000-0000000000dd','Casa Demo','68558622000173','food_service','SCLN 407',
+   'POINT(-47.8865 -15.7915)'::extensions.geography);
+
+insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel) values
+  ('22222222-0000-0000-0000-0000000000dd','33333333-0000-0000-0000-0000000000dd','administrador');
+
+create temp table vd as
+  select pg_temp.vaga('33333333-0000-0000-0000-0000000000dd','publicada') as demo;
+
+select is(
+  pg_temp.contar_como('11111111-0000-0000-0000-000000000001',
+    $$ select count(*)::int from public.vaga
+        where estabelecimento_id = '33333333-0000-0000-0000-0000000000dd' $$),
+  0,
+  'diretriz 2.1: a conta real não alcança a vaga de demonstração nem lendo public.vaga direto');
+
+select is(
+  pg_temp.contar_como('11111111-0000-0000-0000-0000000000ed',
+    $$ select count(*)::int from public.vaga
+        where estabelecimento_id = '33333333-0000-0000-0000-0000000000dd' $$),
+  1,
+  'e a conta de demonstração alcança a dela, que é o ponto de existir');
+
+select is(
+  pg_temp.contar_como('11111111-0000-0000-0000-0000000000ed',
+    $$ select count(*)::int from public.vaga
+        where estado = 'publicada'
+          and estabelecimento_id in ('33333333-0000-0000-0000-000000000001',
+                                     '33333333-0000-0000-0000-000000000002') $$),
+  0,
+  'e não alcança nenhuma vaga real: a separação vale nos dois sentidos');
 
 select * from finish();
 rollback;
