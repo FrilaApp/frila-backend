@@ -14,6 +14,14 @@ begin
           'POINT(-47.8822 -15.7942)'::extensions.geography)
   returning id into v_estab;
 
+  -- RF21: estabelecimento sem administrador não existe no produto, e `vaga` passou a
+  -- exigir quem publicou. O cenário ganha o dono junto com a casa.
+  insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
+  values ('cccccccc-0000-0000-0000-000000000001','contratante','Zé',
+          '+5561999990011','ze@t.test','1980-01-01', '2026-09-22', now());
+  insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
+  values ('cccccccc-0000-0000-0000-000000000001', v_estab, 'administrador');
+
   select id into v_funcao from public.funcao where nome = 'garçom';
 
   insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em) values
@@ -39,10 +47,12 @@ create function pg_temp.nova_vaga(p_inicio timestamptz, p_fim timestamptz,
 returns uuid language sql as $$
   insert into public.vaga (estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
                            valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
-                           exige_material_proprio, responsavel_local, modo, chave_cliente)
+                           exige_material_proprio, responsavel_local, modo, chave_cliente,
+                           publicado_por)
   select estab, funcao, p_inicio, p_fim, 'CLN 201',
          'POINT(-47.8822 -15.7942)'::extensions.geography,
-         p_valor, p_posicoes, true, false, false, 'Maître Zé', p_modo, gen_random_uuid()
+         p_valor, p_posicoes, true, false, false, 'Maître Zé', p_modo, gen_random_uuid(),
+         'cccccccc-0000-0000-0000-000000000001'
     from cen
   returning id;
 $$;
@@ -51,10 +61,10 @@ $$;
 select throws_ok(
   $$ insert into public.vaga (estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
                               valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
-                              exige_material_proprio, modo, chave_cliente)
+                              exige_material_proprio, modo, chave_cliente, publicado_por)
      select estab, funcao, now() + interval '2 h', now() + interval '10 h', 'CLN 201',
             'POINT(-47.88 -15.79)'::extensions.geography, 12000, 1::smallint,
-            true, false, false, 'urgencia', gen_random_uuid() from cen $$,
+            true, false, false, 'urgencia', gen_random_uuid(), 'cccccccc-0000-0000-0000-000000000001' from cen $$,
   '23502',
   null,
   'RN02: vaga sem responsavel_local não entra');
@@ -94,16 +104,19 @@ select lives_ok(
 select throws_ok(
   $$ insert into public.vaga (estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
                               valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
-                              exige_material_proprio, responsavel_local, modo, chave_cliente)
+                              exige_material_proprio, responsavel_local, modo, chave_cliente,
+                              publicado_por)
      select estab, funcao, now() + interval '2 h', now() + interval '10 h', 'x',
             'POINT(-47.88 -15.79)'::extensions.geography, 12000, 1::smallint,
             true, false, false, 'Zé', 'urgencia'::public.modo_preenchimento,
-            '11111111-1111-1111-1111-111111111111'::uuid from cen
+            '11111111-1111-1111-1111-111111111111'::uuid,
+            'cccccccc-0000-0000-0000-000000000001'::uuid from cen
      union all
      select estab, funcao, now() + interval '3 h', now() + interval '11 h', 'y',
             'POINT(-47.88 -15.79)'::extensions.geography, 12000, 1::smallint,
             true, false, false, 'Zé', 'urgencia'::public.modo_preenchimento,
-            '11111111-1111-1111-1111-111111111111'::uuid from cen $$,
+            '11111111-1111-1111-1111-111111111111'::uuid,
+            'cccccccc-0000-0000-0000-000000000001'::uuid from cen $$,
   '23505',
   null,
   'a mesma chave do cliente não publica duas vagas');

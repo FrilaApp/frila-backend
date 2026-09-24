@@ -33,12 +33,15 @@ select has_table('public', 'bloqueio',               'bloqueio existe');
 select has_table('public', 'ocorrencia',             'ocorrencia existe');
 
 -- ── Colunas cujo nome o contrato promete ao cliente ────────────────────────────
+-- `publicado_por` não está na Modelagem: nasceu com `publicar_vaga`, porque um
+-- estabelecimento tem vários membros e RF04 pergunta quem publicou. Divergência
+-- registrada em docs/ESTADO.md.
 select columns_are('public', 'vaga', array[
   'id','estabelecimento_id','evento_id','funcao_id','inicio_em','fim_em','local','ponto',
   'valor_centavos','posicoes','inclui_refeicao','inclui_transporte','exige_material_proprio',
   'responsavel_local','traje','participa_rateio','observacoes','modo','alerta_antecedencia',
-  'estado','publicado_em','chave_cliente'
-], 'vaga tem exatamente as colunas da Modelagem');
+  'estado','publicado_em','chave_cliente','publicado_por'
+], 'vaga tem exatamente as colunas da Modelagem, mais quem publicou');
 
 select columns_are('public', 'turno', array[
   'id','posicao_id','checkin_em','checkin_tipo','checkin_distancia_m','checkin_confirmado_em',

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.4
+  version: 0.2.5
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -89,6 +89,33 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.5, de 24/09/2026.** `publicar_vaga` foi implementada, e o que a
+    implementação descobriu está escrito aqui.
+
+    - **`modo = selecao` é recusado na v1.0**, com `422 campo_invalido` e `details: modo`.
+      O escopo do MVP tem só o modo urgência. O código **não** é
+      `selecao_sem_antecedencia`: aquele é a regra das 24 horas de RN24, e ele só volta a
+      ter sentido na v1.1, quando o modo passar a existir e houver antecedência para
+      recusar. Um cliente que trate os dois como o mesmo erro vai dizer "publique com mais
+      antecedência" para quem escolheu um modo que ainda não existe.
+    - **`422 campo_invalido` com o campo em `details`** para `valor_centavos` não positivo,
+      `posicoes` fora de 1..200, `funcao_id` fora do catálogo e `ponto` com latitude ou
+      longitude fora da faixa. Antes isso chegava ao cliente como violação de restrição do
+      banco, que ele não sabe ler.
+    - **`403 sem_permissao`** para quem não é membro do estabelecimento — inclusive quando o
+      estabelecimento não existe, e de propósito: um 404 diria a quem não é membro que
+      aquele estabelecimento existe. Conta suspensa recebe o mesmo 403, com
+      `details: conta_suspensa` (RN13).
+    - **`422 perfil_incompativel`** para conta de profissional (RN25).
+    - **Diretriz 1.2**: `local`, `responsavel_local`, `traje` e `observacoes` passam pelo
+      filtro de termos bloqueados, e recusam com `422 campo_invalido` e o campo em
+      `details`, como a 0.2.3 antecipou.
+
+    A resposta não mudou: `VagaPublicada` com `vaga_id` e um id por posição. O despacho
+    continua fora da requisição (B15) — publicar enfileira e responde.
+
+    ---
 
     **Versão 0.2.4, de 23/09/2026.** Um código de erro novo e uma resposta que faltava.
 
@@ -816,9 +843,20 @@ paths:
         pelo agendador, em até 30 segundos (RNF03); publicar não espera o despacho (B15).
 
         Recusas: campo obrigatório ausente (`campo_obrigatorio`, com o nome do campo em `details`,
-        RN02), horário inválido, e modo seleção em vaga que começa em menos de 24 horas
-        (`selecao_sem_antecedencia`, RN24). `chave` torna o reenvio seguro: a mesma chave devolve a
-        mesma vaga.
+        RN02); valor, número de posições, função ou coordenada que o campo trouxe e a regra não
+        aceita (`campo_invalido`, com o campo em `details`); fim antes do início ou turno no passado
+        (`horario_invalido`); texto com termo bloqueado em `local`, `responsavel_local`, `traje` ou
+        `observacoes` (`campo_invalido`, diretriz 1.2). Conta de profissional recebe
+        `perfil_incompativel` (RN25); quem não é membro do estabelecimento recebe `403
+        sem_permissao`, e é o que responde também quando o estabelecimento não existe; conta
+        suspensa recebe `403 sem_permissao` com `details: conta_suspensa` (RN13).
+
+        **Na v1.0, `modo = selecao` é recusado** com `campo_invalido` e `details: modo` — o escopo
+        do MVP tem só urgência. `selecao_sem_antecedencia` é a regra das 24 horas (RN24) e volta na
+        v1.1, quando houver modo seleção para recusar.
+
+        `chave` torna o reenvio seguro: a mesma chave devolve a mesma vaga, com as mesmas posições,
+        e não enfileira o despacho de novo.
       x-requisitos: [RF04, RF09, RN02, RN03, RN04, RN18, RN24, UC01]
       requestBody:
         required: true

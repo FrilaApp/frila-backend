@@ -93,13 +93,13 @@ returns uuid language sql as $$
   insert into public.vaga (estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
                            valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
                            exige_material_proprio, responsavel_local, modo,
-                           alerta_antecedencia, chave_cliente)
+                           alerta_antecedencia, chave_cliente, publicado_por)
   select (select id from public.estabelecimento where documento = '11222333000181'),
          (select id from public.funcao where nome = 'garçom'),
          now() + interval '4 h', now() + interval '12 h', 'CLN 201',
          'POINT(-47.8822 -15.7942)'::extensions.geography,
          12000, p_posicoes, true, false, false, 'Maître Zé', 'urgencia',
-         p_alerta, gen_random_uuid()
+         p_alerta, gen_random_uuid(), 'eeeeeeee-0000-0000-0000-000000000002'
   returning id;
 $$;
 

@@ -100,10 +100,13 @@ create function pg_temp.vaga(id uuid, estab uuid, inicio timestamptz, fim timest
 returns void language sql as $$
   insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
                            valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
-                           exige_material_proprio, responsavel_local, modo, chave_cliente)
+                           exige_material_proprio, responsavel_local, modo, chave_cliente,
+                           publicado_por)
   values (id, estab, (select f.id from public.funcao f where f.nome = 'garçom'),
           inicio, fim, 'CLN 201', 'POINT(-47.8822 -15.7942)'::extensions.geography,
-          12000, n, true, false, false, 'Maître Zé', 'urgencia', gen_random_uuid());
+          12000, n, true, false, false, 'Maître Zé', 'urgencia', gen_random_uuid(),
+          (select m.usuario_id from public.membro_estabelecimento m
+            where m.estabelecimento_id = estab and m.papel = 'administrador' limit 1));
 $$;
 
 select pg_temp.vaga('d5000000-0000-4000-8000-000000000001','d4000000-0000-4000-8000-000000000001',
