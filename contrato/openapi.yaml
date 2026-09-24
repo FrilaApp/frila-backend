@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.7
+  version: 0.2.8
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -89,6 +89,25 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.8, de 24/09/2026.** `meus_turnos` foi implementada, para os dois lados.
+
+    - **É a mesma operação para o profissional e para a casa**, e o que muda é quem
+      aparece em `contraparte`: para o profissional, o estabelecimento; para quem opera
+      a casa, o profissional. Com `estabelecimento_id`, quem pergunta precisa ser membro
+      — senão `403 sem_permissao`.
+    - **Conta de contratante sem `estabelecimento_id` recebe lista vazia**, e não erro.
+      A pergunta "quais são os meus turnos como profissional?" é válida vinda de
+      qualquer conta; a resposta é "nenhum".
+    - **A ordem é a da tela**: hoje e os próximos primeiro, do mais próximo para o mais
+      distante; os anteriores depois, do mais recente para o mais antigo. O turno de
+      hoje é o que a pessoa abre o app para ver.
+    - **Nenhum telefone sai por aqui.** O contato tem porta própria, `contato_do_turno`,
+      que confere o prazo de RN10 — uma lista que já trouxesse o contato tornaria o
+      prazo decorativo. `contato_visivel_ate` vem em cada turno justamente para que a
+      tela saiba se pode oferecer o botão antes de tocá-lo.
+
+    ---
 
     **Versão 0.2.7, de 24/09/2026.** `candidatar` foi implementada no modo urgência, e
     a implementação separou dois casos que o contrato tratava como um só.
@@ -1319,7 +1338,17 @@ paths:
       tags: [Turno]
       operationId: meusTurnos
       summary: Turnos do chamador, como profissional ou como estabelecimento
-      description: Base do histórico (UC13) e da leitura offline por 24 horas (RNF06).
+      description: |
+        Base do histórico (UC13) e da leitura offline por 24 horas (RNF06).
+
+        Hoje e os próximos primeiro, do mais próximo para o mais distante; os anteriores depois, do
+        mais recente para o mais antigo. Com `estabelecimento_id`, quem pergunta precisa ser membro
+        da casa — senão `403 sem_permissao`. Conta de contratante **sem** `estabelecimento_id`
+        recebe lista vazia, e não erro.
+
+        Nenhum telefone sai por aqui: o contato sai por `contato_do_turno`, que confere o prazo de
+        RN10. `contato_visivel_ate` vem em cada turno para que a tela saiba se pode oferecer o botão
+        antes de tocá-lo.
       x-requisitos: [RF13, RF22, RNF06, UC13]
       parameters:
         - name: de
