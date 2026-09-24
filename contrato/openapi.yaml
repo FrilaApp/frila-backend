@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.11
+  version: 0.2.12
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -72,7 +72,7 @@ info:
     | 409 | `checkin_ja_confirmado` | Confirmação de um check-in geolocalizado, que já nasceu verificado |
     | 409 | `posicao_nao_cancelavel` | A posição não está confirmada: aberta não tem o que cancelar, cumprida ou já cancelada não volta atrás |
     | 409 | `candidatura_indisponivel` | A candidatura foi retirada, expirou ou já foi escolhida |
-    | 409 | `avaliacao_ja_registrada` | Já existe avaliação deste autor para o turno, com outra resposta |
+    | 409 | `avaliacao_ja_registrada` | Já existe avaliação **deste lado** do turno, com outra resposta — de quem chama ou de outro membro do mesmo estabelecimento |
     | 409 | `conta_existente`, `documento_ja_cadastrado` | Cadastro repetido |
     | 409 | `administrador_unico` | Exclusão de conta de quem é o único administrador (UC16) |
     | 409 | `perfil_ja_existe` | `criar_perfil_profissional` numa conta que já tem perfil. Conflito, e não sobrescrita: sobrescrever apagaria a grade de quem tocasse duas vezes no botão |
@@ -92,6 +92,42 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.12, de 25/09/2026.** `avaliar` e `perfil_publico` foram implementadas, e
+    com elas o ciclo do Sprint 1 fecha inteiro. As duas já estavam descritas aqui; o que
+    muda é o que a implementação precisou decidir e este documento não dizia.
+
+    - **A avaliação é um voto por lado do turno, e não um voto por pessoa.** Era a única
+      coisa que este contrato afirmava duas vezes, de dois jeitos: a tabela de erros dizia
+      "avaliação **deste autor**", e `Turno.pode_avaliar` dizia "sem avaliação **deste
+      lado** ainda". Vale o lado. Um estabelecimento tem vários membros, e dois deles
+      votando no mesmo turno dariam à casa dois votos sobre o mesmo profissional — a
+      reputação deixaria de comparar gente com gente. A linha da tabela de erros foi
+      corrigida.
+    - **A consequência prática, para a tela:** o operador que reenvia a resposta que o
+      administrador já gravou recebe **`200` com a avaliação do lado dele**, e não um
+      erro. Se a resposta for diferente, recebe `409 avaliacao_ja_registrada`. A tela
+      precisa saber disso: "já avaliado" aqui pode significar "a sua casa já avaliou", e
+      não "você já avaliou".
+    - **`avaliar` responde `403 sem_permissao` também para turno que não existe**, e não
+      `404`. É o mesmo critério do resto do turno: a diferença entre "não é seu" e "não
+      existe" diria a um estranho que aquele turno existe.
+    - **`turno_id` ausente é `422 campo_obrigatorio` com `details: turno_id`.** Campo
+      faltando não é falta de permissão, e mandar a tela pedir permissão para consertar um
+      campo é mandá-la para o lugar errado.
+    - **Conta suspensa não avalia**: `403 sem_permissao` com `details: conta_suspensa`,
+      igual a `publicar_vaga` (RN13).
+    - **`perfil_publico` de conta anonimizada devolve `nome: "Conta encerrada"`** (RF25). A
+      anonimização não apaga o nome da linha — quem mascara é a leitura —, e o mesmo nome
+      passa a valer em `detalhe_vaga`, `vagas_abertas` e no painel, que leem a mesma
+      função.
+
+    O que **não** mudou, e vale dizer por escrito: `perfil_publico` continua sem filtrar
+    bloqueio (RF26), embora o catálogo de erros diga que o `404` "inclui bloqueio". O
+    cartão de implementação não pedia, e a decisão é de produto. Está registrado como
+    divergência aberta, e não como esquecimento.
+
+    ---
 
     **Versão 0.2.11, de 24/09/2026.** `cancelar_posicao` e `cancelar_vaga` foram
     implementadas.
@@ -1670,6 +1706,17 @@ paths:
         geolocalizado ou manual confirmado. Quem faltou não é avaliado. Recusas: `422
         avaliacao_indisponivel` com `antes_do_fim` ou `sem_presenca_verificada`. Reenviar a mesma
         resposta devolve a avaliação gravada; resposta diferente dá `409 avaliacao_ja_registrada`.
+
+        **Um voto por lado do turno, e não por pessoa.** Um estabelecimento tem vários membros, e
+        dois deles votando no mesmo turno dariam à casa dois votos sobre o mesmo profissional. O
+        operador que reenvia a resposta que o administrador já gravou recebe `200` com a avaliação
+        **do lado dele**; com resposta diferente, `409`. É o mesmo que `Turno.pode_avaliar` já
+        descrevia.
+
+        Turno que não existe recebe o mesmo `403 sem_permissao` de turno alheio: a diferença diria a
+        um estranho que aquele turno existe. `turno_id` ausente é `422 campo_obrigatorio` com
+        `details: turno_id`, e conta suspensa é `403 sem_permissao` com `details: conta_suspensa`
+        (RN13).
       x-requisitos: [RF15, RN07, RN08, RN22, UC06]
       requestBody:
         required: true
@@ -1708,6 +1755,9 @@ paths:
         Reputação sempre com denominador ("7 de 7 chamariam de novo") e taxa de comparecimento com o
         total de turnos considerados (RN08, RF16). Perfil sem histórico vem com `total = 0` e taxa nula
         — a tela mostra "Sem histórico", nunca nota zero. Nenhum dado de contato aparece aqui (RN10).
+
+        Conta anonimizada (RF25) devolve `nome: "Conta encerrada"`. O turno e a avaliação sobrevivem à
+        exclusão porque pertencem também à contraparte; o nome, não.
       x-requisitos: [RF16, RN08]
       parameters:
         - name: id
