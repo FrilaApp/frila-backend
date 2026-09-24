@@ -7,26 +7,36 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-**O ciclo principal do Sprint 1 fecha de ponta a ponta no `main`:** publicar → candidatar
-→ acompanhar → contato → check-in → check-out → cancelar. Falta `avaliar`, que está com o
-João Paulo, e o despacho, que é o Sprint 2.
+**O ciclo do Sprint 1 fecha inteiro no `main`:** publicar → candidatar → acompanhar →
+contato → check-in → check-out → cancelar → **avaliar**. Falta só o despacho, que é o
+Sprint 2.
 
-Dezoito RPCs no ar, 29 migrações, e o contrato em **0.2.11**. **Dezenove PRs mergeados e
-nenhum aberto** — o #22, dos cancelamentos, entrou às 12:13 de 24/09.
+Vinte RPCs, 30 migrações, e o contrato em **0.2.12**.
 
 ## Ambientes
 
 | | |
 |---|---|
 | local | `supabase start` · Postgres 17 · **29** migrações no `main` (contadas em 24/09) |
-| `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` |
+| `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · **29** migrações, as mesmas do `main` (conferidas em 24/09) |
 | `frila-prod` | não existe. Sprint 3 |
 
-**O `frila-dev` ficou para trás.** Ele tem as migrações até o branch `s0/criar-conta`,
-aplicadas por `scripts/aplicar-remoto.sh` em 22/09; tudo o que entrou depois — filtro de
-texto, perfil profissional, estabelecimento, painel e `publicar_vaga` — está só no
-`main` e no ambiente local. Antes de aplicar lá, conferir
-`supabase_migrations.schema_migrations` do projeto.
+**O `frila-dev` está em dia com o `main`.** As 11 migrações que faltavam, de
+`20260923200000_filtro_de_texto_ofensivo` a `20260925020000_cancelamentos`, entraram em
+24/09 às 15h pelo MCP do Supabase, porque o token do `.env` não responde. Cada uma rodou
+numa transação só, e o md5 do texto foi conferido contra o arquivo **antes** de executar:
+texto divergente aborta sem gravar nada. O registro em `supabase_migrations.schema_migrations`
+usa a versão e o nome do arquivo, como faz o `scripts/aplicar-remoto.sh`, então o
+`db push` da CLI enxerga tudo como aplicado. A diferença para o script é que `statements`
+guarda o texto inteiro da migração, e não um array vazio. O `seed.sql` também foi
+reaplicado.
+
+Conferido depois: 29 migrações com o md5 igual ao dos arquivos, 19 tabelas com RLS, `anon`
+sem escrita e sem `usage` em `privado`, `privado.ambiente` sem marcador de teste, 32
+funções e 33 termos, `pgmq` 1.5.1 com a fila `despacho` vazia. As 18 RPCs respondem
+**401** `42501` sem sessão. O advisor de segurança só traz o aviso 0029, que é o desenho:
+as 18 RPCs `security definer` abertas a `authenticated`. Antes de aplicar a próxima,
+conferir `supabase_migrations.schema_migrations` do projeto.
 
 As credenciais estão no `.env` local (fora do git).
 
@@ -39,7 +49,6 @@ Todos os cartões de Backend do Sprint 0 e do Sprint 1 já mergeados estão **Co
 |---|---|
 | `ggEzge6h` Filtro de texto ofensivo | **Revisão** · o código está no `main`; falta a revisão da Júlia na lista de termos |
 | `7gpPBgTH` Contas de demonstração | a marca no banco já existe; falta a Edge Function, o segredo e as notas da revisão |
-| `zdCpLEVs` `avaliar` e `perfil_publico` | em andamento com o João Paulo |
 | `RTmRTHbo` Republicar vaga | Cortável, não começado |
 | `yKUkCjSU` Testes do ciclo (QA) | o que ele pede já existe em pgTAP e no ciclo por HTTP; vale reler antes de refazer |
 
@@ -52,7 +61,8 @@ virou `api/openapi.yaml`**. O redirect do GitHub cobre o nome antigo da organiza
 não cobre caminho dentro do repositório — quem tiver script ou marcador apontando para o
 caminho antigo precisa ajustar. No backend, o PR #15 ajustou.
 
-Versão vigente: **0.2.5**, espelhada em `contrato/openapi.yaml` e conferida pelo portão.
+Versão vigente: **0.2.12**, espelhada em `contrato/openapi.yaml` e conferida pelo portão
+contra o original de verdade desde 24/09.
 
 ## O que existe no banco
 
@@ -60,7 +70,7 @@ Versão vigente: **0.2.5**, espelhada em `contrato/openapi.yaml` e conferida pel
 leitura, 39 auxiliares no schema `privado`, e nenhuma política de escrita em lugar
 nenhum — toda escrita passa por função `security definer`.
 
-**Dezoito RPCs expostas**, que cobrem o ciclo inteiro menos a avaliação:
+**Vinte RPCs expostas**, que cobrem o ciclo inteiro:
 
 ```
 conta        criar_conta · minha_conta
@@ -69,9 +79,10 @@ casa         cadastrar_estabelecimento · painel_estabelecimento
 vaga         publicar_vaga · vagas_abertas · detalhe_vaga · cancelar_vaga
 turno        candidatar · meus_turnos · contato_do_turno · cancelar_posicao
 presença     fazer_checkin · fazer_checkout · confirmar_checkin_manual
+reputação    avaliar · perfil_publico
 ```
 
-Falta do ciclo: `avaliar` (com o João Paulo) e tudo do despacho, que é o Sprint 2.
+Falta do ciclo: nada. O despacho é o Sprint 2.
 
 **A fila existe.** `pgmq.q_despacho` recebe `{vaga_id, publicada_em}` na publicação e
 `{vaga_id, posicao_id, motivo: reabertura, excluir_conta}` no cancelamento — o
@@ -92,17 +103,18 @@ gatilho de RN07 usava `now()` direto e foi corrigido. Nenhuma RPC nova deve usar
 
 ## Os portões
 
-Medidos na máquina em 24/09, no branch dos cancelamentos, com `db reset` antes:
+Medidos na máquina em 24/09 e 25/09, no branch das contas de demonstração já com a
+`main` fundida, com `db reset` antes:
 
 | Comando | O que garante | Medida |
 |---|---|---|
-| `supabase test db` | pgTAP | **547** asserções em 22 arquivos |
+| `supabase test db` | pgTAP | A MEDIR |
+| `./scripts/mutacao.sh` | cada regra morre sem teste | A MEDIR |
+| `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 58 asserções, até o perfil público |
 | `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | 11 asserções, com o teto de tentativas |
-| `./scripts/mutacao.sh` | cada regra morre sem teste | **74** cobertas, 0 sem cobertura |
-| `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 52 asserções, até as recusas da presença |
 | `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
-| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.10 → 0.2.11 |
-| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.11 idêntico |
+| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.11 → 0.2.12 |
+| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.12 idêntico ao original, conferido com o token |
 | `./scripts/lint-conhecido.sh` | `plpgsql_check` | sem achado novo |
 | `./scripts/advisor-conhecido.sh` | advisor do Supabase | **não roda**: token vencido |
 | `./scripts/migracoes-imutaveis.sh` | nenhuma migração aplicada foi editada | verde |
@@ -172,6 +184,20 @@ E mais estas:
   em 25/09. Não quebra a entrada por código do e-mail, que é a que os cenários usam, mas
   fecha qualquer fluxo administrativo do Auth para essas contas. As contas de revisão do
   `seed.sql` vão com string vazia por isso.
+- **A avaliação é um voto por LADO do turno, e não por autor.** `public.avaliacao` ganhou
+  `unique (turno_id, alvo_tipo)` ao lado do `unique (turno_id, autor_id)` que já existia.
+  O contrato afirmava as duas coisas: a tabela de erros dizia "avaliação deste autor" e
+  `Turno.pode_avaliar` dizia "sem avaliação deste lado ainda". Venceu o lado, e a 0.2.12
+  corrigiu a tabela de erros. **Consequência para a tela:** o operador que reenvia a
+  resposta que o administrador já gravou recebe `200` com a avaliação do lado dele; com
+  resposta diferente, `409 avaliacao_ja_registrada`. O `CLAUDE.md` foi atualizado junto.
+- **`perfil_publico` não filtra bloqueio (RF26)**, embora o catálogo de erros diga que o
+  `404 nao_encontrado` "inclui bloqueio". O cartão `zdCpLEVs` não pedia, e a decisão é de
+  produto. Está escrito na 0.2.12 como divergência aberta, e é pergunta para a Júlia.
+- **`unique` não é mutada por nenhum portão.** O `mutacao.sh` varre `contype in ('c','x')`
+  e os gatilhos; `contype = 'u'` fica de fora. Na prática isso significa que
+  `um_voto_por_lado` — a regra mais discutível do cartão — é a única sem asserção de
+  mutação. Cartão próprio, não conserto de última hora.
 - **`net.http_post` não entrou no `publicar_vaga`**, como o cartão pedia: a Edge Function
   `despachar` é do Sprint 2 e não existe. A fila é durável.
 - **O modo seleção é recusado na v1.0** com `campo_invalido` e `details: modo`, e não com
@@ -191,22 +217,22 @@ E mais estas:
 
 1. **`supabase login`.** O `SUPABASE_ACCESS_TOKEN` do `.env` responde **401** na
    Management API. Sem ele o advisor de segurança do `frila-dev` não é verificado por
-   ninguém. Depende de alguém presente: o comando abre o navegador.
-2. **PAT com leitura em `FrilaApp/frila-docs`**, gravado como secret `FRILA_DOCS_TOKEN`.
-   Na máquina o portão do contrato compara com o original de verdade (medido em 24/09);
-   na CI, sem o secret, ele confere só a integridade do espelho e avisa em voz alta.
-   Fine-grained, *Resource owner* `FrilaApp`, *Only select repositories* → `frila-docs`,
-   *Contents: Read-only*. Medido em 24/09: `gh secret list` do repositório está **vazio**,
-   `FrilaApp/frila-docs` é **privado**, e a única org da conta `silvaaszx` é `FrilaApp` —
-   tela de criação de token que ainda mostre `BlendOps` como *Resource owner* é anterior
-   à renomeação de 23/09 e produz um token que não lê nada.
-   **Ressalva:** sem token, `contrato-em-dia.sh` sai com **0** (linha 58), e isso
-   contraria a regra dos portões — caminho que não mediu tem de sair diferente de zero.
-   Enquanto o secret não existir, o portão avisa mas não reprova.
+   ninguém. Depende de alguém presente: o comando abre o navegador. Em 24/09 o advisor
+   rodou pelo MCP do Supabase, que tem acesso à organização, mas o script continua sem token.
+2. ~~**PAT com leitura em `FrilaApp/frila-docs`.**~~ **Resolvido em 24/09.** O secret
+   `FRILA_DOCS_TOKEN` existe no repositório e o portão passou a conferir o original de
+   verdade: `./scripts/contrato-em-dia.sh` com o token respondeu *"Espelho em dia com
+   FrilaApp/frila-docs"* sobre o contrato 0.2.11. Fine-grained, *Resource owner*
+   `FrilaApp`, *Contents: Read-only*, validade até 23/09/2027.
+   **O que continua aberto:** sem token, `contrato-em-dia.sh` sai com **0** (linha 58),
+   e isso contraria a regra dos portões — caminho que não mediu tem de sair diferente de
+   zero. Hoje o secret existe e o ponto é teórico; quando o PAT vencer, em 23/09/2027, o
+   portão volta a ficar verde sem ter medido nada e ninguém vai saber. A correção é do
+   tamanho de uma linha e não entrou junto porque pertence a outro cartão.
 3. **`git push` no `FrilaApp/Bancada`**, que exige Touch ID. Sem ele as notas diárias não
    saem e o site `bancada-buu.pages.dev` não republica.
 4. **Revisão da Júlia** na lista de termos bloqueados. Sem ela o `ggEzge6h` não fecha.
-5. **Aplicar as migrações novas no `frila-dev`**, que está seis migrações atrás.
+5. ~~**Aplicar as migrações novas no `frila-dev`.**~~ **Resolvido em 24/09**: as 29 estão lá (ver Ambientes).
 6. **Decidir as operações do contrato sem cartão no quadro** — `renovarSessao`,
    `criteriosDeNotificacao`, `pedirRevisaoDespacho`, `equipeDeConfianca`,
    `incluirNaEquipe`, `removerDaEquipe`, `listarFuncoes`, `candidatosDaVaga`,

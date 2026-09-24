@@ -27,10 +27,12 @@
 --
 -- ── O que está escrito aqui e o que é medido ───────────────────────────────────
 --
--- As contagens desnormalizadas (`taxa_comparecimento`, `turnos_realizados`,
--- `aval_positivas`, `aval_total`) são **escritas à mão**, coerentes com os turnos e as
--- avaliações abaixo. Não há trigger que as calcule: o job de reconciliação é do
--- Sprint 2. A aritmética usada aqui é `cumpridas / (cumpridas + faltas)`; a definição
+-- As contagens de comparecimento (`taxa_comparecimento`, `turnos_realizados`) são
+-- **escritas à mão**, coerentes com os turnos abaixo: quem as recalcula é
+-- `privado.recalcular_comparecimento`, chamada pelo check-in e pelo cancelamento, e este
+-- arquivo escreve direto na tabela. `aval_positivas` e `aval_total` **não** são
+-- escritas aqui: o gatilho `avaliacao_soma_na_reputacao` soma cada avaliação inserida,
+-- e escrevê-las à mão contaria cada uma duas vezes. A aritmética usada aqui é `cumpridas / (cumpridas + faltas)`; a definição
 -- canônica está na Modelagem de Banco de Dados, e quando o job existir é ele quem
 -- manda. Até lá, mudar um turno aqui obriga a mexer no número correspondente.
 --
@@ -129,23 +131,23 @@ on conflict (id) do nothing;
 -- As contagens abaixo são coerentes com os turnos mais adiante; ver o cabeçalho.
 
 insert into public.profissional (id, usuario_id, ponto_base, taxa_comparecimento,
-                                 turnos_realizados, aval_positivas, aval_total)
+                                 turnos_realizados)
 values
-  ('e0000000-0000-4000-8000-000000000001','a0000000-0000-4000-8000-000000000001','POINT(-47.8830 -15.7650)'::extensions.geography, 1.000, 1, 1, 1),
-  ('e0000000-0000-4000-8000-000000000002','a0000000-0000-4000-8000-000000000002','POINT(-47.8795 -15.7590)'::extensions.geography, 1.000, 1, 0, 0),
-  ('e0000000-0000-4000-8000-000000000003','a0000000-0000-4000-8000-000000000003','POINT(-47.8910 -15.7710)'::extensions.geography, 1.000, 1, 0, 0),
-  ('e0000000-0000-4000-8000-000000000004','a0000000-0000-4000-8000-000000000004','POINT(-48.0300 -15.8360)'::extensions.geography, null,  0, 0, 0),
-  ('e0000000-0000-4000-8000-000000000005','a0000000-0000-4000-8000-000000000005','POINT(-47.8840 -15.7680)'::extensions.geography, null,  0, 0, 0),
-  ('e0000000-0000-4000-8000-000000000006','a0000000-0000-4000-8000-000000000006','POINT(-47.8860 -15.7600)'::extensions.geography, null,  0, 0, 0),
-  ('e0000000-0000-4000-8000-000000000007','a0000000-0000-4000-8000-000000000007','POINT(-47.8880 -15.7640)'::extensions.geography, null,  0, 0, 0),
-  ('e0000000-0000-4000-8000-000000000008','a0000000-0000-4000-8000-000000000008','POINT(-47.8450 -15.8280)'::extensions.geography, 1.000, 1, 0, 1),
-  ('e0000000-0000-4000-8000-000000000009','a0000000-0000-4000-8000-000000000009','POINT(-48.0270 -15.8320)'::extensions.geography, null,  0, 0, 0),
-  ('e0000000-0000-4000-8000-000000000010','a0000000-0000-4000-8000-000000000010','POINT(-47.8905 -15.7585)'::extensions.geography, 1.000, 1, 1, 1),
+  ('e0000000-0000-4000-8000-000000000001','a0000000-0000-4000-8000-000000000001','POINT(-47.8830 -15.7650)'::extensions.geography, 1.000, 1),
+  ('e0000000-0000-4000-8000-000000000002','a0000000-0000-4000-8000-000000000002','POINT(-47.8795 -15.7590)'::extensions.geography, 1.000, 1),
+  ('e0000000-0000-4000-8000-000000000003','a0000000-0000-4000-8000-000000000003','POINT(-47.8910 -15.7710)'::extensions.geography, 1.000, 1),
+  ('e0000000-0000-4000-8000-000000000004','a0000000-0000-4000-8000-000000000004','POINT(-48.0300 -15.8360)'::extensions.geography, null,  0),
+  ('e0000000-0000-4000-8000-000000000005','a0000000-0000-4000-8000-000000000005','POINT(-47.8840 -15.7680)'::extensions.geography, null,  0),
+  ('e0000000-0000-4000-8000-000000000006','a0000000-0000-4000-8000-000000000006','POINT(-47.8860 -15.7600)'::extensions.geography, null,  0),
+  ('e0000000-0000-4000-8000-000000000007','a0000000-0000-4000-8000-000000000007','POINT(-47.8880 -15.7640)'::extensions.geography, null,  0),
+  ('e0000000-0000-4000-8000-000000000008','a0000000-0000-4000-8000-000000000008','POINT(-47.8450 -15.8280)'::extensions.geography, 1.000, 1),
+  ('e0000000-0000-4000-8000-000000000009','a0000000-0000-4000-8000-000000000009','POINT(-48.0270 -15.8320)'::extensions.geography, null,  0),
+  ('e0000000-0000-4000-8000-000000000010','a0000000-0000-4000-8000-000000000010','POINT(-47.8905 -15.7585)'::extensions.geography, 1.000, 1),
   -- Sem histórico: `taxa_comparecimento` nula, e não 0.000. As duas contam histórias
   -- opostas sobre quem acabou de chegar, e a tela precisa saber a diferença (RF16).
-  ('e0000000-0000-4000-8000-000000000011','a0000000-0000-4000-8000-000000000011','POINT(-47.8820 -15.7625)'::extensions.geography, null,  0, 0, 0),
+  ('e0000000-0000-4000-8000-000000000011','a0000000-0000-4000-8000-000000000011','POINT(-47.8820 -15.7625)'::extensions.geography, null,  0),
   -- Faltou ao único turno que tinha: 0 de 1.
-  ('e0000000-0000-4000-8000-000000000012','a0000000-0000-4000-8000-000000000012','POINT(-47.8850 -15.7665)'::extensions.geography, 0.000, 0, 0, 0)
+  ('e0000000-0000-4000-8000-000000000012','a0000000-0000-4000-8000-000000000012','POINT(-47.8850 -15.7665)'::extensions.geography, 0.000, 0)
 on conflict (id) do nothing;
 
 insert into public.profissional_funcao (profissional_id, funcao_id)
@@ -212,18 +214,17 @@ on conflict do nothing;
 -- também contratam pelo Frila, e um `check` que só aceitasse 14 dígitos os deixaria
 -- de fora. Os documentos são de formato válido e não pertencem a ninguém.
 
-insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto,
-                                    aval_positivas, aval_total)
+insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto)
 values
   ('c0000000-0000-4000-8000-000000000001','Bar do Cerrado','09123456000178','food_service',
    'CLN 208, Bloco B, Asa Norte, Brasília-DF',
-   'POINT(-47.8869 -15.7620)'::extensions.geography, 1, 1),
+   'POINT(-47.8869 -15.7620)'::extensions.geography),
   ('c0000000-0000-4000-8000-000000000002','Buffet Águas Claras','09123456000259','evento',
    'Rua das Pitangueiras, Águas Claras, Brasília-DF',
-   'POINT(-48.0286 -15.8345)'::extensions.geography, 2, 2),
+   'POINT(-48.0286 -15.8345)'::extensions.geography),
   ('c0000000-0000-4000-8000-000000000003','Empório Lago Sul','52998224725','varejo',
    'SHIS QI 11, Bloco C, Lago Sul, Brasília-DF',
-   'POINT(-47.8400 -15.8300)'::extensions.geography, 0, 0)
+   'POINT(-47.8400 -15.8300)'::extensions.geography)
 on conflict (id) do nothing;
 
 -- O Paulo é operador do bar, não administrador: é com ele que se testa o que um papel

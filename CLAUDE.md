@@ -124,7 +124,7 @@ uma vez só.
 | RN02 — vaga incompleta não existe | `NOT NULL` nas colunas obrigatórias |
 | RN24 — modo seleção só com mais de 24 h | `CHECK` em `vaga` |
 | RN22 — geolocalizado vale até 200 m; manual só conta confirmado | `CHECK verificacao_coerente` |
-| RN07 — avaliação binária, após o fim, com presença verificada | `UNIQUE (turno_id, autor_id)` + trigger |
+| RN07 — avaliação binária, após o fim, com presença verificada | `UNIQUE (turno_id, alvo_tipo)` — **um voto por lado**, não por pessoa — mais o `UNIQUE (turno_id, autor_id)` que já existia, e o trigger |
 
 ### Como se escreve uma RPC
 
@@ -148,8 +148,12 @@ end $$;
   estável em `snake_case` e o cliente compara sem traduzir. A lista está no contrato.
 - **Nenhuma tabela tem política de escrita.** Os apps não fazem `insert`; chamam a RPC.
 - **Idempotência**: onde há chave natural (candidatura por vaga e profissional,
-  check-in por turno, avaliação por turno e autor, bloqueio por par), ela basta.
+  check-in por turno, **avaliação por turno e lado**, bloqueio por par), ela basta.
   `publicar_vaga` e `denunciar` recebem `chave` gerada pelo app.
+  A avaliação é por **lado** e não por autor desde o contrato 0.2.12: um estabelecimento
+  tem vários membros, e dois deles votando no mesmo turno dariam à casa dois votos sobre
+  o mesmo profissional. Quem reenvia o que o outro membro já gravou recebe a avaliação do
+  próprio lado; com resposta diferente, `409 avaliacao_ja_registrada`.
 - **Mudança incompatível vira função nova** (`publicar_vaga_v2`). A antiga fica no ar
   enquanto houver app antigo na loja.
 

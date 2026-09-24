@@ -539,8 +539,56 @@ recusa "check-in em turno que não existe" 404 nao_encontrado \
 
 
 echo
-echo "▸ O que ainda não existe"
-echo "  ⏭  avaliar e os cancelamentos entram com o resto do Sprint 1."
-echo "     Cada uma acrescenta um passo aqui, com o status HTTP conferido."
+echo "▸ A avaliação e o perfil público"
+#
+# O turno deste ciclo começa em três dias, e a avaliação só abre depois do fim previsto
+# (RN07): o 200, o reenvio idempotente e o 409 dependem do relógio do produto, que só se
+# sobrepõe dentro da transação do pgTAP (tests/180_avaliar_e_perfil_publico.sql). O que
+# esta camada prova é a rota, o verbo e o **status** — o 422 da regra chega como 422.
+
+recusa "RN07: avaliar antes do fim do turno" 422 avaliacao_indisponivel \
+  "{\"turno_id\":\"$TURNO\",\"resposta\":true}" avaliar
+
+recusa "avaliar turno que não é seu" 403 sem_permissao \
+  '{"turno_id":"00000000-0000-4000-8000-000000000000","resposta":true}' avaliar
+
+PROF=$(chamar meu_perfil_profissional '{}' \
+  | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+[ -n "$PROF" ] || falhou "não consegui ler o id do perfil profissional"
+
+# GET no contrato, como o painel: a função não escreve e responde na transação só de
+# leitura do PostgREST.
+resp=$(get_rpc perfil_publico "--data-urlencode id=$PROF")
+http=${resp%% *}; corpo=${resp#* }
+[ "$http" = "200" ] || falhou "GET perfil_publico do profissional devolveu $http: $corpo"
+rep=$(printf '%s' "$corpo" | python3 -c "
+import json,sys; d=json.load(sys.stdin); r=d.get('reputacao',{})
+print(d.get('tipo'), r.get('total'), sorted(d), sorted(r))" 2>/dev/null || true)
+[ "$rep" = "profissional 0 ['funcoes', 'id', 'nome', 'reputacao', 'tipo'] ['positivas', 'taxa_comparecimento', 'total', 'turnos_considerados', 'turnos_realizados']" ] \
+  || falhou "perfil_publico do profissional fora do contrato: $corpo"
+ok "GET perfil_publico → 200, PerfilPublico do contrato, sem histórico com total 0"
+
+printf '%s' "$corpo" | grep -qE '"(telefone|email|nascimento|ponto_base)"|\+55' \
+  && falhou "perfil_publico traz dado de contato: $corpo"
+ok "RN10: nenhum telefone, e-mail, nascimento ou ponto base no perfil público"
+
+resp=$(get_rpc perfil_publico "--data-urlencode id=$ESTAB")
+http=${resp%% *}; corpo=${resp#* }
+tipo=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tipo',''))" 2>/dev/null || true)
+[ "$http" = "200" ] && [ "$tipo" = "estabelecimento" ] \
+  || falhou "GET perfil_publico do estabelecimento: HTTP $http, $corpo"
+ok "GET perfil_publico do estabelecimento → 200"
+
+resp=$(get_rpc perfil_publico "--data-urlencode id=00000000-0000-4000-8000-000000000000")
+http=${resp%% *}; corpo=${resp#* }
+code=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || true)
+[ "$http" = "404" ] && [ "$code" = "nao_encontrado" ] \
+  || falhou "perfil_publico de id inexistente: HTTP $http code '$code', esperado 404 nao_encontrado"
+ok "GET perfil_publico de id inexistente → 404 nao_encontrado"
+
 echo
-echo "Ciclo verificado até as recusas do registro de presença."
+echo "▸ O que ainda não existe"
+echo "  ⏭  o caminho feliz do check-in e da avaliação por HTTP pede um turno que já"
+echo "     aconteceu, e o relógio do produto só se sobrepõe dentro do pgTAP."
+echo
+echo "Ciclo verificado até as recusas da presença e da avaliação, e o perfil público."
