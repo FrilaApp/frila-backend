@@ -43,10 +43,15 @@ select columns_are('public', 'vaga', array[
   'estado','publicado_em','chave_cliente','publicado_por'
 ], 'vaga tem exatamente as colunas da Modelagem, mais quem publicou');
 
+-- `checkin_recebido_em` e `checkout_recebido_em` não estão na Modelagem: nasceram com
+-- o registro de presença. `checkin_em` é a hora do toque e `checkin_recebido_em` a hora
+-- em que o servidor recebeu — sem as duas, um turno registrado às 18:00 e sincronizado
+-- às 23:00 seria indistinguível de um registrado às 23:00. Divergência em ESTADO.md.
 select columns_are('public', 'turno', array[
   'id','posicao_id','checkin_em','checkin_tipo','checkin_distancia_m','checkin_confirmado_em',
-  'checkout_em','checkout_distancia_m','verificacao','valor_acordado_centavos'
-], 'turno tem exatamente as colunas da Modelagem');
+  'checkin_recebido_em','checkout_em','checkout_distancia_m','checkout_recebido_em',
+  'verificacao','valor_acordado_centavos'
+], 'turno tem exatamente as colunas da Modelagem, mais a hora em que o servidor recebeu');
 
 select columns_are('public', 'posicao', array[
   'id','vaga_id','estado','profissional_id','confirmado_em','falta','inicio_em','fim_em'
