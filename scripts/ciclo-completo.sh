@@ -493,8 +493,31 @@ printf '%s' "$corpo" | grep -qE '"(telefone|whatsapp_url)"' \
 ok "RN10: nenhum telefone sai por meus_turnos"
 
 echo
+echo "▸ A presença"
+#
+# O caminho feliz do check-in depende da janela de 60 minutos antes do início, e a vaga
+# deste ciclo começa em três dias — sobrepor o relógio do produto é coisa de pgTAP,
+# dentro da transação. O que esta camada prova é o **status** das recusas, que o teste
+# de banco não alcança.
+
+AGORA=$(python3 -c "
+import datetime as d; print(d.datetime.now(d.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+
+recusa "check-in fora da janela de 60 min" 422 fora_da_janela \
+  "{\"turno_id\":\"$TURNO\",\"distancia_m\":100,\"registrado_em\":\"$AGORA\"}" \
+  fazer_checkin
+
+recusa "check-out sem check-in" 409 checkin_pendente \
+  "{\"turno_id\":\"$TURNO\",\"distancia_m\":100,\"registrado_em\":\"$AGORA\"}" \
+  fazer_checkout
+
+recusa "check-in em turno que não existe" 404 nao_encontrado \
+  '{"turno_id":"00000000-0000-4000-8000-000000000000","distancia_m":10,"registrado_em":"2026-01-01T00:00:00Z"}' \
+  fazer_checkin
+
+echo
 echo "▸ O que ainda não existe"
-echo "  ⏭  contato_do_turno, check-in, check-out e avaliar entram com o resto do Sprint 1."
+echo "  ⏭  contato_do_turno, avaliar e os cancelamentos entram com o resto do Sprint 1."
 echo "     Cada uma acrescenta um passo aqui, com o status HTTP conferido."
 echo
-echo "Ciclo verificado até os turnos do profissional."
+echo "Ciclo verificado até as recusas do registro de presença."

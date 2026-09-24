@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.8
+  version: 0.2.10
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -68,6 +68,8 @@ info:
     | 404 | `nao_encontrado` | O recurso não existe ou não é visível para quem pede (inclui bloqueio, RF26) |
     | 409 | `posicao_ja_preenchida` | Alguém chegou antes (RN19). **Funcionamento normal no modo urgência** |
     | 409 | `vaga_encerrada` | A vaga fechou, foi cancelada ou já começou |
+    | 409 | `checkin_pendente` | Check-out ou confirmação de um turno que ainda não teve check-in. O código diz qual é o passo que falta |
+    | 409 | `checkin_ja_confirmado` | Confirmação de um check-in geolocalizado, que já nasceu verificado |
     | 409 | `candidatura_indisponivel` | A candidatura foi retirada, expirou ou já foi escolhida |
     | 409 | `avaliacao_ja_registrada` | Já existe avaliação deste autor para o turno, com outra resposta |
     | 409 | `conta_existente`, `documento_ja_cadastrado` | Cadastro repetido |
@@ -89,6 +91,48 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.10, de 24/09/2026.** O registro de presença foi implementado:
+    `fazer_checkin`, `fazer_checkout` e `confirmar_checkin_manual`.
+
+    Dois códigos novos no catálogo, os dois 409:
+
+    - **`checkin_pendente`** — check-out de um turno que nunca teve check-in, ou
+      confirmação de um check-in que não existe. O código diz **qual é o passo que
+      falta**, para a tela poder levar a pessoa até ele em vez de só recusar.
+    - **`checkin_ja_confirmado`** — confirmar um check-in geolocalizado, que já nasceu
+      verificado. Não há o que confirmar.
+
+    E três coisas que a implementação fixou:
+
+    - **Quem decide o tipo é o servidor**, a partir da distância: até 200 m
+      `geolocalizado`, acima disso ou sem distância `manual`. Deixar o app declarar o
+      tipo seria deixar o app declarar a própria presença.
+    - **A distância do check-in manual não é gravada.** Ela não prova nada, e guardá-la
+      sugeriria que prova. O que vale é a confirmação de quem estava lá.
+    - **`registrado_em` até 2 minutos no futuro é aceito** — é a folga do relógio do
+      aparelho, que adianta. Acima disso, `422 registro_no_futuro`. A janela vai de 60
+      minutos antes do início até o fim previsto; fora dela, `422 fora_da_janela`.
+
+    O profissional que tenta confirmar o próprio check-in manual recebe `403
+    sem_permissao`, e não 404: ele é parte do turno e sabe que ele existe — esconder não
+    protegeria nada e confundiria a tela.
+
+    ---
+
+    **Versão 0.2.9, de 24/09/2026.** `contato_do_turno` foi implementada, e o único 403
+    que ela devolve é o do prazo.
+
+    - **Quem não é nenhum dos dois lados do turno recebe `404 nao_encontrado`**, e não
+      `403 sem_permissao`. O 403 confirmaria que aquele turno existe a quem não deveria
+      saber. O mesmo 404 responde antes da confirmação — sem confirmação não há contrato
+      a executar, e portanto não há base legal — e quando há bloqueio entre as partes.
+    - **`403 contato_expirado` é o prazo virando resposta**, e vale para os dois lados.
+      O sétimo dia conta inteiro: a recusa começa depois de `fim_em + 7 dias`.
+    - O contato do profissional traz o **nome da pessoa**; o da casa, o **nome do
+      estabelecimento**. Deste lado há gente, do outro há marca.
+
+    ---
 
     **Versão 0.2.8, de 24/09/2026.** `meus_turnos` foi implementada, para os dois lados.
 
@@ -1385,7 +1429,12 @@ paths:
       summary: Contato da outra parte do turno
       description: |
         Só existe depois da confirmação e só até 7 dias depois do fim do turno (RN10). A base legal é
-        a execução do contrato (LGPD, art. 7º, V). Depois do prazo, `403 contato_expirado`.
+        a execução do contrato (LGPD, art. 7º, V). Depois do prazo, `403 contato_expirado`, para os
+        dois lados; o sétimo dia conta inteiro.
+
+        Todo o resto é `404 nao_encontrado`: antes da confirmação, para quem não é nenhum dos dois
+        lados, e quando há bloqueio entre as partes. Um `403` confirmaria que aquele turno existe a
+        quem não deveria saber.
       x-requisitos: [RF11, RN10]
       parameters:
         - name: turno_id
