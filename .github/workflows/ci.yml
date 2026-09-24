@@ -37,6 +37,11 @@ jobs:
         if: github.event_name == 'pull_request'
         run: ./scripts/migracoes-imutaveis.sh "origin/${{ github.base_ref }}"
 
+      # O pgTAP roda numa sessão só e não enxerga corrida. Duas conexões de verdade: o
+      # mesmo dono com dois cadastros no ar recebe o estabelecimento, e não 409.
+      - name: Corrida no cadastro do estabelecimento
+        run: ./scripts/corrida-cadastrar-estabelecimento.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
