@@ -255,11 +255,17 @@ on conflict do nothing;
 insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
                          valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
                          exige_material_proprio, responsavel_local, traje, participa_rateio,
-                         observacoes, modo, estado, publicado_em, chave_cliente)
+                         observacoes, modo, estado, publicado_em, chave_cliente, publicado_por)
 select x.id::uuid, x.estab::uuid, f.id, x.inicio, x.fim, x.local, x.ponto::extensions.geography,
        x.valor, x.posicoes, x.refeicao, x.transporte, x.material, x.responsavel, x.traje,
        x.rateio, x.obs, x.modo::public.modo_preenchimento, x.estado::public.estado_vaga,
-       x.publicado, x.chave::uuid
+       x.publicado, x.chave::uuid,
+       -- Quem publicou é o administrador do estabelecimento (RF21). A coluna nasceu com
+       -- `publicar_vaga`, e sem ela o cenário teria vaga sem autor — que é justamente o
+       -- estado que a coluna existe para impedir.
+       (select m.usuario_id from public.membro_estabelecimento m
+         where m.estabelecimento_id = x.estab::uuid and m.papel = 'administrador'
+         limit 1)
   from _quando q,
   lateral (values
     ('d0000000-0000-4000-8000-000000000001','c0000000-0000-4000-8000-000000000001','garçom',

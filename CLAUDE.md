@@ -211,11 +211,32 @@ o hook do vault só registra commits do próprio repositório.
 
 No fim de cada dia de trabalho, `scripts/bancada-sync.sh`:
 
-1. Atualiza a nota de tarefa em `04 - Tarefas/`.
-2. Registra os fatos por `scripts/registrar-fato.sh` — a única porta de escrita em
-   `05 - Registros/`, protegida por hook.
-3. Escreve a nota diária em `02 - Atualizações Diárias/`, com as seções fixas e **cada
-   bullet saindo de um fato**.
+```bash
+./scripts/bancada-sync.sh                     # os commits de hoje
+./scripts/bancada-sync.sh 2026-09-22          # os de outro dia
+./scripts/bancada-sync.sh --seco              # mostra o que faria
+./scripts/bancada-sync.sh --fato <tipo> <descrição…>
+```
+
+1. Leva os commits do dia para `05 - Registros/`, pela forma `externo` do
+   `registrar-fato.sh` — a única porta de escrita do log, protegida por hook —, com a
+   data, a hora e o autor **do commit**. Um dia de trabalho recuperado depois não pode
+   aterrissar no dia em que a ponte rodou.
+2. `--fato` leva o que foi medido e não é commit: um PR aberto, um portão que reprovou,
+   um número que vai importar depois. Esse carimba o agora, que é quando de fato
+   aconteceu.
+3. Cria a nota diária em `02 - Atualizações Diárias/` a partir do modelo, com as seções
+   fixas, e lista os fatos do dia na saída.
+
+**Ela não escreve a narrativa.** A regra de ouro do vault é que fato e narrativa são
+camadas separadas, e que nenhum bullet pode existir sem um fato por trás. Um script que
+virasse assunto de commit em prosa estaria inventando a camada de cima a partir da de
+baixo — que é exatamente o que a regra proíbe. A narrativa é escrita por quem trabalhou,
+a partir da lista que a ponte imprime.
+
+O vault fica em `../doc-harness`; `BANCADA_DIR` no `.env` sobrepõe. Se os hooks de lá
+não estiverem instalados, nada é registrado e ninguém avisa — aconteceu entre 10/09 e
+23/09. O conserto é `./scripts/bootstrap.sh`, dentro do vault.
 
 O `push` do vault exige Touch ID. É deliberado: nada sai de lá sem alguém presente.
 Nunca use `SKIP_BIOMETRICS=1`.
