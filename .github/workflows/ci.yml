@@ -20,6 +20,21 @@ jobs:
         with:
           version: latest
 
+      # As imagens do Supabase vêm do ghcr.io, e um `docker pull` anônimo divide a cota
+      # com o GitHub Actions inteiro. Em 23/09 isso derrubou quatro execuções seguidas
+      # com `toomanyrequests` antes de qualquer teste rodar — CI vermelha por motivo que
+      # ninguém deste repositório controla, que é o tipo de vermelho que o time aprende
+      # a ignorar.
+      #
+      # O `GITHUB_TOKEN` do próprio job dá uma cota autenticada, e não precisa de
+      # segredo nenhum configurado.
+      - name: Autenticar no ghcr.io, para o pull não cair na cota anônima
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # Sobe Postgres, Auth e PostgREST. As migrações e o seed entram no start.
       - name: Subir o ambiente
         run: supabase start --exclude studio,realtime,storage-api,imgproxy,logflare,vector
@@ -60,6 +75,29 @@ jobs:
       - name: Diagnóstico ao falhar
         if: failure()
         run: supabase status && docker ps -a
+
+  # Job próprio, e não um passo do job do banco, por dois motivos.
+  #
+  # O primeiro é que este portão é git e `sed`: não precisa de Postgres, e amarrá-lo ao
+  # `supabase start` faz um portão de dois segundos esperar três minutos de `docker
+  # pull`. O segundo é o que aconteceu ao medir: o `ghcr.io` devolveu `toomanyrequests`,
+  # o job caiu em "Subir o ambiente" e o portão **não chegou a rodar** — a CI ficou
+  # vermelha pelo motivo errado, que é indistinguível de vermelha pelo motivo certo para
+  # quem só olha o ✗.
+  #
+  # Portão barato fica fora do caminho do portão caro.
+  contrato-acompanha:
+    name: O contrato acompanhou o código
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # O script precisa da base para comparar, e o checkout de PR traz só o
+          # commit de merge.
+          fetch-depth: 0
+
+      - run: ./scripts/contrato-acompanha-o-codigo.sh "origin/${{ github.base_ref }}"
 
   contrato:
     name: Contrato em dia com o Frila
