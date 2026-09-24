@@ -472,8 +472,29 @@ recusa "candidatar em vaga que não existe" 404 nao_encontrado \
   '{"vaga_id":"00000000-0000-4000-8000-000000000000"}' candidatar
 
 echo
+echo "▸ Os meus turnos"
+#
+# A leitura que o profissional abre no dia do turno. É GET no contrato, e é aqui que
+# isso se prova — o pgTAP chama a função e não sabe por qual verbo ela é exposta.
+
+resp=$(get_rpc meus_turnos)
+http=${resp%% *}; corpo=${resp#* }
+[ "$http" = "200" ] || falhou "GET meus_turnos devolveu $http: $corpo"
+achou=$(printf '%s' "$corpo" | python3 -c "
+import json,sys
+print(sum(1 for t in json.load(sys.stdin) if t['id'] == '$TURNO'))" 2>/dev/null || true)
+[ "$achou" = "1" ] || falhou "o turno confirmado não apareceu em meus_turnos: $corpo"
+ok "GET meus_turnos → 200, com o turno confirmado"
+
+# RN10: o telefone tem porta própria. Uma lista que já o trouxesse tornaria o prazo
+# de 7 dias decorativo.
+printf '%s' "$corpo" | grep -qE '"(telefone|whatsapp_url)"' \
+  && falhou "meus_turnos traz contato, e não deveria: $corpo"
+ok "RN10: nenhum telefone sai por meus_turnos"
+
+echo
 echo "▸ O que ainda não existe"
-echo "  ⏭  check-in, check-out e avaliar entram com o resto do Sprint 1."
+echo "  ⏭  contato_do_turno, check-in, check-out e avaliar entram com o resto do Sprint 1."
 echo "     Cada uma acrescenta um passo aqui, com o status HTTP conferido."
 echo
-echo "Ciclo verificado até a candidatura confirmada."
+echo "Ciclo verificado até os turnos do profissional."
