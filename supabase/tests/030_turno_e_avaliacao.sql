@@ -31,12 +31,24 @@ begin
     returning id into v_prof;
   end if;
 
+  -- RF21: quem publica é o administrador da casa. A coluna nasceu com `publicar_vaga`,
+  -- e o cenário ganha o dono para poder preenchê-la.
+  insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
+  values ('bbbbbbbb-0000-0000-0000-0000000000c1','contratante','Zé',
+          '+5561999990011','ze@t.test','1980-01-01', '2026-09-22', now())
+  on conflict (id) do nothing;
+  insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
+  values ('bbbbbbbb-0000-0000-0000-0000000000c1', v_estab, 'administrador')
+  on conflict do nothing;
+
   insert into public.vaga (estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
                            valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
-                           exige_material_proprio, responsavel_local, modo, chave_cliente)
+                           exige_material_proprio, responsavel_local, modo, chave_cliente,
+                           publicado_por)
   values (v_estab, v_funcao, p_inicio, p_fim, 'CLN 201',
           'POINT(-47.8822 -15.7942)'::extensions.geography,
-          12000, 1, true, false, false, 'Maître Zé', 'urgencia', gen_random_uuid())
+          12000, 1, true, false, false, 'Maître Zé', 'urgencia', gen_random_uuid(),
+          'bbbbbbbb-0000-0000-0000-0000000000c1')
   returning id into v_vaga;
 
   insert into public.posicao (vaga_id, estado, profissional_id, confirmado_em, inicio_em, fim_em)

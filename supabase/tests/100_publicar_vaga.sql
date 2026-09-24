@@ -16,7 +16,7 @@
 -- contas, com ids que começam em `f0000000`, e conta apenas o que ele mesmo criou.
 
 begin;
-select plan(31);
+select plan(37);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -77,14 +77,6 @@ create temp table cat as select id from public.funcao where nome = 'garçom';
 create temp table quando as
   select (privado.agora() + interval '3 days') as inicio,
          (privado.agora() + interval '3 days 6 hours') as fim;
-
-create function pg_temp.publicar(conta uuid, corpo text) returns jsonb
-language plpgsql as $$
-declare r jsonb;
-begin
-  r := pg_temp.como(conta, corpo);
-  return r;
-end $$;
 
 -- ── Sem sessão não há publicação ───────────────────────────────────────────────
 select throws_ok(

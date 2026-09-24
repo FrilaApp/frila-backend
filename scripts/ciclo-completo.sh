@@ -248,6 +248,80 @@ code=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.s
 ok "GET painel de estabelecimento alheio → 403 sem_permissao"
 
 echo
+echo "▸ A vaga"
+#
+# A sessão corrente é a da contratante que acabou de cadastrar o bar, que é quem pode
+# publicar por ele. Cada recusa daqui existe no pgTAP com o código; o que só se vê
+# nesta camada é o **status**, e é por isso que ela está aqui também.
+
+FUNCAO_VAGA=$(curl -s "$URL/rest/v1/funcao?select=id&nome=eq.gar%C3%A7om" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d[0]['id'] if d else '')")
+[ -n "$FUNCAO_VAGA" ] || falhou "não consegui ler o catálogo de funções por HTTP"
+
+# Datas em UTC, longe o bastante para não esbarrar no fuso de quem roda o script.
+INICIO=$(python3 -c "
+import datetime as d; print((d.datetime.now(d.timezone.utc)+d.timedelta(days=3)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+FIM=$(python3 -c "
+import datetime as d; print((d.datetime.now(d.timezone.utc)+d.timedelta(days=3, hours=6)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+CHAVE=$(python3 -c "import uuid; print(uuid.uuid4())")
+
+vaga_corpo() { # vaga_corpo <chave> [<campo extra em json, sem as chaves externas>]
+  printf '{"estabelecimento_id":"%s","funcao_id":"%s","inicio_em":"%s","fim_em":"%s",
+           "local":"CLN 406, Asa Norte","ponto":{"latitude":-15.7890,"longitude":-47.8850},
+           "valor_centavos":18000,"posicoes":3,"inclui_refeicao":true,
+           "inclui_transporte":true,"exige_material_proprio":false,
+           "responsavel_local":"Seu Zé","modo":"urgencia","chave":"%s"%s}' \
+    "$ESTAB" "$FUNCAO_VAGA" "$INICIO" "$FIM" "$1" "${2:-}"
+}
+
+vaga=$(curl -s -X POST "$URL/rest/v1/rpc/publicar_vaga" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "$(vaga_corpo "$CHAVE")")
+VAGA=$(printf '%s' "$vaga" | python3 -c "import json,sys; print(json.load(sys.stdin).get('vaga_id',''))" 2>/dev/null || true)
+n_pos=$(printf '%s' "$vaga" | python3 -c "
+import json,sys; print(len(json.load(sys.stdin).get('posicoes') or []))" 2>/dev/null || true)
+[ -n "$VAGA" ] && [ "$n_pos" = "3" ] \
+  || falhou "publicar_vaga não devolveu a vaga com três posições: $vaga"
+ok "publicar_vaga → vaga publicada, três posições"
+
+# RF04. A rede cai depois do commit e o app reenvia: a mesma chave não pode publicar
+# duas vagas — nem criar mais três posições.
+de_novo=$(curl -s -X POST "$URL/rest/v1/rpc/publicar_vaga" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "$(vaga_corpo "$CHAVE")" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin).get('vaga_id',''))" 2>/dev/null || true)
+[ "$de_novo" = "$VAGA" ] || falhou "reenviar com a mesma chave devolveu outra vaga ($de_novo)"
+ok "RF04: reenviar com a mesma chave devolve a mesma vaga"
+
+recusa "RN02: responsável em branco" 422 campo_obrigatorio \
+  "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"responsavel_local":"  "')" \
+  publicar_vaga
+
+recusa "RN18: valor zero" 422 campo_invalido \
+  "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"valor_centavos":0')" \
+  publicar_vaga
+
+recusa "v1.0: modo seleção não existe" 422 campo_invalido \
+  "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"modo":"selecao"')" \
+  publicar_vaga
+
+recusa "diretriz 1.2: termo bloqueado em observações" 422 campo_invalido \
+  "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"observacoes":"Nada de caralho aqui"')" \
+  publicar_vaga
+
+# O fim antes do início: a recusa sai da RPC com o código do contrato, e não da
+# constraint do banco como 500.
+recusa "fim antes do início" 422 horario_invalido \
+  "$(printf '{"estabelecimento_id":"%s","funcao_id":"%s","inicio_em":"%s","fim_em":"%s",
+     "local":"CLN 406","ponto":{"latitude":-15.789,"longitude":-47.885},
+     "valor_centavos":18000,"posicoes":1,"inclui_refeicao":true,"inclui_transporte":true,
+     "exige_material_proprio":false,"responsavel_local":"Seu Zé","modo":"urgencia",
+     "chave":"%s"}' "$ESTAB" "$FUNCAO_VAGA" "$FIM" "$INICIO" \
+     "$(python3 -c 'import uuid; print(uuid.uuid4())')")" \
+  publicar_vaga
+
+echo
 echo "▸ O perfil do profissional"
 #
 # A sessão corrente ($TOKEN) é a segunda, que ainda não tem conta. Volta-se para a
@@ -302,7 +376,7 @@ recusa "atualizar sem nenhum campo" 422 campo_obrigatorio \
 
 echo
 echo "▸ O que ainda não existe"
-echo "  ⏭  publicar_vaga, candidatar, check-in e avaliar entram com o resto do Sprint 1."
+echo "  ⏭  candidatar, check-in e avaliar entram com o resto do Sprint 1."
 echo "     Cada uma acrescenta um passo aqui, com o status HTTP conferido."
 echo
-echo "Ciclo verificado até o estabelecimento, o painel e o perfil do profissional."
+echo "Ciclo verificado até a publicação da vaga."

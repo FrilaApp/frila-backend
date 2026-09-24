@@ -54,11 +54,14 @@ create function pg_temp.vaga(estab uuid, estado public.estado_vaga) returns uuid
 language sql as $$
   insert into public.vaga (estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
                            valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
-                           exige_material_proprio, responsavel_local, modo, estado, chave_cliente)
+                           exige_material_proprio, responsavel_local, modo, estado, chave_cliente,
+                           publicado_por)
   select estab, (select id from public.funcao where nome = 'garçom'),
          now() + interval '4 h', now() + interval '12 h', 'CLN 201',
          'POINT(-47.8822 -15.7942)'::extensions.geography,
-         12000, 1, true, false, false, 'Maître Zé', 'urgencia', estado, gen_random_uuid()
+         12000, 1, true, false, false, 'Maître Zé', 'urgencia', estado, gen_random_uuid(),
+         (select m.usuario_id from public.membro_estabelecimento m
+           where m.estabelecimento_id = estab and m.papel = 'administrador' limit 1)
   returning id;
 $$;
 
