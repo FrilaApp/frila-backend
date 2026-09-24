@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.5
+  version: 0.2.6
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -89,6 +89,36 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.6, de 24/09/2026.** `vagas_abertas` e `detalhe_vaga` foram
+    implementadas. As duas são leituras, e o que a implementação acrescentou aqui é
+    sobretudo **o que elas recusam** e **o que elas escondem**.
+
+    - **As duas são a tela de quem procura turno**, e recusam conta de contratante com
+      `422 perfil_incompativel`. Antes isso não estava escrito, e um cliente que
+      chamasse com a conta errada receberia uma lista vazia — que a tela leria como
+      "não há vagas", e não como "esta tela não é sua".
+    - **`limite` fora de 1..100 e `deslocamento` negativo** são `422 campo_invalido` com
+      o nome do parâmetro em `details`, e não um truncamento silencioso.
+    - **Sem coordenada e sem ponto base**, `vagas_abertas` recusa com
+      `422 campo_obrigatorio` e `details: latitude`. Sem ponto de referência não há
+      ordem, e ordenar por um ponto inventado devolveria uma lista plausível e errada.
+    - **`detalhe_vaga` responde `404 nao_encontrado`** para vaga que o profissional não
+      deveria alcançar — bloqueio entre as partes (RF26) ou conta de demonstração — e
+      não `403`. Um 403 confirmaria que aquela vaga existe, e quem bloqueou alguém não
+      deve receber prova de que a outra parte continua publicando.
+    - **Conta de demonstração e conta real não se enxergam** (diretrizes 2.1 e 4.2): a
+      lista e o detalhe de uma população nunca trazem a vaga da outra.
+    - **`PerfilPublico` de estabelecimento** traz `taxa_comparecimento` nula e os dois
+      contadores de turno em zero. A taxa é do profissional — é ele que comparece ou
+      falta —, e zero aqui não é "nunca trabalhou": é "este campo não se aplica a esta
+      ponta".
+
+    Uma correção, e não uma adição: `PerfilPublico` de **profissional** passou a trazer
+    `turnos_realizados`, que o schema `Reputacao` exige desde a 0.2.1 e a implementação
+    não devolvia. Um cliente gerado a partir do contrato quebraria ao desserializar.
+
+    ---
 
     **Versão 0.2.5, de 24/09/2026.** `publicar_vaga` foi implementada, e o que a
     implementação descobriu está escrito aqui.
@@ -971,6 +1001,13 @@ paths:
         profissional, se nenhum for enviado). A distância aqui **ordena**, não filtra: o limite de
         15 km vale só para a notificação (B07). Vagas de estabelecimentos com bloqueio entre as partes
         não aparecem (RF26). A ordem não pode ser comprada (RN06).
+
+        É a tela de quem procura turno: conta de contratante recebe `422 perfil_incompativel`.
+        `limite` fora de 1..100 e `deslocamento` negativo são `422 campo_invalido` com o nome do
+        parâmetro em `details`. Sem coordenada e sem ponto base no perfil, `422 campo_obrigatorio`
+        com `details: latitude` — sem ponto de referência não há ordem.
+
+        Conta de demonstração e conta real não se enxergam (diretrizes 2.1 e 4.2).
       x-requisitos: [RF07, RN05, RN06, RF26, UC03]
       parameters:
         - name: latitude
@@ -1032,7 +1069,14 @@ paths:
       tags: [Vagas]
       operationId: detalheVaga
       summary: Detalhe de uma vaga
-      description: Tudo o que o profissional vê antes de se candidatar (UC03, passo 2).
+      description: |
+        Tudo o que o profissional vê antes de se candidatar (UC03, passo 2). Sem documento do
+        estabelecimento e sem contato de ninguém: o telefone sai por `contato_do_turno`, depois da
+        confirmação e dentro do prazo (RN10).
+
+        Conta de contratante recebe `422 perfil_incompativel`. Vaga que o profissional não deveria
+        alcançar — bloqueio entre as partes (RF26) ou conta de demonstração — responde
+        `404 nao_encontrado`, e não `403`: o 403 confirmaria que ela existe.
       x-requisitos: [RF04, RF16, RN02, UC03]
       parameters:
         - name: vaga_id

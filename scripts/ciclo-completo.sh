@@ -375,8 +375,71 @@ recusa "atualizar sem nenhum campo" 422 campo_obrigatorio \
   '{}' atualizar_perfil_profissional
 
 echo
+echo "▸ A lista de vagas"
+#
+# A sessão é a do profissional, que acabou de ganhar perfil e ponto base. A vaga foi
+# publicada pela contratante da segunda sessão: é o primeiro ponto do ciclo em que um
+# lado enxerga o trabalho do outro.
+#
+# As duas operações são GET no contrato, e é isso que este passo prova — o pgTAP chama
+# a função e não sabe por qual verbo o PostgREST a expõe.
+
+get_rpc() { # get_rpc <rota> [<query>] → "<http> <corpo>"
+  local rota="$1" query="${2:-}" tmp http
+  tmp=$(mktemp)
+  http=$(curl -s -o "$tmp" -w '%{http_code}' -G "$URL/rest/v1/rpc/$rota" \
+    -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" ${query:+$query})
+  printf '%s %s' "$http" "$(cat "$tmp")"
+  rm -f "$tmp"
+}
+
+resp=$(get_rpc vagas_abertas)
+http=${resp%% *}; corpo=${resp#* }
+[ "$http" = "200" ] || falhou "GET vagas_abertas devolveu $http: $corpo"
+tem=$(printf '%s' "$corpo" | python3 -c "
+import json,sys
+print(sum(1 for v in json.load(sys.stdin) if v['id'] == '$VAGA'))" 2>/dev/null || true)
+[ "$tem" = "1" ] || falhou "a vaga publicada não apareceu na lista: $corpo"
+ok "GET vagas_abertas → 200, e a vaga publicada está na lista"
+
+# RN06. A tela não pode ser ordenada por reputação nem por pagamento, e a lista traz a
+# distância justamente para que a ordem seja verificável de fora.
+ordenada=$(printf '%s' "$corpo" | python3 -c "
+import json,sys
+d=[v['distancia_km'] for v in json.load(sys.stdin)]
+print('sim' if d == sorted(d) else 'nao')")
+[ "$ordenada" = "sim" ] || falhou "a lista não veio ordenada por distância: $corpo"
+ok "RN06: a lista vem ordenada por distância"
+
+resp=$(get_rpc detalhe_vaga "--data-urlencode vaga_id=$VAGA")
+http=${resp%% *}; corpo=${resp#* }
+[ "$http" = "200" ] || falhou "GET detalhe_vaga devolveu $http: $corpo"
+id=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || true)
+[ "$id" = "$VAGA" ] || falhou "o detalhe não é da vaga pedida: $corpo"
+ok "GET detalhe_vaga → 200, da vaga pedida"
+
+# RN10: o contato sai por `contato_do_turno`, depois da confirmação. Nunca daqui.
+printf '%s' "$corpo" | grep -qE '"(documento|telefone|whatsapp)"' \
+  && falhou "o detalhe traz documento ou contato: $corpo"
+ok "RN10: nem documento nem contato no detalhe"
+
+resp=$(get_rpc detalhe_vaga "--data-urlencode vaga_id=00000000-0000-4000-8000-000000000000")
+http=${resp%% *}; corpo=${resp#* }
+code=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || true)
+[ "$http" = "404" ] && [ "$code" = "nao_encontrado" ] \
+  || falhou "detalhe de vaga inexistente: HTTP $http code '$code', esperado 404 nao_encontrado"
+ok "GET detalhe_vaga de vaga que não existe → 404 nao_encontrado"
+
+resp=$(get_rpc vagas_abertas "--data-urlencode limite=101")
+http=${resp%% *}; corpo=${resp#* }
+code=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || true)
+[ "$http" = "422" ] && [ "$code" = "campo_invalido" ] \
+  || falhou "limite acima do teto: HTTP $http code '$code', esperado 422 campo_invalido"
+ok "limite acima do teto do contrato → 422 campo_invalido"
+
+echo
 echo "▸ O que ainda não existe"
 echo "  ⏭  candidatar, check-in e avaliar entram com o resto do Sprint 1."
 echo "     Cada uma acrescenta um passo aqui, com o status HTTP conferido."
 echo
-echo "Ciclo verificado até a publicação da vaga."
+echo "Ciclo verificado até a lista de vagas e o detalhe."
