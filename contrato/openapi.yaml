@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.12
+  version: 0.2.13
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -92,6 +92,35 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.13, de 25/09/2026.** `republicar_vaga` foi implementada, e com ela o
+    Sprint 1 fecha. A operação já estava descrita aqui desde a 0.2.1; o que muda é o que
+    a implementação precisou decidir.
+
+    - **Ela delega a `publicar_vaga`, e por isso "mesmas recusas" virou literal.** Não é
+      uma lista parecida mantida em dois lugares: é a mesma função. Recusa nova em
+      `publicar_vaga` passa a valer em `republicar_vaga` no mesmo commit, e o app pode
+      tratar as duas com uma tela de erro só.
+    - **Vaga de origem que não existe é `404 nao_encontrado`; vaga de outra casa é `403
+      sem_permissao`.** A diferença é deliberada e é o oposto do critério de
+      `detalhe_vaga`: quem republica veio da própria lista de vagas, então a existência já
+      não é segredo para ele — e um `404` mandaria a tela dizer "essa vaga sumiu" quando o
+      problema é outro.
+    - **Conta sem perfil de contratante recebe `422 perfil_incompativel` antes de
+      qualquer leitura**, para que o código de erro não conte a um profissional se aquela
+      vaga existe.
+    - **`vaga_id` ausente é `422 campo_obrigatorio` com `details: vaga_id`.**
+    - **`publicado_por` da vaga nova é quem republicou**, e não quem publicou a de origem
+      (RF04). Um estabelecimento tem vários membros, e a pergunta "quem publicou" é sobre
+      esta publicação.
+    - **A data nova passa pela mesma peneira da original:** fim antes do início e início
+      no passado são `422 horario_invalido`, pelo relógio do produto.
+
+    Uma ausência registrada: **`evento_id` não é copiado**, porque `publicar_vaga` não o
+    recebe e nenhuma vaga publicada pelo app tem evento hoje. Quando o evento existir, ele
+    entra nas duas de uma vez.
+
+    ---
 
     **Versão 0.2.12, de 25/09/2026.** `avaliar` e `perfil_publico` foram implementadas, e
     com elas o ciclo do Sprint 1 fecha inteiro. As duas já estavam descritas aqui; o que
@@ -1055,7 +1084,19 @@ paths:
       tags: [Vagas]
       operationId: republicarVaga
       summary: Republicar uma vaga anterior com nova data e horário
-      description: Copia todos os campos da vaga de origem e muda só início e fim (RF05). Mesmas recusas de `publicar_vaga`.
+      description: |
+        Copia todos os campos da vaga de origem e muda só início e fim (RF05). Mesmas recusas de
+        `publicar_vaga` — literalmente as mesmas: a implementação delega a ela, em vez de manter uma
+        segunda lista de validações que começaria igual e divergiria depois.
+
+        Vaga de origem que não existe é `404 nao_encontrado`; vaga de outra casa é `403 sem_permissao`.
+        A diferença é o oposto do critério de `detalhe_vaga`, e de propósito: quem republica veio da
+        própria lista de vagas, então a existência já não é segredo para ele. Conta sem perfil de
+        contratante recebe `422 perfil_incompativel` antes de qualquer leitura, para o código de erro
+        não contar a um profissional se aquela vaga existe.
+
+        `publicado_por` da vaga nova é **quem republicou** (RF04), e não quem publicou a de origem.
+        `evento_id` não é copiado: `publicar_vaga` não o recebe.
       x-requisitos: [RF05, UC01]
       requestBody:
         required: true
