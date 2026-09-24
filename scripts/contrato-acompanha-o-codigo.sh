@@ -73,10 +73,10 @@ if git diff --quiet "$BASE"...HEAD -- "$ESPELHO"; then
   echo "  muda aqui e não muda lá é um cliente gerando o modelo antigo até a chamada"
   echo "  falhar no aparelho de alguém."
   echo
-  echo "  O contrato nasce em FrilaApp/frila-docs · Documentos/API/openapi.yaml, num PR"
+  echo "  O contrato nasce em FrilaApp/frila-docs · api/openapi.yaml, num PR"
   echo "  próprio. Depois traga o arquivo e regrave a soma:"
   echo
-  echo "    gh api repos/FrilaApp/frila-docs/contents/Documentos/API/openapi.yaml \\"
+  echo "    gh api repos/FrilaApp/frila-docs/contents/api/openapi.yaml \\"
   echo "      -H 'Accept: application/vnd.github.raw' > $ESPELHO"
   echo "    shasum -a 256 $ESPELHO | awk '{print \$1}' > $SOMA"
   falta=1

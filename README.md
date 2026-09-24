@@ -27,6 +27,28 @@ supabase test db          # pgTAP
 O `supabase start` imprime a URL, a chave anônima e o endereço do **Inbucket**, onde o
 código de entrada por e-mail chega sem envio real. Precisa do Docker aberto.
 
+### Sem Docker Desktop: Colima
+
+Funciona com o [Colima](https://github.com/abiosoft/colima) no lugar do Docker Desktop
+(medido com Colima 0.10.3 e Docker 29, em Apple Silicon):
+
+```bash
+brew install colima docker
+colima start --cpu 4 --memory 8 --vm-type vz --vz-rosetta
+supabase start -x vector,logflare
+```
+
+- **`-x vector,logflare` é obrigatório.** O container `vector` monta o socket do Docker,
+  e no Colima isso falha com `error while creating mount source path
+  '.../.colima/default/docker.sock': operation not supported`. O pgTAP e o ciclo não usam
+  nenhum dos dois. A CI já sobe sem eles.
+- **O repositório precisa estar dentro do `$HOME`.** O Colima só compartilha o home com a
+  VM. Fora dele, o `supabase test db` responde `Files=0, Tests=0, Result: NOTESTS`, sem
+  erro, porque o container do `pg_prove` enxerga a pasta de testes vazia.
+- O Colima não volta sozinho depois de reiniciar o Mac: `colima start` de novo, ou
+  `brew services start colima`.
+- O aviso `docker-credential-desktop not found` é inofensivo.
+
 | Comando | O que faz |
 |---|---|
 | `supabase start` / `stop` | Ambiente local |
@@ -60,6 +82,24 @@ scripts/                bancada-sync, ciclo-completo
 | `frila-prod` | Só a partir do Sprint 3 |
 
 A chave de serviço fica fora do app e fora do git: só o agendador e a CI a usam.
+
+### Limites do plano gratuito do Supabase
+
+Os dois projetos remotos rodam no plano gratuito, e o plano cobra o preço assim:
+
+- **Dois projetos ativos por organização.** `frila-dev` e `frila-prod` ocupam os dois.
+  Um terceiro projeto, mesmo de teste, obriga a pausar um deles.
+- **Pausa depois de 1 semana sem uso.** Um projeto parado volta pelo painel, mas enquanto
+  isso o app que aponta para ele não funciona. Vale para o `frila-dev` em semana sem
+  TestFlight.
+- **Nenhum backup automático.** O backup do `frila-prod` é nosso (cartão `S3 · Infra ·
+  Backup lógico diário do frila-prod e ensaio de restauração`).
+- **Cotas mensais somadas na organização.** Invocações de Edge Function e tráfego de
+  saída são contados para os dois projetos juntos. Um laço no despacho do `frila-dev`
+  consome a cota do `frila-prod`.
+
+Os números exatos de cada cota mudam; a fonte é a
+[página de preços do Supabase](https://supabase.com/pricing).
 
 ## Onde está o resto
 

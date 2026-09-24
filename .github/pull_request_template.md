@@ -32,7 +32,7 @@ conserte no código em silêncio.
 >
 > Mudança **incompatível** não sobe versão: vira função nova (`publicar_vaga_v2`), e a
 > antiga fica no ar enquanto houver app antigo na loja. A regra inteira está em
-> `Documentos/API/README.md`, no repositório do Frila.
+> `api/README.md`, no repositório do Frila.
 
 ## Portões
 

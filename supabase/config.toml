@@ -62,7 +62,11 @@ schema_paths = []
 enabled = true
 # Specifies an ordered list of seed files to load during db reset.
 # Supports glob patterns relative to supabase directory: "./seeds/*.sql"
-sql_paths = ["./seed.sql"]
+# Dois arquivos, e a separação é deliberada. `seed.sql` é o catálogo de funções, que é
+# dado de produto e precisa existir em todo ambiente — `scripts/aplicar-remoto.sh` o
+# aplica no frila-dev. `cenarios.sql` é dado de teste, e não é aplicado por script
+# nenhum contra um ambiente remoto: chega aqui só pelo `db reset`, no local e na CI.
+sql_paths = ["./seed.sql", "./cenarios.sql"]
 
 [db.network_restrictions]
 # Enable management of network restrictions.

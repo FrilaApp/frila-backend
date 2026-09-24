@@ -20,7 +20,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 espelho=contrato/openapi.yaml
 soma=contrato/openapi.yaml.sha256
-origem="https://api.github.com/repos/FrilaApp/frila-docs/contents/Documentos/API/openapi.yaml?ref=main"
+origem="https://api.github.com/repos/FrilaApp/frila-docs/contents/api/openapi.yaml?ref=main"
 
 versao=$(sed -n 's/^  version: *//p' "$espelho" | head -1)
 
@@ -78,7 +78,7 @@ echo "O espelho divergiu do contrato em FrilaApp/frila-docs:"
 diff -u "$espelho" "$tmp" | head -60
 echo
 echo "Se a mudança é intencional, traga o arquivo e regrave a soma:"
-echo "  gh api repos/FrilaApp/frila-docs/contents/Documentos/API/openapi.yaml \\"
+echo "  gh api repos/FrilaApp/frila-docs/contents/api/openapi.yaml \\"
 echo "    -H 'Accept: application/vnd.github.raw' > $espelho"
 echo "  shasum -a 256 $espelho | awk '{print \$1}' > $soma"
 echo "Se o contrato é que precisa mudar, mude lá primeiro, num PR próprio."

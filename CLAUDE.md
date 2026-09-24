@@ -46,7 +46,7 @@ discordar do documento, **o documento ganha** — ou o documento muda primeiro.
 
 | O quê | Onde |
 |---|---|
-| **Contrato da API** | `contrato/openapi.yaml` — espelho de `FrilaApp/frila-docs · Documentos/API/openapi.yaml`. Nome de campo, código de erro e status HTTP saem daqui |
+| **Contrato da API** | `contrato/openapi.yaml` — espelho de `FrilaApp/frila-docs · api/openapi.yaml`. Nome de campo, código de erro e status HTTP saem daqui |
 | **Modelagem de Banco** | vault `FrilaApp/Bancada · doc-harness/07 - Arquitetura/Modelagem de Banco de Dados.md` — o DDL, as 19 políticas de RLS, a definição canônica da taxa de comparecimento |
 | **Decisões técnicas** | mesmo vault, `Pendências Técnicas Para Codar.md` — D1 a D13 |
 | **Escopo e sprints** | `FrilaApp/frila-docs · Documentos/MD/05-ESCOPO-DO-MVP.md` |
