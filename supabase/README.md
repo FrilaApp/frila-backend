@@ -21,12 +21,47 @@ supabase test db    # 232 asserções pgTAP
 
 | Arquivo | Conteúdo | Vai para o remoto? |
 |---|---|---|
-| `seed.sql` | O catálogo de 32 funções | **Sim.** `scripts/aplicar-remoto.sh` o aplica |
+| `seed.sql` | O catálogo de 32 funções, a lista de termos bloqueados e **as duas contas de revisão da App Store** | **Sim.** `scripts/aplicar-remoto.sh` o aplica |
 | `cenarios.sql` | Contas, casas, vagas e turnos de teste | **Não.** Só `db reset`, no local e na CI |
 
 O catálogo de funções é dado de produto: sem ele não há o que escolher na publicação, e
 ele precisa existir em todo ambiente. Dado de teste não — um estabelecimento fantasma
 no `frila-dev` é dívida que alguém descobre no pior momento.
+
+### A exceção: as contas de revisão em produção
+
+As duas contas de demonstração do cartão `7gpPBgTH` são a **única** exceção à frase
+acima, e elas vão para o `frila-prod` de propósito. A App Store exige que o revisor use o
+app inteiro (diretriz 2.1), o Frila entra por código no e-mail e o revisor não tem a
+caixa de entrada de ninguém. São duas porque RN25 dá um perfil por conta e a revisão
+precisa dos dois lados.
+
+O que o `seed.sql` semeia para elas: a conta contratante, a conta profissional, uma casa,
+uma vaga aberta e um turno confirmado com o contato já liberado — sem isso o revisor veria
+uma lista vazia, que é a diretriz 4.2.
+
+Elas não encostam na população real. `usuario.demonstracao` separa as duas em
+`vagas_abertas`, `detalhe_vaga`, `candidatar` e, desde 25/09, **na própria política de
+leitura de `vaga`** — antes disso quem lesse `rest/v1/vaga` direto passava ao lado do
+filtro, e isso foi medido, não deduzido.
+
+A entrada é a Edge Function `entrar-demonstracao`, que aceita só os endereços declarados
+com um código fixo em segredo. Os segredos não moram no repositório:
+
+```bash
+cp supabase/functions/.env.exemplo supabase/functions/.env.local   # local
+supabase functions serve --env-file supabase/functions/.env.local
+./scripts/demonstracao.sh                                          # o portão
+
+supabase secrets set DEMONSTRACAO_EMAILS=… DEMONSTRACAO_CODIGO=…   # frila-dev e prod
+supabase functions deploy entrar-demonstracao
+```
+
+**`cenarios.sql` deixa as colunas de token do GoTrue em NULL**, e com NULL o
+`POST /auth/v1/admin/generate_link` responde `500 Database error finding user` — o GoTrue
+lê essas colunas em campos que não aceitam nulo. As contas de revisão no `seed.sql` vão
+com string vazia por causa disso. As do `cenarios.sql` continuam como estão: elas entram
+pelo código do e-mail, que não passa por esse caminho.
 
 Os dois entram no `db reset` por `config.toml → db.seed.sql_paths`. Só o primeiro é
 lido por `aplicar-remoto.sh`.

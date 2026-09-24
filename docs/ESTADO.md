@@ -7,9 +7,9 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-**O ciclo do Sprint 1 fecha inteiro no branch `s1/avaliar`:** publicar → candidatar →
-acompanhar → contato → check-in → check-out → cancelar → **avaliar**. Falta só o despacho,
-que é o Sprint 2.
+**O ciclo do Sprint 1 fecha inteiro no `main`:** publicar → candidatar → acompanhar →
+contato → check-in → check-out → cancelar → **avaliar**. Falta só o despacho, que é o
+Sprint 2.
 
 Vinte RPCs, 30 migrações, e o contrato em **0.2.12**.
 
@@ -49,7 +49,6 @@ Todos os cartões de Backend do Sprint 0 e do Sprint 1 já mergeados estão **Co
 |---|---|
 | `ggEzge6h` Filtro de texto ofensivo | **Revisão** · o código está no `main`; falta a revisão da Júlia na lista de termos |
 | `7gpPBgTH` Contas de demonstração | a marca no banco já existe; falta a Edge Function, o segredo e as notas da revisão |
-| `zdCpLEVs` `avaliar` e `perfil_publico` | **Revisão** · PR #24, assumido do João Paulo em 24/09 |
 | `RTmRTHbo` Republicar vaga | Cortável, não começado |
 | `yKUkCjSU` Testes do ciclo (QA) | o que ele pede já existe em pgTAP e no ciclo por HTTP; vale reler antes de refazer |
 
@@ -104,13 +103,15 @@ gatilho de RN07 usava `now()` direto e foi corrigido. Nenhuma RPC nova deve usar
 
 ## Os portões
 
-Medidos na máquina em 24/09 e 25/09, no branch `s1/avaliar`, com `db reset` antes:
+Medidos na máquina em 24/09 e 25/09, no branch das contas de demonstração já com a
+`main` fundida, com `db reset` antes:
 
 | Comando | O que garante | Medida |
 |---|---|---|
-| `supabase test db` | pgTAP | **585** asserções em 23 arquivos |
+| `supabase test db` | pgTAP | **592** asserções em 23 arquivos |
 | `./scripts/mutacao.sh` | cada regra morre sem teste | **75** cobertas, 0 sem cobertura |
 | `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 58 asserções, até o perfil público |
+| `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | 10 conferências, com o teto de tentativas |
 | `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
 | `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.11 → 0.2.12 |
 | `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.12 idêntico ao original, conferido com o token |
@@ -166,6 +167,23 @@ quem precisa reconciliar é o documento:
 
 E mais estas:
 
+- **A porta de demonstração aceita uma lista de e-mails, e o contrato fala em um só.**
+  `openapi.yaml:2138` diz *"Aceita **um** e-mail... A conta é de profissional"*; o cartão
+  `7gpPBgTH` pede **duas** contas, contratante e profissional, porque RN25 dá um perfil
+  por conta — e o critério de aceite diz "com **cada** e-mail de revisão". O segredo
+  `DEMONSTRACAO_EMAILS` é uma lista: com um endereço só, o comportamento é letra por letra
+  o que o contrato descreve, então é superconjunto e não quebra cliente nenhum. **Quem
+  precisa mudar é o contrato**, num PR do `FrilaApp/frila-docs` — e o espelho daqui só
+  pode acompanhar depois, porque desde 24/09 o portão compara com o original de verdade.
+- **`public.entrada_demonstracao` é a vigésima tabela de `public`**, e não está na
+  Modelagem. Não é tabela do produto: guarda as tentativas contra o código fixo da
+  revisão. RLS ligada e nenhuma política, como `pgmq.q_despacho`; quem escreve é a Edge
+  Function pela `service_role`.
+- **`cenarios.sql` deixa as colunas de token do GoTrue em NULL**, e com NULL o
+  `POST /auth/v1/admin/generate_link` responde `500 Database error finding user`. Medido
+  em 25/09. Não quebra a entrada por código do e-mail, que é a que os cenários usam, mas
+  fecha qualquer fluxo administrativo do Auth para essas contas. As contas de revisão do
+  `seed.sql` vão com string vazia por isso.
 - **A avaliação é um voto por LADO do turno, e não por autor.** `public.avaliacao` ganhou
   `unique (turno_id, alvo_tipo)` ao lado do `unique (turno_id, autor_id)` que já existia.
   O contrato afirmava as duas coisas: a tabela de erros dizia "avaliação deste autor" e

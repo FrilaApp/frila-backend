@@ -387,6 +387,20 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# A porta de entrada das contas de revisão da App Store (diretriz 2.1).
+#
+# `verify_jwt` fica ligado: o contrato pede a chave do projeto no `Authorization`, que é
+# o mesmo que o app manda em qualquer chamada. Desligar deixaria a função aberta à
+# internet inteira, e o que protege o código fixo passaria a ser só o teto de tentativas.
+#
+# Os dois segredos — `DEMONSTRACAO_EMAILS` e `DEMONSTRACAO_CODIGO` — não moram aqui. No
+# local entram por `supabase functions serve --env-file supabase/functions/.env.local`; no
+# `frila-dev` e no `frila-prod`, por `supabase secrets set`. Segredo em arquivo versionado
+# é segredo publicado.
+[functions.entrar-demonstracao]
+enabled = true
+verify_jwt = true
+
 [analytics]
 enabled = true
 port = 54327

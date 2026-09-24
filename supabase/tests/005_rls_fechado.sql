@@ -8,7 +8,7 @@
 -- Um teste que só olha a existência de política não pega isso. Estes tentam escrever.
 
 begin;
-select plan(9);
+select plan(13);
 
 -- Executa `sql` com a identidade de `papel`. Se levantar, a subtransação do throws_ok
 -- desfaz o SET LOCAL junto com o resto.
@@ -20,13 +20,19 @@ begin
   reset role;
 end $$;
 
--- ── As dezenove tabelas com RLS ligado ─────────────────────────────────────────
+-- ── As tabelas com RLS ligado ──────────────────────────────────────────────────
+--
+-- Dezenove são as da Modelagem. A vigésima é `entrada_demonstracao`, que não é tabela
+-- do produto: é o registro de tentativas da porta de demonstração, escrito só pela
+-- Edge Function com a chave `service_role`. Ela entra nesta contagem de propósito — o
+-- que este teste protege é "nenhuma tabela de `public` sem RLS", e abrir exceção por
+-- nome seria o começo da lista de exceções.
 select is(
   (select count(*)::int from pg_class c
      join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity),
-  19,
-  'as 19 tabelas do produto têm Row Level Security ligado');
+  20,
+  'as 19 tabelas do produto e o registro da demonstração têm Row Level Security ligado');
 
 select is(
   (select count(*)::int from pg_class c
@@ -94,6 +100,39 @@ select throws_ok(
   '42501',
   null,
   'nem o usuário logado publica vaga escrevendo na tabela: isso é trabalho da RPC');
+
+-- ── O registro da porta de demonstração é fechado nos dois sentidos ────────────
+--
+-- `public.entrada_demonstracao` guarda as tentativas contra o código fixo da revisão da
+-- App Store. Ela mora em `public` porque quem escreve é a Edge Function pela chave
+-- `service_role`, e o PostgREST só alcança `public` — mas nenhuma chave que vai dentro
+-- do app pode ler nem escrever nela. Ler seria entregar quantas tentativas faltam para
+-- o teto; escrever seria zerar o teto.
+select throws_ok(
+  $$ select pg_temp.como('anon', $x$
+       select count(*) from public.entrada_demonstracao $x$) $$,
+  '42501',
+  null,
+  'a chave publicável não lê o registro de entrada da demonstração');
+
+select throws_ok(
+  $$ select pg_temp.como('authenticated', $x$
+       insert into public.entrada_demonstracao (email, aceita)
+       values ('invasor@x.test', true) $x$) $$,
+  '42501',
+  null,
+  'nem o usuário logado escreve no registro para afogar o teto de tentativas');
+
+select is(
+  (select count(*)::int from pg_policies
+    where schemaname = 'public' and tablename = 'entrada_demonstracao'),
+  0,
+  'e a tabela não tem política nenhuma: o acesso é só da service_role, que passa por cima da RLS');
+
+select is(
+  (select relrowsecurity from pg_class where oid = 'public.entrada_demonstracao'::regclass),
+  true,
+  'com a RLS ligada — sem ela, zero política significaria porta aberta e não porta fechada');
 
 select * from finish();
 rollback;
