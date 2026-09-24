@@ -96,7 +96,8 @@ Medidos na máquina em 24/09, no branch dos cancelamentos, com `db reset` antes:
 
 | Comando | O que garante | Medida |
 |---|---|---|
-| `supabase test db` | pgTAP | **540** asserções em 22 arquivos |
+| `supabase test db` | pgTAP | **547** asserções em 22 arquivos |
+| `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | 11 asserções, com o teto de tentativas |
 | `./scripts/mutacao.sh` | cada regra morre sem teste | **74** cobertas, 0 sem cobertura |
 | `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 52 asserções, até as recusas da presença |
 | `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
@@ -154,6 +155,23 @@ quem precisa reconciliar é o documento:
 
 E mais estas:
 
+- **A porta de demonstração aceita uma lista de e-mails, e o contrato fala em um só.**
+  `openapi.yaml:2138` diz *"Aceita **um** e-mail... A conta é de profissional"*; o cartão
+  `7gpPBgTH` pede **duas** contas, contratante e profissional, porque RN25 dá um perfil
+  por conta — e o critério de aceite diz "com **cada** e-mail de revisão". O segredo
+  `DEMONSTRACAO_EMAILS` é uma lista: com um endereço só, o comportamento é letra por letra
+  o que o contrato descreve, então é superconjunto e não quebra cliente nenhum. **Quem
+  precisa mudar é o contrato**, num PR do `FrilaApp/frila-docs` — e o espelho daqui só
+  pode acompanhar depois, porque desde 24/09 o portão compara com o original de verdade.
+- **`public.entrada_demonstracao` é a vigésima tabela de `public`**, e não está na
+  Modelagem. Não é tabela do produto: guarda as tentativas contra o código fixo da
+  revisão. RLS ligada e nenhuma política, como `pgmq.q_despacho`; quem escreve é a Edge
+  Function pela `service_role`.
+- **`cenarios.sql` deixa as colunas de token do GoTrue em NULL**, e com NULL o
+  `POST /auth/v1/admin/generate_link` responde `500 Database error finding user`. Medido
+  em 25/09. Não quebra a entrada por código do e-mail, que é a que os cenários usam, mas
+  fecha qualquer fluxo administrativo do Auth para essas contas. As contas de revisão do
+  `seed.sql` vão com string vazia por isso.
 - **`net.http_post` não entrou no `publicar_vaga`**, como o cartão pedia: a Edge Function
   `despachar` é do Sprint 2 e não existe. A fila é durável.
 - **O modo seleção é recusado na v1.0** com `campo_invalido` e `details: modo`, e não com

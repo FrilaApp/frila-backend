@@ -65,6 +65,31 @@ jobs:
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
+      # A porta de demonstração é Edge Function, e função não sobe com `supabase start`:
+      # precisa de `functions serve`. O código e os endereços aqui são de mentira de
+      # propósito — o que a CI mede é o comportamento da porta, não o segredo. O segredo
+      # de verdade vive em `supabase secrets set` no frila-dev e no frila-prod, e um
+      # segredo real num workflow versionado seria um segredo publicado.
+      #
+      # Os endereços têm de casar com os do `seed.sql`, que é quem semeia as contas.
+      # Os segredos entram por `--env-file`: variável de ambiente do passo vai para o
+      # processo da CLI, e não para o worker que roda a função. Medido — sem o arquivo, a
+      # função sobe e responde 404 em tudo, porque a lista de e-mails chega vazia.
+      - name: Servir a Edge Function da demonstração
+        run: |
+          cat > supabase/functions/.env.local <<'EOF'
+          DEMONSTRACAO_EMAILS=revisao-contratante@frila.app,revisao-profissional@frila.app
+          DEMONSTRACAO_CODIGO=codigo-de-ci-sem-valor
+          EOF
+          supabase functions serve --env-file supabase/functions/.env.local &
+          for _ in $(seq 1 60); do
+            curl -sf -o /dev/null http://127.0.0.1:54321/functions/v1/entrar-demonstracao && break
+            sleep 1
+          done
+
+      - name: Contas de demonstração por HTTP
+        run: ./scripts/demonstracao.sh
+
       # Suíte verde não diz o que ela protege. Derruba cada restrição, trigger e
       # política — e afrouxa cada política para `using (true)` — exigindo que o pgTAP
       # fique vermelho em cada caso. Escrito depois de duas revisões medirem que 11 de
