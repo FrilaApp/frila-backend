@@ -12,9 +12,15 @@
 --
 -- Documentos usados, todos com dígito verificador calculado à parte:
 --   CNPJ válidos  11222333000181 · 45223011000179 · 19131905000129
---   CPF  válidos  52998224725 · 11144477735
+--   CPF  válidos  11144477735
 --   inválidos     11222333000182 (CNPJ, último dígito trocado)
 --                 52998224724    (CPF, último dígito trocado)
+--
+-- O CPF `52998224725` **não** serve para cadastrar aqui: ele é o documento do
+-- Empório Lago Sul em `cenarios.sql`, e o banco não nasce vazio. Um teste que o
+-- reutilize recebe 409 `documento_ja_cadastrado` e falha pelo motivo errado. Ele
+-- continua servindo de par do `52998224724`, que é o mesmo CPF com o último
+-- dígito trocado — para isso o documento não precisa estar livre.
 
 begin;
 select plan(27);
@@ -191,7 +197,7 @@ select throws_ok(
 -- contrata pelo Frila.
 select is(
   pg_temp.como('e0000000-0000-4000-8000-0000000000a2',
-    $$ select public.cadastrar_estabelecimento('Casa da Ana','52998224725','servico_domestico',
+    $$ select public.cadastrar_estabelecimento('Casa da Ana','11144477735','servico_domestico',
          'QI 5, Lago Sul','{"latitude":-15.83,"longitude":-47.87}') $$)->>'papel',
   'administrador',
   'RF02: CPF com dígito verificador certo é aceito');
