@@ -23,7 +23,7 @@ conserte no código em silêncio.
 - [ ] **Não.** Nenhuma função do schema `public` foi criada, removida ou teve a
       assinatura alterada.
 - [ ] **Sim**, e o contrato foi junto: `contrato/openapi.yaml` atualizado a partir de
-      `BlendOps/Frila`, `info.version` subiu e a soma foi regravada.
+      `FrilaApp/frila-docs`, `info.version` subiu e a soma foi regravada.
 
 > O contrato é a fonte dos modelos do iOS, do Android e da web. Uma RPC que muda aqui e
 > não muda lá deixa o cliente gerando o modelo antigo até a chamada falhar no aparelho
@@ -32,7 +32,7 @@ conserte no código em silêncio.
 >
 > Mudança **incompatível** não sobe versão: vira função nova (`publicar_vaga_v2`), e a
 > antiga fica no ar enquanto houver app antigo na loja. A regra inteira está em
-> `Documentos/API/README.md`, no repositório do Frila.
+> `api/README.md`, no repositório do Frila.
 
 ## Portões
 

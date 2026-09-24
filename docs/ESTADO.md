@@ -8,11 +8,20 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 ## Em uma linha
 
 O esquema está de pé e fechado, a entrada por código funciona de ponta a ponta, o banco
-nasce povoado com cenários que cobrem a RN05, e o contrato fechou as divergências com o
-quadro. **Cinco dos seis cartões de Backend do Sprint 0 estão em Revisão**; o último
-(`CvopSHh6`, versão mínima do app) é do João Paulo e já está com alguém.
+nasce povoado com cenários que cobrem a RN05, o contrato fechou as divergências com o
+quadro e o primeiro cartão do Sprint 1 está feito.
 
-**Seis PRs abertos, nenhum mergeado**, e três deles empilhados — ver *Os PRs* abaixo.
+**O Sprint 0 de Backend está fechado do lado de cá:** cinco cartões em Revisão, e o
+sexto (`CvopSHh6`, versão mínima do app) é do João Paulo — `configuracao_do_app` já está
+no contrato esperando por ele. No Sprint 1, `jSOAe6OL` (perfil profissional) também está
+em Revisão.
+
+**Nove PRs abertos, nenhum mergeado.** Seis no backend e três no `frila-docs`, quase
+todos empilhados — ver *Os PRs*.
+
+**A organização mudou de nome:** `BlendOps` virou `FrilaApp`, e `Frila` virou
+`frila-docs`. O GitHub redireciona, então nada quebrou; as referências deste repositório
+foram atualizadas no PR #10.
 
 **A CI não rodou um teste sequer em 23/09.** Cinco execuções em três branches caíram em
 `toomanyrequests` do `ghcr.io` antes de subir o ambiente. Tudo o que está afirmado aqui
@@ -42,7 +51,8 @@ inteira: serve para a Management API e para o advisor, e não precisa no dia a d
 | `v7b5sLYv` Políticas de acesso (RLS) | **Concluído** · PR #2 |
 | `MPFZagWG` Entrada por código e `criar_conta` | **Concluído** · PR #3 |
 | `Cc2XYCi0` Dados de teste e cenários | **Revisão** · PR #4 |
-| `oUwDEP8Q` Contrato (saiu como 0.2.2) | **Revisão** · PR #7 e Frila#2 |
+| `jSOAe6OL` Perfil profissional (S1) | **Revisão** · PR #9 e frila-docs#4 |
+| `oUwDEP8Q` Contrato (saiu como 0.2.2) | **Revisão** · PR #7 e frila-docs#2 |
 | `ggEzge6h` Filtro de texto ofensivo | **Revisão** · PR #8 e Frila#3 · *falta a revisão da Júlia na lista* |
 | `CvopSHh6` Versão mínima do app | do João Paulo · em andamento com ele. `configuracao_do_app` já está no contrato |
 
@@ -56,16 +66,23 @@ Três pilhas. A ordem de merge importa: mergear o espelho antes do contrato deix
 espelho à frente do original.
 
 ```
-BlendOps/Frila#2  contrato 0.2.2          ← mergear primeiro
+frila-docs#2      contrato 0.2.2           ← mergear primeiro
   └ #3            contrato 0.2.3
+    └ #4          contrato 0.2.4
 
-frila-backend#4   cenários                 ← independente, pode ir a qualquer hora
-frila-backend#5   ponte com a Bancada      ← independente
-frila-backend#7   espelho 0.2.2 + portão   ← só depois de Frila#2
-  └ #8            filtro de texto          ← só depois de Frila#3
+frila-backend#4   cenários                  ← independente, pode ir a qualquer hora
+frila-backend#5   ponte com a Bancada       ← independente
+frila-backend#7   espelho 0.2.2 + portão    ← só depois de frila-docs#2
+  └ #8            filtro de texto           ← só depois de frila-docs#3
+    └ #9          perfil profissional       ← só depois de frila-docs#4
+      └ #10       referências da org        ← por último
 ```
 
-**A ponte (#5) depende de um push no `BlendOps/Bancada`**, que exige Touch ID: a forma
+Mergear um espelho antes do contrato correspondente deixa o espelho à frente do
+original, e é o estado que `contrato-em-dia.sh` existe para pegar — só que ele não
+consegue, porque o `FRILA_DOCS_TOKEN` não existe.
+
+**A ponte (#5) depende de um push no `FrilaApp/Bancada`**, que exige Touch ID: a forma
 `externo` do `registrar-fato.sh` mora lá.
 
 `./scripts/trello.sh` faz tudo: `ver`, `lista`, `pegar`, `revisao`, `concluir`, `comentar`.
@@ -91,8 +108,20 @@ ocorrências. Teste novo que consulte `public.vaga` ou `public.turno` sem filtro
 medindo o cenário junto — três asserções já precisaram de escopo por isso. O mapa está em
 [`supabase/README.md`](../supabase/README.md).
 
-RPCs prontas: `criar_conta`, `minha_conta`. As treze do ciclo (publicar, candidatar,
-check-in, avaliar…) são o Sprint 1 e não existem ainda.
+RPCs prontas: `criar_conta`, `minha_conta`, `criar_perfil_profissional`,
+`meu_perfil_profissional`, `atualizar_perfil_profissional`. As do ciclo (publicar,
+candidatar, check-in, avaliar…) ainda não existem.
+
+**O molde das RPCs de escrita já está fixado** pelas três do perfil, e vale copiar:
+`auth.uid()` na primeira linha, `privado.exigir_perfil` na segunda — a recusa de perfil
+vem antes de qualquer escrita, senão sobra linha órfã quando a validação seguinte
+falhar —, validação devolvendo o código do contrato com o campo em `details`, e a
+resposta moldada por uma função `…_em_json` separada, porque três cópias divergem na
+primeira mudança de campo.
+
+Os auxiliares de conversão também já existem: `privado.ponto_do_json` e
+`privado.ponto_em_json` traduzem entre a `Coordenada` do contrato e `geography`, e
+`privado.gravar_funcoes` e `privado.gravar_disponibilidade` substituem lista inteira.
 
 **O filtro de texto já existe e o primeiro ponto de uso é `criar_conta`.** Toda RPC nova
 que aceite texto livre — `publicar_vaga`, `republicar_vaga`, `cadastrar_estabelecimento`
@@ -177,10 +206,10 @@ tratava suíte já vermelha como detecção.
    verificado por ninguém desde que ele venceu, e isso não aparecia porque o portão lia
    o corpo de erro como "nenhum achado". O portão foi corrigido para reprovar; o token
    depende de alguém presente.
-2. **PAT com leitura em `BlendOps/Frila`**, gravado como secret `FRILA_DOCS_TOKEN`. Sem
+2. **PAT com leitura em `FrilaApp/frila-docs`**, gravado como secret `FRILA_DOCS_TOKEN`. Sem
    ele, o job do contrato confere só a integridade do espelho e avisa em voz alta que não
-   conferiu o original. Fine-grained, *Resource owner* `BlendOps`, *Contents: Read-only*.
-3. **`git push` no `BlendOps/Bancada`**, que exige Touch ID. Esperando: a forma `externo`
+   conferiu o original. Fine-grained, *Resource owner* `FrilaApp`, *Contents: Read-only*.
+3. **`git push` no `FrilaApp/Bancada`**, que exige Touch ID. Esperando: a forma `externo`
    do `registrar-fato.sh`, o conserto dos hooks, as notas de 22 e 23/09 e a T-0025
    atualizada. Sem esse push, o PR #5 do backend não tem como funcionar na máquina de
    ninguém, e o site da Bancada não republica.
@@ -205,9 +234,12 @@ tratava suíte já vermelha como detecção.
 
 ## Por onde continuar
 
-1. **Fazer os seis PRs andarem**, na ordem da seção *Os PRs*. Nenhum tem CI verde, e o
-   motivo é o `ghcr.io`, não o código. Reexecutar antes de mergear.
-2. Sprint 1: `publicar_vaga` primeiro, porque `candidatar` depende dela. `candidatar` é
+1. **Fazer os nove PRs andarem**, na ordem da seção *Os PRs*. Só o #4 tem CI verde; o
+   motivo dos outros é o `ghcr.io`, não o código. Reexecutar antes de mergear.
+2. `4qwQF0w6` — `cadastrar_estabelecimento` e `meus_estabelecimentos`. É o que falta
+   para `publicar_vaga` ter onde publicar, e `meus_estabelecimentos` já está no contrato
+   desde a 0.2.2.
+3. Sprint 1: `publicar_vaga` depois, porque `candidatar` depende dela. `candidatar` é
    o cartão onde o produto quebra se errar — `UPDATE` condicional com
    `FOR UPDATE SKIP LOCKED`, e teste de corrida com **pgbench**, porque o pgTAP roda numa
    sessão só e não testa concorrência.
