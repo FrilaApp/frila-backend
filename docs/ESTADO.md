@@ -11,8 +11,8 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 → acompanhar → contato → check-in → check-out → cancelar. Falta `avaliar`, que está com o
 João Paulo, e o despacho, que é o Sprint 2.
 
-Dezoito RPCs no ar, 29 migrações, e o contrato em **0.2.11**. Os nove PRs que estavam
-parados em 23/09 foram mergeados, e mais sete entraram depois deles.
+Dezoito RPCs no ar, 29 migrações, e o contrato em **0.2.11**. **Dezenove PRs mergeados e
+nenhum aberto** — o #22, dos cancelamentos, entrou às 12:13 de 24/09.
 
 ## Ambientes
 
@@ -32,13 +32,12 @@ As credenciais estão no `.env` local (fora do git).
 
 ## O quadro
 
-Todos os cartões de Backend do Sprint 0 e do Sprint 1 que dependiam só de código estão
-**Concluídos**. Ficaram três, e nenhum deles espera código:
+Todos os cartões de Backend do Sprint 0 e do Sprint 1 já mergeados estão **Concluídos** —
+`wSoltQDy` (cancelamentos) fechou em 24/09 com o #22. Ficaram cinco:
 
 | Cartão | Por quê |
 |---|---|
 | `ggEzge6h` Filtro de texto ofensivo | **Revisão** · o código está no `main`; falta a revisão da Júlia na lista de termos |
-| `wSoltQDy` Cancelamentos | **Revisão** · PR #22, esperando a CI |
 | `7gpPBgTH` Contas de demonstração | a marca no banco já existe; falta a Edge Function, o segredo e as notas da revisão |
 | `zdCpLEVs` `avaliar` e `perfil_publico` | em andamento com o João Paulo |
 | `RTmRTHbo` Republicar vaga | Cortável, não começado |
@@ -178,7 +177,14 @@ E mais estas:
 2. **PAT com leitura em `FrilaApp/frila-docs`**, gravado como secret `FRILA_DOCS_TOKEN`.
    Na máquina o portão do contrato compara com o original de verdade (medido em 24/09);
    na CI, sem o secret, ele confere só a integridade do espelho e avisa em voz alta.
-   Fine-grained, *Resource owner* `FrilaApp`, *Contents: Read-only*.
+   Fine-grained, *Resource owner* `FrilaApp`, *Only select repositories* → `frila-docs`,
+   *Contents: Read-only*. Medido em 24/09: `gh secret list` do repositório está **vazio**,
+   `FrilaApp/frila-docs` é **privado**, e a única org da conta `silvaaszx` é `FrilaApp` —
+   tela de criação de token que ainda mostre `BlendOps` como *Resource owner* é anterior
+   à renomeação de 23/09 e produz um token que não lê nada.
+   **Ressalva:** sem token, `contrato-em-dia.sh` sai com **0** (linha 58), e isso
+   contraria a regra dos portões — caminho que não mediu tem de sair diferente de zero.
+   Enquanto o secret não existir, o portão avisa mas não reprova.
 3. **`git push` no `FrilaApp/Bancada`**, que exige Touch ID. Sem ele as notas diárias não
    saem e o site `bancada-buu.pages.dev` não republica.
 4. **Revisão da Júlia** na lista de termos bloqueados. Sem ela o `ggEzge6h` não fecha.
@@ -193,16 +199,16 @@ E mais estas:
 
 ## Por onde continuar
 
-1. **Mergear o PR #22** (cancelamentos), se a CI tiver fechado verde. É o único aberto.
+1. `7gpPBgTH` — contas de demonstração. A marca `usuario.demonstracao` e o isolamento nas
+   leituras já existem; falta a Edge Function `entrar-demonstracao` com o código fixo em
+   segredo, o seed das duas contas e as notas da revisão. **É o próximo cartão de código
+   livre**, já que o `zdCpLEVs` está com o João Paulo.
 2. `zdCpLEVs` — `avaliar` e `perfil_publico` com reputação, que está com o João Paulo. É
    a última peça do ciclo antes do despacho.
-3. `7gpPBgTH` — contas de demonstração. A marca `usuario.demonstracao` e o isolamento nas
-   leituras já existem; falta a Edge Function `entrar-demonstracao` com o código fixo em
-   segredo, o seed das duas contas e as notas da revisão.
-4. **Sprint 2, o despacho.** A fila já recebe as duas mensagens que o motor vai consumir:
+3. **Sprint 2, o despacho.** A fila já recebe as duas mensagens que o motor vai consumir:
    `{vaga_id, publicada_em}` na publicação e `{vaga_id, posicao_id, motivo: reabertura,
    excluir_conta}` no cancelamento. `pg_cron` e `pg_net` entram com ele.
-5. Toda RPC nova nasce com quatro coisas, e nenhuma é negociável: o filtro de texto nos
+4. Toda RPC nova nasce com quatro coisas, e nenhuma é negociável: o filtro de texto nos
    campos livres, a recusa correspondente no `ciclo-completo.sh`, a linha no
    `openapi.yaml` com a versão subindo, e a asserção de mutação que morre quando a regra
    some. O portão do contrato cobra a terceira; as outras três dependem de quem escreve.
