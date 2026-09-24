@@ -102,6 +102,14 @@ jobs:
       - name: Lint do plpgsql sem achado novo
         run: ./scripts/lint-conhecido.sh
 
+      # `privado.agora()` é o relógio do produto. Com `now()` no meio do caminho, todo
+      # prazo vira decoração dentro de um teste que controla o relógio: o teste passa e a
+      # regra some. O portão pergunta ao `pg_proc`, e não aos arquivos de migração —
+      # migração é histórico, e o `now()` do gatilho de RN07 continua lá, no arquivo
+      # imutável que já foi corrigido por outra migração.
+      - name: Nenhuma função usa now() direto
+        run: ./scripts/relogio-do-produto.sh
+
       - name: Diagnóstico ao falhar
         if: failure()
         run: supabase status && docker ps -a
