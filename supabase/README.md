@@ -158,14 +158,19 @@ mostra o denominador, que é onde a RN08 vive.
 
 ## O que é medido e o que está escrito à mão
 
-As contagens desnormalizadas — `taxa_comparecimento`, `turnos_realizados`,
-`aval_positivas`, `aval_total` — estão **escritas à mão** no arquivo, coerentes com os
-turnos e as avaliações. Não há trigger que as calcule: o job de reconciliação é do
-Sprint 2. A aritmética usada é `cumpridas / (cumpridas + faltas)`; a definição canônica
-está na Modelagem de Banco de Dados, e quando o job existir é ele quem manda.
+As contagens de comparecimento — `taxa_comparecimento`, `turnos_realizados` — estão
+**escritas à mão** no arquivo, coerentes com os turnos. Quem as recalcula no produto é
+`privado.recalcular_comparecimento`, chamada pelo check-in e pelo cancelamento; o
+cenário escreve direto na tabela e não passa por ela. A aritmética usada é
+`cumpridas / (cumpridas + faltas)`.
 
 **Mexer num turno aqui obriga a mexer no número correspondente.**
 `tests/090_cenarios.sql` cobre a forma do cenário, não essa aritmética.
+
+`aval_positivas` e `aval_total` **não** são escritas à mão: o gatilho
+`avaliacao_soma_na_reputacao` soma cada avaliação inserida. Escrevê-las aqui contaria
+cada avaliação duas vezes, e `tests/180_avaliar_e_perfil_publico.sql` confere a
+coerência dos contadores com as avaliações do banco inteiro.
 
 ## Uma lacuna do modelo, encontrada ao montar isto
 
