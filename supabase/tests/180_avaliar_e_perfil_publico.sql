@@ -12,7 +12,7 @@
 -- envelope inteiro, que fixa `code` e `details`.
 
 begin;
-select plan(43);
+select plan(45);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb
 language plpgsql as $$
@@ -166,6 +166,30 @@ select throws_ok(
   '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : null, "hint" : null}',
   'turno inexistente recebe a mesma recusa de turno alheio — a diferença diria que ele existe');
 
+-- `turno_id` ausente é campo faltando, e não turno alheio. Sem a conferência explícita
+-- o nulo cai no `select` vazio e sai como `403 sem_permissao`, que manda o app pedir
+-- permissão para consertar um campo. `fazer_checkin` já separa os dois casos.
+select throws_ok(
+  $$ select pg_temp.avaliar('f2000000-0000-4000-8000-000000000001', null, true) $$,
+  'PGRST',
+  '{"code" : "campo_obrigatorio", "message" : "campo_obrigatorio", "details" : "turno_id", "hint" : null}',
+  'turno_id nulo é 422 campo_obrigatorio, e não 403: campo faltando não é falta de permissão');
+
+-- RN13: a conta suspensa não avalia. Mesmo código e mesmo `details` de `publicar_vaga`,
+-- para a tela poder explicar em vez de só negar. A suspensão é desfeita logo abaixo,
+-- porque esta mesma conta é a parte do turno no caminho feliz.
+update public.usuario set estado = 'suspensa'
+ where id = 'f2000000-0000-4000-8000-000000000001';
+
+select throws_ok(
+  $$ select pg_temp.avaliar('f2000000-0000-4000-8000-000000000001','f7000000-0000-4000-8000-000000000001', true) $$,
+  'PGRST',
+  '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : "conta_suspensa", "hint" : null}',
+  'RN13: conta suspensa não avalia, e o motivo vai em details');
+
+update public.usuario set estado = 'ativa'
+ where id = 'f2000000-0000-4000-8000-000000000001';
+
 -- ── RN07: antes do fim, e sem presença ─────────────────────────────────────────
 set local frila.agora = '2026-10-10 22:59:59+00';
 
@@ -227,7 +251,9 @@ select is(
   '[0, 0]'::jsonb,
   'RN08: e só a parte avaliada soma — o estabelecimento que avaliou não muda');
 
--- Idempotência pela chave natural (turno, autor).
+-- Idempotência pela chave natural, que aqui é **(turno, lado)** e não (turno, autor):
+-- um voto por lado do turno, `unique (turno_id, alvo_tipo)`. O reenvio do mesmo autor é
+-- o caso fácil; o do outro membro do mesmo lado está logo abaixo, no 409.
 select is(
   pg_temp.avaliar('f2000000-0000-4000-8000-000000000001','f7000000-0000-4000-8000-000000000001', true),
   (select jsonb_build_object('turno_id', turno_id, 'resposta', resposta, 'criada_em', criada_em)

@@ -239,6 +239,21 @@ begin
     perform public.erro(401, 'nao_autenticado');
   end if;
 
+  -- RN13, com o mesmo código e o mesmo `details` de `publicar_vaga`: a conta suspensa
+  -- não avalia ninguém. Vem antes de tudo o que fala sobre o turno, para a recusa não
+  -- depender de o turno existir.
+  if exists (select 1 from public.usuario u
+              where u.id = v_uid and u.estado = 'suspensa') then
+    perform public.erro(403, 'sem_permissao', 'conta_suspensa');
+  end if;
+
+  -- `turno_id` ausente é campo faltando, e não turno alheio. `fazer_checkin` já trata
+  -- assim; sem esta linha o nulo cairia no `select` vazio e sairia como
+  -- `403 sem_permissao`, mandando o app pedir permissão para consertar um campo.
+  if v_turno is null then
+    perform public.erro(422, 'campo_obrigatorio', 'turno_id');
+  end if;
+
   select p.profissional_id, v.estabelecimento_id, p.fim_em, t.verificacao
     into v_prof, v_estab, v_fim, v_verificacao
     from public.turno t
@@ -275,16 +290,17 @@ begin
       perform public.erro(422, 'avaliacao_indisponivel', 'sem_presenca_verificada');
     end if;
 
+    -- O `do update` que não muda nada existe para a inserção **sempre** devolver uma
+    -- linha, inclusive quando outra chamada do mesmo lado ganhou a corrida. Com
+    -- `do nothing` o `returning` volta vazio, e aí a decisão de 409 passaria a depender
+    -- de um segundo `select` e do que a outra transação fez — commit ou rollback. Não é
+    -- corrida que a máquina reproduza, e o custo de raciocinar sobre ela toda vez é
+    -- maior do que o custo desta linha.
     insert into public.avaliacao (turno_id, autor_id, alvo_tipo, alvo_id, resposta)
     values (v_turno, v_uid, v_alvo_tipo, v_alvo_id, v_resposta)
-    on conflict do nothing
+    on conflict (turno_id, alvo_tipo)
+      do update set resposta = public.avaliacao.resposta
     returning * into v_linha;
-
-    -- Perdeu a corrida para outra chamada do mesmo lado: lê o que ela gravou.
-    if not found then
-      select * into v_linha from public.avaliacao a
-       where a.turno_id = v_turno and a.alvo_tipo = v_alvo_tipo;
-    end if;
   end if;
 
   if v_linha.resposta is distinct from v_resposta then
