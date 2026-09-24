@@ -19,14 +19,25 @@ nenhum aberto** — o #22, dos cancelamentos, entrou às 12:13 de 24/09.
 | | |
 |---|---|
 | local | `supabase start` · Postgres 17 · **29** migrações no `main` (contadas em 24/09) |
-| `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` |
+| `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · **29** migrações, as mesmas do `main` (conferidas em 24/09) |
 | `frila-prod` | não existe. Sprint 3 |
 
-**O `frila-dev` ficou para trás.** Ele tem as migrações até o branch `s0/criar-conta`,
-aplicadas por `scripts/aplicar-remoto.sh` em 22/09; tudo o que entrou depois — filtro de
-texto, perfil profissional, estabelecimento, painel e `publicar_vaga` — está só no
-`main` e no ambiente local. Antes de aplicar lá, conferir
-`supabase_migrations.schema_migrations` do projeto.
+**O `frila-dev` está em dia com o `main`.** As 11 migrações que faltavam, de
+`20260923200000_filtro_de_texto_ofensivo` a `20260925020000_cancelamentos`, entraram em
+24/09 às 15h pelo MCP do Supabase, porque o token do `.env` não responde. Cada uma rodou
+numa transação só, e o md5 do texto foi conferido contra o arquivo **antes** de executar:
+texto divergente aborta sem gravar nada. O registro em `supabase_migrations.schema_migrations`
+usa a versão e o nome do arquivo, como faz o `scripts/aplicar-remoto.sh`, então o
+`db push` da CLI enxerga tudo como aplicado. A diferença para o script é que `statements`
+guarda o texto inteiro da migração, e não um array vazio. O `seed.sql` também foi
+reaplicado.
+
+Conferido depois: 29 migrações com o md5 igual ao dos arquivos, 19 tabelas com RLS, `anon`
+sem escrita e sem `usage` em `privado`, `privado.ambiente` sem marcador de teste, 32
+funções e 33 termos, `pgmq` 1.5.1 com a fila `despacho` vazia. As 18 RPCs respondem
+**401** `42501` sem sessão. O advisor de segurança só traz o aviso 0029, que é o desenho:
+as 18 RPCs `security definer` abertas a `authenticated`. Antes de aplicar a próxima,
+conferir `supabase_migrations.schema_migrations` do projeto.
 
 As credenciais estão no `.env` local (fora do git).
 
@@ -173,7 +184,8 @@ E mais estas:
 
 1. **`supabase login`.** O `SUPABASE_ACCESS_TOKEN` do `.env` responde **401** na
    Management API. Sem ele o advisor de segurança do `frila-dev` não é verificado por
-   ninguém. Depende de alguém presente: o comando abre o navegador.
+   ninguém. Depende de alguém presente: o comando abre o navegador. Em 24/09 o advisor
+   rodou pelo MCP do Supabase, que tem acesso à organização, mas o script continua sem token.
 2. ~~**PAT com leitura em `FrilaApp/frila-docs`.**~~ **Resolvido em 24/09.** O secret
    `FRILA_DOCS_TOKEN` existe no repositório e o portão passou a conferir o original de
    verdade: `./scripts/contrato-em-dia.sh` com o token respondeu *"Espelho em dia com
@@ -187,7 +199,7 @@ E mais estas:
 3. **`git push` no `FrilaApp/Bancada`**, que exige Touch ID. Sem ele as notas diárias não
    saem e o site `bancada-buu.pages.dev` não republica.
 4. **Revisão da Júlia** na lista de termos bloqueados. Sem ela o `ggEzge6h` não fecha.
-5. **Aplicar as migrações novas no `frila-dev`**, que está seis migrações atrás.
+5. ~~**Aplicar as migrações novas no `frila-dev`.**~~ **Resolvido em 24/09**: as 29 estão lá (ver Ambientes).
 6. **Decidir as operações do contrato sem cartão no quadro** — `renovarSessao`,
    `criteriosDeNotificacao`, `pedirRevisaoDespacho`, `equipeDeConfianca`,
    `incluirNaEquipe`, `removerDaEquipe`, `listarFuncoes`, `candidatosDaVaga`,
