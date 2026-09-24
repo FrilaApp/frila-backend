@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.6
+  version: 0.2.7
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -89,6 +89,29 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.7, de 24/09/2026.** `candidatar` foi implementada no modo urgência, e
+    a implementação separou dois casos que o contrato tratava como um só.
+
+    - **Vaga `preenchida` recusa com `409 posicao_ja_preenchida`, e não com
+      `vaga_encerrada`.** Os dois são 409 e a diferença importa para a tela:
+      `vaga_encerrada` é "esta vaga não existe mais" — cancelada, encerrada ou já
+      começada; `posicao_ja_preenchida` é "alguém chegou antes", que o produto trata
+      como funcionamento normal. Uma vaga preenchida fechou porque **encheu**, e quem
+      chegou depois merece a tela do segundo caso.
+    - **`422 inelegivel` com `details: funcao_incompativel`** também para quem ainda não
+      tem perfil profissional. Sem perfil não há função cadastrada, e sem função nenhuma
+      vaga serve; os dois casos terminam na mesma tela, a de completar o perfil.
+    - **`404 nao_encontrado`** para vaga que o profissional não deveria alcançar —
+      bloqueio entre as partes ou conta de demonstração —, igual ao que `detalhe_vaga`
+      responde. Candidatar-se é a continuação natural de ter visto a vaga, e as duas
+      operações escondem a mesma coisa.
+
+    `contato` volta preenchido já na resposta da confirmação, com o prazo do RN10: o
+    fim previsto do turno mais 7 dias. O `whatsapp_url` sai sem o `+` do E.164, que o
+    `wa.me` não aceita — a regra mora no servidor para não ser reescrita em três apps.
+
+    ---
 
     **Versão 0.2.6, de 24/09/2026.** `vagas_abertas` e `detalhe_vaga` foram
     implementadas. As duas são leituras, e o que a implementação acrescentou aqui é
@@ -1113,7 +1136,13 @@ paths:
 
         As três respostas são normais: `200` (entrou), `409 posicao_ja_preenchida` (alguém chegou
         antes — a tela diz "que pena, foi rápido", não "algo deu errado") e `422 inelegivel`
-        (`turno_sobreposto` ou `perfil_suspenso`). Reenviar para a mesma vaga devolve o mesmo resultado.
+        (`turno_sobreposto`, `perfil_suspenso` ou `funcao_incompativel`). Reenviar para a mesma vaga
+        devolve o mesmo resultado.
+
+        **Vaga `preenchida` também responde `posicao_ja_preenchida`**, e não `vaga_encerrada`: ela
+        fechou porque encheu. `vaga_encerrada` fica para a vaga cancelada, encerrada ou cujo início
+        já passou. Vaga escondida por bloqueio ou por demonstração responde `404 nao_encontrado`,
+        igual a `detalhe_vaga`.
       x-requisitos: [RF08, RF09, RF10, RF11, RN03, RN10, RN19, RN21, RN24, UC03, UC04]
       requestBody:
         required: true

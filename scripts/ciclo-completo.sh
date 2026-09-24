@@ -438,8 +438,42 @@ code=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.s
 ok "limite acima do teto do contrato → 422 campo_invalido"
 
 echo
+echo "▸ A candidatura"
+#
+# A mesma sessão de profissional que acabou de ver a lista. A vaga tem três posições, e
+# a função dela é a mesma do perfil criado acima — é o caminho feliz do modo urgência.
+
+cand=$(curl -s -X POST "$URL/rest/v1/rpc/candidatar" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"vaga_id\":\"$VAGA\"}")
+estado=$(printf '%s' "$cand" | python3 -c "import json,sys; print(json.load(sys.stdin).get('estado',''))" 2>/dev/null || true)
+TURNO=$(printf '%s' "$cand" | python3 -c "import json,sys; print(json.load(sys.stdin).get('turno_id') or '')" 2>/dev/null || true)
+[ "$estado" = "confirmada" ] && [ -n "$TURNO" ] \
+  || falhou "candidatar não confirmou: $cand"
+ok "candidatar → confirmada, com turno"
+
+# RN10: o contato só existe depois da confirmação, e com prazo. É a primeira vez no
+# ciclo em que um telefone sai do servidor.
+wa=$(printf '%s' "$cand" | python3 -c "
+import json,sys; print((json.load(sys.stdin).get('contato') or {}).get('whatsapp_url',''))" 2>/dev/null || true)
+case "$wa" in
+  https://wa.me/55*) ok "RN10: o contato vem com o link do WhatsApp pronto" ;;
+  *) falhou "o contato não veio como o contrato promete: $cand" ;;
+esac
+
+de_novo=$(curl -s -X POST "$URL/rest/v1/rpc/candidatar" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"vaga_id\":\"$VAGA\"}" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin).get('turno_id') or '')" 2>/dev/null || true)
+[ "$de_novo" = "$TURNO" ] || falhou "reenviar a candidatura devolveu outro turno ($de_novo)"
+ok "reenviar a candidatura devolve o mesmo turno"
+
+recusa "candidatar em vaga que não existe" 404 nao_encontrado \
+  '{"vaga_id":"00000000-0000-4000-8000-000000000000"}' candidatar
+
+echo
 echo "▸ O que ainda não existe"
-echo "  ⏭  candidatar, check-in e avaliar entram com o resto do Sprint 1."
+echo "  ⏭  check-in, check-out e avaliar entram com o resto do Sprint 1."
 echo "     Cada uma acrescenta um passo aqui, com o status HTTP conferido."
 echo
-echo "Ciclo verificado até a lista de vagas e o detalhe."
+echo "Ciclo verificado até a candidatura confirmada."

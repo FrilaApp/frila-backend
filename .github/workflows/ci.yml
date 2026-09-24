@@ -57,6 +57,11 @@ jobs:
       - name: Corrida no cadastro do estabelecimento
         run: ./scripts/corrida-cadastrar-estabelecimento.sh
 
+      # RN19 só falha sob concorrência: vinte conexões aceitando a mesma vaga de duas
+      # posições. O pgTAP roda numa sessão só e veria sempre o caminho feliz.
+      - name: Corrida na candidatura
+        run: ./scripts/corrida-candidatar.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
