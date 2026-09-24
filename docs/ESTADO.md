@@ -19,7 +19,7 @@ Vinte RPCs, 30 migrações, e o contrato em **0.2.12**.
 |---|---|
 | local | `supabase start` · Postgres 17 · **29** migrações no `main` (contadas em 24/09) |
 | `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · **29** migrações, as mesmas do `main` (conferidas em 24/09) |
-| `frila-prod` | não existe. Sprint 3 |
+| `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **vazio**: as migrações entram pelo cartão do ambiente de produção (29/10), com a entrega contínua por tag |
 
 **O `frila-dev` está em dia com o `main`.** As 11 migrações que faltavam, de
 `20260923200000_filtro_de_texto_ofensivo` a `20260925020000_cancelamentos`, entraram em
