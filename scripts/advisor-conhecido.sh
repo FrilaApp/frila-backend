@@ -28,9 +28,28 @@ REF="${1:-${FRILA_DEV_PROJECT_REF:?falta FRILA_DEV_PROJECT_REF no .env}}"
 ESPERADOS="authenticated_security_definer_function_executable|public.criar_conta
 authenticated_security_definer_function_executable|public.minha_conta"
 
-resposta=$(curl -sS -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+# O status HTTP é conferido porque `curl -sS` sai com 0 num 401, e o corpo de erro
+# (`{"message":"Unauthorized"}`) não tem `lints` — o que o bloco abaixo leria como
+# "nenhum achado". Com um token de conta vencido, este portão ficava verde num
+# ambiente que ele não tinha conseguido medir.
+#
+# É a mesma falha que a regra do projeto já nomeia: um caminho que não seja "medi e o
+# resultado foi X" tem que sair diferente de zero.
+tmp=$(mktemp)
+http=$(curl -sS -o "$tmp" -w '%{http_code}' \
+  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
   "https://api.supabase.com/v1/projects/$REF/advisors/security") || {
+  rm -f "$tmp"
   echo "  NÃO CONSEGUI FALAR COM O ADVISOR — isto não é advisor limpo"; exit 1; }
+
+resposta=$(cat "$tmp"); rm -f "$tmp"
+
+if [ "$http" != "200" ]; then
+  echo "  O ADVISOR RESPONDEU $http — isto não é advisor limpo, é advisor não medido"
+  printf '  %s\n' "$resposta"
+  [ "$http" = "401" ] && echo "  (401 costuma ser SUPABASE_ACCESS_TOKEN vencido ou revogado no .env)"
+  exit 1
+fi
 
 achados=$(printf '%s' "$resposta" | python3 -c "
 import json, sys
