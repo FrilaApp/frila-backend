@@ -174,17 +174,16 @@ E mais estas:
 1. **`supabase login`.** O `SUPABASE_ACCESS_TOKEN` do `.env` responde **401** na
    Management API. Sem ele o advisor de segurança do `frila-dev` não é verificado por
    ninguém. Depende de alguém presente: o comando abre o navegador.
-2. **PAT com leitura em `FrilaApp/frila-docs`**, gravado como secret `FRILA_DOCS_TOKEN`.
-   Na máquina o portão do contrato compara com o original de verdade (medido em 24/09);
-   na CI, sem o secret, ele confere só a integridade do espelho e avisa em voz alta.
-   Fine-grained, *Resource owner* `FrilaApp`, *Only select repositories* → `frila-docs`,
-   *Contents: Read-only*. Medido em 24/09: `gh secret list` do repositório está **vazio**,
-   `FrilaApp/frila-docs` é **privado**, e a única org da conta `silvaaszx` é `FrilaApp` —
-   tela de criação de token que ainda mostre `BlendOps` como *Resource owner* é anterior
-   à renomeação de 23/09 e produz um token que não lê nada.
-   **Ressalva:** sem token, `contrato-em-dia.sh` sai com **0** (linha 58), e isso
-   contraria a regra dos portões — caminho que não mediu tem de sair diferente de zero.
-   Enquanto o secret não existir, o portão avisa mas não reprova.
+2. ~~**PAT com leitura em `FrilaApp/frila-docs`.**~~ **Resolvido em 24/09.** O secret
+   `FRILA_DOCS_TOKEN` existe no repositório e o portão passou a conferir o original de
+   verdade: `./scripts/contrato-em-dia.sh` com o token respondeu *"Espelho em dia com
+   FrilaApp/frila-docs"* sobre o contrato 0.2.11. Fine-grained, *Resource owner*
+   `FrilaApp`, *Contents: Read-only*, validade até 23/09/2027.
+   **O que continua aberto:** sem token, `contrato-em-dia.sh` sai com **0** (linha 58),
+   e isso contraria a regra dos portões — caminho que não mediu tem de sair diferente de
+   zero. Hoje o secret existe e o ponto é teórico; quando o PAT vencer, em 23/09/2027, o
+   portão volta a ficar verde sem ter medido nada e ninguém vai saber. A correção é do
+   tamanho de uma linha e não entrou junto porque pertence a outro cartão.
 3. **`git push` no `FrilaApp/Bancada`**, que exige Touch ID. Sem ele as notas diárias não
    saem e o site `bancada-buu.pages.dev` não republica.
 4. **Revisão da Júlia** na lista de termos bloqueados. Sem ela o `ggEzge6h` não fecha.
