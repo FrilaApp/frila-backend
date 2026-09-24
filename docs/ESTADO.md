@@ -18,7 +18,7 @@ nenhum aberto** — o #22, dos cancelamentos, entrou às 12:13 de 24/09.
 
 | | |
 |---|---|
-| local | `supabase start` · Postgres 17 · 21 migrações no `main` |
+| local | `supabase start` · Postgres 17 · **29** migrações no `main` (contadas em 24/09) |
 | `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` |
 | `frila-prod` | não existe. Sprint 3 |
 
