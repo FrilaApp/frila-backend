@@ -7,16 +7,12 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-O ciclo chega até a publicação da vaga: conta, estabelecimento, painel, perfil
-profissional e `publicar_vaga` estão no `main`, com o despacho enfileirado esperando o
-motor do Sprint 2.
+**O ciclo principal do Sprint 1 fecha de ponta a ponta no `main`:** publicar → candidatar
+→ acompanhar → contato → check-in → check-out → cancelar. Falta `avaliar`, que está com o
+João Paulo, e o despacho, que é o Sprint 2.
 
-**Os nove PRs que estavam parados foram mergeados em 24/09**, e com eles o Sprint 0 de
-Backend fechou do lado de cá. Restou **um PR aberto**: o [#16](https://github.com/FrilaApp/frila-backend/pull/16),
-do `publicar_vaga`.
-
-**A CI voltou a rodar.** O `toomanyrequests` do `ghcr.io` que travou 23/09 passou; todos
-os merges de hoje saíram com a suíte, a mutação e o lint verdes.
+Dezoito RPCs no ar, 29 migrações, e o contrato em **0.2.11**. Os nove PRs que estavam
+parados em 23/09 foram mergeados, e mais sete entraram depois deles.
 
 ## Ambientes
 
@@ -36,19 +32,17 @@ As credenciais estão no `.env` local (fora do git).
 
 ## O quadro
 
-| Cartão | Estado |
+Todos os cartões de Backend do Sprint 0 e do Sprint 1 que dependiam só de código estão
+**Concluídos**. Ficaram três, e nenhum deles espera código:
+
+| Cartão | Por quê |
 |---|---|
-| `JuD3ytg1` Migrações iniciais | **Concluído** · PR #1 |
-| `v7b5sLYv` Políticas de acesso (RLS) | **Concluído** · PR #2 |
-| `MPFZagWG` Entrada por código e `criar_conta` | **Concluído** · PR #3 |
-| `Cc2XYCi0` Dados de teste e cenários | **Concluído** · PR #4 |
-| `oUwDEP8Q` Contrato (saiu como 0.2.2 a 0.2.4) | **Concluído** · PR #7 e frila-docs #2, #3, #4 |
-| `jSOAe6OL` Perfil profissional (S1) | **Concluído** · PR #9 |
-| `4qwQF0w6` `cadastrar_estabelecimento` e painel (S1) | **Concluído** · PR #11 e #13 · do João Paulo |
-| `ggEzge6h` Filtro de texto ofensivo | **Revisão** · código no `main` · *falta a revisão da Júlia na lista de termos* |
-| `wtITHAPo` `publicar_vaga` (S1) | **Revisão** · PR #16 e frila-docs#5 |
-| `CvopSHh6` Versão mínima do app | com o Cauê. `configuracao_do_app` está no contrato |
-| `zdCpLEVs` `avaliar` e `perfil_publico` (S1) | em andamento com o João Paulo |
+| `ggEzge6h` Filtro de texto ofensivo | **Revisão** · o código está no `main`; falta a revisão da Júlia na lista de termos |
+| `wSoltQDy` Cancelamentos | **Revisão** · PR #22, esperando a CI |
+| `7gpPBgTH` Contas de demonstração | a marca no banco já existe; falta a Edge Function, o segredo e as notas da revisão |
+| `zdCpLEVs` `avaliar` e `perfil_publico` | em andamento com o João Paulo |
+| `RTmRTHbo` Republicar vaga | Cortável, não começado |
+| `yKUkCjSU` Testes do ciclo (QA) | o que ele pede já existe em pgTAP e no ciclo por HTTP; vale reler antes de refazer |
 
 `./scripts/trello.sh` faz tudo: `ver`, `lista`, `pegar`, `revisao`, `concluir`, `comentar`.
 
@@ -64,49 +58,51 @@ Versão vigente: **0.2.5**, espelhada em `contrato/openapi.yaml` e conferida pel
 ## O que existe no banco
 
 19 tabelas em `public`, 30 restrições `CHECK`, 1 de exclusão (RN21), 19 políticas de
-leitura, 26 auxiliares no schema `privado`, e nenhuma política de escrita em lugar
+leitura, 39 auxiliares no schema `privado`, e nenhuma política de escrita em lugar
 nenhum — toda escrita passa por função `security definer`.
 
-RPCs prontas: `criar_conta`, `minha_conta`, `criar_perfil_profissional`,
-`meu_perfil_profissional`, `atualizar_perfil_profissional`, `cadastrar_estabelecimento`,
-`painel_estabelecimento`, `publicar_vaga`. Faltam do ciclo: `candidatar`, `vagas_abertas`,
-`detalhe_vaga`, `meus_turnos`, `contato_do_turno`, check-in, check-out, `avaliar` e os
-dois cancelamentos.
+**Dezoito RPCs expostas**, que cobrem o ciclo inteiro menos a avaliação:
 
-`privado` tem duas tabelas: `ambiente` (o marcador de teste do relógio) e
-`termo_bloqueado` (a lista do filtro da diretriz 1.2, sem política de leitura por
-decisão — publicar a lista é publicar o mapa de como contorná-la).
+```
+conta        criar_conta · minha_conta
+perfil       criar_perfil_profissional · meu_perfil_profissional · atualizar_perfil_profissional
+casa         cadastrar_estabelecimento · painel_estabelecimento
+vaga         publicar_vaga · vagas_abertas · detalhe_vaga · cancelar_vaga
+turno        candidatar · meus_turnos · contato_do_turno · cancelar_posicao
+presença     fazer_checkin · fazer_checkout · confirmar_checkin_manual
+```
 
-**A fila existe.** `pgmq` entrou com o `publicar_vaga`, e `pgmq.q_despacho` é onde a
-publicação deixa `{vaga_id, publicada_em}`. RLS ligada e **sem política**: o event
-trigger `ensure_rls` só alcança `public`, então ela foi ligada à mão na migração. `pg_cron`
-e `pg_net` continuam fora — agendador sem job e chamada HTTP sem destino são superfície
-sem uso, e `pg_net` numa transação de escrita falha em silêncio.
+Falta do ciclo: `avaliar` (com o João Paulo) e tudo do despacho, que é o Sprint 2.
+
+**A fila existe.** `pgmq.q_despacho` recebe `{vaga_id, publicada_em}` na publicação e
+`{vaga_id, posicao_id, motivo: reabertura, excluir_conta}` no cancelamento — o
+`excluir_conta` é quem **não** deve ser notificado de novo. RLS ligada e sem política.
+`pg_cron` e `pg_net` continuam fora.
 
 Depois do `db reset` o banco **não nasce vazio**: `cenarios.sql` põe 12 profissionais, 4
 contratantes, 3 estabelecimentos, 7 vagas, 7 turnos, 6 avaliações, 1 bloqueio e 2
 ocorrências. O mapa está em [`supabase/README.md`](../supabase/README.md).
 
 **O molde das RPCs de escrita está fixado**, e vale copiar: `auth.uid()` na primeira
-linha, `privado.exigir_perfil` na segunda — a recusa de perfil vem antes de qualquer
-escrita —, a conferência de conta suspensa em seguida, validação devolvendo o código do
-contrato com o campo em `details`, e a resposta moldada por uma função `…_em_json`
-separada.
+linha, `privado.exigir_perfil` na segunda, a conferência de conta suspensa em seguida,
+validação devolvendo o código do contrato com o campo em `details`, e a resposta moldada
+por uma função `…_em_json` separada.
 
-**`privado.agora()` é o relógio do produto.** Todo prazo passa por ele. Nenhuma RPC nova
-deve usar `now()` direto.
+**`privado.agora()` é o relógio do produto**, e desde 24/09 não há mais exceção: o
+gatilho de RN07 usava `now()` direto e foi corrigido. Nenhuma RPC nova deve usar `now()`.
 
 ## Os portões
 
-Medidos na máquina em 24/09, no branch do `publicar_vaga`, com `db reset` antes:
+Medidos na máquina em 24/09, no branch dos cancelamentos, com `db reset` antes:
 
 | Comando | O que garante | Medida |
 |---|---|---|
-| `supabase test db` | pgTAP | **391** asserções em 16 arquivos |
+| `supabase test db` | pgTAP | **540** asserções em 22 arquivos |
 | `./scripts/mutacao.sh` | cada regra morre sem teste | **74** cobertas, 0 sem cobertura |
-| `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | até a publicação da vaga |
-| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.4 → 0.2.5 |
-| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.5 idêntico |
+| `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 52 asserções, até as recusas da presença |
+| `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
+| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.10 → 0.2.11 |
+| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.11 idêntico |
 | `./scripts/lint-conhecido.sh` | `plpgsql_check` | sem achado novo |
 | `./scripts/advisor-conhecido.sh` | advisor do Supabase | **não roda**: token vencido |
 | `./scripts/migracoes-imutaveis.sh` | nenhuma migração aplicada foi editada | verde |
@@ -147,17 +143,28 @@ resultado foi X"* tem que sair diferente de zero.
 
 ## Divergências registradas
 
-- **`vaga.publicado_por` não está na Modelagem.** Nasceu com `publicar_vaga`: um
-  estabelecimento tem vários membros e RF04 pergunta quem publicou. Quem precisa
-  reconciliar é o documento.
-- **`net.http_post` não entrou no `publicar_vaga`**, como o cartão `wtITHAPo` pedia. A
-  Edge Function `despachar` é do Sprint 2 e não existe; a fila é durável e o motor
-  consome o que estiver enfileirado. Comentado no cartão.
+Quatro colunas do esquema não estão na Modelagem de Banco. Todas nasceram de uma RPC, e
+quem precisa reconciliar é o documento:
+
+| Coluna | Por quê |
+|---|---|
+| `vaga.publicado_por` | um estabelecimento tem vários membros, e RF04 pergunta quem publicou |
+| `usuario.demonstracao` | conta de revisão da App Store; as duas populações dividem o banco sem se enxergar |
+| `turno.checkin_recebido_em` | `checkin_em` é a hora do **toque**; sem as duas, registro offline vira indistinguível |
+| `turno.checkout_recebido_em` | o mesmo, do outro lado |
+
+E mais estas:
+
+- **`net.http_post` não entrou no `publicar_vaga`**, como o cartão pedia: a Edge Function
+  `despachar` é do Sprint 2 e não existe. A fila é durável.
 - **O modo seleção é recusado na v1.0** com `campo_invalido` e `details: modo`, e não com
-  `selecao_sem_antecedencia` — este é a regra das 24 h e volta na v1.1. O contrato 0.2.5
-  passou a dizer isso por escrito.
-- **`turno.checkout_distancia_m` sem o teto de 200 m** que a Modelagem traz. Vai à
-  decisão no cartão `S0 · Produto · Decisões de produto que travam o código`, prazo 02/10.
+  `selecao_sem_antecedencia`. Contrato 0.2.5.
+- **Vaga `preenchida` recusa com `posicao_ja_preenchida`**, e não `vaga_encerrada`.
+  Contrato 0.2.7.
+- **A posição cancelada não volta para `aberta`**: a vaga ganha posição nova. Contrato
+  0.2.11.
+- **`turno.checkout_distancia_m` sem o teto de 200 m** que a Modelagem traz. Vai à decisão
+  no cartão `S0 · Produto · Decisões de produto que travam o código`, prazo 02/10.
 - **`vaga.posicoes` com teto de 200**, que vem do contrato e não da Modelagem.
 - **`privado.bloqueado_com_estabelecimento` faltava `m.usuario_id <> conta`.** Corrigido
   aqui; a Modelagem tem a mesma expressão errada.
@@ -186,14 +193,16 @@ resultado foi X"* tem que sair diferente de zero.
 
 ## Por onde continuar
 
-1. **Revisar e mergear o PR #16** (`publicar_vaga`). É o único aberto.
-2. `H6OOKVqK` — `vagas_abertas` e `detalhe_vaga`. Agora que existe vaga publicada, é a
-   leitura que dá o que mostrar ao profissional, e ela precede o `candidatar`.
-3. `6ITEQC9v` — `candidatar`. É o cartão onde o produto quebra se errar: `UPDATE`
-   condicional com `FOR UPDATE SKIP LOCKED`, e teste de corrida com **pgbench**, porque o
-   pgTAP roda numa sessão só e não testa concorrência. O molde da corrida já existe em
-   `scripts/corrida-cadastrar-estabelecimento.sh`.
-4. Toda RPC nova do Sprint 1 nasce com quatro coisas, e nenhuma é negociável: o filtro de
-   texto nos campos livres, a recusa correspondente no `ciclo-completo.sh`, a linha no
+1. **Mergear o PR #22** (cancelamentos), se a CI tiver fechado verde. É o único aberto.
+2. `zdCpLEVs` — `avaliar` e `perfil_publico` com reputação, que está com o João Paulo. É
+   a última peça do ciclo antes do despacho.
+3. `7gpPBgTH` — contas de demonstração. A marca `usuario.demonstracao` e o isolamento nas
+   leituras já existem; falta a Edge Function `entrar-demonstracao` com o código fixo em
+   segredo, o seed das duas contas e as notas da revisão.
+4. **Sprint 2, o despacho.** A fila já recebe as duas mensagens que o motor vai consumir:
+   `{vaga_id, publicada_em}` na publicação e `{vaga_id, posicao_id, motivo: reabertura,
+   excluir_conta}` no cancelamento. `pg_cron` e `pg_net` entram com ele.
+5. Toda RPC nova nasce com quatro coisas, e nenhuma é negociável: o filtro de texto nos
+   campos livres, a recusa correspondente no `ciclo-completo.sh`, a linha no
    `openapi.yaml` com a versão subindo, e a asserção de mutação que morre quando a regra
    some. O portão do contrato cobra a terceira; as outras três dependem de quem escreve.

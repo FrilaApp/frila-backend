@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.10
+  version: 0.2.11
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -70,6 +70,7 @@ info:
     | 409 | `vaga_encerrada` | A vaga fechou, foi cancelada ou já começou |
     | 409 | `checkin_pendente` | Check-out ou confirmação de um turno que ainda não teve check-in. O código diz qual é o passo que falta |
     | 409 | `checkin_ja_confirmado` | Confirmação de um check-in geolocalizado, que já nasceu verificado |
+    | 409 | `posicao_nao_cancelavel` | A posição não está confirmada: aberta não tem o que cancelar, cumprida ou já cancelada não volta atrás |
     | 409 | `candidatura_indisponivel` | A candidatura foi retirada, expirou ou já foi escolhida |
     | 409 | `avaliacao_ja_registrada` | Já existe avaliação deste autor para o turno, com outra resposta |
     | 409 | `conta_existente`, `documento_ja_cadastrado` | Cadastro repetido |
@@ -91,6 +92,25 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.11, de 24/09/2026.** `cancelar_posicao` e `cancelar_vaga` foram
+    implementadas.
+
+    - **`409 posicao_nao_cancelavel`**, código novo: a posição não está confirmada.
+      Aberta não tem o que cancelar; cumprida ou já cancelada não volta atrás.
+    - **O motivo passa pelo filtro da diretriz 1.2** e recusa com `422 campo_invalido`,
+      `details: motivo`. Ele vai para a tela da outra parte, como qualquer texto livre.
+    - **Quem não é nenhum dos dois lados recebe `404`**, e não `403` — o mesmo critério
+      das outras operações do turno.
+    - **`cancelar_vaga` é só do contratante**: conta de profissional recebe
+      `422 perfil_incompativel`. Quem quer sair cancela a **própria posição**; cancelar a
+      vaga inteira tiraria o turno de outras pessoas.
+
+    A posição cancelada **não volta** para `aberta`: ela guarda de quem era e se houve
+    falta, que é o que RN12 exige registrar e a taxa de comparecimento precisa ler. A
+    vaga ganha uma posição **nova**, e é ela que `nova_posicao_id` devolve.
+
+    ---
 
     **Versão 0.2.10, de 24/09/2026.** O registro de presença foi implementado:
     `fazer_checkin`, `fazer_checkout` e `confirmar_checkin_manual`.
