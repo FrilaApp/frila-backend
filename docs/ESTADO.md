@@ -108,7 +108,7 @@ Medidos na máquina em 24/09 e 25/09, no branch das contas de demonstração já
 
 | Comando | O que garante | Medida |
 |---|---|---|
-| `supabase test db` | pgTAP | **592** asserções em 23 arquivos |
+| `supabase test db` | pgTAP | **612** asserções em 24 arquivos, em 5 a 7 s na CI |
 | `./scripts/mutacao.sh` | cada regra morre sem teste | **75** cobertas, 0 sem cobertura |
 | `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 58 asserções, até o perfil público |
 | `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | 10 conferências, com o teto de tentativas |
@@ -116,6 +116,7 @@ Medidos na máquina em 24/09 e 25/09, no branch das contas de demonstração já
 | `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.11 → 0.2.12 |
 | `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.12 idêntico ao original, conferido com o token |
 | `./scripts/lint-conhecido.sh` | `plpgsql_check` | sem achado novo |
+| `./scripts/relogio-do-produto.sh` | nenhuma função usa `now()` direto | só `privado.agora()` |
 | `./scripts/advisor-conhecido.sh` | advisor do Supabase | **não roda**: token vencido |
 | `./scripts/migracoes-imutaveis.sh` | nenhuma migração aplicada foi editada | verde |
 
@@ -198,6 +199,14 @@ E mais estas:
   e os gatilhos; `contype = 'u'` fica de fora. Na prática isso significa que
   `um_voto_por_lado` — a regra mais discutível do cartão — é a única sem asserção de
   mutação. Cartão próprio, não conserto de última hora.
+- **O check-out é recusado depois do fim previsto.** `privado.exigir_janela` recusa
+  `registrado_em > fim` com `fora_da_janela`: bater o ponto às 04:05 num turno que termina
+  às 04:00 não entra. Medido em 25/09 ao escrever o `190_ciclo_no_banco.sql`. Não é bug
+  hoje — o aviso de hora excedida é cartão do Sprint 2 —, mas quando ele existir, é esta
+  janela que precisa mudar.
+- **`vagas_abertas` e `meus_turnos` devolvem array, e não objeto com chave.** Custou duas
+  rodadas vermelhas ao escrever o teste de ciclo. O contrato descreve as duas como lista;
+  quem escrever teste novo não deve procurar `->'vagas'` nem `->'turnos'`.
 - **`net.http_post` não entrou no `publicar_vaga`**, como o cartão pedia: a Edge Function
   `despachar` é do Sprint 2 e não existe. A fila é durável.
 - **O modo seleção é recusado na v1.0** com `campo_invalido` e `details: modo`, e não com
