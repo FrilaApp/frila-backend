@@ -68,7 +68,10 @@ for cl in c.get("checklists",[]):
 import json,sys
 for c in json.load(sys.stdin):
     lb=",".join(l["name"] for l in c["labels"] if l["name"])
-    print("%-12s %s  [%s]" % (c["shortUrl"].split("/")[-2], c["name"], lb))'
+    # O shortUrl é https://trello.com/c/<id>: o id é o último pedaço, e não o
+    # penúltimo, que é sempre a letra "c". Com [-2] toda linha saía com "c" na
+    # coluna do id, e quem quisesse `ver` um cartão tinha de ir ao navegador.
+    print("%-12s %s  [%s]" % (c["shortUrl"].split("/")[-1], c["name"], lb))'
     ;;
 
   pegar)
