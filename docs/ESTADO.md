@@ -113,7 +113,14 @@ vaga         publicar_vaga · vagas_abertas · detalhe_vaga · cancelar_vaga
 turno        candidatar · meus_turnos · contato_do_turno · cancelar_posicao
 presença     fazer_checkin · fazer_checkout · confirmar_checkin_manual
 reputação    avaliar · perfil_publico
+app          configuracao_do_app   (sem sessão: a única que o anon executa)
 ```
+
+**`configuracao_do_app` é a exceção à regra de que `anon` não lê nada** (cartão #201): o
+app abaixo da versão mínima precisa descobrir isso antes de conseguir entrar. Lê
+`privado.configuracao_app`, que o PostgREST não expõe. Subir a versão mínima é migração
+nova, pelo roteiro em [`supabase/operacao/subir-versao-minima.md`](../supabase/operacao/subir-versao-minima.md).
+A Modelagem no vault ainda não registra a exceção.
 
 Falta do ciclo: nada. O despacho é o Sprint 2.
 
