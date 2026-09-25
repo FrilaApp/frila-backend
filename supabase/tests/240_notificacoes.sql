@@ -8,7 +8,7 @@
 -- Ids próprios, começando em `c1000000`.
 
 begin;
-select plan(38);
+select plan(42);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -208,6 +208,26 @@ select is(
   0,
   'RN23: aviso de contratante ou de turno nunca entra na conta do teto');
 
+-- O teto ainda não tem quem o aplique (entra com o motor de despacho). O que já dá para
+-- provar é a pergunta que ele vai fazer — "quantas notificações de vaga esta pessoa
+-- recebeu" — pelo caminho real, `privado.notificar`: o lembrete que a e1 já recebeu
+-- lá em cima não pode entrar na resposta, e a de vaga tem de entrar.
+select privado.notificar('c1000000-0000-4000-8000-0000000000e1', 'vaga',
+  'c1000000-0000-4000-8000-00000000aa01',
+  '{"vaga_id":"c1000000-0000-4000-8000-00000000aa01"}');
+
+select is(
+  (select array_agg(n.tipo::text order by n.tipo::text) from public.notificacao n
+    where n.profissional_id = (select p.id from public.profissional p
+                                where p.usuario_id = 'c1000000-0000-4000-8000-0000000000e1')),
+  array['vaga'],
+  'RN23: pelo notificar, a conta do teto da e1 vê a de vaga e não vê o lembrete que ela também recebeu');
+
+select cmp_ok(
+  (select count(*)::int from public.notificacao
+    where usuario_id = 'c1000000-0000-4000-8000-0000000000e1' and tipo <> 'vaga'), '>', 0,
+  'a e1 tem aviso de outro tipo, então a asserção anterior mede alguma coisa');
+
 -- ── candidatar: confirmacao ao profissional e a cada membro (RF10) ────────────
 select is(
   pg_temp.destinatarios('confirmacao', (select (geo->>'turno_id')::uuid from c)),
@@ -359,6 +379,20 @@ select is(
     'privado.notificar(uuid, public.tipo_notificacao, uuid, jsonb)', 'execute'),
   false,
   'privado.notificar não é chamável pelo app');
+
+select is(
+  has_function_privilege('authenticated',
+    'privado.notificar_membros(uuid, public.tipo_notificacao, uuid, jsonb)', 'execute'),
+  false,
+  'privado.notificar_membros não é chamável pelo app');
+
+select is(
+  has_function_privilege('anon',
+    'privado.notificar(uuid, public.tipo_notificacao, uuid, jsonb)', 'execute')
+  or has_function_privilege('anon',
+    'privado.notificar_membros(uuid, public.tipo_notificacao, uuid, jsonb)', 'execute'),
+  false,
+  'nenhuma das duas é chamável sem sessão');
 
 select * from finish();
 rollback;
