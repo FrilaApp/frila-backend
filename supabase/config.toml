@@ -401,6 +401,17 @@ deno_version = 2
 enabled = true
 verify_jwt = true
 
+# A porta do motor de despacho, que só o agendador abre (cartão ZqmkOaHn).
+#
+# `verify_jwt` fica DESLIGADO, ao contrário da porta de demonstração, e é de propósito:
+# ligado, o gateway deixaria passar qualquer JWT do projeto, inclusive a sessão de um
+# usuário comum, e quem decidiria a entrada seria ele. Aqui a decisão é da função, e o
+# critério é um só: o cabeçalho `x-segredo-agendador` igual ao segredo `SEGREDO_AGENDADOR`.
+# Sem ele — com a chave publicável, com sessão, com nada — a resposta é 401.
+[functions.despachar]
+enabled = true
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

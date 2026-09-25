@@ -80,6 +80,7 @@ jobs:
           cat > supabase/functions/.env.local <<'EOF'
           DEMONSTRACAO_EMAILS=revisao-contratante@frila.app,revisao-profissional@frila.app
           DEMONSTRACAO_CODIGO=codigo-de-ci-sem-valor
+          SEGREDO_AGENDADOR=segredo-de-ci-sem-valor
           EOF
           supabase functions serve --env-file supabase/functions/.env.local &
           for _ in $(seq 1 60); do
@@ -89,6 +90,12 @@ jobs:
 
       - name: Contas de demonstração por HTTP
         run: ./scripts/demonstracao.sh
+
+      # O `functions serve` acima serve todas as funções, e o `despachar` sobe junto. A
+      # porta tem de recusar a chave publicável, que está dentro do app, e abrir só para
+      # o segredo do agendador (cartão ZqmkOaHn).
+      - name: Porta do despachar por HTTP
+        run: ./scripts/despachar-porta.sh
 
       # Suíte verde não diz o que ela protege. Derruba cada restrição, trigger e
       # política — e afrouxa cada política para `using (true)` — exigindo que o pgTAP
