@@ -11,40 +11,56 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 contato → check-in → check-out → cancelar → **avaliar**. Falta só o despacho, que é o
 Sprint 2.
 
-Vinte e duas RPCs, 32 migrações, e o contrato em **0.2.15**.
+Vinte e duas RPCs, 36 migrações, e o contrato em **0.2.15**.
 
-> ## ⛔ A CI está parada, e não é por código
+> ## ⛔ A CI não inicia, e é Billing da organização
 >
-> Medido em 25/09, às 15:53: os jobs falham em **três segundos, com zero passos
-> executados**. O único job que não precisa de runner (`O contrato acompanhou o código`,
-> pulado em `push`) pula normalmente; os outros dois morrem antes de começar.
+> **Medido em 25/09, às 18:40**, e este é o diagnóstico que substitui o de 15:53. A
+> anotação do GitHub é literal, nos três jobs de todos os PRs:
 >
-> **A organização `FrilaApp` está no plano `free` e os quatro repositórios são
-> privados** — nesse arranjo, repositório privado consome a cota mensal de minutos do
-> Actions, e cota esgotada falha exatamente assim.
+> > The job was not started because recent account payments have failed or your spending
+> > limit needs to be increased. Please check the 'Billing & plans' section in your
+> > settings
 >
-> Descartei a hipótese de ser o `ci.yml`: na execução das 15:32 o passo novo
-> (`A resposta de cada RPC casa com o contrato`) rodou e passou. O re-run das 16:00
-> falhou igual, então não é intermitência.
+> Não é intermitência, não é o `ci.yml` e não é "cota esgotada" no sentido genérico: o
+> GitHub está dizendo que o **limite de gasto** impede o job de começar. `gh api
+> /orgs/FrilaApp` devolve `plan.name: free`, e no plano free o Actions só é ilimitado em
+> repositório **público** — os quatro da organização são privados, então cada minuto sai
+> de uma cota mensal, e com o limite de gasto padrão de US$ 0 os jobs param de iniciar
+> exatamente assim.
 >
-> **Enquanto isso não for resolvido, ninguém mergeia nada.** O conserto é Billing da org:
-> aumentar o limite de gastos do Actions, ou esperar a virada da cota. Depois disso, um
-> `gh run rerun <id> --failed` em cada PR aberto.
+> **Não medido:** a página de Billing exige escopo `admin:org`, que o token desta máquina
+> não tem. A data da virada do ciclo de cobrança continua desconhecida.
+>
+> O conserto é da organização: subir o limite de gasto, ou esperar a virada. Depois disso,
+> um `gh run rerun <id> --failed` em cada PR aberto.
+>
+> **Enquanto isso, o que entra no `main` entra com prova local.** Foi a decisão de 25/09:
+> a bateria inteira do `ci.yml` rodada na máquina, com `db reset` antes, e o placar colado
+> no PR e no cartão. Vale para os PRs de quem mediu; PR de outra pessoa continua com ela.
 
 ## Onde cada coisa parou em 25/09
 
-| PR | Cartão | Estado |
-|---|---|---|
-| **#30** `s3/trilha-de-auditoria` | `6mdX80SC` | **aberto**, verde na máquina, CI bloqueada |
-| **#27** `s0/despachar-porta` | `ZqmkOaHn` | **aberto**, do Cauê, CI bloqueada desde 14:10 |
+Mergeado em 25/09 com prova local no lugar do portão remoto:
 
-Mergeados em 25/09: **#23** (contas de demonstração), **#24** (`avaliar` e
+| PR | Cartão | Merge |
+|---|---|---|
+| **#30** `s3/trilha-de-auditoria` | `6mdX80SC` | `2947a5c8`, às 19:10Z. 12 portões verdes na máquina; cartão **Concluído** |
+
+Abertos, e nenhum é meu:
+
+| PR | Cartão | De quem |
+|---|---|---|
+| **#27** `s0/despachar-porta` | `ZqmkOaHn` | Cauê |
+| **#31** `s0/configuracao-do-app` | `CvopSHh6` | João Paulo |
+| **#32** `s2/notificacoes` | `wM63y4qx` | João Paulo |
+| **#34** `s0/corrigir-bancada-sync` | `nNUtbriv` | João Paulo |
+| **#35** `ao/frila-8` | — | Cauê |
+
+Mergeados antes em 25/09: **#23** (contas de demonstração), **#24** (`avaliar` e
 `perfil_publico`), **#25** (testes do ciclo), **#26** (`republicar_vaga`), **#28**
 (`meus_estabelecimentos`), **#29** (testes de contrato). No `frila-docs`: **0.2.12** a
 **0.2.15**, e a **0.2.14** é do João Paulo.
-
-**O branch `s3/trilha-de-auditoria` tem o `ESTADO.md` mais novo que este** — os números
-de portão de lá (662 asserções, 84 de mutação) valem depois que o #30 entrar.
 
 ## Ambientes
 
@@ -75,14 +91,17 @@ As credenciais estão no `.env` local (fora do git).
 
 ## O quadro
 
-Todos os cartões de Backend do Sprint 0 e do Sprint 1 já mergeados estão **Concluídos** —
-`wSoltQDy` (cancelamentos) fechou em 24/09 com o #22. Ficaram cinco:
+`6mdX80SC` (trilha de auditoria) fechou em 25/09 com o #30. **A lista Revisão é o gargalo
+do quadro, e não o código:** varrida em 25/09, ela tem cinco cartões meus cujo código já
+está no `main` e que continuam abertos porque ninguém marcou a checklist.
 
-| Cartão | Por quê |
+| Cartão | Onde está, e o que falta |
 |---|---|
+| `7gpPBgTH` Contas de demonstração | **Em andamento** · a porta, o seed e o isolamento estão no `main`; a isenção da janela e as notas da revisão estão no branch `s1/janela-da-demonstracao`. Falta o segredo no `frila-dev`/`frila-prod`, que pede `supabase login` |
 | `ggEzge6h` Filtro de texto ofensivo | **Revisão** · o código está no `main`; falta a revisão da Júlia na lista de termos |
-| `7gpPBgTH` Contas de demonstração | a marca no banco já existe; falta a Edge Function, o segredo e as notas da revisão |
-| `RTmRTHbo` Republicar vaga | Cortável, não começado |
+| `RTmRTHbo` Republicar vaga | **Revisão** · o #26 está mergeado. A frase "Cortável, não começado" das versões anteriores deste arquivo estava errada |
+| `AvockvHx` meus_estabelecimentos | **Revisão** · o #28 está mergeado; a checklist não foi marcada |
+| `0uROtsRX` Testes de contrato | **Revisão** · o #29 está mergeado; a checklist não foi marcada |
 | `yKUkCjSU` Testes do ciclo (QA) | o que ele pede já existe em pgTAP e no ciclo por HTTP; vale reler antes de refazer |
 
 `./scripts/trello.sh` faz tudo: `ver`, `lista`, `pegar`, `revisao`, `concluir`, `comentar`.
@@ -103,13 +122,15 @@ contra o original de verdade desde 24/09.
 leitura, 39 auxiliares no schema `privado`, e nenhuma política de escrita em lugar
 nenhum — toda escrita passa por função `security definer`.
 
-**Vinte RPCs expostas**, que cobrem o ciclo inteiro:
+**Vinte e duas RPCs expostas a `authenticated`**, que cobrem o ciclo inteiro. Contadas em
+25/09 com `has_function_privilege`, e não pela lista escrita à mão — as duas versões
+anteriores deste arquivo diziam vinte e já estavam atrasadas:
 
 ```
 conta        criar_conta · minha_conta
 perfil       criar_perfil_profissional · meu_perfil_profissional · atualizar_perfil_profissional
-casa         cadastrar_estabelecimento · painel_estabelecimento
-vaga         publicar_vaga · vagas_abertas · detalhe_vaga · cancelar_vaga
+casa         cadastrar_estabelecimento · painel_estabelecimento · meus_estabelecimentos
+vaga         publicar_vaga · republicar_vaga · vagas_abertas · detalhe_vaga · cancelar_vaga
 turno        candidatar · meus_turnos · contato_do_turno · cancelar_posicao
 presença     fazer_checkin · fazer_checkout · confirmar_checkin_manual
 reputação    avaliar · perfil_publico
@@ -141,13 +162,13 @@ Medidos na máquina em 24/09 e 25/09, no branch das contas de demonstração já
 
 | Comando | O que garante | Medida |
 |---|---|---|
-| `supabase test db` | pgTAP | **662** asserções em 27 arquivos, em 5 a 7 s na CI |
+| `supabase test db` | pgTAP | **671** asserções em 28 arquivos, em 1 a 3 s na máquina |
 | `./scripts/mutacao.sh` | cada regra morre sem teste | **84** cobertas, 0 sem cobertura |
 | `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 58 asserções, até o perfil público |
-| `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | 10 conferências, com o teto de tentativas |
+| `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | **15** conferências: a porta, o que ela recusa, os dados semeados, **o ciclo da presença inteiro** e o teto de tentativas |
 | `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
 | `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.14 → 0.2.15 |
-| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.15 idêntico ao original, conferido com o token |
+| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | na CI, com o secret: espelho 0.2.15 idêntico ao original. **Na máquina sai zero sem conferir nada**, porque não há `FRILA_DOCS_TOKEN` no ambiente local — o script avisa em voz alta, mas o placar fica verde |
 | `./scripts/lint-conhecido.sh` | `plpgsql_check` | sem achado novo |
 | `./scripts/relogio-do-produto.sh` | nenhuma função usa `now()` direto | só `privado.agora()` |
 | `./scripts/contrato-responde.sh` | a resposta de cada RPC casa com o schema | 22 corpos e 7 envelopes, 18 operações ainda sem implementação |
@@ -243,6 +264,21 @@ E mais estas:
   às 04:00 não entra. Medido em 25/09 ao escrever o `190_ciclo_no_banco.sql`. Não é bug
   hoje — o aviso de hora excedida é cartão do Sprint 2 —, mas quando ele existir, é esta
   janela que precisa mudar.
+- **A janela não se aplica à conta de revisão da App Store**, desde a migração
+  `20260925230000_janela_da_demonstracao`. O turno semeado para a revisão começa dois dias
+  depois de o seed rodar, e a janela abre 60 minutos antes do início: sete horas que abrem
+  47 horas depois do seed e depois fecham para sempre. Em produção o seed entra uma vez, e
+  a revisão não tem data marcada — medido em 25/09, a sessão de
+  `revisao-profissional@frila.app` recebia `422 fora_da_janela`, o que deixaria check-in,
+  confirmação manual e check-out inalcançáveis, contra a diretriz 2.1. A isenção é **só**
+  da janela: registro no futuro continua `registro_no_futuro`, e o check-in sem distância
+  continua nascendo `manual` e `pendente`. O par de controle está no
+  `230_janela_da_demonstracao.sql`, com a conta real recebendo 422 no mesmo relógio.
+- **`vagas_abertas` não filtra por data futura.** O filtro é `estado = 'publicada'` e nada
+  mais: vaga cujo início já passou continua na lista de todo mundo. Medido em 25/09. Para
+  a revisão isso é bom — a vaga semeada não desaparece e a tela nunca nasce vazia (4.2) —,
+  mas é uma vaga vencida visível para o produto, e nada hoje muda o estado dela: quem
+  encerra vaga vencida é o motor do Sprint 2. Não tem cartão próprio.
 - **`vagas_abertas` e `meus_turnos` devolvem array, e não objeto com chave.** Custou duas
   rodadas vermelhas ao escrever o teste de ciclo. O contrato descreve as duas como lista;
   quem escrever teste novo não deve procurar `->'vagas'` nem `->'turnos'`.
@@ -304,19 +340,36 @@ E mais estas:
 7. **Avisar o Cauê** que o projeto Supabase que ele criou em 22/09 virou o `frila-dev`, e
    que a mensagem da fila de despacho traz `vaga_id` e `publicada_em` — é o que o motor
    do Sprint 2 vai consumir.
+8. **Billing do Actions na organização `FrilaApp`.** É o que mantém a CI parada, e ninguém
+   deste repositório resolve: precisa de quem tem acesso a *Billing & plans* da
+   organização. Ver o bloco no topo deste arquivo.
+9. **O segredo da demonstração no `frila-dev` e no `frila-prod`**, e o `functions deploy` da
+   `entrar-demonstracao`. Os dois passam por `supabase secrets set`, que pede o login da
+   pendência 1. É o que falta para o critério 1 do `7gpPBgTH` valer *no `frila-dev`*, como o
+   cartão pede, e não só na máquina.
 
 ## Por onde continuar
 
-1. `7gpPBgTH` — contas de demonstração. A marca `usuario.demonstracao` e o isolamento nas
-   leituras já existem; falta a Edge Function `entrar-demonstracao` com o código fixo em
-   segredo, o seed das duas contas e as notas da revisão. **É o próximo cartão de código
-   livre**, já que o `zdCpLEVs` está com o João Paulo.
-2. `zdCpLEVs` — `avaliar` e `perfil_publico` com reputação, que está com o João Paulo. É
-   a última peça do ciclo antes do despacho.
-3. **Sprint 2, o despacho.** A fila já recebe as duas mensagens que o motor vai consumir:
+1. **Fechar a lista Revisão.** É onde está o trabalho mais barato do quadro: `RTmRTHbo`,
+   `AvockvHx` e `0uROtsRX` têm o código no `main` e a checklist não marcada. Cada um pede a
+   mesma coisa — medir os critérios contra a suíte, comentar a evidência no cartão e
+   concluir. O molde está nos comentários que o `6mdX80SC` e o `7gpPBgTH` receberam em
+   25/09: um item da checklist por asserção nomeada, com o arquivo e a linha.
+2. `7gpPBgTH` — contas de demonstração. O que falta é **fora do código**: o segredo
+   `DEMONSTRACAO_EMAILS`/`DEMONSTRACAO_CODIGO` no `frila-dev` e no `frila-prod` e o
+   `functions deploy`, os dois por `supabase secrets set`, que pedem `supabase login` — e o
+   token do `.env` responde 401. O critério 1 da checklist diz "no frila-dev": até o segredo
+   entrar lá, ele está medido só na máquina.
+3. **Sprint 2, o despacho.** Mas não os cartões: varridos em 25/09, quatorze dos dezenove
+   cartões de Backend do Sprint 2 descem de `wM63y4qx` (notificações), que está com o João
+   Paulo no #32, e `7XS6MQGg` (motor de despacho) é do Cauê por escrito no corpo do #27.
+   Livre e desbloqueado sobrou `NDx7TJ4d` (turnos não verificados e taxa de comparecimento),
+   e dois dos cinco critérios dele dependem de uma decisão de produto que não existe
+   (`8zLfn0mt`) e do `pg_cron`, que entra com o motor.
+   A fila já recebe as duas mensagens que o motor vai consumir:
    `{vaga_id, publicada_em}` na publicação e `{vaga_id, posicao_id, motivo: reabertura,
    excluir_conta}` no cancelamento. `pg_cron` e `pg_net` entram com ele.
-4. Toda RPC nova nasce com quatro coisas, e nenhuma é negociável: o filtro de texto nos
+5. Toda RPC nova nasce com quatro coisas, e nenhuma é negociável: o filtro de texto nos
    campos livres, a recusa correspondente no `ciclo-completo.sh`, a linha no
    `openapi.yaml` com a versão subindo, e a asserção de mutação que morre quando a regra
    some. O portão do contrato cobra a terceira; as outras três dependem de quem escreve.
