@@ -117,6 +117,7 @@ Medidos na máquina em 24/09 e 25/09, no branch das contas de demonstração já
 | `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.15 idêntico ao original, conferido com o token |
 | `./scripts/lint-conhecido.sh` | `plpgsql_check` | sem achado novo |
 | `./scripts/relogio-do-produto.sh` | nenhuma função usa `now()` direto | só `privado.agora()` |
+| `./scripts/contrato-responde.sh` | a resposta de cada RPC casa com o schema | 22 corpos e 7 envelopes, 18 operações ainda sem implementação |
 | `./scripts/advisor-conhecido.sh` | advisor do Supabase | **não roda**: token vencido |
 | `./scripts/migracoes-imutaveis.sh` | nenhuma migração aplicada foi editada | verde |
 
@@ -215,6 +216,10 @@ E mais estas:
 - **`republicar_vaga` não copia `evento_id`.** `publicar_vaga` não recebe esse campo, e
   nenhuma vaga publicada pelo app tem evento hoje. Quando o evento existir, ele entra nas
   duas de uma vez. Registrado na 0.2.13.
+- **Dezoito operações do contrato ainda não têm implementação**, e o
+  `contrato-responde.sh` as lista a cada execução. Não é dívida escondida: é o Sprint 2 em
+  diante. O número é o que impede alguém de ler "portão verde" como "o contrato inteiro
+  está no ar".
 - **`net.http_post` não entrou no `publicar_vaga`**, como o cartão pedia: a Edge Function
   `despachar` é do Sprint 2 e não existe. A fila é durável.
 - **O modo seleção é recusado na v1.0** com `campo_invalido` e `details: modo`, e não com
