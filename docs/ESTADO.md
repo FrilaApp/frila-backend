@@ -46,6 +46,7 @@ Mergeado em 25/09 com prova local no lugar do portão remoto:
 | PR | Cartão | Merge |
 |---|---|---|
 | **#30** `s3/trilha-de-auditoria` | `6mdX80SC` | `2947a5c8`, às 19:10Z. 12 portões verdes na máquina; cartão **Concluído** |
+| **#36** `s1/janela-da-demonstracao` | `7gpPBgTH` | `ed0c6456`. A janela do registro não se aplica à conta de revisão, e as notas da revisão em português e inglês. 12 portões verdes |
 
 Abertos, e nenhum é meu:
 
@@ -91,18 +92,28 @@ As credenciais estão no `.env` local (fora do git).
 
 ## O quadro
 
-`6mdX80SC` (trilha de auditoria) fechou em 25/09 com o #30. **A lista Revisão é o gargalo
-do quadro, e não o código:** varrida em 25/09, ela tem cinco cartões meus cujo código já
-está no `main` e que continuam abertos porque ninguém marcou a checklist.
+**A lista Revisão foi varrida e esvaziada do que era fechável**, em 25/09. Ela tinha onze
+cartões e ficou com nove; o gargalo não era o código, era checklist não marcada. Cada um
+recebeu no cartão a evidência item a item — o arquivo de teste e o nome da asserção, mais a
+medição por HTTP onde o critério pedia status.
 
-| Cartão | Onde está, e o que falta |
+Fecharam em 25/09: `6mdX80SC` (trilha de auditoria, #30), `AvockvHx`
+(`meus_estabelecimentos`, #28) e `0uROtsRX` (testes de contrato, #29). O `yKUkCjSU` (testes
+do ciclo) já estava Concluído com os quatro critérios marcados — as versões anteriores deste
+arquivo o listavam como pendente, e estavam erradas.
+
+**O que sobrou de Backend na Revisão, e por quê:**
+
+| Cartão | O que falta, e de quem é |
 |---|---|
-| `7gpPBgTH` Contas de demonstração | **Em andamento** · a porta, o seed e o isolamento estão no `main`; a isenção da janela e as notas da revisão estão no branch `s1/janela-da-demonstracao`. Falta o segredo no `frila-dev`/`frila-prod`, que pede `supabase login` |
-| `ggEzge6h` Filtro de texto ofensivo | **Revisão** · o código está no `main`; falta a revisão da Júlia na lista de termos |
-| `RTmRTHbo` Republicar vaga | **Revisão** · o #26 está mergeado. A frase "Cortável, não começado" das versões anteriores deste arquivo estava errada |
-| `AvockvHx` meus_estabelecimentos | **Revisão** · o #28 está mergeado; a checklist não foi marcada |
-| `0uROtsRX` Testes de contrato | **Revisão** · o #29 está mergeado; a checklist não foi marcada |
-| `yKUkCjSU` Testes do ciclo (QA) | o que ele pede já existe em pgTAP e no ciclo por HTTP; vale reler antes de refazer |
+| `7gpPBgTH` Contas de demonstração | Três dos quatro critérios medidos e as notas anexadas. O critério 1 diz "no `frila-dev`", e lá a porta ainda não existe: falta `supabase secrets set` e `functions deploy`, que pedem `supabase login`. **Bloqueio de presença** |
+| `RTmRTHbo` Republicar vaga | Os três critérios de backend marcados, inclusive republicar a partir de vaga `encerrada`, medido por HTTP. O quarto é de ponta a ponta e depende da tela: a ação "Publicar de novo" em Minhas vagas. **É iOS** |
+| `ggEzge6h` Filtro de texto | Os três critérios marcados, com a recusa e o falso positivo medidos por HTTP. **Acrescentei um quarto item à checklist**: a revisão da lista de termos pela Júlia, que estava em *O que fazer* e não era cobrada por critério nenhum — com três marcados o cartão fecharia com a lista nunca lida. **É da Júlia** |
+| `CvopSHh6` Versão mínima do app | Do João Paulo, no #31 |
+| `wM63y4qx` Notificações | Do João Paulo, no #32. É de onde descem quatorze dos dezenove cartões de Backend do Sprint 2 |
+
+A frase "Cortável, não começado" que este arquivo trazia sobre o `RTmRTHbo` estava errada: o
+#26 já estava mergeado.
 
 `./scripts/trello.sh` faz tudo: `ver`, `lista`, `pegar`, `revisao`, `concluir`, `comentar`.
 
@@ -350,11 +361,12 @@ E mais estas:
 
 ## Por onde continuar
 
-1. **Fechar a lista Revisão.** É onde está o trabalho mais barato do quadro: `RTmRTHbo`,
-   `AvockvHx` e `0uROtsRX` têm o código no `main` e a checklist não marcada. Cada um pede a
-   mesma coisa — medir os critérios contra a suíte, comentar a evidência no cartão e
-   concluir. O molde está nos comentários que o `6mdX80SC` e o `7gpPBgTH` receberam em
-   25/09: um item da checklist por asserção nomeada, com o arquivo e a linha.
+1. **A Revisão já foi varrida** em 25/09, e o que sobrou de Backend está bloqueado por
+   presença ou é de outra pessoa — ver a seção *O quadro*. O molde de fechamento está nos
+   comentários que o `6mdX80SC`, o `AvockvHx`, o `0uROtsRX`, o `RTmRTHbo` e o `ggEzge6h`
+   receberam: um item da checklist por asserção nomeada, com o arquivo; e medição por HTTP
+   quando o critério fala em status, porque o pgTAP alcança `sqlstate` e `code` e não o
+   status. Vale repetir o molde em cartão novo, e não reinventá-lo.
 2. `7gpPBgTH` — contas de demonstração. O que falta é **fora do código**: o segredo
    `DEMONSTRACAO_EMAILS`/`DEMONSTRACAO_CODIGO` no `frila-dev` e no `frila-prod` e o
    `functions deploy`, os dois por `supabase secrets set`, que pedem `supabase login` — e o
