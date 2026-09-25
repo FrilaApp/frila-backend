@@ -1,4 +1,4 @@
-# Estado do backend — 24/09/2026
+# Estado do backend — 25/09/2026
 
 Onde o trabalho parou e o que a próxima sessão precisa saber. As regras duráveis estão
 no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
@@ -11,7 +11,40 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 contato → check-in → check-out → cancelar → **avaliar**. Falta só o despacho, que é o
 Sprint 2.
 
-Vinte RPCs, 30 migrações, e o contrato em **0.2.12**.
+Vinte e duas RPCs, 32 migrações, e o contrato em **0.2.15**.
+
+> ## ⛔ A CI está parada, e não é por código
+>
+> Medido em 25/09, às 15:53: os jobs falham em **três segundos, com zero passos
+> executados**. O único job que não precisa de runner (`O contrato acompanhou o código`,
+> pulado em `push`) pula normalmente; os outros dois morrem antes de começar.
+>
+> **A organização `FrilaApp` está no plano `free` e os quatro repositórios são
+> privados** — nesse arranjo, repositório privado consome a cota mensal de minutos do
+> Actions, e cota esgotada falha exatamente assim.
+>
+> Descartei a hipótese de ser o `ci.yml`: na execução das 15:32 o passo novo
+> (`A resposta de cada RPC casa com o contrato`) rodou e passou. O re-run das 16:00
+> falhou igual, então não é intermitência.
+>
+> **Enquanto isso não for resolvido, ninguém mergeia nada.** O conserto é Billing da org:
+> aumentar o limite de gastos do Actions, ou esperar a virada da cota. Depois disso, um
+> `gh run rerun <id> --failed` em cada PR aberto.
+
+## Onde cada coisa parou em 25/09
+
+| PR | Cartão | Estado |
+|---|---|---|
+| **#30** `s3/trilha-de-auditoria` | `6mdX80SC` | **aberto**, verde na máquina, CI bloqueada |
+| **#27** `s0/despachar-porta` | `ZqmkOaHn` | **aberto**, do Cauê, CI bloqueada desde 14:10 |
+
+Mergeados em 25/09: **#23** (contas de demonstração), **#24** (`avaliar` e
+`perfil_publico`), **#25** (testes do ciclo), **#26** (`republicar_vaga`), **#28**
+(`meus_estabelecimentos`), **#29** (testes de contrato). No `frila-docs`: **0.2.12** a
+**0.2.15**, e a **0.2.14** é do João Paulo.
+
+**O branch `s3/trilha-de-auditoria` tem o `ESTADO.md` mais novo que este** — os números
+de portão de lá (662 asserções, 84 de mutação) valem depois que o #30 entrar.
 
 ## Ambientes
 
