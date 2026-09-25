@@ -46,7 +46,15 @@ fi
 #   2. só "No schema errors found", quando não há. Na máquina ela imprime as duas
 #      linhas; no servidor, sem terminal, só esta.
 #   3. qualquer outra coisa, que é falha e sai diferente de zero.
-saida=$(printf '%s' "$bruto" | sed -n '/^[[{]/,$p')
+# O recorte começa na primeira linha que abre JSON e termina onde o JSON termina. A
+# segunda parte não é preciosismo: em 25/09 a CLI passou a imprimir "A new version of
+# Supabase CLI is available" **depois** do JSON, e o recorte antigo, que ia até o fim da
+# saída, entregava ao parser um documento com lixo colado no fim. O erro que aparecia era
+# `JSONDecodeError: Extra data`, sobre um lint que estava limpo.
+#
+# Linha de aviso da CLI começa com letra na coluna zero; JSON começa com pontuação ou vem
+# indentado. É por aí que as duas se separam.
+saida=$(printf '%s' "$bruto" | sed -n '/^[[{]/,$p' | sed '/^[A-Za-z]/d')
 
 if [ -z "$saida" ]; then
   if printf '%s' "$bruto" | grep -q 'No schema errors found'; then
