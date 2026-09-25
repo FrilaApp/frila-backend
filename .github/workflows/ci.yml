@@ -110,6 +110,17 @@ jobs:
       - name: Nenhuma função usa now() direto
         run: ./scripts/relogio-do-produto.sh
 
+      # O Postgres monta o JSON de cada RPC à mão: basta renomear uma chave para quebrar o
+      # app sem erro no banco, sem teste vermelho e sem log. Os outros dois portões de
+      # contrato não alcançam isso — um compara o espelho com o original, o outro exige
+      # que o PR que mexe em `public` mexa no contrato. Nenhum dos dois olha um corpo.
+      #
+      # Este chama cada RPC da v1.0 com o relógio do produto sob controle e valida a
+      # resposta contra o schema declarado, nos dois sentidos: campo que sumiu e campo que
+      # o contrato não declara.
+      - name: A resposta de cada RPC casa com o contrato
+        run: ./scripts/contrato-responde.sh
+
       - name: Diagnóstico ao falhar
         if: failure()
         run: supabase status && docker ps -a
