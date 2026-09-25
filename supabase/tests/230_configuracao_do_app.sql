@@ -8,7 +8,7 @@
 --   200  a configuração da plataforma, com os cinco campos de ConfiguracaoDoApp
 --   422  plataforma ausente (campo_obrigatorio) ou fora do enum (campo_invalido)
 --   404  plataforma do enum sem configuração gravada — hoje android e web, que ainda
---        não têm loja. Decisão desta implementação, fora do contrato: ver a migração.
+--        não têm loja. Documentado no contrato 0.2.16.
 --
 -- A tabela fica em `privado`: nenhuma chave do app lê a linha direto, só pela função.
 
@@ -58,8 +58,7 @@ select is(
   (select array_agg(p.proname::text order by p.proname)
      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
-      and has_function_privilege('anon', p.oid, 'execute')
-      and p.proname not in ('rls_auto_enable')),
+      and has_function_privilege('anon', p.oid, 'execute')),
   array['configuracao_do_app'],
   'configuracao_do_app é a única função de public que anon executa');
 
