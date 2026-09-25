@@ -66,10 +66,10 @@ fica registrada aqui.
 
 **Os modelos não mudaram porque o Supabase não deixa.** O PATCH com eles voltou
 `400 Email template modification is not available for free tier projects using the
-default email provider`. Enquanto não houver SMTP próprio (cartão #192), o `frila-dev`
+default email provider`. Enquanto não houver SMTP próprio (cartão #200 do Trello), o `frila-dev`
 manda o e-mail padrão, só com o link e sem o código, e a entrada por código do app não
 fecha contra o hospedado. O teste do #53 roda no local (Mailpit), onde o `config.toml`
-já aplica `codigo-de-entrada.html`. Quando o #192 tiver credenciais: configurar o SMTP e
+já aplica `codigo-de-entrada.html`. Quando o #200 tiver credenciais: configurar o SMTP e
 então aplicar esse arquivo em `mailer_templates_magic_link_content` e
 `mailer_templates_confirmation_content`, com o assunto "Seu código de entrada no Frila".
 O limite do e-mail padrão continua em `rate_limit_email_sent = 2` por hora.
