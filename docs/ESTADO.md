@@ -54,6 +54,29 @@ de portão de lá (662 asserções, 84 de mutação) valem depois que o #30 entr
 | `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · **29** migrações, as mesmas do `main` (conferidas em 24/09) |
 | `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **vazio**: as migrações entram pelo cartão do ambiente de produção (29/10), com a entrega contínua por tag |
 
+**O Auth do `frila-dev` foi para o código de 6 dígitos só pela metade**, em 25/09, pela
+Management API, sem tocar no `frila-prod`. A configuração do painel não é versionada;
+fica registrada aqui.
+
+| Chave | Antes | Depois |
+|---|---|---|
+| `mailer_otp_length` | 8 | **6**, o que o contrato 0.2.17 promete |
+| `uri_allow_list` | `com.frila.org.app://login-callback` | vazia: o iOS não registra mais esquema de URL (FrilaApp/frila-frontend#10) |
+| modelos `magic_link` e `confirmation` | padrão do Supabase, com link | **inalterados** |
+
+**Os modelos não mudaram porque o Supabase não deixa.** O PATCH com eles voltou
+`400 Email template modification is not available for free tier projects using the
+default email provider`. Enquanto não houver SMTP próprio (cartão #200 do Trello, que depende do #46, a escolha do provedor, e do domínio com DNS), o `frila-dev`
+manda o e-mail padrão, só com o link e sem o código, e a entrada por código do app não
+fecha contra o hospedado. O teste do #53 roda no local (Mailpit), onde o `config.toml`
+já aplica `codigo-de-entrada.html`. Quando o #200 tiver credenciais: configurar o SMTP e
+então aplicar esse arquivo em `mailer_templates_magic_link_content` e
+`mailer_templates_confirmation_content`, com o assunto "Seu código de entrada no Frila".
+O limite do e-mail padrão continua em `rate_limit_email_sent = 2` por hora.
+
+Rollback: `PATCH /v1/projects/jcobftbhbqdikratzizz/config/auth` com
+`{"mailer_otp_length": 8, "uri_allow_list": "com.frila.org.app://login-callback"}`.
+
 **O `frila-dev` está em dia com o `main`.** As 11 migrações que faltavam, de
 `20260923200000_filtro_de_texto_ofensivo` a `20260925020000_cancelamentos`, entraram em
 24/09 às 15h pelo MCP do Supabase, porque o token do `.env` não responde. Cada uma rodou
@@ -219,6 +242,12 @@ E mais estas:
   Modelagem. Não é tabela do produto: guarda as tentativas contra o código fixo da
   revisão. RLS ligada e nenhuma política, como `pgmq.q_despacho`; quem escreve é a Edge
   Function pela `service_role`.
+- **Com o CLI 2.75, `supabase start` e `db reset` quebram no `cenarios.sql`**:
+  `relation "_quando" does not exist`. O arquivo cria `_quando` como `temp table`, e o
+  executor de seed dessa versão não mantém a sessão entre os lotes. Por `psql`, numa
+  sessão só, o mesmo arquivo roda limpo. Medido em 25/09. Contorno:
+  `SUPABASE_DB_SEED_ENABLED=false supabase db reset` e depois `psql "$DB_URL"` com
+  `seed.sql` e `cenarios.sql`. Com isso o pgTAP passa, 639 testes.
 - **`cenarios.sql` deixa as colunas de token do GoTrue em NULL**, e com NULL o
   `POST /auth/v1/admin/generate_link` responde `500 Database error finding user`. Medido
   em 25/09. Não quebra a entrada por código do e-mail, que é a que os cenários usam, mas
