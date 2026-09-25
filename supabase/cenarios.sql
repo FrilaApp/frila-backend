@@ -52,12 +52,7 @@
 -- mesmo rodando numa sexta — a vaga em modo seleção precisa de mais de 24 h de
 -- antecedência (RN24), e "a próxima sexta" pode ser hoje à noite.
 
-drop table if exists _quando;
-create temp table _quando as
-select ((date_trunc('day', now() at time zone 'America/Sao_Paulo')
-         + (((5 - extract(dow from now() at time zone 'America/Sao_Paulo')::int + 7) % 7) + 7)
-             * interval '1 day'
-         + interval '18 hours') at time zone 'America/Sao_Paulo') as sexta_18h;
+
 
 -- ── As contas ──────────────────────────────────────────────────────────────────
 --
@@ -134,8 +129,8 @@ insert into public.profissional (id, usuario_id, ponto_base, taxa_comparecimento
                                  turnos_realizados)
 values
   ('e0000000-0000-4000-8000-000000000001','a0000000-0000-4000-8000-000000000001','POINT(-47.8830 -15.7650)'::extensions.geography, 1.000, 1),
-  ('e0000000-0000-4000-8000-000000000002','a0000000-0000-4000-8000-000000000002','POINT(-47.8795 -15.7590)'::extensions.geography, 1.000, 1),
-  ('e0000000-0000-4000-8000-000000000003','a0000000-0000-4000-8000-000000000003','POINT(-47.8910 -15.7710)'::extensions.geography, 1.000, 1),
+  ('e0000000-0000-4000-8000-000000000002','a0000000-0000-4000-8000-000000000002','POINT(-47.8795 -15.7590)'::extensions.geography, null,  0),
+  ('e0000000-0000-4000-8000-000000000003','a0000000-0000-4000-8000-000000000003','POINT(-47.8910 -15.7710)'::extensions.geography, null,  0),
   ('e0000000-0000-4000-8000-000000000004','a0000000-0000-4000-8000-000000000004','POINT(-48.0300 -15.8360)'::extensions.geography, null,  0),
   ('e0000000-0000-4000-8000-000000000005','a0000000-0000-4000-8000-000000000005','POINT(-47.8840 -15.7680)'::extensions.geography, null,  0),
   ('e0000000-0000-4000-8000-000000000006','a0000000-0000-4000-8000-000000000006','POINT(-47.8860 -15.7600)'::extensions.geography, null,  0),
@@ -253,6 +248,12 @@ on conflict do nothing;
 --   d…06  preenchida  Buffet  · garçom          · sexta 18:00–02:00  ← cruza com a d…01
 --   d…07  encerrada   Bar     · garçom          · uma sexta passada 18:00–02:00
 
+with _quando as (
+  select ((date_trunc('day', now() at time zone 'America/Sao_Paulo')
+           + (((5 - extract(dow from now() at time zone 'America/Sao_Paulo')::int + 7) % 7) + 7)
+               * interval '1 day'
+           + interval '18 hours') at time zone 'America/Sao_Paulo') as sexta_18h
+)
 insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
                          valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
                          exige_material_proprio, responsavel_local, traje, participa_rateio,
@@ -524,4 +525,3 @@ values
   ('b0000000-0000-4000-8000-000000000001','fcm-cenario-zelia-'  || repeat('0', 24), 'ios')
 on conflict (token_fcm) do nothing;
 
-drop table _quando;
