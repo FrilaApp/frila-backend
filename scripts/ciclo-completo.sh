@@ -247,6 +247,31 @@ code=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.s
   || falhou "painel de estabelecimento alheio: HTTP $http code '$code', esperado 403 sem_permissao"
 ok "GET painel de estabelecimento alheio → 403 sem_permissao"
 
+# `meus_estabelecimentos` é a leitura que vem **antes** de todas as outras do contratante:
+# `publicar_vaga`, `painel_estabelecimento` e `republicar_vaga` recebem
+# `estabelecimento_id`, e é daqui que o app o tira. Por GET, como o contrato manda.
+tmp=$(mktemp)
+http=$(curl -s -o "$tmp" -w '%{http_code}' -G "$URL/rest/v1/rpc/meus_estabelecimentos" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN")
+corpo=$(cat "$tmp"); rm -f "$tmp"
+[ "$http" = "200" ] || falhou "GET meus_estabelecimentos devolveu $http: $corpo"
+
+achou=$(printf '%s' "$corpo" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+alvo = sys.argv[1]
+print(next((e.get('papel','') for e in d if e.get('id') == alvo), ''))" "$ESTAB" 2>/dev/null || true)
+[ "$achou" = "administrador" ] \
+  || falhou "meus_estabelecimentos não trouxe o estabelecimento recém-criado como administrador: $corpo"
+ok "GET meus_estabelecimentos → 200, com a casa criada e o papel de administrador"
+
+# RN10: esta tela não é a de cadastro. Telefone, e-mail, documento, endereço e coordenada
+# ficam de fora — o pgTAP já cobra isso, mas o corpo que sai pelo PostgREST é outro objeto
+# e merece a mesma pergunta.
+printf '%s' "$corpo" | grep -qiE 'telefone|email|documento|endereco|latitude|longitude|\+55' \
+  && falhou "meus_estabelecimentos vazou dado de contato ou de cadastro: $corpo"
+ok "RN10: nenhum contato, documento ou coordenada em meus_estabelecimentos"
+
 echo
 echo "▸ A vaga"
 #

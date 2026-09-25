@@ -61,7 +61,7 @@ virou `api/openapi.yaml`**. O redirect do GitHub cobre o nome antigo da organiza
 não cobre caminho dentro do repositório — quem tiver script ou marcador apontando para o
 caminho antigo precisa ajustar. No backend, o PR #15 ajustou.
 
-Versão vigente: **0.2.13**, espelhada em `contrato/openapi.yaml` e conferida pelo portão
+Versão vigente: **0.2.15**, espelhada em `contrato/openapi.yaml` e conferida pelo portão
 contra o original de verdade desde 24/09.
 
 ## O que existe no banco
@@ -108,13 +108,13 @@ Medidos na máquina em 24/09 e 25/09, no branch das contas de demonstração já
 
 | Comando | O que garante | Medida |
 |---|---|---|
-| `supabase test db` | pgTAP | **628** asserções em 25 arquivos, em 5 a 7 s na CI |
+| `supabase test db` | pgTAP | **639** asserções em 26 arquivos, em 5 a 7 s na CI |
 | `./scripts/mutacao.sh` | cada regra morre sem teste | **75** cobertas, 0 sem cobertura |
 | `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 58 asserções, até o perfil público |
 | `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | 10 conferências, com o teto de tentativas |
 | `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
-| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.12 → 0.2.13 |
-| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.13 idêntico ao original, conferido com o token |
+| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.14 → 0.2.15 |
+| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.15 idêntico ao original, conferido com o token |
 | `./scripts/lint-conhecido.sh` | `plpgsql_check` | sem achado novo |
 | `./scripts/relogio-do-produto.sh` | nenhuma função usa `now()` direto | só `privado.agora()` |
 | `./scripts/advisor-conhecido.sh` | advisor do Supabase | **não roda**: token vencido |
@@ -146,7 +146,12 @@ resultado foi X"* tem que sair diferente de zero.
 - **Uma recusa tem três eixos, e conferir dois não basta.** `sqlstate`, `code` e status.
   Os dois primeiros o pgTAP alcança; o status, só o `ciclo-completo.sh`.
 - **Rótulo de volatilidade mentiroso passa despercebido.** Quem pega é o lint, e só com a
-  CLI igual à da CI.
+  CLI igual à da CI. Aconteceu de novo em 25/09, com `meus_estabelecimentos` nascendo
+  `stable` e chamando `exigir_perfil` e `erro`, que são VOLATILE.
+- **O portão que lê a saída de uma ferramenta quebra quando a ferramenta fala demais.** A
+  CLI passou a imprimir o aviso de versão nova depois do JSON, e o `lint-conhecido.sh`
+  reprovou com `JSONDecodeError` sobre um lint limpo. Recorte de saída de ferramenta
+  precisa dizer onde termina, e não só onde começa.
 - **Mudança feita no painel do Supabase não existe para o próximo ambiente.**
 - **Mergear pilha de PRs com `--delete-branch` fecha os filhos.** Aconteceu com o #8 e o
   #10 em 24/09: apagar o branch-base de um PR aberto o fecha, e PR fechado **não** pode
