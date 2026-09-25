@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.15
+  version: 0.2.16
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -92,6 +92,24 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.16, de 25/09/2026.** `configuracao_do_app` foi implementada. O app iOS
+    já a chamava, e sem ela a checagem de versão mínima falhava aberta: ninguém era
+    bloqueado, e ninguém percebia. O que a implementação fixou, e este documento não dizia:
+
+    - **Plataforma sem configuração é `404 nao_encontrado`, com `details: plataforma`.** Hoje
+      só `ios` tem loja e versão. Android e web ainda não publicaram, e gravar uma URL de loja
+      inventada em dado de produção seria pior do que responder que não há configuração. O
+      `422` deixa de ser "a única recusa possível".
+    - **Os dois `422` têm código próprio:** `campo_obrigatorio` para `plataforma` ausente ou em
+      branco, `campo_invalido` para valor fora do enum. Os dois com `details: plataforma`.
+    - **Versão é só números e pontos, até quatro partes de até seis dígitos** (`1`, `1.2`,
+      `1.2.10`, `1.2.10.3`), e `versao_recomendada` nunca fica abaixo de `versao_minima`. O
+      banco recusa o resto, então o cliente pode confiar no formato ao comparar.
+    - **`POST` responde igual ao `GET`**, como toda RPC do PostgREST, com `{"plataforma": ...}`
+      no corpo. O app iOS usa `POST`.
+
+    ---
 
     **Versão 0.2.15, de 25/09/2026.** `meus_estabelecimentos` foi implementada. Ela está
     descrita aqui desde a 0.2.1 e **nunca tinha sido escrita** — o cartão de backend que
@@ -649,11 +667,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConfiguracaoDoApp'
+        '404':
+          description: |
+            `nao_encontrado` com `details: plataforma`: a plataforma existe no enum, mas ainda não
+            tem configuração (hoje, só `ios` tem). Bloquear quem não tem loja para onde ir não
+            ajudaria ninguém.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
         '422':
           description: |
-            `plataforma` ausente ou fora do enum. É a única recusa possível aqui — não há
-            autenticação a falhar, porque esta operação existe justamente para o app que ainda
-            não conseguiu entrar.
+            `campo_obrigatorio` quando `plataforma` está ausente ou em branco; `campo_invalido`
+            quando está fora do enum. Os dois com `details: plataforma`. Não há autenticação a
+            falhar, porque esta operação existe justamente para o app que ainda não conseguiu entrar.
           content:
             application/json:
               schema:
@@ -3354,11 +3381,13 @@ components:
           $ref: '#/components/schemas/Plataforma'
         versao_minima:
           type: string
+          pattern: '^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$'
           description: Abaixo desta, o app bloqueia e leva à loja. Nenhuma tela do produto abre.
           example: "1.0.0"
         versao_recomendada:
           type: string
-          description: Aviso dispensável, uma vez por versão.
+          pattern: '^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$'
+          description: Aviso dispensável, uma vez por versão. Nunca abaixo de `versao_minima`.
           example: "1.1.0"
         url_da_loja:
           type: string

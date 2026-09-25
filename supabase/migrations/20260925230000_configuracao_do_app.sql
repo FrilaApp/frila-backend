@@ -15,7 +15,7 @@
 --
 -- A exceção é estreita: `anon` executa a função e não enxerga a tabela. A tabela mora
 -- em `privado`, que o PostgREST não expõe, e a função devolve só os cinco campos do
--- contrato. `tests/220_configuracao_do_app.sql` confere, por nome, que ela continua
+-- contrato. `tests/230_configuracao_do_app.sql` confere, por nome, que ela continua
 -- sendo a única função de `public` que `anon` executa.
 --
 -- ── Por que colunas, e não (chave, valor) ─────────────────────────────────────
