@@ -141,8 +141,8 @@ Medidos na máquina em 24/09 e 25/09, no branch das contas de demonstração já
 
 | Comando | O que garante | Medida |
 |---|---|---|
-| `supabase test db` | pgTAP | **639** asserções em 26 arquivos, em 5 a 7 s na CI |
-| `./scripts/mutacao.sh` | cada regra morre sem teste | **75** cobertas, 0 sem cobertura |
+| `supabase test db` | pgTAP | **662** asserções em 27 arquivos, em 5 a 7 s na CI |
+| `./scripts/mutacao.sh` | cada regra morre sem teste | **84** cobertas, 0 sem cobertura |
 | `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 58 asserções, até o perfil público |
 | `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | 10 conferências, com o teto de tentativas |
 | `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
@@ -253,6 +253,15 @@ E mais estas:
   `contrato-responde.sh` as lista a cada execução. Não é dívida escondida: é o Sprint 2 em
   diante. O número é o que impede alguém de ler "portão verde" como "o contrato inteiro
   está no ar".
+- **A retenção não pode esvaziar `ocorrencia.motivo`.** `ocorrencia_motivo_check` exige
+  `length(btrim(motivo)) > 0`, então o job do `yClUqOpU` tem de **substituir** o relato por
+  um marcador, e não apagá-lo. Medido em 25/09: um `update … set motivo = ''` passa pela
+  exceção controlada da retenção e morre logo depois, com `23514`.
+- **`ocorrencia.criada_em` e as outras colunas `criado_em` usam `now()`, e não
+  `privado.agora()`.** São `default` de coluna, fora do alcance do
+  `relogio-do-produto.sh`, que pergunta ao corpo das funções. Não quebra regra de prazo
+  nenhuma hoje, mas significa que dentro de um teste com relógio deslocado a ocorrência
+  nasce com a data de verdade enquanto o resto da transação vive no futuro.
 - **`net.http_post` não entrou no `publicar_vaga`**, como o cartão pedia: a Edge Function
   `despachar` é do Sprint 2 e não existe. A fila é durável.
 - **O modo seleção é recusado na v1.0** com `campo_invalido` e `details: modo`, e não com
