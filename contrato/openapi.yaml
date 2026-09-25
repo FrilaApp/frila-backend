@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.13
+  version: 0.2.15
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -92,6 +92,56 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.15, de 25/09/2026.** `meus_estabelecimentos` foi implementada. Ela está
+    descrita aqui desde a 0.2.1 e **nunca tinha sido escrita** — o cartão de backend que
+    deveria tê-la trazido a citava no corpo, mas nenhum item da checklist dele a
+    mencionava, então ele fechou com a checklist inteira marcada e a função faltando.
+    Ficou quatro versões de contrato no ar como promessa.
+
+    Vale dizer o tamanho do buraco, porque ele não era cosmético: `publicar_vaga`,
+    `painel_estabelecimento` e `republicar_vaga` recebem `estabelecimento_id`, e sem esta
+    leitura o app só descobriria esse id **cadastrando um estabelecimento novo** — criando
+    uma casa duplicada a cada tentativa.
+
+    O que a implementação fixou, e este documento não dizia:
+
+    - **A lista vem ordenada por nome.** Duas casas é o caso comum, e ordem instável faria
+      o seletor do app trocar de posição entre duas aberturas da mesma tela.
+    - **`reputacao` vem no mesmo formato do `PerfilPublico` de estabelecimento**: taxa
+      nula e os dois contadores de turno em zero. É a mesma função que serve as duas
+      leituras, e não uma segunda definição da mesma coisa.
+    - **Conta de profissional recebe `422 perfil_incompativel`**, e não uma lista vazia. A
+      tela leria vazio como "você não tem casas", que é outra frase.
+    - **Nenhum dado de cadastro na resposta** (RN10): sem documento, sem endereço, sem
+      coordenada e sem contato. Quem precisa disso chama o painel.
+
+    ---
+
+    **Versão 0.2.14, de 25/09/2026.** O aviso passa a ter destinatário e tipo próprios, e não
+    só o profissional da vaga. Nenhuma assinatura, campo de resposta ou código de erro muda:
+    o que muda é o que a implementação enfileira, e o cliente precisa saber para tratar o toque.
+
+    - **`notificacao` guarda `usuario_id` (quem recebe), `tipo` e `referencia_id`.** O aviso vai
+      para a conta, e a conta pode ser de profissional ou de membro de estabelecimento. Os
+      tipos são `vaga`, `vagas_agrupadas`, `vaga_sem_elegiveis`, `confirmacao`, `lembrete_24h`,
+      `lembrete_3h`, `inicio_sem_checkin`, `atraso_15min`, `fim_sem_checkout`, `vaga_vazia`,
+      `checkin`, `checkin_manual_pendente`, `cancelamento`, `avaliacao_disponivel`,
+      `suspensao` e `reativacao`. Só `vaga` e `vagas_agrupadas` contam para o teto da RN23.
+    - **O `payload` do toque leva o `tipo` e ids, nada mais (RN15).** Chaves possíveis:
+      `vaga_id`, `posicao_id`, `turno_id`, `estabelecimento_id` e, no cancelamento,
+      `reaberta` (booleano). Nunca telefone, e-mail, nome ou coordenada: o app busca o que
+      mostrar pela RPC do destino. O servidor recusa qualquer outra chave.
+    - **Marca de envio.** Os tipos agendados (`lembrete_24h`, `lembrete_3h`,
+      `inicio_sem_checkin`, `atraso_15min`, `fim_sem_checkout`, `vaga_vazia` e
+      `avaliacao_disponivel`) saem uma vez por tipo, referência e conta. Reenviar não duplica.
+    - **Quem é avisado hoje.** `candidatar` avisa o profissional e cada membro do
+      estabelecimento (`confirmacao`, RF10). `fazer_checkin` avisa os membros (`checkin`, ou
+      `checkin_manual_pendente` quando a presença espera confirmação). `cancelar_posicao` e
+      `cancelar_vaga` avisam só a outra parte (`cancelamento`), com `reaberta = false` quando o
+      turno ficou descoberto. Os demais tipos entram com os cartões do agendador.
+
+    ---
 
     **Versão 0.2.13, de 25/09/2026.** `republicar_vaga` foi implementada, e com ela o
     Sprint 1 fecha. A operação já estava descrita aqui desde a 0.2.1; o que muda é o que
@@ -904,7 +954,13 @@ paths:
         tela precisa esconder o que o servidor vai recusar com `403 sem_permissao` (RF21).
 
         Lista vazia é resposta legítima: conta de contratante recém-criada, antes do primeiro
-        cadastro.
+        cadastro. Conta de **profissional** recebe `422 perfil_incompativel`, e não lista vazia — a
+        tela leria vazio como "você não tem casas", que é outra frase.
+
+        A lista vem **ordenada por nome**, para o seletor do app não trocar de posição entre duas
+        aberturas da mesma tela. `reputacao` vem no mesmo formato do `PerfilPublico` de
+        estabelecimento, da mesma função. Nenhum dado de cadastro sai aqui (RN10): sem documento,
+        sem endereço, sem coordenada e sem contato — quem precisa disso chama o painel.
       x-requisitos: [RF02, RF21, UC07]
       responses:
         '200':
@@ -1137,7 +1193,8 @@ paths:
       summary: Cancelar a vaga inteira
       description: |
         Cancela as posições abertas e as confirmadas, com motivo registrado (RN12). Profissionais já
-        confirmados são avisados. Cancelamento pelo contratante não gera falta para ninguém.
+        confirmados são avisados (`cancelamento`, com `reaberta = false`). Cancelamento pelo
+        contratante não gera falta para ninguém.
       x-requisitos: [RF14, RN12]
       requestBody:
         required: true
@@ -1291,6 +1348,7 @@ paths:
 
         - **Modo urgência:** o primeiro elegível que aceita é confirmado na hora, por escrita
           condicional no banco (RN19). A resposta já traz o turno e o contato da outra parte (RN10).
+          O profissional e cada membro do estabelecimento recebem o aviso `confirmacao` (RF10).
         - **Modo seleção:** a candidatura fica pendente até o contratante escolher. Ela vale até a vaga
           fechar, e a vaga fecha sozinha 24 horas antes do início se ninguém for escolhido (RN24).
 
@@ -1567,6 +1625,9 @@ paths:
           `distancia_m` nulo ou a distância medida; o check-in vira `manual` e a presença fica
           `pendente` até o contratante confirmar (`confirmar_checkin_manual`).
 
+        Os membros do estabelecimento recebem o aviso `checkin` (presença verificada) ou
+        `checkin_manual_pendente` (pedido de confirmação). O reenvio não avisa de novo (RF13).
+
         `registrado_em` é a hora do toque, e não a da sincronização: o check-in feito sem rede entra na
         fila do app e sai depois com a hora certa. O banco recusa hora no futuro. Reenviar devolve o
         registro já gravado.
@@ -1665,6 +1726,9 @@ paths:
         Qualquer das partes, com motivo (RN12). Antes do início, a posição cancelada é substituída por
         uma nova, aberta, e a notificação sai de novo em até 30 segundos. Depois do início, não há
         reabertura, e o contratante é avisado de que o turno ficou descoberto.
+
+        Só a outra parte recebe o aviso `cancelamento`, com `reaberta` no payload: `false` quando
+        o turno ficou descoberto, para a casa distinguir da posição que voltou para a fila.
 
         Cancelamento do profissional com menos de 24 horas do início conta como falta; com mais de 24
         horas, sai da taxa de comparecimento. Nenhum cancelamento suspende ninguém (RN13).
