@@ -190,6 +190,16 @@ select pg_temp.guarda('cancelarVaga', pg_temp.como('cc000000-0000-4000-8000-0000
   $$ select public.cancelar_vaga(%L::uuid, 'evento adiado') $$,
   ((select r from vaga2)->>'vaga_id')::uuid)));
 
+-- ── A configuração do app, sem sessão ─────────────────────────────────────────
+--
+-- É a única RPC que o app chama antes de entrar, então colhe como `anon`, e não pelo
+-- `pg_temp.como`, que monta sessão. O `anon` não escreve em `colhido`: a resposta passa
+-- por uma variável do psql e é guardada depois de voltar ao papel de antes.
+set local role anon;
+select public.configuracao_do_app('ios')::text as configuracao \gset
+reset role;
+select pg_temp.guarda('configuracaoDoApp', :'configuracao'::jsonb);
+
 -- ── As recusas, no envelope do contrato ───────────────────────────────────────
 --
 -- Uma por código de erro que as RPCs da v1.0 levantam. O validador confere cada uma
