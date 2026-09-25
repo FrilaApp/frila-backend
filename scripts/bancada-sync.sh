@@ -151,9 +151,14 @@ echo "▸ Commits do backend em $DIA"
 # zerados — o script diria "0 fatos novos" depois de registrar oito.
 lista=$(mktemp)
 trap 'rm -f "$lista"' EXIT
+# `--since/--until` filtram pela data do committer. O fato, porém, pertence ao dia
+# em que o autor escreveu o commit. Um rebase ou cherry-pick pode mover a data do
+# committer para outro dia sem mudar a data do autor, então filtramos a data do
+# autor explicitamente depois da coleta. O ISO 8601 preserva também o fuso original
+# para que a hora registrada seja a hora do autor, não a hora desta máquina.
 git log --branches --no-merges \
-  --since="$DIA 00:00" --until="$DIA 23:59:59" \
-  --date=format:%H:%M --format='%h%x09%ad%x09%an%x09%s' > "$lista"
+  --format='%h%x09%aI%x09%an%x09%s' \
+  | awk -F '\t' -v dia="$DIA" 'substr($2, 1, 10) == dia { print }' > "$lista"
 
 total=$(grep -c . "$lista" || true)
 novos=0
@@ -161,12 +166,13 @@ novos=0
 if [ "$total" -eq 0 ]; then
   pulo "nenhum commit neste dia — um dia sem registro é um dado, não um problema"
 else
-  while IFS=$'\t' read -r sha hora quem assunto; do
+  while IFS=$'\t' read -r sha data quem assunto; do
     [ -n "$sha" ] || continue
     if ja_registrado "$sha"; then
       pulo "$sha já estava no log"
       continue
     fi
+    hora="${data:11:5}"
     n=$(git show --pretty="" --name-only "$sha" | grep -c . || true)
     if [ "$n" -eq 1 ]; then arquivos="1 arquivo"; else arquivos="$n arquivos"; fi
     registrar_commit "$DIA" "$hora" "$quem" "\`$sha\` — $assunto · $arquivos"
