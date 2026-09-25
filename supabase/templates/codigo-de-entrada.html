@@ -2,8 +2,13 @@
      Sprint 1, refaz os quatro com a voz do produto.
 
      O código, e não um link. Link mágico abre em navegador, sai do app e quebra o
-     fluxo em Android de entrada, que é onde está a maior parte da oferta. `{{ .Token }}`
-     é o código de seis dígitos; `{{ .ConfirmationURL }}` seria o link, e não entra. -->
+     fluxo em Android de entrada, que é onde está a maior parte da oferta. A variável
+     Token é o código de seis dígitos; a variável ConfirmationURL seria o link, e não
+     entra.
+
+     Nenhuma variável entre chaves duplas aqui dentro: o modelo é avaliado antes de
+     virar HTML, e comentário não protege nada. Escrita aqui, a ConfirmationURL ia no
+     código-fonte de todo e-mail, e o link mágico funcionaria para quem abrisse. -->
 <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; color: #1a1a1a;">
 
   <p style="font-size: 15px; line-height: 1.5; margin: 0 0 24px;">
