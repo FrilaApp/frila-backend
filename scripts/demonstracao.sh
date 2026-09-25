@@ -115,6 +115,8 @@ echo "▸ As duas contas entram"
 r=$(chamar "$PORTA" "{\"email\":\"$CONTRATANTE\",\"codigo\":\"$CODIGO\"}")
 [ "$(status_de "$r")" = "200" ] || falhou "o contratante de revisão recebeu $(status_de "$r")"
 [ "$(campo "$(corpo_de "$r")" token_type)" = "bearer" ] || falhou "a sessão do contratante não veio no schema Sessao"
+TOKEN_CASA=$(campo "$(corpo_de "$r")" access_token)
+[ -n "$TOKEN_CASA" ] || falhou "a sessão do contratante veio sem access_token"
 ok "contratante: 200 com sessão"
 
 r=$(chamar "$PORTA" "{\"email\":\"$PROFISSIONAL\",\"codigo\":\"$CODIGO\"}")
@@ -153,6 +155,62 @@ r=$(chamar "$URL/rest/v1/rpc/contato_do_turno" "{\"turno_id\":\"$turno\"}" "$TOK
 [ -n "$(campo "$(corpo_de "$r")" telefone)" ] || falhou "o contato veio sem telefone"
 ok "contato_do_turno: contato liberado, com prazo"
 
+# ── O ciclo da presença, que é a metade do app que a revisão precisa alcançar ─────────
+#
+# O turno semeado para a revisão começa dois dias depois de o seed rodar, e a janela do
+# registro abre 60 minutos antes do início. Sem a isenção da migração
+# `20260925230000_janela_da_demonstracao`, tudo daqui para baixo responde
+# `422 fora_da_janela` — medido em 25/09, e é o que o revisor encontraria em 06/11.
+#
+# Aqui o caminho vai inteiro: o profissional bate o ponto longe do local, a casa
+# confirma, e o turno fecha. É o único lugar onde o caminho feliz do check-in é medido
+# por HTTP: o `ciclo-completo.sh` pula essa parte de propósito, porque para uma conta
+# real ela pede um turno que já aconteceu e o relógio do produto só se sobrepõe dentro do
+# pgTAP.
+#
+# O contraste — a conta real continuar recebendo 422 no mesmo cenário — está em
+# `supabase/tests/230_janela_da_demonstracao.sql`, que tem as duas contas no mesmo
+# relógio.
+echo "▸ O ciclo da presença, fora da janela"
+
+agora=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# A recusa vem primeiro, e não por gosto de ordem: `fazer_checkin` devolve o registro já
+# gravado antes de chegar à janela, então depois do check-in válido esta chamada mediria a
+# idempotência e passaria sem testar nada.
+#
+# A isenção é só da janela. Registro no futuro continua recusado, e é esta asserção que
+# impede alguém de ler "a revisão atravessa a janela" como "a revisão fabrica presença".
+r=$(chamar "$URL/rest/v1/rpc/fazer_checkin" \
+      "{\"turno_id\":\"$turno\",\"distancia_m\":null,\"registrado_em\":\"2027-01-01T12:00:00Z\"}" "$TOKEN")
+[ "$(status_de "$r")" = "422" ] \
+  || falhou "registro no futuro devolveu $(status_de "$r"), e o contrato pede 422"
+[ "$(campo "$(corpo_de "$r")" code)" = "registro_no_futuro" ] \
+  || falhou "registro no futuro recusou com $(campo "$(corpo_de "$r")" code)"
+ok "registro no futuro: 422 registro_no_futuro — a isenção é só da janela"
+
+r=$(chamar "$URL/rest/v1/rpc/fazer_checkin" \
+      "{\"turno_id\":\"$turno\",\"distancia_m\":null,\"registrado_em\":\"$agora\"}" "$TOKEN")
+[ "$(status_de "$r")" = "200" ] \
+  || falhou "fazer_checkin devolveu $(status_de "$r") $(campo "$(corpo_de "$r")" code) — a revisão não alcança o check-in"
+[ "$(campo "$(corpo_de "$r")" tipo)" = "manual" ] \
+  || falhou "o check-in sem distância saiu $(campo "$(corpo_de "$r")" tipo), e RN22 pede manual"
+ok "fazer_checkin: 200 manual, longe do local e fora da janela"
+
+r=$(chamar "$URL/rest/v1/rpc/confirmar_checkin_manual" "{\"turno_id\":\"$turno\"}" "$TOKEN_CASA")
+[ "$(status_de "$r")" = "200" ] \
+  || falhou "confirmar_checkin_manual devolveu $(status_de "$r") $(campo "$(corpo_de "$r")" code)"
+[ "$(campo "$(corpo_de "$r")" verificacao)" = "verificado" ] \
+  || falhou "depois do toque da casa a verificação ficou $(campo "$(corpo_de "$r")" verificacao)"
+ok "confirmar_checkin_manual: a casa da revisão confirma, e vira verificado"
+
+r=$(chamar "$URL/rest/v1/rpc/fazer_checkout" \
+      "{\"turno_id\":\"$turno\",\"distancia_m\":null,\"registrado_em\":\"$agora\"}" "$TOKEN")
+[ "$(status_de "$r")" = "200" ] \
+  || falhou "fazer_checkout devolveu $(status_de "$r") $(campo "$(corpo_de "$r")" code)"
+[ -n "$(campo "$(corpo_de "$r")" registrado_em)" ] || falhou "o check-out veio sem registrado_em"
+ok "fazer_checkout: o turno da revisão fecha"
+
 # ── O teto de tentativas ─────────────────────────────────────────────────────────────
 #
 # Código fixo que nunca expira precisa de teto, senão o espaço de um código curto sai em
@@ -172,4 +230,5 @@ ok "429 limite_excedido depois de repetir o código errado"
 
 echo
 echo "A porta de demonstração está de pé: recusa o que não foi declarado, abre as duas"
-echo "contas, entrega os dados semeados e tem teto de tentativas."
+echo "contas, entrega os dados semeados, leva o ciclo da presença até o fim fora da janela"
+echo "e tem teto de tentativas."
