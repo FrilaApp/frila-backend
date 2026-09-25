@@ -61,7 +61,7 @@ virou `api/openapi.yaml`**. O redirect do GitHub cobre o nome antigo da organiza
 não cobre caminho dentro do repositório — quem tiver script ou marcador apontando para o
 caminho antigo precisa ajustar. No backend, o PR #15 ajustou.
 
-Versão vigente: **0.2.12**, espelhada em `contrato/openapi.yaml` e conferida pelo portão
+Versão vigente: **0.2.13**, espelhada em `contrato/openapi.yaml` e conferida pelo portão
 contra o original de verdade desde 24/09.
 
 ## O que existe no banco
@@ -108,13 +108,13 @@ Medidos na máquina em 24/09 e 25/09, no branch das contas de demonstração já
 
 | Comando | O que garante | Medida |
 |---|---|---|
-| `supabase test db` | pgTAP | **612** asserções em 24 arquivos, em 5 a 7 s na CI |
+| `supabase test db` | pgTAP | **628** asserções em 25 arquivos, em 5 a 7 s na CI |
 | `./scripts/mutacao.sh` | cada regra morre sem teste | **75** cobertas, 0 sem cobertura |
 | `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 58 asserções, até o perfil público |
 | `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | 10 conferências, com o teto de tentativas |
 | `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
-| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.11 → 0.2.12 |
-| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.12 idêntico ao original, conferido com o token |
+| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.12 → 0.2.13 |
+| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | espelho 0.2.13 idêntico ao original, conferido com o token |
 | `./scripts/lint-conhecido.sh` | `plpgsql_check` | sem achado novo |
 | `./scripts/relogio-do-produto.sh` | nenhuma função usa `now()` direto | só `privado.agora()` |
 | `./scripts/advisor-conhecido.sh` | advisor do Supabase | **não roda**: token vencido |
@@ -207,6 +207,9 @@ E mais estas:
 - **`vagas_abertas` e `meus_turnos` devolvem array, e não objeto com chave.** Custou duas
   rodadas vermelhas ao escrever o teste de ciclo. O contrato descreve as duas como lista;
   quem escrever teste novo não deve procurar `->'vagas'` nem `->'turnos'`.
+- **`republicar_vaga` não copia `evento_id`.** `publicar_vaga` não recebe esse campo, e
+  nenhuma vaga publicada pelo app tem evento hoje. Quando o evento existir, ele entra nas
+  duas de uma vez. Registrado na 0.2.13.
 - **`net.http_post` não entrou no `publicar_vaga`**, como o cartão pedia: a Edge Function
   `despachar` é do Sprint 2 e não existe. A fila é durável.
 - **O modo seleção é recusado na v1.0** com `campo_invalido` e `details: modo`, e não com
