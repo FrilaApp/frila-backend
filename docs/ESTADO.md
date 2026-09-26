@@ -90,6 +90,17 @@ conferir `supabase_migrations.schema_migrations` do projeto.
 
 As credenciais estão no `.env` local (fora do git).
 
+**A porta do `despachar` está no `frila-dev` desde 25/09** (cartão `ZqmkOaHn`, critério do
+401/200). A Edge Function recusa com **401** `nao_autenticado` quem chega sem o cabeçalho
+`x-segredo-agendador` igual ao segredo `SEGREDO_AGENDADOR` — inclusive com a chave
+publicável e com a `anon` legada, as duas medidas — e responde **200** `{"processadas": 0}`
+a quem traz o segredo. `verify_jwt` fica desligado de propósito: ligado, o gateway deixaria
+passar qualquer JWT do projeto. Ela **não lê a fila**: o motor é do cartão `7XS6MQGg`, e ler
+sem ele apagaria o que o `publicar_vaga` já enfileirou. O segredo do `frila-dev` foi gravado
+por `secrets set` pela Management API e não está em arquivo do repositório. O Vault com a
+URL e o segredo, que o `pg_cron` vai ler, ainda não existe: nasce com o job, no motor.
+Medido com `./scripts/despachar-porta.sh`, que também roda na CI.
+
 ## O quadro
 
 **A lista Revisão foi varrida e esvaziada do que era fechável**, em 25/09. Ela tinha onze
@@ -310,7 +321,7 @@ E mais estas:
   nenhuma hoje, mas significa que dentro de um teste com relógio deslocado a ocorrência
   nasce com a data de verdade enquanto o resto da transação vive no futuro.
 - **`net.http_post` não entrou no `publicar_vaga`**, como o cartão pedia: a Edge Function
-  `despachar` é do Sprint 2 e não existe. A fila é durável.
+  `despachar` só tem a porta (25/09), e o motor é do Sprint 2. A fila é durável.
 - **O modo seleção é recusado na v1.0** com `campo_invalido` e `details: modo`, e não com
   `selecao_sem_antecedencia`. Contrato 0.2.5.
 - **Vaga `preenchida` recusa com `posicao_ja_preenchida`**, e não `vaga_encerrada`.
