@@ -107,6 +107,17 @@ registrar_agora() { # registrar_agora <tipo> <descrição>
 
 ja_registrado() { grep -rqF -- "\`$1\`" "$VAULT/05 - Registros" 2>/dev/null; }
 
+# O sha não basta: rebase e cherry-pick dão sha novo ao mesmo trabalho, e ele voltaria
+# ao log como fato novo. O que o rebase preserva é a hora do autor, o autor e o assunto,
+# então a mesma tripla no arquivo do dia é o mesmo fato. Comparação por texto fixo
+# (`index`, e o valor pelo ambiente) porque assunto de commit tem `.`, `(` e `*`.
+mesmo_trabalho() { # mesmo_trabalho <arquivo do dia> <hora> <autor> <assunto>
+  [ -f "$1" ] || return 1
+  CAB="- \`$2\` · **$3** · \`frila-backend\` · \`" ASS="\` — $4 · " \
+    awk 'index($0, ENVIRON["CAB"]) == 1 && index($0, ENVIRON["ASS"]) > 0 { achou = 1 }
+         END { exit !achou }' "$1"
+}
+
 # ── Fato avulso ────────────────────────────────────────────────────────────────
 #
 # Para o que foi medido e não é commit: um PR aberto, um portão que reprovou, um
@@ -135,6 +146,9 @@ DIA="${DIA:-$(date +%Y-%m-%d)}"
 printf '%s\n' "$DIA" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' \
   || falhou "data em formato inesperado: $DIA (use AAAA-MM-DD)"
 
+# O arquivo de fatos do dia: é onde `mesmo_trabalho` procura, e o que a última seção lista.
+LOG="$VAULT/05 - Registros/${DIA:0:4}/${DIA:5:2}/$DIA.md"
+
 echo "▸ Commits do backend em $DIA"
 
 # `--branches` e não `--all`: trabalho em branch ainda não mergeada é trabalho feito, e
@@ -151,9 +165,14 @@ echo "▸ Commits do backend em $DIA"
 # zerados — o script diria "0 fatos novos" depois de registrar oito.
 lista=$(mktemp)
 trap 'rm -f "$lista"' EXIT
+# `--since/--until` filtram pela data do committer. O fato, porém, pertence ao dia
+# em que o autor escreveu o commit. Um rebase ou cherry-pick pode mover a data do
+# committer para outro dia sem mudar a data do autor, então filtramos a data do
+# autor explicitamente depois da coleta. O ISO 8601 preserva também o fuso original
+# para que a hora registrada seja a hora do autor, não a hora desta máquina.
 git log --branches --no-merges \
-  --since="$DIA 00:00" --until="$DIA 23:59:59" \
-  --date=format:%H:%M --format='%h%x09%ad%x09%an%x09%s' > "$lista"
+  --format='%h%x09%aI%x09%an%x09%s' \
+  | awk -F '\t' -v dia="$DIA" 'substr($2, 1, 10) == dia { print }' > "$lista"
 
 total=$(grep -c . "$lista" || true)
 novos=0
@@ -161,10 +180,15 @@ novos=0
 if [ "$total" -eq 0 ]; then
   pulo "nenhum commit neste dia — um dia sem registro é um dado, não um problema"
 else
-  while IFS=$'\t' read -r sha hora quem assunto; do
+  while IFS=$'\t' read -r sha data quem assunto; do
     [ -n "$sha" ] || continue
     if ja_registrado "$sha"; then
       pulo "$sha já estava no log"
+      continue
+    fi
+    hora="${data:11:5}"
+    if mesmo_trabalho "$LOG" "$hora" "$quem" "$assunto"; then
+      pulo "$sha é o mesmo trabalho de um commit já no log (rebase ou cherry-pick)"
       continue
     fi
     n=$(git show --pretty="" --name-only "$sha" | grep -c . || true)
@@ -203,8 +227,6 @@ fi
 #
 # Um portão que termina em silêncio quando não fez nada é um portão que ensina o time
 # a ignorá-lo. Este diz o que sobrou para a pessoa.
-
-LOG="$VAULT/05 - Registros/${DIA:0:4}/${DIA:5:2}/$DIA.md"
 
 echo
 echo "▸ Falta escrever"
