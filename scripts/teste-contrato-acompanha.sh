@@ -124,6 +124,14 @@ CONTRATO_GRANDE=1 caso "contrato do tamanho do real, primeira implementação, p
 "Nada a exigir do contrato." \
 'create or replace function public.declarada_sem_codigo(token text) returns jsonb language sql as $$ select null::jsonb $$;'
 
+caso "comentário de linha entre function e o nome é detectado" 1 "public.nova_comentada" \
+'create or replace function -- a RPC do cartão
+  public.nova_comentada() returns int language sql as $$ select 1 $$;'
+
+caso "comentário de bloco entre function e o nome é detectado" 1 "public.nova_em_bloco" \
+'create or replace function /* nota
+   de duas linhas */ public.nova_em_bloco() returns int language sql as $$ select 1 $$;'
+
 caso "comentário com create function não conta" 0 "Nenhuma função de public tocada" \
 '-- create or replace function public.so_no_comentario() era o plano'
 

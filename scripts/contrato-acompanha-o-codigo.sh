@@ -56,9 +56,17 @@ git rev-parse --verify --quiet "$BASE" >/dev/null || {
 
 # Lê SQL na entrada e devolve `verbo public.nome`, um por linha. O verbo é `create`,
 # `drop` ou `alter`; aspas e espaços em volta do ponto são normalizados.
+#
+# Comentário some antes da busca, inclusive no meio da declaração: `function -- nota`
+# com o nome na linha seguinte, ou `function /* nota */ public.nome`, esconderiam o
+# nome do padrão. O `--` é cortado até o fim da linha antes de juntar as linhas; o
+# `/* */`, que pode atravessar linhas, depois. O corte não conhece literal de texto:
+# um `'--'` esconderia uma declaração escrita depois dele na mesma linha — que é
+# como ninguém aqui escreve migração, e o teste de contrato contra o banco pega.
 funcoes_em() {
-  grep -viE '^[[:space:]]*--' \
+  sed -E 's/--.*$//' \
     | tr '\n' ' ' \
+    | perl -pe 's{/\*.*?\*/}{ }gs' \
     | grep -oiE '(create|drop|alter)[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?function[[:space:]]+"?public"?[[:space:]]*\.[[:space:]]*"?[a-z0-9_]+' \
     | tr -d '"' \
     | sed -E 's/^([A-Za-z]+).*[[:space:]]public[[:space:]]*\.[[:space:]]*([A-Za-z0-9_]+)$/\1 public.\2/' \
