@@ -13,6 +13,7 @@
 -- mesmo criou — contagem sobre a tabela inteira mede o cenário junto.
 
 begin;
+set local frila.agendador_secret = 'segredo-de-teste';
 select plan(33);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
