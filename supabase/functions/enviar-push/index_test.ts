@@ -762,3 +762,131 @@ Deno.test("Segurança e Privacidade: títulos e corpos não contêm dados pessoa
     assert(!body.includes("+55"), `Corpo não pode conter telefone (${tipo})`);
   }
 });
+
+// ── Ciclo de vida do token (cartão wpNabtCO) ──────────────────────────────────
+//
+// A tabela `dispositivo` simulada em memória é o estado que o banco deixa depois de
+// cada passo, provado no pgTAP 300: na troca de conta o token passa para B, e na saída
+// `remover_dispositivo` apaga a linha. Aqui se prova o outro lado — que a Edge Function
+// só manda para os aparelhos da conta destinatária, lidos por `usuario_id`.
+
+const CONTA_A = "a3000000-0000-4000-8000-000000000001";
+const CONTA_B = "b3000000-0000-4000-8000-000000000002";
+const TOKEN_COMPARTILHADO = "fcm_token_aparelho_compartilhado_0001";
+
+function mockCicloDoToken(
+  dispositivos: Array<{ usuario_id: string; token_fcm: string }>,
+  notificacoes: Record<string, string>,
+  enviados: string[],
+): typeof fetch {
+  return (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    const json = (corpo: unknown) =>
+      Promise.resolve(
+        new Response(JSON.stringify(corpo), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+    if (url === "http://mock-oauth/token") {
+      return json({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 });
+    }
+
+    const notif = url.match(/\/rest\/v1\/notificacao\?id=eq\.([^&]+)/);
+    if (notif) {
+      return json([
+        {
+          id: notif[1],
+          usuario_id: notificacoes[notif[1]],
+          tipo: "vaga",
+          referencia_id: "v3000000-0000-4000-8000-000000000001",
+          payload: {},
+          tentativas: 0,
+          estado_entrega: "pendente",
+          proxima_tentativa_em: null,
+        },
+      ]);
+    }
+
+    if (url.includes("/rest/v1/rpc/notificacao_expirada")) {
+      return Promise.resolve(new Response("false", { status: 200 }));
+    }
+
+    const disp = url.match(/\/rest\/v1\/dispositivo\?usuario_id=eq\.([^&]+)/);
+    if (disp) {
+      return json(
+        dispositivos
+          .filter((d) => d.usuario_id === disp[1])
+          .map((d, i) => ({ id: `d${i}`, token_fcm: d.token_fcm, plataforma: "ios" })),
+      );
+    }
+
+    if (url.includes("/messages:send") && init?.body) {
+      const corpo = JSON.parse(init.body as string);
+      enviados.push(corpo.message.token);
+      return json({ name: "projects/frila-test-project/messages/msg_ciclo" });
+    }
+
+    if (url.includes("/rest/v1/rpc/gravar_aceite_push") || url.includes("/rest/v1/rpc/gravar_falha_push")) {
+      return Promise.resolve(new Response("null", { status: 200 }));
+    }
+
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+}
+
+async function enviarNotificacao(
+  notificacaoId: string,
+  fetchFn: typeof fetch,
+): Promise<{ status: string; detalhe?: string }> {
+  const sa = await gerarContaDeServicoTeste();
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+    body: JSON.stringify({ notificacao_id: notificacaoId }),
+  });
+  const res = await processarEnvioPush(req, {
+    serviceAccount: sa,
+    fetchFn,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+  });
+  assertEquals(res.status, 200);
+  return (await res.json()).relatorio[0];
+}
+
+Deno.test("Ciclo do token: depois da troca de conta, só a conta B recebe push no aparelho", async () => {
+  // Estado depois de A e em seguida B registrarem o mesmo token (troca de dono).
+  const dispositivos = [{ usuario_id: CONTA_B, token_fcm: TOKEN_COMPARTILHADO }];
+  const notificacoes = {
+    "n3000000-0000-4000-8000-00000000000a": CONTA_A,
+    "n3000000-0000-4000-8000-00000000000b": CONTA_B,
+  };
+  const enviados: string[] = [];
+  const fetchFn = mockCicloDoToken(dispositivos, notificacoes, enviados);
+
+  const paraA = await enviarNotificacao("n3000000-0000-4000-8000-00000000000a", fetchFn);
+  assertEquals(paraA.status, "falhou");
+  assertEquals(paraA.detalhe, "sem_dispositivo");
+  assertEquals(enviados, [], "O push da conta A não pode sair para o aparelho que passou para B");
+
+  const paraB = await enviarNotificacao("n3000000-0000-4000-8000-00000000000b", fetchFn);
+  assertEquals(paraB.status, "enviada");
+  assertEquals(enviados, [TOKEN_COMPARTILHADO]);
+});
+
+Deno.test("Ciclo do token: depois de sair da conta, nenhuma notificação sai para o aparelho", async () => {
+  // Estado depois de remover_dispositivo: a linha do aparelho não existe mais.
+  const dispositivos: Array<{ usuario_id: string; token_fcm: string }> = [];
+  const notificacoes = { "n3000000-0000-4000-8000-00000000000c": CONTA_B };
+  const enviados: string[] = [];
+
+  const relatorio = await enviarNotificacao(
+    "n3000000-0000-4000-8000-00000000000c",
+    mockCicloDoToken(dispositivos, notificacoes, enviados),
+  );
+
+  assertEquals(relatorio.status, "falhou");
+  assertEquals(relatorio.detalhe, "sem_dispositivo");
+  assertEquals(enviados, [], "Aparelho que saiu da conta não recebe push");
+});
