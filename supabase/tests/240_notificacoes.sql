@@ -9,7 +9,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(51);
+select plan(53);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -174,6 +174,20 @@ select throws_ok(
   '22023',
   null,
   'RN15: chave vaga_id com boolean é recusada');
+
+select throws_ok(
+  $$ select privado.notificar('c1000000-0000-4000-8000-0000000000e1', 'lembrete_3h',
+       gen_random_uuid(), '{"vaga_id":null}'::jsonb) $$,
+  '22023',
+  'payload_invalido',
+  'RN15: chave vaga_id com null é recusada');
+
+select throws_ok(
+  $$ select privado.notificar('c1000000-0000-4000-8000-0000000000e1', 'lembrete_3h',
+       gen_random_uuid(), '{"vaga_id":123}'::jsonb) $$,
+  '22023',
+  'payload_invalido',
+  'RN15: chave vaga_id com número é recusada');
 
 select throws_ok(
   $$ select privado.notificar('c1000000-0000-4000-8000-0000000000e1', 'lembrete_3h',
