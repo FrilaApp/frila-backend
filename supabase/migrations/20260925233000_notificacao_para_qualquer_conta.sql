@@ -116,12 +116,12 @@ begin
   -- alguém puser o nome da casa "só para o push ficar bonito" o dado pessoal vai parar
   -- em log do FCM.
   for v_par in select key, value from jsonb_each(coalesce(p_payload, '{}'::jsonb)) loop
-    if v_par.key not in ('vaga_id', 'posicao_id', 'turno_id', 'estabelecimento_id', 'reaberta')
-       or not (jsonb_typeof(v_par.value) = 'boolean'
-               or (v_par.key <> 'reaberta'
-                   and jsonb_typeof(v_par.value) = 'string'
-                   and (v_par.value #>> '{}') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'))
-       or (v_par.key = 'reaberta' and jsonb_typeof(v_par.value) <> 'boolean') then
+    if not (
+      (v_par.key = 'reaberta' and jsonb_typeof(v_par.value) = 'boolean')
+      or (v_par.key in ('vaga_id', 'posicao_id', 'turno_id', 'estabelecimento_id')
+          and jsonb_typeof(v_par.value) = 'string'
+          and (v_par.value #>> '{}') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+    ) then
       raise exception 'payload_invalido' using errcode = '22023', detail = v_par.key;
     end if;
   end loop;
@@ -552,3 +552,12 @@ begin
     'reaberta',        v_nova is not null,
     'nova_posicao_id', v_nova);
 end $$;
+
+comment on function privado.cancelar_uma_posicao(uuid, uuid, text, boolean) is
+  'Desiste de uma posição com motivo (RF14, RN12). Quando é do profissional e a menos de 24 h do início, marca falta e recalcula a taxa. Se pedido e antes do início, reabre a posição criando outra e redisparando o despacho. Notifica a outra parte.';
+
+revoke execute on function privado.cancelar_uma_posicao(uuid, uuid, text, boolean)
+  from public, anon, authenticated;
+grant execute on function privado.cancelar_uma_posicao(uuid, uuid, text, boolean)
+  to service_role;
+

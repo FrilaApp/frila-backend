@@ -8,7 +8,7 @@
 -- Ids próprios, começando em `c1000000`.
 
 begin;
-select plan(42);
+select plan(51);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -166,6 +166,47 @@ select throws_ok(
   '22023',
   null,
   'RN15: o valor de um id tem que ser um uuid, não um telefone');
+
+select throws_ok(
+  $$ select privado.notificar('c1000000-0000-4000-8000-0000000000e1', 'lembrete_3h',
+       gen_random_uuid(), '{"vaga_id":true}'::jsonb) $$,
+  '22023',
+  null,
+  'RN15: chave vaga_id com boolean é recusada');
+
+select throws_ok(
+  $$ select privado.notificar('c1000000-0000-4000-8000-0000000000e1', 'lembrete_3h',
+       gen_random_uuid(), '{"posicao_id":true}'::jsonb) $$,
+  '22023',
+  null,
+  'RN15: chave posicao_id com boolean é recusada');
+
+select throws_ok(
+  $$ select privado.notificar('c1000000-0000-4000-8000-0000000000e1', 'lembrete_3h',
+       gen_random_uuid(), '{"turno_id":true}'::jsonb) $$,
+  '22023',
+  null,
+  'RN15: chave turno_id com boolean é recusada');
+
+select throws_ok(
+  $$ select privado.notificar('c1000000-0000-4000-8000-0000000000e1', 'lembrete_3h',
+       gen_random_uuid(), '{"estabelecimento_id":true}'::jsonb) $$,
+  '22023',
+  null,
+  'RN15: chave estabelecimento_id com boolean é recusada');
+
+select throws_ok(
+  $$ select privado.notificar('c1000000-0000-4000-8000-0000000000e1', 'cancelamento',
+       gen_random_uuid(), '{"reaberta":"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"}'::jsonb) $$,
+  '22023',
+  null,
+  'RN15: chave reaberta com UUID é recusada (só aceita boolean)');
+
+select lives_ok(
+  $$ select privado.notificar('c1000000-0000-4000-8000-0000000000e1', 'cancelamento',
+       gen_random_uuid(), '{"reaberta":true}'::jsonb) $$,
+  'RN15: chave reaberta com boolean é aceita');
+
 
 -- As restrições de coerência entre o tipo e o profissional.
 select throws_ok(
@@ -394,5 +435,24 @@ select is(
   false,
   'nenhuma das duas é chamável sem sessão');
 
+select is(
+  has_function_privilege('authenticated',
+    'privado.cancelar_uma_posicao(uuid, uuid, text, boolean)', 'execute'),
+  false,
+  'privado.cancelar_uma_posicao não é chamável pelo app');
+
+select is(
+  has_function_privilege('anon',
+    'privado.cancelar_uma_posicao(uuid, uuid, text, boolean)', 'execute'),
+  false,
+  'privado.cancelar_uma_posicao não é chamável sem sessão');
+
+select is(
+  has_function_privilege('service_role',
+    'privado.cancelar_uma_posicao(uuid, uuid, text, boolean)', 'execute'),
+  true,
+  'privado.cancelar_uma_posicao é chamável pela service_role');
+
 select * from finish();
 rollback;
+
