@@ -17,7 +17,7 @@
 -- Ids próprios, começando em `b6000000`.
 
 begin;
-select plan(21);
+select plan(24);
 
 insert into privado.ambiente (eh_teste) values (true);
 
@@ -306,6 +306,58 @@ end $$;
 select ok(
   pg_temp.plano_taxa() !~* 'aggregate',
   'Critério 4: perfil público lê a taxa sem agregação na leitura (sem Aggregate no EXPLAIN)'
+);
+
+-- ── 7. Triggers transacionais mantêm comparecimento na escrita ──────────
+
+-- Teste do trigger posicao_recalcula_comparecimento:
+-- Insere vaga 3 e posicao 3 para o profissional, e cancela com falta
+insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+                         valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+                         exige_material_proprio, responsavel_local, traje, participa_rateio,
+                         modo, estado, publicado_em, chave_cliente, publicado_por)
+select 'b6000000-0000-4000-8000-000000000013'::uuid, ids.estab, ids.funcao,
+       timestamptz '2026-10-04 18:00:00-03', timestamptz '2026-10-04 23:00:00-03',
+       'Bar Reconcilia', 'POINT(-47.8800 -15.7700)'::extensions.geography,
+       15000, 1, true, false, false, 'Dona', null, false,
+       'urgencia', 'publicada', timestamptz '2026-10-02 18:00:00-03', gen_random_uuid(),
+       'b6000000-0000-4000-8000-0000000000d1'::uuid
+  from ids;
+
+insert into public.posicao (id, vaga_id, inicio_em, fim_em, estado, profissional_id, confirmado_em)
+select 'b6000000-0000-4000-8000-000000000033'::uuid,
+       'b6000000-0000-4000-8000-000000000013'::uuid,
+       timestamptz '2026-10-04 18:00:00-03', timestamptz '2026-10-04 23:00:00-03',
+       'confirmada', (select prof from ids), now();
+
+update public.posicao
+   set estado = 'cancelada',
+       falta  = true
+ where id = 'b6000000-0000-4000-8000-000000000033'::uuid;
+
+select is(
+  (select p.taxa_comparecimento from public.profissional p where p.id = (select prof from ids)),
+  0.500::numeric,
+  'trigger posicao_recalcula_comparecimento recalcula taxa para 0.500 ao marcar falta em posicao'
+);
+
+-- Teste do trigger turno_recalcula_comparecimento:
+-- Altera verificacao do turno2 para verificado
+update public.turno
+   set checkin_confirmado_em = now(),
+       verificacao           = 'verificado'
+ where id = (select turno2 from turnos_teste);
+
+select is(
+  (select p.turnos_realizados from public.profissional p where p.id = (select prof from ids)),
+  2,
+  'trigger turno_recalcula_comparecimento atualiza turnos_realizados para 2 ao alterar verificacao'
+);
+
+select is(
+  (select p.taxa_comparecimento from public.profissional p where p.id = (select prof from ids)),
+  0.667::numeric,
+  'trigger turno_recalcula_comparecimento recalcula taxa para 0.667 ao alterar verificacao'
 );
 
 select set_config('frila.agora', '', true);
