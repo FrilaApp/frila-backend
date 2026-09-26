@@ -106,7 +106,7 @@ arquivo o listavam como pendente, e estavam erradas.
 
 | Cartão | O que falta, e de quem é |
 |---|---|
-| `7gpPBgTH` Contas de demonstração | Três dos quatro critérios medidos e as notas anexadas. O critério 1 diz "no `frila-dev`", e lá a porta ainda não existe: falta `supabase secrets set` e `functions deploy`, que pedem `supabase login`. **Bloqueio de presença** |
+| `7gpPBgTH` Contas de demonstração | Três dos quatro critérios medidos e as notas anexadas. O critério 1 diz "no `frila-dev`", e lá a porta ainda não existe. O caminho está pronto num comando — `./scripts/demonstracao-remoto.sh dev` faz os segredos, o deploy e a medição —, e falta só um `SUPABASE_ACCESS_TOKEN` que responda. **Bloqueio de credencial, e não de navegador** |
 | `RTmRTHbo` Republicar vaga | Os três critérios de backend marcados, inclusive republicar a partir de vaga `encerrada`, medido por HTTP. O quarto é de ponta a ponta e depende da tela: a ação "Publicar de novo" em Minhas vagas. **É iOS** |
 | `ggEzge6h` Filtro de texto | Os três critérios marcados, com a recusa e o falso positivo medidos por HTTP. **Acrescentei um quarto item à checklist**: a revisão da lista de termos pela Júlia, que estava em *O que fazer* e não era cobrada por critério nenhum — com três marcados o cartão fecharia com a lista nunca lida. **É da Júlia** |
 | `CvopSHh6` Versão mínima do app | Do João Paulo, no #31 |
@@ -124,8 +124,22 @@ virou `api/openapi.yaml`**. O redirect do GitHub cobre o nome antigo da organiza
 não cobre caminho dentro do repositório — quem tiver script ou marcador apontando para o
 caminho antigo precisa ajustar. No backend, o PR #15 ajustou.
 
-Versão vigente: **0.2.15**, espelhada em `contrato/openapi.yaml` e conferida pelo portão
-contra o original de verdade desde 24/09.
+Versão espelhada em `contrato/openapi.yaml`: **0.2.15**. Versão no `FrilaApp/frila-docs`:
+**0.2.17**.
+
+> ⚠️ **O espelho está atrasado em duas versões.** Medido em 25/09 às 17h32, com o
+> `FRILA_DOCS_TOKEN` do `.env`, que responde 200: `./scripts/contrato-em-dia.sh` sai **1**
+> com o diff das 0.2.16 (`configuracao_do_app`) e 0.2.17 (as notificações da 0.2.14 passando
+> a existir no backend).
+>
+> As duas são do João Paulo, e os PRs **#31** e **#32** dele já trazem o espelho — então ele
+> sobe com eles, e não deve ser espelhado por fora: seria conflito garantido. O que importa
+> saber: **quando o Actions voltar, o job `Contrato em dia com o Frila` reprova em todo PR**
+> até um dos dois entrar.
+>
+> Isso passou batido nas medições de 25/09 porque o portão lê `FRILA_DOCS_TOKEN` do
+> ambiente, e nenhuma delas fez `source .env` antes. Sem o token ele sai **0** avisando que
+> não conferiu o original — o buraco da pendência 2, que aqui deixou de ser teórico.
 
 ## O que existe no banco
 
@@ -179,12 +193,13 @@ Medidos na máquina em 24/09 e 25/09, no branch das contas de demonstração já
 | `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | **15** conferências: a porta, o que ela recusa, os dados semeados, **o ciclo da presença inteiro** e o teto de tentativas |
 | `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
 | `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.14 → 0.2.15 |
-| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | na CI, com o secret: espelho 0.2.15 idêntico ao original. **Na máquina sai zero sem conferir nada**, porque não há `FRILA_DOCS_TOKEN` no ambiente local — o script avisa em voz alta, mas o placar fica verde |
+| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | 🔴 **vermelho**: espelho 0.2.15, original 0.2.17. O conserto vem nos PRs #31 e #32 do João Paulo, que já trazem o espelho. Desde 25/09 o script lê o `.env` e sai **2** quando não tem token, em vez de 0 |
 | `./scripts/lint-conhecido.sh` | `plpgsql_check` | sem achado novo |
 | `./scripts/relogio-do-produto.sh` | nenhuma função usa `now()` direto | só `privado.agora()` |
 | `./scripts/contrato-responde.sh` | a resposta de cada RPC casa com o schema | 22 corpos e 7 envelopes, 18 operações ainda sem implementação |
 | `./scripts/advisor-conhecido.sh` | advisor do Supabase | **não roda**: token vencido |
 | `./scripts/migracoes-imutaveis.sh` | nenhuma migração aplicada foi editada | verde |
+| `./scripts/migracoes-sem-colisao.sh` | duas migrações não têm a mesma versão | as 36 versões distintas · **novo em 25/09**, depois de a colisão matar um `db reset` de verdade |
 
 Todos rodam na CI menos o advisor, que exige token de conta.
 
@@ -224,6 +239,14 @@ resultado foi X"* tem que sair diferente de zero.
   ser reaberto nem ter a base trocada. O #8 não se perdeu porque o #9 descendia dele; o
   #10 teve de virar o #15. Numa pilha, deletar só o último — ou retargetar os filhos
   para `main` antes.
+- **Dois branches podem escolher a mesma hora redonda, e a colisão mata o `db reset`.**
+  Medido em 25/09: `20260925230000_janela_da_demonstracao` entrou no `main` pelo #36, e o
+  #31 do João Paulo trazia `20260925230000_configuracao_do_app`. Fundidos, o reset aplica
+  os dois e registra um — `duplicate key value violates unique constraint
+  "schema_migrations_pkey"`, com o banco meio migrado. `supabase migration new` usa o
+  segundo corrente e nunca colide; quem nomeia à mão, e aqui é o comum porque o nome conta
+  o que a migração faz, escolhe hora redonda — e hora redonda é o que duas pessoas
+  escolhem igual. Portão novo: `./scripts/migracoes-sem-colisao.sh`.
 
 ## Divergências registradas
 
@@ -326,20 +349,36 @@ E mais estas:
 
 ## Pendências fora do código
 
-1. **`supabase login`.** O `SUPABASE_ACCESS_TOKEN` do `.env` responde **401** na
-   Management API. Sem ele o advisor de segurança do `frila-dev` não é verificado por
-   ninguém. Depende de alguém presente: o comando abre o navegador. Em 24/09 o advisor
-   rodou pelo MCP do Supabase, que tem acesso à organização, mas o script continua sem token.
+1. **Um `SUPABASE_ACCESS_TOKEN` que responda.** O do `.env` (`sbp_8f8e…`) responde **401**
+   na Management API, remedido em 25/09 às 17h30. Sem ele: o advisor de segurança do
+   `frila-dev` não é verificado por ninguém, o `aplicar-remoto.sh` não roda, e a porta da
+   demonstração não sobe no `frila-dev` nem no `frila-prod`.
+
+   **E não precisa de `supabase login` interativo**, ao contrário do que as versões
+   anteriores deste arquivo diziam: a CLI aceita `SUPABASE_ACCESS_TOKEN` do ambiente, e o
+   `.env` já tem a variável. O que falta é o valor. Token novo em
+   https://supabase.com/dashboard/account/tokens, colado no `.env`, e daí
+   `./scripts/demonstracao-remoto.sh dev` faz os três passos e mede o resultado. Medido em
+   25/09: a CLI responde 401 e não "faça login", nos três casos — token do `.env`, token
+   falso e nenhum token —, o que é consistente com ela usar a variável; o que **não** foi
+   medido, por falta de token válido, é o caminho verde.
+
+   Em 24/09 o advisor rodou pelo MCP do Supabase, que tem acesso à organização. O MCP não
+   está na sessão de 25/09.
 2. ~~**PAT com leitura em `FrilaApp/frila-docs`.**~~ **Resolvido em 24/09.** O secret
    `FRILA_DOCS_TOKEN` existe no repositório e o portão passou a conferir o original de
    verdade: `./scripts/contrato-em-dia.sh` com o token respondeu *"Espelho em dia com
    FrilaApp/frila-docs"* sobre o contrato 0.2.11. Fine-grained, *Resource owner*
    `FrilaApp`, *Contents: Read-only*, validade até 23/09/2027.
-   **O que continua aberto:** sem token, `contrato-em-dia.sh` sai com **0** (linha 58),
-   e isso contraria a regra dos portões — caminho que não mediu tem de sair diferente de
-   zero. Hoje o secret existe e o ponto é teórico; quando o PAT vencer, em 23/09/2027, o
-   portão volta a ficar verde sem ter medido nada e ninguém vai saber. A correção é do
-   tamanho de uma linha e não entrou junto porque pertence a outro cartão.
+   ~~**O que continua aberto:** sem token, `contrato-em-dia.sh` sai com **0**.~~
+   **Resolvido em 25/09, e deixou de ser teórico no caminho.** O script passou a ler o
+   `.env` e a sair **2** quando não há token em lugar nenhum. Custou o seguinte: em 25/09 o
+   portão saiu 0 em quatro baterias seguidas, avisando que não conferiu o original, **e o
+   token estava no `.env` todo esse tempo** — os outros scripts do repositório leem o
+   `.env`; este não lia. Enquanto isso o espelho envelhecia atrás de uma 0.2.17 que já
+   existia no `frila-docs`, e o único portão que pega isso era justamente o que estava
+   passando. O ponto que era "quando o PAT vencer em 2027 ninguém vai saber" já tinha
+   acontecido, por outro caminho.
 3. **`git push` no `FrilaApp/Bancada`**, que exige Touch ID. Sem ele as notas diárias não
    saem e o site `bancada-buu.pages.dev` não republica.
 4. **Revisão da Júlia** na lista de termos bloqueados. Sem ela o `ggEzge6h` não fecha.
@@ -355,9 +394,15 @@ E mais estas:
    deste repositório resolve: precisa de quem tem acesso a *Billing & plans* da
    organização. Ver o bloco no topo deste arquivo.
 9. **O segredo da demonstração no `frila-dev` e no `frila-prod`**, e o `functions deploy` da
-   `entrar-demonstracao`. Os dois passam por `supabase secrets set`, que pede o login da
-   pendência 1. É o que falta para o critério 1 do `7gpPBgTH` valer *no `frila-dev`*, como o
-   cartão pede, e não só na máquina.
+   `entrar-demonstracao`. É o que falta para o critério 1 do `7gpPBgTH` valer *no
+   `frila-dev`*, como o cartão pede, e não só na máquina. **O trabalho já está escrito:**
+   `./scripts/demonstracao-remoto.sh dev` faz os segredos, o deploy e a medição por HTTP, e
+   recusa antes de escrever se o token não responde, se o código é o de exemplo, se ele tem
+   menos de 8 caracteres, ou se o alvo é produção sem `EU_SEI_QUE_E_PRODUCAO=1`. Depende só
+   da pendência 1.
+
+   O `--seco` foi medido em 25/09 e para no primeiro passo com a mensagem certa. O caminho
+   verde nunca rodou, por falta de token.
 
 ## Por onde continuar
 

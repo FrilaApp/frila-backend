@@ -148,6 +148,22 @@ jobs:
 
       - run: ./scripts/contrato-acompanha-o-codigo.sh "origin/${{ github.base_ref }}"
 
+  # Mesmo raciocínio do job acima: `find`, `sed` e `uniq`, sem Postgres e sem rede. E este
+  # tem um motivo a mais para ficar fora do job do banco — ele existe justamente para
+  # pegar a falha que **mata** o `db reset` no meio. Rodá-lo depois do `supabase start`
+  # seria pedir ao portão que avisasse do incêndio depois da casa queimada: a CI ficaria
+  # vermelha em "Aplicar as migrações do zero", com a mensagem de chave duplicada do
+  # Postgres no lugar do nome dos dois arquivos que colidiram.
+  #
+  # Roda em `push` também, e não só em PR: colisão entra por qualquer caminho que ponha
+  # dois arquivos na pasta, incluindo um merge que junta dois branches inocentes.
+  migracoes:
+    name: Migrações sem colisão de versão
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/migracoes-sem-colisao.sh
+
   contrato:
     name: Contrato em dia com o Frila
     runs-on: ubuntu-latest

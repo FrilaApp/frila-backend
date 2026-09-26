@@ -72,9 +72,26 @@ cp supabase/functions/.env.exemplo supabase/functions/.env.local   # local
 supabase functions serve --env-file supabase/functions/.env.local
 ./scripts/demonstracao.sh                                          # o portão
 
-supabase secrets set DEMONSTRACAO_EMAILS=… DEMONSTRACAO_CODIGO=…   # frila-dev e prod
-supabase functions deploy entrar-demonstracao
+./scripts/demonstracao-remoto.sh dev --seco                        # o que faria
+./scripts/demonstracao-remoto.sh dev                               # segredos, deploy e a medida
 ```
+
+O `demonstracao-remoto.sh` faz os três passos do remoto na ordem e **mede o resultado**:
+`secrets set`, `functions deploy`, e o `demonstracao.sh` apontado ao projeto. O terceiro é
+o motivo de ele existir — segredo gravado e função no ar não provam que o revisor entra. Na
+primeira vez que isto foi montado à mão, a função subiu e respondeu 404 em tudo, porque os
+segredos foram para o processo da CLI e não para o worker.
+
+Ele recusa antes de escrever: token que não responde 200 na Management API, código de
+exemplo (`troque-este-codigo`, `codigo-de-ci-sem-valor`, que estão em arquivo versionado),
+código com menos de 8 caracteres, e `prod` sem `EU_SEI_QUE_E_PRODUCAO=1` — porque o
+`demonstracao.sh` **grava**: percorre o ciclo da presença no turno semeado e gasta o teto de
+tentativas.
+
+**Não precisa de `supabase login` interativo.** A CLI aceita `SUPABASE_ACCESS_TOKEN` do
+ambiente, e o `.env` já tem a variável; o que ela precisa é de um token válido, de
+https://supabase.com/dashboard/account/tokens. Em 25/09 o token do `.env` respondia **401**,
+e é a primeira coisa que o script mede.
 
 **`cenarios.sql` deixa as colunas de token do GoTrue em NULL**, e com NULL o
 `POST /auth/v1/admin/generate_link` responde `500 Database error finding user` — o GoTrue

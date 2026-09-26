@@ -47,15 +47,28 @@ fi
 echo "Espelho íntegro: contrato $versao, sha256 $atual"
 
 # ── 2. Divergência do original ─────────────────────────────────────────────────
+#
+# O `.env` entra aqui, e não só o ambiente. Custou caro não ler: em 25/09 este portão saiu
+# **0** em quatro baterias seguidas, avisando que não conferiu o original — e o token estava
+# no `.env` todo esse tempo. Enquanto isso o espelho envelhecia da 0.2.15 para trás de uma
+# 0.2.17 que já existia lá, e o único portão que pega isso era justamente o que estava
+# passando. Os outros scripts do repositório leem o `.env`; este não lia.
+if [ -f .env ]; then set -a; source .env; set +a; fi
+
 token="${FRILA_DOCS_TOKEN:-${GH_TOKEN:-}}"
 
 if [ -z "$token" ]; then
   echo
   echo "⚠  Original NÃO conferido: FrilaApp/frila-docs é privado e não há token."
   echo "   O espelho pode estar íntegro e mesmo assim atrasado em relação ao contrato."
-  echo "   Para ligar: crie um PAT com leitura em FrilaApp/frila-docs e grave como o secret"
-  echo "   FRILA_DOCS_TOKEN do repositório."
-  exit 0
+  echo "   Para ligar: crie um PAT com leitura em FrilaApp/frila-docs, grave como o secret"
+  echo "   FRILA_DOCS_TOKEN do repositório, e como FRILA_DOCS_TOKEN no .env local."
+  echo
+  echo "   Este caminho sai 2, e não 0: ele mediu a integridade do espelho e NÃO mediu a"
+  echo "   divergência. A regra dos portões é que caminho que não mediu sai diferente de"
+  echo "   zero — verde sobre metade da pergunta é o jeito mais barato de perder a outra"
+  echo "   metade de vista."
+  exit 2
 fi
 
 tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
