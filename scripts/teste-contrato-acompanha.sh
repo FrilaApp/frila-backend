@@ -31,11 +31,22 @@ paths:
       operationId: declaradaSemCodigo'
 
 # Monta a base: o contrato acima e uma migração que já cria `public.ja_no_ar`.
+#
+# Com `CONTRATO_GRANDE=1`, o contrato ganha milhares de linhas depois das rotas, como o
+# de verdade (2 mil e tantas). Um `printf | grep -q` sob `pipefail` passa num contrato
+# pequeno e falha num grande: o `grep -q` sai no primeiro acerto, o `printf` que ainda
+# escrevia leva SIGPIPE, e o pipeline vira 141 — falso. Foi assim que a primeira versão
+# da isenção passou em todos os casos daqui e reprovou o PR #43 que devia destravar.
 montar_base() {
   local dir="$1"
   mkdir -p "$dir/scripts" "$dir/contrato" "$dir/supabase/migrations"
   cp "$PORTAO" "$dir/scripts/"
   printf '%s\n' "$CONTRATO_BASE" > "$dir/contrato/openapi.yaml"
+  if [ "${CONTRATO_GRANDE:-0}" = "1" ]; then
+    for i in $(seq 1 5000); do
+      printf '  /rpc/enchimento_%s:\n    post:\n      operationId: enchimento%s\n' "$i" "$i"
+    done >> "$dir/contrato/openapi.yaml"
+  fi
   printf '%s\n' 'create or replace function public.ja_no_ar() returns int language sql as $$ select 1 $$;' \
     > "$dir/supabase/migrations/20260901000000_base.sql"
   git -C "$dir" init -q -b main
@@ -108,6 +119,10 @@ caso "função nova com contrato atualizado e versão subindo passa" 0 \
 "O contrato acompanhou o código." \
 'create or replace function public.nova_com_contrato() returns int language sql as $$ select 1 $$;' \
 '0.2.18'
+
+CONTRATO_GRANDE=1 caso "contrato do tamanho do real, primeira implementação, passa" 0 \
+"Nada a exigir do contrato." \
+'create or replace function public.declarada_sem_codigo(token text) returns jsonb language sql as $$ select null::jsonb $$;'
 
 caso "comentário com create function não conta" 0 "Nenhuma função de public tocada" \
 '-- create or replace function public.so_no_comentario() era o plano'

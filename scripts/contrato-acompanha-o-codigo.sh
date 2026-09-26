@@ -105,9 +105,11 @@ exigidas=""
 for funcao in $tocadas; do
   nome=${funcao#public.}
   so_cria=$(printf '%s\n' "$toques" | awk -v f="$funcao" '$2 == f && $1 != "create"' | wc -l | tr -d ' ')
+  # `grep <<<` e não `printf | grep -q`: sob `pipefail`, o `grep -q` sai no primeiro
+  # acerto, o `printf` que ainda escrevia o contrato leva SIGPIPE e o teste vira falso.
   if [ "$so_cria" = "0" ] \
-     && printf '%s\n' "$contrato_base" | grep -qE "^  /rpc/${nome}:[[:space:]]*$" \
-     && ! printf '%s\n' "$criadas_na_base" | grep -qxF "$funcao"; then
+     && grep -qE "^  /rpc/${nome}:[[:space:]]*$" <<<"$contrato_base" \
+     && ! grep -qxF "$funcao" <<<"$criadas_na_base"; then
     isentas="$isentas $funcao"
   else
     exigidas="$exigidas $funcao"
