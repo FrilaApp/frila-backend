@@ -146,6 +146,10 @@ jobs:
           # commit de merge.
           fetch-depth: 0
 
+      # O portão é testado antes de julgar o PR: um portão com furo aprova calado.
+      - name: O portão fecha nos casos conhecidos
+        run: ./scripts/teste-contrato-acompanha.sh
+
       - run: ./scripts/contrato-acompanha-o-codigo.sh "origin/${{ github.base_ref }}"
 
   contrato:
