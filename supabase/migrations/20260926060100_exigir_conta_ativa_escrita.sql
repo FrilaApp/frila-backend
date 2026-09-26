@@ -1,7 +1,7 @@
 -- Exigência explícita de conta ativa em RPCs de escrita (RF25, RN15).
 --
 -- Garante que chamadores com token JWT emitido antes da exclusão de conta
--- sejam recusados com 403 sem_permissao (conta_encerrada) em todas as RPCs de escrita
+-- sejam recusados com 401 nao_autenticado em todas as RPCs de escrita
 -- que não passam por privado.exigir_perfil.
 
 create or replace function

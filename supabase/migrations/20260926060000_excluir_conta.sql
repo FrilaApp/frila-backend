@@ -23,7 +23,7 @@ begin
    where u.id = v_uid;
 
   if v_estado is null or v_estado = 'anonimizada' then
-    perform public.erro(403, 'sem_permissao', 'conta_encerrada');
+    perform public.erro(401, 'nao_autenticado');
   end if;
 end $$;
 
@@ -50,7 +50,7 @@ begin
 end $$;
 
 comment on function privado.exigir_perfil(public.perfil_conta) is
-  'Exige conta ativa e o perfil declarado. Recusa token de conta anonimizada ou suspensa (RF25) e perfil incompatível (RN25).';
+  'Exige conta ativa e o perfil declarado. Recusa token de conta anonimizada ou inexistente (RF25) e perfil incompatível (RN25).';
 
 revoke execute on function privado.exigir_perfil(public.perfil_conta)
   from public, anon, authenticated;
@@ -85,10 +85,11 @@ begin
 
   -- RN12. A falta é do profissional que desiste em cima da hora, e só dele: o
   -- contratante que cancela não gera falta para ninguém, e a posição que nunca foi
-  -- confirmada não tem de quem ser falta. Na exclusão de conta, não há falta.
+  -- confirmada não tem de quem ser falta. Na exclusão de conta (sinalizada via
+  -- frila.exclusao_de_conta), não há falta.
   if v_eh_prof and v_pos.estado = 'confirmada'
      and v_pos.inicio_em - v_agora < interval '24 hours'
-     and motivo <> 'exclusão de conta' then
+     and coalesce(current_setting('frila.exclusao_de_conta', true), 'off') <> 'on' then
     v_falta := true;
   end if;
 
@@ -232,6 +233,9 @@ begin
     perform public.erro(409, 'administrador_unico');
   end if;
 
+  -- Sinaliza para a transação que os cancelamentos decorrem de exclusão de conta (isenção de falta RN12).
+  perform set_config('frila.exclusao_de_conta', 'on', true);
+
   -- 1. Se for profissional: reabre cada turno futuro através de privado.cancelar_uma_posicao
   -- (reabrir = true). A vaga volta a 'publicada', uma nova posição aberta é criada, o despacho
   -- sai de novo (reaberta: true) e a outra parte é avisada, sem gerar falta.
@@ -270,6 +274,8 @@ begin
       v_cancelados := v_cancelados + 1;
     end loop;
   end if;
+
+  perform set_config('frila.exclusao_de_conta', 'off', true);
 
   -- Se for profissional: retirar candidaturas pendentes
   if v_usuario.perfil = 'profissional' then
@@ -316,6 +322,8 @@ begin
             and g.estado in ('publicada', 'preenchida'))
          and p.estado = 'aberta';
 
+      -- Decisão de produto: se a vaga preenchida tiver turno em andamento (já iniciado
+      -- e não concluído), a vaga vai para cancelada mas o turno segue até o fim para auditoria.
       update public.vaga
          set estado = 'cancelada'
        where estabelecimento_id = v_estab

@@ -4,7 +4,7 @@
 -- 1. Depois de excluir, a conta não entra, não recebe despacho e não aparece em busca.
 -- 2. Turnos passados da outra parte mostram 'Conta encerrada' e a reputação dela não muda
 --    (visto em painel_estabelecimento pelo contratante e em meus_turnos pelo profissional).
--- 3. Token emitido antes da exclusão é recusado com 403 (conta_encerrada) em qualquer RPC de escrita
+-- 3. Token emitido antes da exclusão é recusado com 401 (nao_autenticado) em qualquer RPC de escrita
 --    (candidatar, fazer_checkin, registrar_dispositivo, avaliar, confirmar_checkin_manual,
 --     cancelar_posicao, cancelar_vaga) e não consegue puxar token de push de outra conta.
 -- 4. Idempotência: conta inexistente no usuario ou já anonimizada não falha (turnos_cancelados = 0).
@@ -16,7 +16,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(56);
+select plan(60);
 
 insert into privado.ambiente (eh_teste) values (true);
 
@@ -137,10 +137,14 @@ select
   'c1000000-0000-4000-8000-000000000005'::uuid as prof2_u,
   'c1000000-0000-4000-8000-000000000015'::uuid as prof2_p,
   'c1000000-0000-4000-8000-000000000006'::uuid as outro_u,
+  'c1000000-0000-4000-8000-000000000016'::uuid as outro_p,
   -- Vagas e posições do estab_com_membros
   'c1000000-0000-4000-8000-000000000031'::uuid as vaga_futura,
   'c1000000-0000-4000-8000-000000000041'::uuid as pos_futura,
   'c1000000-0000-4000-8000-000000000051'::uuid as turno_futuro,
+  'c1000000-0000-4000-8000-000000000037'::uuid as vaga_urgente,
+  'c1000000-0000-4000-8000-000000000047'::uuid as pos_urgente,
+  'c1000000-0000-4000-8000-000000000057'::uuid as turno_urgente,
   'c1000000-0000-4000-8000-000000000032'::uuid as vaga_passada,
   'c1000000-0000-4000-8000-000000000042'::uuid as pos_passada,
   'c1000000-0000-4000-8000-000000000052'::uuid as turno_passado,
@@ -199,6 +203,13 @@ select prof2_p, prof2_u, extensions.ST_SetSRID(extensions.ST_MakePoint(-47.8825,
 insert into public.profissional_funcao (profissional_id, funcao_id)
 select prof2_p, (select id from public.funcao where nome = 'bartender') from ids;
 
+insert into public.profissional (id, usuario_id, ponto_base, taxa_comparecimento, turnos_realizados, aval_positivas, aval_total)
+select outro_p, outro_u, extensions.ST_SetSRID(extensions.ST_MakePoint(-47.8825, -15.7942), 4326)::extensions.geography,
+       1.000, 0, 0, 0 from ids;
+
+insert into public.profissional_funcao (profissional_id, funcao_id)
+select outro_p, (select id from public.funcao where nome = 'garçom') from ids;
+
 -- Estabelecimentos
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto, aval_positivas, aval_total)
 select estab_com_membros, 'Bar das Nações', '12345678000195', 'food_service', 'SCLS 402',
@@ -247,20 +258,35 @@ select turno_passado, admin_u, 'profissional', prof_p, true from ids;
 insert into public.avaliacao (turno_id, autor_id, alvo_tipo, alvo_id, resposta)
 select turno_passado, prof_u, 'estabelecimento', estab_com_membros, true from ids;
 
--- 2. Turno futuro confirmado do profissional prof_u
+-- 2. Turno futuro confirmado do profissional prof_u (a menos de 24h para provar isenção por excluir_conta)
 insert into public.vaga (id, estabelecimento_id, funcao_id, publicado_por, inicio_em, fim_em, valor_centavos, estado, ponto, local, modo, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio, responsavel_local, chave_cliente)
 select vaga_futura, estab_com_membros, (select id from public.funcao where nome = 'garçom'), admin_u,
-       privado.agora() + interval '3 days', privado.agora() + interval '3 days' + interval '6 hours',
+       privado.agora() + interval '3 hours', privado.agora() + interval '9 hours',
        18000, 'preenchida', extensions.ST_SetSRID(extensions.ST_MakePoint(-47.8825, -15.7942), 4326)::extensions.geography,
        'SCLS 402', 'urgencia', 1, false, false, false, 'Maria', gen_random_uuid() from ids;
 
 insert into public.posicao (id, vaga_id, profissional_id, estado, inicio_em, fim_em, confirmado_em, falta)
 select pos_futura, vaga_futura, prof_p, 'confirmada',
-       privado.agora() + interval '3 days', privado.agora() + interval '3 days' + interval '6 hours',
+       privado.agora() + interval '3 hours', privado.agora() + interval '9 hours',
        privado.agora() - interval '1 hour', false from ids;
 
 insert into public.turno (id, posicao_id, valor_acordado_centavos, verificacao)
 select turno_futuro, pos_futura, 18000, 'pendente' from ids;
+
+-- 2.1 Turno urgente de outro profissional (para provar falta em cancelar_posicao a menos de 24h)
+insert into public.vaga (id, estabelecimento_id, funcao_id, publicado_por, inicio_em, fim_em, valor_centavos, estado, ponto, local, modo, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio, responsavel_local, chave_cliente)
+select vaga_urgente, estab_com_membros, (select id from public.funcao where nome = 'garçom'), admin_u,
+       privado.agora() + interval '2 hours', privado.agora() + interval '8 hours',
+       15000, 'preenchida', extensions.ST_SetSRID(extensions.ST_MakePoint(-47.8825, -15.7942), 4326)::extensions.geography,
+       'SCLS 402', 'urgencia', 1, false, false, false, 'Maria', gen_random_uuid() from ids;
+
+insert into public.posicao (id, vaga_id, profissional_id, estado, inicio_em, fim_em, confirmado_em, falta)
+select pos_urgente, vaga_urgente, outro_p, 'confirmada',
+       privado.agora() + interval '2 hours', privado.agora() + interval '8 hours',
+       privado.agora() - interval '1 hour', false from ids;
+
+insert into public.turno (id, posicao_id, valor_acordado_centavos, verificacao)
+select turno_urgente, pos_urgente, 15000, 'pendente' from ids;
 
 -- 3. Outra vaga aberta com candidatura pendente de prof_u
 insert into public.vaga (id, estabelecimento_id, funcao_id, publicado_por, inicio_em, fim_em, valor_centavos, estado, ponto, local, modo, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio, responsavel_local, chave_cliente)
@@ -341,6 +367,33 @@ select is(
   '0',
   'Conta inexistente no usuario retorna 0 turnos cancelados sem erro');
 
+-- ── 3.1 Falta em cancelar_posicao com motivo 'exclusão de conta' a menos de 24h ──
+--
+-- A isenção de falta em cima da hora (RN12) é exclusiva de exclusão de conta real
+-- (sinalizada internamente via frila.exclusao_de_conta). Se um usuário chamar
+-- cancelar_posicao diretamente informando o texto 'exclusão de conta' a menos de 24h,
+-- a falta AINDA deve ser marcada e a taxa de comparecimento recalculada.
+
+select lives_ok(
+  format($$ select pg_temp.como(%L, format('select public.cancelar_posicao(%%L::uuid, %%L)', %L, 'exclusão de conta')) $$,
+         (select outro_u from ids), (select pos_urgente from ids)),
+  'Profissional ativo pode cancelar posição com motivo exclusão de conta');
+
+select is(
+  (select estado from public.posicao where id = (select pos_urgente from ids)),
+  'cancelada'::public.estado_posicao,
+  'Posição cancelada pelo profissional via cancelar_posicao');
+
+select is(
+  (select falta from public.posicao where id = (select pos_urgente from ids)),
+  true,
+  'cancelar_posicao a menos de 24h com motivo "exclusão de conta" ainda marca falta');
+
+select is(
+  (select taxa_comparecimento from public.profissional where id = (select outro_p from ids)),
+  0.000,
+  'Taxa de comparecimento do profissional é recalculada refletindo a falta');
+
 -- ── 4. Exclusão de profissional com turno futuro (Decisão JP: Reabertura) ────
 
 select lives_ok(
@@ -356,7 +409,7 @@ select is(
 select is(
   (select falta from public.posicao where id = (select pos_futura from ids)),
   false,
-  'Cancelamento por exclusão de conta não marca falta');
+  'Cancelamento por exclusão de conta a menos de 24h não marca falta');
 
 select is(
   (select verificacao from public.turno where id = (select turno_futuro from ids)),
@@ -484,49 +537,49 @@ select throws_ok(
   format($$ select pg_temp.como(%L, format('select public.candidatar(%%L)', %L)) $$,
          (select prof_u from ids), (select vaga_aberta_outra from ids)),
   'PGRST',
-  '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : "conta_encerrada", "hint" : null}',
+  '{"code" : "nao_autenticado", "message" : "nao_autenticado", "details" : null, "hint" : null}',
   'Token emitido antes da exclusão é recusado em candidatar');
 
 select throws_ok(
   format($$ select pg_temp.como(%L, format('select public.fazer_checkin(%%L::uuid, 10)', %L)) $$,
          (select prof_u from ids), (select turno_passado from ids)),
   'PGRST',
-  '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : "conta_encerrada", "hint" : null}',
+  '{"code" : "nao_autenticado", "message" : "nao_autenticado", "details" : null, "hint" : null}',
   'Token emitido antes da exclusão é recusado em fazer_checkin');
 
 select throws_ok(
   format($$ select pg_temp.como(%L, format('select public.registrar_dispositivo(%%L, %%L)', 'token-fcm-novo-1234567890', 'android')) $$,
          (select prof_u from ids)),
   'PGRST',
-  '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : "conta_encerrada", "hint" : null}',
+  '{"code" : "nao_autenticado", "message" : "nao_autenticado", "details" : null, "hint" : null}',
   'Token emitido antes da exclusão é recusado em registrar_dispositivo');
 
 select throws_ok(
   format($$ select pg_temp.como(%L, format('select public.avaliar(%%L::uuid, true)', %L)) $$,
          (select prof_u from ids), (select turno_passado from ids)),
   'PGRST',
-  '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : "conta_encerrada", "hint" : null}',
+  '{"code" : "nao_autenticado", "message" : "nao_autenticado", "details" : null, "hint" : null}',
   'Token emitido antes da exclusão é recusado em avaliar');
 
 select throws_ok(
   format($$ select pg_temp.como(%L, format('select public.confirmar_checkin_manual(%%L::uuid)', %L)) $$,
          (select prof_u from ids), (select turno_passado from ids)),
   'PGRST',
-  '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : "conta_encerrada", "hint" : null}',
+  '{"code" : "nao_autenticado", "message" : "nao_autenticado", "details" : null, "hint" : null}',
   'Token emitido antes da exclusão é recusado em confirmar_checkin_manual');
 
 select throws_ok(
   format($$ select pg_temp.como(%L, format('select public.cancelar_posicao(%%L::uuid, %%L)', %L, 'motivo valido cancelamento')) $$,
          (select prof_u from ids), (select pos_passada from ids)),
   'PGRST',
-  '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : "conta_encerrada", "hint" : null}',
+  '{"code" : "nao_autenticado", "message" : "nao_autenticado", "details" : null, "hint" : null}',
   'Token emitido antes da exclusão é recusado em cancelar_posicao');
 
 select throws_ok(
   format($$ select pg_temp.como(%L, format('select public.cancelar_vaga(%%L::uuid, %%L)', %L, 'motivo valido cancelamento')) $$,
          (select prof_u from ids), (select vaga_aberta_outra from ids)),
   'PGRST',
-  '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : "conta_encerrada", "hint" : null}',
+  '{"code" : "nao_autenticado", "message" : "nao_autenticado", "details" : null, "hint" : null}',
   'Token emitido antes da exclusão é recusado em cancelar_vaga');
 
 -- Conta encerrada não puxa token de push de outra conta
@@ -534,7 +587,7 @@ select throws_ok(
   format($$ select pg_temp.como(%L, format('select public.registrar_dispositivo(%%L, %%L)', 'token-fcm-outro', 'android')) $$,
          (select prof_u from ids)),
   'PGRST',
-  '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : "conta_encerrada", "hint" : null}',
+  '{"code" : "nao_autenticado", "message" : "nao_autenticado", "details" : null, "hint" : null}',
   'Conta encerrada não consegue puxar token de push de outra conta');
 
 select is(
