@@ -27,6 +27,10 @@ supabase test db          # pgTAP
 O `supabase start` imprime a URL, a chave anônima e o endereço do **Inbucket**, onde o
 código de entrada por e-mail chega sem envio real. Precisa do Docker aberto.
 
+Para o despacho local, preencha `AGENDADOR_SECRET` no `.env`. O
+`ciclo-completo.sh` aplica esse valor ao banco local antes de executar o fluxo; não
+versione o segredo.
+
 ### Sem Docker Desktop: Colima
 
 Funciona com o [Colima](https://github.com/abiosoft/colima) no lugar do Docker Desktop
@@ -82,6 +86,13 @@ scripts/                bancada-sync, ciclo-completo
 | `frila-prod` | Só a partir do Sprint 3 |
 
 A chave de serviço fica fora do app e fora do git: só o agendador e a CI a usam.
+
+### Antes de aplicar no frila-dev ou em produção
+
+Configure `frila.agendador_secret` no banco e o mesmo valor como
+`AGENDADOR_SECRET` na Edge Function `despachar` **antes** de aplicar a migração do
+motor de despacho. Sem os dois valores, `publicar_vaga` falha ao enfileirar o
+despacho.
 
 ### Limites do plano gratuito do Supabase
 

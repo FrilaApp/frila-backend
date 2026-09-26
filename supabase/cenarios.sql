@@ -129,8 +129,8 @@ insert into public.profissional (id, usuario_id, ponto_base, taxa_comparecimento
                                  turnos_realizados)
 values
   ('e0000000-0000-4000-8000-000000000001','a0000000-0000-4000-8000-000000000001','POINT(-47.8830 -15.7650)'::extensions.geography, 1.000, 1),
-  ('e0000000-0000-4000-8000-000000000002','a0000000-0000-4000-8000-000000000002','POINT(-47.8795 -15.7590)'::extensions.geography, null,  0),
-  ('e0000000-0000-4000-8000-000000000003','a0000000-0000-4000-8000-000000000003','POINT(-47.8910 -15.7710)'::extensions.geography, null,  0),
+  ('e0000000-0000-4000-8000-000000000002','a0000000-0000-4000-8000-000000000002','POINT(-47.8795 -15.7590)'::extensions.geography, 1.000, 1),
+  ('e0000000-0000-4000-8000-000000000003','a0000000-0000-4000-8000-000000000003','POINT(-47.8910 -15.7710)'::extensions.geography, 1.000, 1),
   ('e0000000-0000-4000-8000-000000000004','a0000000-0000-4000-8000-000000000004','POINT(-48.0300 -15.8360)'::extensions.geography, null,  0),
   ('e0000000-0000-4000-8000-000000000005','a0000000-0000-4000-8000-000000000005','POINT(-47.8840 -15.7680)'::extensions.geography, null,  0),
   ('e0000000-0000-4000-8000-000000000006','a0000000-0000-4000-8000-000000000006','POINT(-47.8860 -15.7600)'::extensions.geography, null,  0),
@@ -287,11 +287,9 @@ select x.id::uuid, x.estab::uuid, f.id, x.inicio, x.fim, x.local, x.ponto::exten
      'urgencia', 'preenchida', now() - interval '5 days',
      '11110000-0000-4000-8000-000000000002'),
 
-    -- As duas vagas do passado descontam **21** dias da âncora, não 14: a âncora está
-    -- entre 7 e 13 dias no futuro (com + 18h). Com 14 dias, aos sábados pela manhã
-    -- (quando a âncora salta 13 dias à frente), o término da vaga (+20h) caía no futuro
-    -- imediato, disparando avaliacao_rn07 (antes_do_fim). Com 21, o passado é passado em
-    -- qualquer dia e horário da semana em que o `db reset` rodar.
+    -- As duas vagas do passado descontam **21** dias da âncora: a âncora está
+    -- entre 7 e 13 dias no futuro, então 21 dias garante que caia no passado em
+    -- qualquer dia e hora da semana em que o `db reset` rodar (inclusive sábado de manhã).
     ('d0000000-0000-4000-8000-000000000003','c0000000-0000-4000-8000-000000000002','limpeza pós-evento',
      q.sexta_18h - interval '21 days' + interval '12 hours',
      q.sexta_18h - interval '21 days' + interval '20 hours',
@@ -524,4 +522,5 @@ values
   ('a0000000-0000-4000-8000-000000000010','fcm-cenario-joao-'   || repeat('0', 24), 'android'),
   ('b0000000-0000-4000-8000-000000000001','fcm-cenario-zelia-'  || repeat('0', 24), 'ios')
 on conflict (token_fcm) do nothing;
+
 

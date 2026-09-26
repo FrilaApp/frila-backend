@@ -7,15 +7,70 @@
 # PostgREST a expõe, que o e-mail sai, nem que o status HTTP é o que o contrato promete.
 # Aqui, prova. Cada RPC do Sprint 1 acrescenta um passo.
 #
-# Uso:  ./scripts/ciclo-completo.sh
+# Uso:  ./scripts/ciclo-completo.sh [--sobrescrever-segredo]
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+sobrescrever_segredo=false
+case "${1:-}" in
+  '') ;;
+  --sobrescrever-segredo) sobrescrever_segredo=true ;;
+  *) printf 'Opção desconhecida: %s\n' "$1" >&2; exit 2 ;;
+esac
 
 [ -f .env ] && { set -a; source .env; set +a; }
 
 URL="${SUPABASE_URL:-http://127.0.0.1:54321}"
 CAIXA="${INBUCKET_URL:-http://127.0.0.1:54324}"
 ANON="${SUPABASE_ANON_KEY:-}"
+
+# O trigger de despacho roda dentro do Postgres, portanto a variável local precisa
+# ser aplicada ao banco antes da primeira RPC que enfileira uma vaga. O valor nunca
+# é exibido nem gravado no repositório.
+if [ -n "${AGENDADOR_SECRET:-}" ]; then
+  DB="${DB_CONTAINER:-supabase_db_frila-backend}"
+  estado_segredo=$(docker exec -e PGPASSWORD=postgres -i "$DB" \
+    psql -U supabase_admin -d postgres -X -q -At -v ON_ERROR_STOP=1 \
+      -v segredo="$AGENDADOR_SECRET" -f - <<'SQL'
+select case
+  when nullif(current_setting('frila.agendador_secret', true), '') is null then 'ausente'
+  when current_setting('frila.agendador_secret', true) = :'segredo' then 'igual'
+  else 'diferente'
+end;
+SQL
+  )
+
+  if [ "$estado_segredo" = "diferente" ] && [ "$sobrescrever_segredo" = false ]; then
+    printf '%s\n' \
+      'AGENDADOR_SECRET já está configurado com outro valor; use --sobrescrever-segredo para substituir.' >&2
+    exit 1
+  fi
+
+  if [ "$estado_segredo" = "igual" ]; then
+    printf '%s\n' 'AGENDADOR_SECRET já está configurado no banco local.'
+  else
+    docker exec -e PGPASSWORD=postgres -i "$DB" \
+      psql -U supabase_admin -d postgres -X -q -v ON_ERROR_STOP=1 \
+        -v segredo="$AGENDADOR_SECRET" -f - <<'SQL'
+alter database postgres set frila.agendador_secret = :'segredo';
+alter role authenticator set frila.agendador_secret = :'segredo';
+select pg_terminate_backend(pid)
+  from pg_stat_activity
+ where usename = 'authenticator' and pid <> pg_backend_pid();
+SQL
+    if [ "$estado_segredo" = "ausente" ]; then
+      printf '%s\n' 'AGENDADOR_SECRET configurado no banco local.'
+    else
+      printf '%s\n' 'AGENDADOR_SECRET substituído no banco local.'
+    fi
+  fi
+
+  for _ in $(seq 1 30); do
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "$URL/rest/v1/")" = "200" ] && break
+    sleep 1
+  done
+fi
+
 [ -z "$ANON" ] && ANON=$(supabase status -o env 2>/dev/null | sed -n 's/^ANON_KEY="\(.*\)"$/\1/p')
 
 if [ -z "$ANON" ]; then
