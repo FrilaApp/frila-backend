@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.17
+  version: 0.2.18
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -92,6 +92,14 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.18, de 26/09/2026.** `registrar_dispositivo` foi implementada (cartão `36fU0CEO`).
+    O app já a previa desde a 0.2.2. A RPC grava ou atualiza o token FCM com idempotência por token,
+    transfere a posse do aparelho caso uma nova conta faça login no mesmo dispositivo físico (RN25),
+    e devolve `{plataforma, atualizado_em}` sem expor dados sensíveis. Nenhuma assinatura ou
+    modelo mudou.
+
+    ---
 
     **Versão 0.2.17, de 25/09/2026.** O aviso descrito na 0.2.14 passou a existir no
     backend: `candidatar`, `fazer_checkin`, `cancelar_posicao` e `cancelar_vaga` enfileiram
