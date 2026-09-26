@@ -111,6 +111,10 @@ caso "mudar RPC já implementada na base continua exigindo o contrato" 1 \
 "O contrato não acompanhou o código." \
 'create or replace function public.ja_no_ar(p int) returns int language sql as $$ select p $$;'
 
+caso "reimplementação de RPC já no ar com mesma assinatura passa sem mexer no contrato" 0 \
+"Nada a exigir do contrato." \
+'create or replace function public.ja_no_ar() returns int language sql as $$ select 2 $$;'
+
 caso "drop de RPC declarada continua exigindo o contrato" 1 \
 "O contrato não acompanhou o código." \
 'drop function public.declarada_sem_codigo(text);'

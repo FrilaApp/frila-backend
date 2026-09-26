@@ -89,35 +89,83 @@ echo "Funções de public tocadas neste PR:"
 printf '  %s\n' $tocadas
 echo
 
+# Lê SQL na entrada e devolve `verbo public.nome(args)`, um por linha.
+assinaturas_em() {
+  perl -e '
+    my $text = do { local $/; <> };
+    $text =~ s/--.*$//mg;
+    $text =~ tr/\n/ /;
+    $text =~ s{/\*.*?\*/}{ }gs;
+    while ($text =~ /(create|drop|alter)\s+(?:or\s+replace\s+)?function\s+(?:if\s+exists\s+)?"?public"?\s*\.\s*"?([a-z0-9_]+)"?(?:\s*(\((?:[^()]++|(?3))*\)))?/gis) {
+      my ($verbo, $nome, $raw_args) = (lc($1), lc($2), $3);
+      my $args = "";
+      if (defined $raw_args) {
+        $raw_args =~ s/^\(\s*//;
+        $raw_args =~ s/\s*\)$//;
+        $raw_args =~ s/\s+/ /g;
+        $raw_args =~ s/^\s+|\s+$//g;
+        $args = "($raw_args)";
+      }
+      print "$verbo public.$nome$args\n";
+    }
+  ' | sort -u || true
+}
+
 # ── RPC que o contrato já declarava e que nasce agora ─────────────────────────
 #
 # O contrato nasce antes do código: `remover_dispositivo` estava declarada desde a
-# 0.2.2 e só foi implementada na 0.2.17. A primeira implementação de uma RPC que o
-# contrato da base já declara não muda a superfície que os clientes conhecem — o
-# modelo que eles geraram já é o certo —, e exigir que o contrato mude aí só empurra
-# alguém a inventar uma mudança no frila-docs ou a contornar este portão.
+# 0.2.2 e só foi implementada na 0.2.17. Da mesma forma, uma RPC já declarada no
+# contrato cujo corpo é corrigido em nova migração sem alterar a assinatura dos
+# parâmetros não muda a superfície que os clientes conhecem — o modelo que eles
+# geraram continua idêntico —, e exigir que o contrato mude aí só empurra alguém a
+# inventar uma mudança no frila-docs ou a contornar este portão.
 #
-# A isenção é estreita de propósito. Vale só quando as três coisas são verdade:
+# A isenção é estreita de propósito. Vale só quando:
 #
 #   1. o contrato da **base** declara `/rpc/<nome>`;
-#   2. nenhuma migração da **base** cria `public.<nome>` — é a primeira implementação,
-#      e não uma mudança de assinatura de uma RPC que já está no ar;
-#   3. o PR só **cria** a função; `drop` e `alter` mudam a superfície sempre.
+#   2. o PR só **cria** a função; `drop` e `alter` mudam a superfície sempre;
+#   3. ou nenhuma migração da **base** cria `public.<nome>` (primeira implementação de RPC
+#      declarada), ou toda `create function` desta RPC no PR preserva exatamente uma
+#      assinatura já existente na base (reimplementação de corpo sem mudar parâmetros).
 contrato_base=$(git show "$BASE:$ESPELHO" 2>/dev/null || true)
 criadas_na_base=$(git ls-tree -r --name-only "$BASE" -- supabase/migrations/ \
   | while IFS= read -r f; do git show "$BASE:$f"; printf '\n'; done \
   | funcoes_em | awk '$1 == "create" { print $2 }' | sort -u || true)
+assinaturas_base=$(git ls-tree -r --name-only "$BASE" -- supabase/migrations/ \
+  | while IFS= read -r f; do git show "$BASE:$f"; printf '\n'; done \
+  | assinaturas_em | sort -u || true)
+
+assinaturas_pr=$(git diff "$BASE"...HEAD -- supabase/migrations \
+  | { grep -E '^\+' || true; } | { grep -vE '^\+\+\+' || true; } | sed 's/^+//' \
+  | assinaturas_em | sort -u || true)
 
 isentas=""
 exigidas=""
 for funcao in $tocadas; do
   nome=${funcao#public.}
   so_cria=$(printf '%s\n' "$toques" | awk -v f="$funcao" '$2 == f && $1 != "create"' | wc -l | tr -d ' ')
-  # `grep <<<` e não `printf | grep -q`: sob `pipefail`, o `grep -q` sai no primeiro
-  # acerto, o `printf` que ainda escrevia o contrato leva SIGPIPE e o teste vira falso.
+  
+  nao_criada_na_base=0
+  if ! grep -qxF "$funcao" <<<"$criadas_na_base"; then
+    nao_criada_na_base=1
+  fi
+
+  mesma_assinatura=0
+  ass_pr=$(printf '%s\n' "$assinaturas_pr" | grep -E "^create ${funcao/./\\.}(\\(|$)" || true)
+  if [ -n "$ass_pr" ]; then
+    mesma_assinatura=1
+    while IFS= read -r sig; do
+      [ -z "$sig" ] && continue
+      if ! grep -qxF "$sig" <<<"$assinaturas_base"; then
+        mesma_assinatura=0
+        break
+      fi
+    done <<<"$ass_pr"
+  fi
+
   if [ "$so_cria" = "0" ] \
      && grep -qE "^  /rpc/${nome}:[[:space:]]*$" <<<"$contrato_base" \
-     && ! grep -qxF "$funcao" <<<"$criadas_na_base"; then
+     && { [ "$nao_criada_na_base" = "1" ] || [ "$mesma_assinatura" = "1" ]; }; then
     isentas="$isentas $funcao"
   else
     exigidas="$exigidas $funcao"
@@ -125,7 +173,7 @@ for funcao in $tocadas; do
 done
 
 if [ -n "$isentas" ]; then
-  echo "Primeira implementação de RPC que o contrato da base já declara:"
+  echo "Primeira implementação ou mesma assinatura de RPC que o contrato da base já declara:"
   printf '  %s\n' $isentas
   echo
 fi
