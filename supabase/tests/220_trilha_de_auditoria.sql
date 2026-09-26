@@ -9,6 +9,7 @@
 --   4. a exceção controlada da retenção funciona, e só ela?
 
 begin;
+set local frila.agendador_secret = 'segredo-de-teste';
 select plan(23);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb

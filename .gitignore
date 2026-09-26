@@ -7,3 +7,6 @@ supabase/.branches/
 *.log
 .vercel/
 .venv-contrato/
+*service-account*.json
+*firebase*.json
+*fcm*.json

@@ -401,6 +401,14 @@ deno_version = 2
 enabled = true
 verify_jwt = true
 
+# Motor de despacho: consulta elegíveis, cria despachos e notificações.
+# Invocada pontualmente pós-commit (net.http_post) ou periodicamente pelo pg_cron.
+# verify_jwt fica desligado porque a proteção é feita pelo segredo do agendador
+# no cabeçalho x-agendador-secret ou Bearer (validado na própria Edge Function).
+[functions.despachar]
+enabled = true
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

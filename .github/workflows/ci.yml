@@ -39,6 +39,19 @@ jobs:
       - name: Subir o ambiente
         run: supabase start --exclude studio,realtime,storage-api,imgproxy,logflare,vector
 
+      # O trigger de despacho exige o segredo antes de qualquer RPC que enfileire uma
+      # vaga. O valor é efêmero, gerado no próprio job, e nunca é um secret do GitHub.
+      - name: Configurar segredo efêmero do agendador
+        run: |
+          AGENDADOR_SECRET="$(openssl rand -hex 32)"
+          # Mascara o segredo efêmero; ele só vale para o banco descartável deste job.
+          echo "::add-mask::$AGENDADOR_SECRET"
+          printf "\\set agendador_secret '%s'\nalter database postgres set frila.agendador_secret = :'agendador_secret';\nalter role authenticator set frila.agendador_secret = :'agendador_secret';\nselect pg_terminate_backend(pid) from pg_stat_activity where usename = 'authenticator' and pid <> pg_backend_pid();\n" \
+            "$AGENDADOR_SECRET" |
+            docker exec -e PGPASSWORD=postgres -i supabase_db_frila-backend \
+              psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1
+          printf 'AGENDADOR_SECRET=%s\n' "$AGENDADOR_SECRET" >> "$GITHUB_ENV"
+
       # Roda do zero de novo: prova que a ordem das migrações se sustenta sozinha.
       - name: Aplicar as migrações do zero
         run: supabase db reset
@@ -81,6 +94,7 @@ jobs:
           DEMONSTRACAO_EMAILS=revisao-contratante@frila.app,revisao-profissional@frila.app
           DEMONSTRACAO_CODIGO=codigo-de-ci-sem-valor
           EOF
+          printf 'AGENDADOR_SECRET=%s\n' "$AGENDADOR_SECRET" >> supabase/functions/.env.local
           supabase functions serve --env-file supabase/functions/.env.local &
           for _ in $(seq 1 60); do
             curl -sf -o /dev/null http://127.0.0.1:54321/functions/v1/entrar-demonstracao && break

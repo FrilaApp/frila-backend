@@ -16,6 +16,7 @@
 -- contas, com ids que começam em `f0000000`, e conta apenas o que ele mesmo criou.
 
 begin;
+set local frila.agendador_secret = 'segredo-de-teste';
 select plan(37);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
