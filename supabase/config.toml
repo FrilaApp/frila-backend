@@ -409,6 +409,14 @@ verify_jwt = true
 enabled = true
 verify_jwt = false
 
+# Exclusão de conta de dentro do app (cartão OrS9gEfU).
+# Obrigatória na App Store (5.1.1(v)).
+# Anonimiza a conta, cancela turnos futuros e apaga credencial em auth.users.
+[functions.excluir-conta]
+enabled = true
+verify_jwt = true
+
+
 [analytics]
 enabled = true
 port = 54327
