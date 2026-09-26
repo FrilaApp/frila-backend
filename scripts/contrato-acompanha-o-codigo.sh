@@ -45,14 +45,40 @@ git rev-parse --verify --quiet "$BASE" >/dev/null || {
 # com o nome qualificado — que é como este repositório escreve, sem exceção, porque
 # toda migração roda com `search_path = ''`.
 #
+# O padrão atravessa quebra de linha: as linhas são juntadas antes da busca. Até 26/09
+# a busca era linha a linha, e `create or replace function` numa linha com
+# `public.registrar_dispositivo(` na seguinte passava sem ser visto — foi assim que o
+# PR #3 atravessou este portão. Não houve dano, porque a RPC já estava no contrato, mas
+# o próximo a escapar pode não estar.
+#
 # Só as linhas **adicionadas**: uma migração removida do PR não muda a superfície do
 # ambiente, que só conhece o que foi aplicado.
-tocadas=$(git diff "$BASE"...HEAD -- supabase/migrations \
-  | grep -E '^\+' \
-  | grep -viE '^\+\s*--' \
-  | grep -oiE '(create|drop|alter)[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?function[[:space:]]+public\.[a-z0-9_]+' \
-  | grep -oiE 'public\.[a-z0-9_]+' \
-  | sort -u || true)
+
+# Lê SQL na entrada e devolve `verbo public.nome`, um por linha. O verbo é `create`,
+# `drop` ou `alter`; aspas e espaços em volta do ponto são normalizados.
+#
+# Comentário some antes da busca, inclusive no meio da declaração: `function -- nota`
+# com o nome na linha seguinte, ou `function /* nota */ public.nome`, esconderiam o
+# nome do padrão. O `--` é cortado até o fim da linha antes de juntar as linhas; o
+# `/* */`, que pode atravessar linhas, depois. O corte não conhece literal de texto:
+# um `'--'` esconderia uma declaração escrita depois dele na mesma linha — que é
+# como ninguém aqui escreve migração, e o teste de contrato contra o banco pega.
+funcoes_em() {
+  sed -E 's/--.*$//' \
+    | tr '\n' ' ' \
+    | perl -pe 's{/\*.*?\*/}{ }gs' \
+    | grep -oiE '(create|drop|alter)[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?function[[:space:]]+"?public"?[[:space:]]*\.[[:space:]]*"?[a-z0-9_]+' \
+    | tr -d '"' \
+    | sed -E 's/^([A-Za-z]+).*[[:space:]]public[[:space:]]*\.[[:space:]]*([A-Za-z0-9_]+)$/\1 public.\2/' \
+    | tr '[:upper:]' '[:lower:]' \
+    | sort -u || true
+}
+
+toques=$(git diff "$BASE"...HEAD -- supabase/migrations \
+  | { grep -E '^\+' || true; } | { grep -vE '^\+\+\+' || true; } | sed 's/^+//' \
+  | funcoes_em)
+
+tocadas=$(printf '%s\n' "$toques" | awk 'NF { print $2 }' | sort -u)
 
 if [ -z "$tocadas" ]; then
   echo "Nenhuma função de public tocada em supabase/migrations. Nada a exigir do contrato."
@@ -62,6 +88,100 @@ fi
 echo "Funções de public tocadas neste PR:"
 printf '  %s\n' $tocadas
 echo
+
+# Lê SQL na entrada e devolve `verbo public.nome(args)`, um por linha.
+assinaturas_em() {
+  perl -e '
+    my $text = do { local $/; <> };
+    $text =~ s/--.*$//mg;
+    $text =~ tr/\n/ /;
+    $text =~ s{/\*.*?\*/}{ }gs;
+    while ($text =~ /(create|drop|alter)\s+(?:or\s+replace\s+)?function\s+(?:if\s+exists\s+)?"?public"?\s*\.\s*"?([a-z0-9_]+)"?(?:\s*(\((?:[^()]++|(?3))*\)))?/gis) {
+      my ($verbo, $nome, $raw_args) = (lc($1), lc($2), $3);
+      my $args = "";
+      if (defined $raw_args) {
+        $raw_args =~ s/^\(\s*//;
+        $raw_args =~ s/\s*\)$//;
+        $raw_args =~ s/\s+/ /g;
+        $raw_args =~ s/^\s+|\s+$//g;
+        $args = "($raw_args)";
+      }
+      print "$verbo public.$nome$args\n";
+    }
+  ' | sort -u || true
+}
+
+# ── RPC que o contrato já declarava e que nasce agora ─────────────────────────
+#
+# O contrato nasce antes do código: `remover_dispositivo` estava declarada desde a
+# 0.2.2 e só foi implementada na 0.2.17. Da mesma forma, uma RPC já declarada no
+# contrato cujo corpo é corrigido em nova migração sem alterar a assinatura dos
+# parâmetros não muda a superfície que os clientes conhecem — o modelo que eles
+# geraram continua idêntico —, e exigir que o contrato mude aí só empurra alguém a
+# inventar uma mudança no frila-docs ou a contornar este portão.
+#
+# A isenção é estreita de propósito. Vale só quando:
+#
+#   1. o contrato da **base** declara `/rpc/<nome>`;
+#   2. o PR só **cria** a função; `drop` e `alter` mudam a superfície sempre;
+#   3. ou nenhuma migração da **base** cria `public.<nome>` (primeira implementação de RPC
+#      declarada), ou toda `create function` desta RPC no PR preserva exatamente uma
+#      assinatura já existente na base (reimplementação de corpo sem mudar parâmetros).
+contrato_base=$(git show "$BASE:$ESPELHO" 2>/dev/null || true)
+criadas_na_base=$(git ls-tree -r --name-only "$BASE" -- supabase/migrations/ \
+  | while IFS= read -r f; do git show "$BASE:$f"; printf '\n'; done \
+  | funcoes_em | awk '$1 == "create" { print $2 }' | sort -u || true)
+assinaturas_base=$(git ls-tree -r --name-only "$BASE" -- supabase/migrations/ \
+  | while IFS= read -r f; do git show "$BASE:$f"; printf '\n'; done \
+  | assinaturas_em | sort -u || true)
+
+assinaturas_pr=$(git diff "$BASE"...HEAD -- supabase/migrations \
+  | { grep -E '^\+' || true; } | { grep -vE '^\+\+\+' || true; } | sed 's/^+//' \
+  | assinaturas_em | sort -u || true)
+
+isentas=""
+exigidas=""
+for funcao in $tocadas; do
+  nome=${funcao#public.}
+  so_cria=$(printf '%s\n' "$toques" | awk -v f="$funcao" '$2 == f && $1 != "create"' | wc -l | tr -d ' ')
+  
+  nao_criada_na_base=0
+  if ! grep -qxF "$funcao" <<<"$criadas_na_base"; then
+    nao_criada_na_base=1
+  fi
+
+  mesma_assinatura=0
+  ass_pr=$(printf '%s\n' "$assinaturas_pr" | grep -E "^create ${funcao/./\\.}(\\(|$)" || true)
+  if [ -n "$ass_pr" ]; then
+    mesma_assinatura=1
+    while IFS= read -r sig; do
+      [ -z "$sig" ] && continue
+      if ! grep -qxF "$sig" <<<"$assinaturas_base"; then
+        mesma_assinatura=0
+        break
+      fi
+    done <<<"$ass_pr"
+  fi
+
+  if [ "$so_cria" = "0" ] \
+     && grep -qE "^  /rpc/${nome}:[[:space:]]*$" <<<"$contrato_base" \
+     && { [ "$nao_criada_na_base" = "1" ] || [ "$mesma_assinatura" = "1" ]; }; then
+    isentas="$isentas $funcao"
+  else
+    exigidas="$exigidas $funcao"
+  fi
+done
+
+if [ -n "$isentas" ]; then
+  echo "Primeira implementação ou mesma assinatura de RPC que o contrato da base já declara:"
+  printf '  %s\n' $isentas
+  echo
+fi
+
+if [ -z "$exigidas" ]; then
+  echo "Nenhuma função muda a superfície que o contrato já descreve. Nada a exigir do contrato."
+  exit 0
+fi
 
 falta=0
 
