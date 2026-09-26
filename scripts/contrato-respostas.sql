@@ -77,6 +77,9 @@ select pg_temp.como('cc000000-0000-4000-8000-000000000003',
 select pg_temp.guarda('minhaConta', pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.minha_conta() $$));
 
+select pg_temp.guarda('registrarDispositivo', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.registrar_dispositivo('fcm_token_teste_harness_contrato_1234567890', 'ios') $$));
+
 create temp table f as select id from public.funcao where nome = 'garçom';
 
 select pg_temp.guarda('criarPerfilProfissional', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
