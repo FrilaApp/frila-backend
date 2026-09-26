@@ -11,22 +11,24 @@ security definer
 set search_path = ''
 as $$
 declare
+  v_uid uuid := (select auth.uid());
   v_estado public.estado_conta;
 begin
+  if v_uid is null then
+    return;
+  end if;
+
   select u.estado into v_estado
     from public.usuario u
-   where u.id = (select auth.uid());
+   where u.id = v_uid;
 
-  -- A suspensão tem exceções próprias e será fechada pelo cartão de suspensão.
-  -- Aqui o invariante é impedir que uma credencial sobreviva à anonimização ou
-  -- seja aceita sem uma linha de conta.
   if v_estado is null or v_estado = 'anonimizada' then
     perform public.erro(403, 'sem_permissao', 'conta_encerrada');
   end if;
 end $$;
 
 comment on function privado.exigir_conta_ativa() is
-  'Ponto único de extensão para impedir escrita com token ainda válido de conta suspensa, anonimizada ou inexistente.';
+  'Ponto único de extensão para impedir escrita com token de conta anonimizada ou inexistente (RF25). As exceções de conta suspensa pertencem ao cartão de suspensão.';
 
 revoke execute on function privado.exigir_conta_ativa() from public, anon, authenticated;
 grant execute on function privado.exigir_conta_ativa() to service_role;
@@ -55,9 +57,7 @@ revoke execute on function privado.exigir_perfil(public.perfil_conta)
 grant execute on function privado.exigir_perfil(public.perfil_conta)
   to authenticated, service_role;
 
--- Cancelamento de posição com verificação de conta ativa.
-drop function if exists privado.cancelar_uma_posicao(uuid, uuid, text, boolean);
-
+-- Cancelamento de posição com verificação de conta ativa e suporte a reabertura.
 create or replace function privado.cancelar_uma_posicao(
   posicao uuid,
   autor   uuid,
@@ -85,9 +85,10 @@ begin
 
   -- RN12. A falta é do profissional que desiste em cima da hora, e só dele: o
   -- contratante que cancela não gera falta para ninguém, e a posição que nunca foi
-  -- confirmada não tem de quem ser falta.
+  -- confirmada não tem de quem ser falta. Na exclusão de conta, não há falta.
   if v_eh_prof and v_pos.estado = 'confirmada'
-     and v_pos.inicio_em - v_agora < interval '24 hours' then
+     and v_pos.inicio_em - v_agora < interval '24 hours'
+     and motivo <> 'exclusão de conta' then
     v_falta := true;
   end if;
 
@@ -189,8 +190,8 @@ declare
   v_agora      timestamptz := privado.agora();
   v_usuario    public.usuario%rowtype;
   v_pos        public.posicao%rowtype;
+  v_cand       record;
   v_estab      uuid;
-  v_prof       uuid;
   v_cancelados integer := 0;
 begin
   if v_uid is null then
@@ -198,11 +199,22 @@ begin
   end if;
 
   select * into v_usuario from public.usuario u where u.id = v_uid for update;
+
+  -- Idempotência: se a conta nem chegou a ser criada em public.usuario, não há perfil nem turnos
+  -- a cancelar. Devolve 202-compatível para a Edge Function completar a remoção em auth.users.
   if not found then
-    perform public.erro(404, 'nao_encontrado');
+    return jsonb_build_object(
+      'perfil_removido_em', v_agora,
+      'dados_apagados_ate', (v_agora::date + 15),
+      'turnos_cancelados', 0);
   end if;
+
+  -- Idempotência: conta já anonimizada (ex.: retentativa pós-502 da Admin API). Devolve 202-compatível.
   if v_usuario.estado = 'anonimizada' then
-    perform public.erro(409, 'conta_existente', 'conta_ja_encerrada');
+    return jsonb_build_object(
+      'perfil_removido_em', coalesce(v_usuario.anonimizado_em, v_agora),
+      'dados_apagados_ate', (coalesce(v_usuario.anonimizado_em, v_agora)::date + 15),
+      'turnos_cancelados', 0);
   end if;
 
   -- Só há conflito quando a administração ficaria sem outro administrador (RF25).
@@ -220,55 +232,44 @@ begin
     perform public.erro(409, 'administrador_unico');
   end if;
 
-  -- Cancela cada turno futuro sem apagar o registro. A ocorrência guarda apenas
-  -- referências e motivo; nenhum dado da linha de usuario é copiado para log (RN15).
-  for v_pos in
-    select p.*
-      from public.posicao p
-      join public.vaga g on g.id = p.vaga_id
-     where p.estado = 'confirmada'
-       and p.inicio_em > v_agora
-       and (
-         (v_usuario.perfil = 'profissional' and
-          p.profissional_id = (select x.id from public.profissional x
-                                where x.usuario_id = v_uid))
-         or
-         (v_usuario.perfil = 'contratante' and exists (
-            select 1 from public.membro_estabelecimento m
-             where m.estabelecimento_id = g.estabelecimento_id
-               and m.usuario_id = v_uid
-               and not exists (
-                 select 1 from public.membro_estabelecimento x
-                  where x.estabelecimento_id = m.estabelecimento_id
-                    and x.usuario_id <> v_uid)))
-       )
-  loop
-    v_estab := privado.estabelecimento_da_posicao(v_pos.id);
-    v_prof := v_pos.profissional_id;
+  -- 1. Se for profissional: reabre cada turno futuro através de privado.cancelar_uma_posicao
+  -- (reabrir = true). A vaga volta a 'publicada', uma nova posição aberta é criada, o despacho
+  -- sai de novo (reaberta: true) e a outra parte é avisada, sem gerar falta.
+  if v_usuario.perfil = 'profissional' then
+    for v_pos in
+      select p.*
+        from public.posicao p
+       where p.estado = 'confirmada'
+         and p.inicio_em > v_agora
+         and p.profissional_id = (select x.id from public.profissional x where x.usuario_id = v_uid)
+    loop
+      perform privado.cancelar_uma_posicao(v_pos.id, v_uid, 'exclusão de conta', true);
+      v_cancelados := v_cancelados + 1;
+    end loop;
+  end if;
 
-    update public.posicao
-       set estado = 'cancelada', falta = false
-     where id = v_pos.id;
-
-    update public.turno
-       set verificacao = 'nao_verificado'
-     where posicao_id = v_pos.id
-       and verificacao = 'pendente';
-
-    insert into public.ocorrencia (tipo, posicao_id, usuario_id, autor_id, motivo)
-    values ('cancelamento', v_pos.id, v_uid, v_uid, 'exclusão de conta');
-
-    if v_usuario.perfil = 'profissional' then
-      perform privado.notificar_membros(
-        v_estab, 'cancelamento', v_pos.id,
-        jsonb_build_object('posicao_id', v_pos.id, 'vaga_id', v_pos.vaga_id, 'reaberta', false));
-    else
-      perform privado.notificar(
-        privado.usuario_do_profissional(v_prof), 'cancelamento', v_pos.id,
-        jsonb_build_object('posicao_id', v_pos.id, 'vaga_id', v_pos.vaga_id, 'reaberta', false));
-    end if;
-    v_cancelados := v_cancelados + 1;
-  end loop;
+  -- 2. Se for contratante: para cada estabelecimento onde for o único membro, cancela turnos futuros
+  -- confirmados (reabrir = false, pois a casa ficará sem membros) avisando o profissional.
+  if v_usuario.perfil = 'contratante' then
+    for v_pos in
+      select p.*
+        from public.posicao p
+        join public.vaga g on g.id = p.vaga_id
+       where p.estado = 'confirmada'
+         and p.inicio_em > v_agora
+         and exists (
+           select 1 from public.membro_estabelecimento m
+            where m.estabelecimento_id = g.estabelecimento_id
+              and m.usuario_id = v_uid
+              and not exists (
+                select 1 from public.membro_estabelecimento x
+                 where x.estabelecimento_id = m.estabelecimento_id
+                   and x.usuario_id <> v_uid))
+    loop
+      perform privado.cancelar_uma_posicao(v_pos.id, v_uid, 'exclusão de conta', false);
+      v_cancelados := v_cancelados + 1;
+    end loop;
+  end if;
 
   -- Se for profissional: retirar candidaturas pendentes
   if v_usuario.perfil = 'profissional' then
@@ -289,13 +290,31 @@ begin
             where x.estabelecimento_id = m.estabelecimento_id
               and x.usuario_id <> v_uid)
     loop
+      -- Retira candidaturas pendentes das vagas que serão canceladas e notifica os candidatos
+      for v_cand in
+        select c.id, c.profissional_id, p.vaga_id
+          from public.candidatura c
+          join public.posicao p on p.id = c.posicao_id
+          join public.vaga g on g.id = p.vaga_id
+         where g.estabelecimento_id = v_estab
+           and c.estado = 'pendente'
+      loop
+        update public.candidatura set estado = 'retirada' where id = v_cand.id;
+        perform privado.notificar(
+          privado.usuario_do_profissional(v_cand.profissional_id),
+          'cancelamento',
+          v_cand.vaga_id,
+          jsonb_build_object('vaga_id', v_cand.vaga_id, 'reaberta', false)
+        );
+      end loop;
+
       update public.posicao p
          set estado = 'cancelada'
        where p.vaga_id in (
          select g.id from public.vaga g
           where g.estabelecimento_id = v_estab
             and g.estado in ('publicada', 'preenchida'))
-       and p.estado = 'aberta';
+         and p.estado = 'aberta';
 
       update public.vaga
          set estado = 'cancelada'
