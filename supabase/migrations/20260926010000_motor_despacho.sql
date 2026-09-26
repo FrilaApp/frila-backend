@@ -9,6 +9,14 @@
 -- limitadas, notifica vaga_sem_elegiveis uma vez, isola contas de demonstração
 -- e dispara despacho imediato pós-commit via net.http_post.
 
+-- ── 0. Extensões do motor de despacho ─────────────────────────────────────────
+-- pg_net: chamadas HTTP assíncronas no pós-commit (net.http_post)
+-- pgmq: fila de mensagens transacional para reprocessamento
+-- pg_cron: agendador de tarefas periódicas em segundo plano
+create extension if not exists pg_net;
+create extension if not exists pgmq cascade;
+create extension if not exists pg_cron;
+
 -- ── 1. Marca de envio para vaga_sem_elegiveis ──────────────────────────────────
 -- O índice único parcial já garante envio único dos tipos agendados.
 -- Inclui vaga_sem_elegiveis para que a notificação ao contratante (UC02 1a)
@@ -429,8 +437,6 @@ create trigger trg_despacho_enfileirado
 -- O job roda a cada 1 minuto para drenar a fila pgmq e reprocessar o que
 -- eventualmente falhou no envio imediato pós-commit (RNF03).
 -- Fica escrito e ativado no banco local / documentado para o remoto.
-create extension if not exists pg_cron;
-
 do $$
 begin
   if exists (select 1 from pg_extension where extname = 'pg_cron') then
