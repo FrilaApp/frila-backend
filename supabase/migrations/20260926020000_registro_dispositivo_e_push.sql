@@ -7,7 +7,8 @@
 
 -- ── 1. RPC registrar_dispositivo ──────────────────────────────────────────────
 
-create or replace function public.registrar_dispositivo(
+create or replace function
+  public.registrar_dispositivo(
   token_fcm  text default null,
   plataforma text default null
 )

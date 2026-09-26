@@ -52,7 +52,12 @@
 -- mesmo rodando numa sexta — a vaga em modo seleção precisa de mais de 24 h de
 -- antecedência (RN24), e "a próxima sexta" pode ser hoje à noite.
 
-
+drop table if exists _quando;
+create temp table _quando as
+select ((date_trunc('day', now() at time zone 'America/Sao_Paulo')
+         + (((5 - extract(dow from now() at time zone 'America/Sao_Paulo')::int + 7) % 7) + 7)
+             * interval '1 day'
+         + interval '18 hours') at time zone 'America/Sao_Paulo') as sexta_18h;
 
 -- ── As contas ──────────────────────────────────────────────────────────────────
 --
@@ -248,12 +253,6 @@ on conflict do nothing;
 --   d…06  preenchida  Buffet  · garçom          · sexta 18:00–02:00  ← cruza com a d…01
 --   d…07  encerrada   Bar     · garçom          · uma sexta passada 18:00–02:00
 
-with _quando as (
-  select ((date_trunc('day', now() at time zone 'America/Sao_Paulo')
-           + (((5 - extract(dow from now() at time zone 'America/Sao_Paulo')::int + 7) % 7) + 7)
-               * interval '1 day'
-           + interval '18 hours') at time zone 'America/Sao_Paulo') as sexta_18h
-)
 insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
                          valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
                          exige_material_proprio, responsavel_local, traje, participa_rateio,
@@ -287,12 +286,14 @@ select x.id::uuid, x.estab::uuid, f.id, x.inicio, x.fim, x.local, x.ponto::exten
      'urgencia', 'preenchida', now() - interval '5 days',
      '11110000-0000-4000-8000-000000000002'),
 
-    -- As duas vagas do passado descontam **21** dias da âncora: a âncora está
-    -- entre 7 e 13 dias no futuro, então 21 dias garante que caia no passado em
-    -- qualquer dia e hora da semana em que o `db reset` rodar (inclusive sábado de manhã).
+    -- As duas vagas do passado descontam **14** dias da âncora, não 7: a âncora está
+    -- entre 7 e 13 dias no futuro, então `- 7 dias` cairia no futuro em metade das
+    -- execuções — e o trigger de RN07 recusaria as avaliações com
+    -- `avaliacao_indisponivel / antes_do_fim`. Com 14, o passado é passado em
+    -- qualquer dia da semana em que o `db reset` rodar.
     ('d0000000-0000-4000-8000-000000000003','c0000000-0000-4000-8000-000000000002','limpeza pós-evento',
-     q.sexta_18h - interval '21 days' + interval '12 hours',
-     q.sexta_18h - interval '21 days' + interval '20 hours',
+     q.sexta_18h - interval '14 days' + interval '12 hours',
+     q.sexta_18h - interval '14 days' + interval '20 hours',
      'Salão de festas, Águas Claras', 'POINT(-48.0286 -15.8345)',
      14000::bigint, 5::smallint, true, true, true, 'Ricardo, na portaria',
      null, false, 'Casamento de 200 pessoas. Material fornecido pelo buffet.',
@@ -326,7 +327,7 @@ select x.id::uuid, x.estab::uuid, f.id, x.inicio, x.fim, x.local, x.ponto::exten
      '11110000-0000-4000-8000-000000000006'),
 
     ('d0000000-0000-4000-8000-000000000007','c0000000-0000-4000-8000-000000000001','garçom',
-     q.sexta_18h - interval '21 days', q.sexta_18h - interval '21 days' + interval '8 hours',
+     q.sexta_18h - interval '14 days', q.sexta_18h - interval '14 days' + interval '8 hours',
      'CLN 208, Bloco B, Asa Norte', 'POINT(-47.8869 -15.7620)',
      16000::bigint, 2::smallint, true, false, false, 'Zélia, no caixa',
      'Camisa preta e calça preta', true, null,
@@ -522,3 +523,5 @@ values
   ('a0000000-0000-4000-8000-000000000010','fcm-cenario-joao-'   || repeat('0', 24), 'android'),
   ('b0000000-0000-4000-8000-000000000001','fcm-cenario-zelia-'  || repeat('0', 24), 'ios')
 on conflict (token_fcm) do nothing;
+
+drop table _quando;
