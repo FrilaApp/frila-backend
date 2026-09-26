@@ -153,8 +153,8 @@ fi
 
 echo
 
-# ── 2. Critério 5: p95 entre publicação e despacho < 30 s em 20 vagas ──────────
-echo "▸ Critério 5: p95 entre publicação e despacho (RNF03: < 30 s em 20 amostras)"
+# ── 2. Critério 5: p95 entre publicação e aceite pelo FCM < 30 s em 20 vagas ──
+echo "▸ Critério 5: p95 entre publicação e aceite pelo FCM (RNF03: < 30 s em 20 publicações)"
 
 SQL_P95="
 with amostras as (
@@ -162,19 +162,25 @@ with amostras as (
     v.id as vaga_id,
     v.publicado_em,
     min(d.criado_em) as primeiro_despacho_em,
-    extract(epoch from (min(d.criado_em) - v.publicado_em)) as latencia_s
+    min(n.aceita_em) as primeiro_aceite_fcm_em,
+    extract(epoch from (min(d.criado_em) - v.publicado_em)) as latencia_despacho_s,
+    extract(epoch from (min(n.aceita_em) - v.publicado_em)) as latencia_fcm_s
   from public.vaga v
   join public.despacho d on d.vaga_id = v.id
+  left join public.notificacao n on n.id = d.notificacao_id
   where v.estado in ('publicada', 'preenchida', 'concluida')
   group by v.id, v.publicado_em
   order by v.publicado_em desc
   limit 20
 )
 select json_build_object(
-  'amostras', count(*),
-  'p50_s', round(coalesce(percentile_cont(0.50) within group (order by latencia_s)::numeric, 0), 3),
-  'p95_s', round(coalesce(percentile_cont(0.95) within group (order by latencia_s)::numeric, 0), 3),
-  'max_s', round(coalesce(max(latencia_s)::numeric, 0), 3)
+  'amostras_vagas', count(*),
+  'amostras_com_fcm', count(*) filter (where primeiro_aceite_fcm_em is not null),
+  'p50_despacho_s', round(coalesce(percentile_cont(0.50) within group (order by latencia_despacho_s)::numeric, 0), 3),
+  'p95_despacho_s', round(coalesce(percentile_cont(0.95) within group (order by latencia_despacho_s)::numeric, 0), 3),
+  'p50_fcm_s', round(coalesce(percentile_cont(0.50) within group (order by latencia_fcm_s) filter (where latencia_fcm_s is not null)::numeric, 0), 3),
+  'p95_fcm_s', round(coalesce(percentile_cont(0.95) within group (order by latencia_fcm_s) filter (where latencia_fcm_s is not null)::numeric, 0), 3),
+  'max_fcm_s', round(coalesce(max(latencia_fcm_s), 0)::numeric, 3)
 )::text
 from amostras;
 "
@@ -196,24 +202,30 @@ except Exception as e:
     print(f"  ✗ Não foi possível calcular p95 das publicações: {raw}")
     sys.exit(1)
 
-amostras = data.get("amostras", 0)
-p50 = float(data.get("p50_s", 0))
-p95 = float(data.get("p95_s", 0))
-max_s = float(data.get("max_s", 0))
+vagas = data.get("amostras_vagas", 0)
+fcm_amostras = data.get("amostras_com_fcm", 0)
+p50_despacho = float(data.get("p50_despacho_s", 0))
+p95_despacho = float(data.get("p95_despacho_s", 0))
+p50_fcm = float(data.get("p50_fcm_s", 0))
+p95_fcm = float(data.get("p95_fcm_s", 0))
+max_fcm = float(data.get("max_fcm_s", 0))
 
-print(f"  Amostras analisadas: {amostras}/20 publicações")
-print(f"  Latência p50: {p50:.3f} s")
-print(f"  Latência p95: {p95:.3f} s")
-print(f"  Latência máxima: {max_s:.3f} s")
+print(f"  Vagas amostradas: {vagas}/20 publicações")
+print(f"  Despacho interno no banco (vaga → despacho): p50 = {p50_despacho:.3f} s | p95 = {p95_despacho:.3f} s")
+print(f"  Amostras com aceite real do provedor (FCM aceita_em): {fcm_amostras}/20")
 
-if amostras < 20:
-    print(f"  ✗ Amostras insuficientes ({amostras} < 20). Requer 20 publicações no frila-dev.")
+if fcm_amostras < 20:
+    print(f"  ✗ Amostras insuficientes de aceite pelo FCM ({fcm_amostras}/20 válidas com aceita_em preenchido).")
+    print("    FONTE DE ENTREGA PENDENTE: A gravação de `public.notificacao.aceita_em` é atribuição do cartão")
+    print("    paralelo 'S2 · Backend · Envio de push pelo FCM, registro do aparelho e estado de entrega'.")
+    print("    Enquanto o worker de envio FCM não estiver ativo no frila-dev consumindo a fila de notificações,")
+    print("    o critério 5 permanece pendente de homologação ponta-a-ponta.")
     sys.exit(1)
-elif p95 >= 30.0:
-    print(f"  ✗ p95 ({p95:.3f} s) excede o teto de 30.0 s de RNF03.")
+elif p95_fcm >= 30.0:
+    print(f"  ✗ p95 até o aceite pelo FCM ({p95_fcm:.3f} s) excede o teto de 30.0 s de RNF03.")
     sys.exit(1)
 else:
-    print(f"  ✓ p95 ({p95:.3f} s) abaixo de 30 s em {amostras} publicações (RNF03 atendido).")
+    print(f"  ✓ p95 até aceite pelo FCM ({p95_fcm:.3f} s) abaixo de 30 s em {fcm_amostras} publicações (RNF03 atendido).")
 PY
   falha=1
 fi

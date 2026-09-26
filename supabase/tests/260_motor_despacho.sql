@@ -9,7 +9,7 @@
 --   + Reprocessamento pela fila pgmq com tentativas limitadas.
 
 begin;
-select plan(36);
+select plan(38);
 
 -- ── 1. Existência e permissões das funções ─────────────────────────────────────
 select has_function('privado', 'elegiveis', array['uuid', 'uuid'],
@@ -58,6 +58,14 @@ create temp table ids as select
   'e0000000-0000-4000-8000-000000000011'::uuid as katia,    -- elegível (sem histórico)
   'e0000000-0000-4000-8000-000000000012'::uuid as lucas,    -- elegível (taxa 0.000)
   (select id from public.profissional where usuario_id = 'de000000-0000-4000-8000-000000000002') as prof_demo;
+
+-- Isola a execução contra dados residuais criados por testes HTTP (ex: ciclo-completo.sh na CI)
+update public.usuario
+   set estado = 'suspensa'
+ where id not in (
+   select usuario_id from public.profissional where id::text like 'e0000000-0000-4000-8000-%'
+ )
+ and id <> 'de000000-0000-4000-8000-000000000002';
 
 -- Garante disponibilidade da conta de demonstração para os testes
 insert into public.disponibilidade (profissional_id, dia_semana, hora_inicio, hora_fim)
@@ -342,6 +350,37 @@ select ok(
        and tgname like '%despacho%'
   ),
   'Trigger pós-commit instalado em pgmq.q_despacho para disparar net.http_post'
+);
+
+-- ── 12. Validação do segredo obrigatório em privado.disparar_despacho ──────────
+select throws_ok(
+  $$ select privado.disparar_despacho('d0000000-0000-4000-8000-000000000001') $$,
+  'Configuração frila.agendador_secret ausente no banco de dados',
+  'privado.disparar_despacho falha explicitamente quando frila.agendador_secret não está configurado'
+);
+
+-- ── 13. Marca de envio para tipo vaga impede notificação duplicada ─────────────
+do $$
+declare
+  v_n1 uuid;
+  v_n2 uuid;
+  v_ana_usr uuid := 'a0000000-0000-4000-8000-000000000001';
+  v_vg uuid := 'd0000000-0000-4000-8000-000000000001';
+begin
+  v_n1 := privado.notificar(v_ana_usr, 'vaga', v_vg, jsonb_build_object('vaga_id', v_vg));
+  v_n2 := privado.notificar(v_ana_usr, 'vaga', v_vg, jsonb_build_object('vaga_id', v_vg));
+  if v_n1 <> v_n2 then
+    raise exception 'notificacoes diferentes criadas: % vs %', v_n1, v_n2;
+  end if;
+end $$;
+
+select is(
+  (select count(*)::int from public.notificacao
+    where tipo = 'vaga'
+      and referencia_id = 'd0000000-0000-4000-8000-000000000001'
+      and usuario_id = 'a0000000-0000-4000-8000-000000000001'),
+  1,
+  'privado.notificar não duplica notificação do tipo vaga para o mesmo usuário e referência'
 );
 
 select * from finish();

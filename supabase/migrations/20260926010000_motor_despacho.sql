@@ -17,7 +17,8 @@ drop index if exists public.notificacao_marca_de_envio;
 create unique index notificacao_marca_de_envio
   on public.notificacao (tipo, referencia_id, usuario_id)
   where tipo in ('lembrete_24h', 'lembrete_3h', 'inicio_sem_checkin', 'atraso_15min',
-                 'fim_sem_checkout', 'vaga_vazia', 'avaliacao_disponivel', 'vaga_sem_elegiveis');
+                 'fim_sem_checkout', 'vaga_vazia', 'avaliacao_disponivel', 'vaga_sem_elegiveis',
+                 'vaga');
 
 create or replace function privado.notificar(
   p_usuario    uuid,
@@ -57,7 +58,8 @@ begin
           privado.agora())
   on conflict (tipo, referencia_id, usuario_id)
     where tipo in ('lembrete_24h', 'lembrete_3h', 'inicio_sem_checkin', 'atraso_15min',
-                   'fim_sem_checkout', 'vaga_vazia', 'avaliacao_disponivel', 'vaga_sem_elegiveis')
+                   'fim_sem_checkout', 'vaga_vazia', 'avaliacao_disponivel', 'vaga_sem_elegiveis',
+                   'vaga')
     do nothing
   returning id into v_id;
 
@@ -245,6 +247,13 @@ begin
 
   -- Gera despacho e notificação para cada elegível
   foreach v_prof_id in array v_elegiveis loop
+    if exists (
+      select 1 from public.despacho d
+       where d.vaga_id = v.id and d.profissional_id = v_prof_id
+    ) then
+      continue;
+    end if;
+
     select p.usuario_id into v_usr_id
       from public.profissional p
      where p.id = v_prof_id;
@@ -254,6 +263,8 @@ begin
       v_payload := v_payload || jsonb_build_object('reaberta', true);
     end if;
 
+    -- A marca de envio com UNIQUE em (tipo, referencia_id, usuario_id) para 'vaga'
+    -- garante idempotência atômica mesmo sob chamadas concorrentes.
     v_notif_id := privado.notificar(v_usr_id, 'vaga', v.id, v_payload);
 
     insert into public.despacho (vaga_id, profissional_id, notificacao_id, criado_em)
@@ -354,13 +365,13 @@ declare
     current_setting('frila.edge_function_url', true),
     'http://127.0.0.1:54321/functions/v1/despachar'
   );
-  v_secret text := coalesce(
-    current_setting('frila.agendador_secret', true),
-    current_setting('supabase.service_role_key', true),
-    'frila-agendador-segredo-local'
-  );
+  v_secret text := current_setting('frila.agendador_secret', true);
   v_req_id bigint;
 begin
+  if v_secret is null or v_secret = '' then
+    raise exception 'Configuração frila.agendador_secret ausente no banco de dados';
+  end if;
+
   -- Dispara o webhook assíncrono pós-commit via pg_net
   begin
     v_req_id := net.http_post(
@@ -398,7 +409,13 @@ security definer
 set search_path = ''
 as $$
 begin
-  perform privado.disparar_despacho((new.message->>'vaga_id')::uuid);
+  begin
+    perform privado.disparar_despacho((new.message->>'vaga_id')::uuid);
+  exception when others then
+    -- Se frila.agendador_secret não estiver configurado na sessão ou net.http_post falhar,
+    -- a mensagem permanece na fila pgmq para reprocessamento posterior pelo agendador.
+    null;
+  end;
   return new;
 end $$;
 
@@ -425,6 +442,5 @@ begin
       'select privado.processar_fila_despacho()'
     );
   end if;
-exception when others then
-  null;
 end $$;
+

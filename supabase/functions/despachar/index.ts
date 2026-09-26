@@ -20,20 +20,20 @@ function igualEmTempoConstante(a: string, b: string): boolean {
   return diferenca === 0;
 }
 
-function segredoValido(req: Request): boolean {
-  const esperado =
-    Deno.env.get("AGENDADOR_SECRET") ||
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ||
-    "frila-agendador-segredo-local";
+const AGENDADOR_SECRET = Deno.env.get("AGENDADOR_SECRET");
+if (!AGENDADOR_SECRET || AGENDADOR_SECRET.trim() === "") {
+  throw new Error("AGENDADOR_SECRET é obrigatório e deve estar configurado no ambiente.");
+}
 
+function segredoValido(req: Request): boolean {
   const secretHeader = req.headers.get("x-agendador-secret");
-  if (secretHeader && igualEmTempoConstante(secretHeader, esperado)) {
+  if (secretHeader && igualEmTempoConstante(secretHeader, AGENDADOR_SECRET)) {
     return true;
   }
 
   const authHeader = req.headers.get("Authorization") ?? "";
   const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (match && igualEmTempoConstante(match[1], esperado)) {
+  if (match && igualEmTempoConstante(match[1], AGENDADOR_SECRET)) {
     return true;
   }
 
