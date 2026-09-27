@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@1";
+import { assertEquals, assertRejects } from "jsr:@std/assert@1";
 import { handler, HandlerDeps } from "./index.ts";
 
 const MOCK_URL = "http://127.0.0.1:54321";
@@ -132,7 +132,7 @@ Deno.test("aceita segredo via header x-agendador-secret e purga contas via Admin
   assertEquals(corpo.retencao_banco.contas_anonimizadas_limpas, 1);
 });
 
-Deno.test("aceita segredo via Bearer token (200)", async () => {
+Deno.test("recusa chamada via Bearer token (exige exclusivamente header x-agendador-secret) (401)", async () => {
   const deps = mockDeps({});
   const resposta = await handler(
     new Request("http://localhost", {
@@ -146,9 +146,9 @@ Deno.test("aceita segredo via Bearer token (200)", async () => {
     deps
   );
 
-  assertEquals(resposta.status, 200);
+  assertEquals(resposta.status, 401);
   const corpo = await resposta.json();
-  assertEquals(corpo.ok, true);
+  assertEquals(corpo.code, "nao_autenticado");
 });
 
 Deno.test("lida com falha pontual em usuário individual sem quebrar a execução geral", async () => {
@@ -179,3 +179,154 @@ Deno.test("lida com falha pontual em usuário individual sem quebrar a execuçã
   assertEquals(corpo.erros_remocao.length, 1);
   assertEquals(corpo.erros_remocao[0].id, ORFAO_2);
 });
+
+Deno.test("falha fechado sem SUPABASE_DB_URL no ambiente", async () => {
+  await assertRejects(
+    () =>
+      handler(
+        new Request("http://localhost", {
+          method: "POST",
+          headers: {
+            "x-agendador-secret": MOCK_SECRET,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({}),
+        }),
+        {
+          agendadorSecret: MOCK_SECRET,
+          supabaseUrl: MOCK_URL,
+          serviceRoleKey: MOCK_SERVICE_ROLE,
+          dbUrl: "",
+        },
+      ),
+    Error,
+    "SUPABASE_DB_URL é obrigatório",
+  );
+});
+
+Deno.test("falha fechado sem AGENDADOR_SECRET no ambiente", async () => {
+  await assertRejects(
+    () =>
+      handler(
+        new Request("http://localhost", {
+          method: "POST",
+          headers: {
+            "x-agendador-secret": MOCK_SECRET,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({}),
+        }),
+        {
+          agendadorSecret: "",
+          supabaseUrl: MOCK_URL,
+          serviceRoleKey: MOCK_SERVICE_ROLE,
+          dbUrl: MOCK_DB_URL,
+        },
+      ),
+    Error,
+    "AGENDADOR_SECRET é obrigatório",
+  );
+});
+
+Deno.test("falha fechado sem SUPABASE_URL no ambiente", async () => {
+  await assertRejects(
+    () =>
+      handler(
+        new Request("http://localhost", {
+          method: "POST",
+          headers: {
+            "x-agendador-secret": MOCK_SECRET,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({}),
+        }),
+        {
+          agendadorSecret: MOCK_SECRET,
+          supabaseUrl: "",
+          serviceRoleKey: MOCK_SERVICE_ROLE,
+          dbUrl: MOCK_DB_URL,
+        },
+      ),
+    Error,
+    "SUPABASE_URL é obrigatório",
+  );
+});
+
+Deno.test("falha fechado sem SUPABASE_SERVICE_ROLE_KEY no ambiente", async () => {
+  await assertRejects(
+    () =>
+      handler(
+        new Request("http://localhost", {
+          method: "POST",
+          headers: {
+            "x-agendador-secret": MOCK_SECRET,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({}),
+        }),
+        {
+          agendadorSecret: MOCK_SECRET,
+          supabaseUrl: MOCK_URL,
+          serviceRoleKey: "",
+          dbUrl: MOCK_DB_URL,
+        },
+      ),
+    Error,
+    "SUPABASE_SERVICE_ROLE_KEY é obrigatório",
+  );
+});
+
+Deno.test("trava parâmetro horas em no mínimo 24 horas", async () => {
+  let horasConsultadas: number | null = null;
+  const deps = mockDeps({});
+  deps.sqlClient = {
+    contasOrfas: (h: number) => {
+      horasConsultadas = h;
+      return Promise.resolve([]);
+    },
+    executarRetencao: () => Promise.resolve({}),
+  };
+
+  // 1. Testa com horas = 0.5 (deve travar em 24)
+  await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        "x-agendador-secret": MOCK_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ horas: 0.5 }),
+    }),
+    deps,
+  );
+  assertEquals(horasConsultadas, 24);
+
+  // 2. Testa com horas = 1 (deve travar em 24)
+  await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        "x-agendador-secret": MOCK_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ horas: 1 }),
+    }),
+    deps,
+  );
+  assertEquals(horasConsultadas, 24);
+
+  // 3. Testa com horas = 48 (deve respeitar 48)
+  await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        "x-agendador-secret": MOCK_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ horas: 48 }),
+    }),
+    deps,
+  );
+  assertEquals(horasConsultadas, 48);
+});
+

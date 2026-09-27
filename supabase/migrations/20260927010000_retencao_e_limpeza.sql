@@ -5,8 +5,7 @@
 -- 2. Rotinas em privado para identificação de contas de autenticação sem cadastro há mais de 24 h.
 -- 3. Limpeza transacional pós-15 dias da exclusão: disponibilidade, funções, aparelhos,
 --    relato de ocorrências (substituição por marcador neutro), nascimento e ponto_base nulos.
--- 4. Higiene operacional periódica: cron.job_run_details (> 7d), arquivo pgmq (> 30d),
---    auditoria_ciclo (> 90d) e dispositivos inativos (> 60d).
+-- 4. Higiene operacional periódica: cron.job_run_details (> 7d) e arquivo pgmq (> 30d).
 -- 5. Registro na política de retenção dos logs do provedor de e-mail.
 
 -- ── 1. Esquema: nascimento e ponto_base anuláveis sob anonimização ─────────────
@@ -97,27 +96,6 @@ comment on function privado.contas_auth_orfas(integer) is
 revoke execute on function privado.contas_auth_orfas(integer) from public, anon, authenticated;
 grant  execute on function privado.contas_auth_orfas(integer) to service_role;
 
-create or replace function privado.limpar_contas_orfas_sql(p_horas integer default 24)
-returns integer
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  v_removidos integer := 0;
-begin
-  delete from auth.users a
-   where not exists (select 1 from public.usuario u where u.id = a.id)
-     and a.created_at < privado.agora() - (p_horas || ' hours')::interval;
-  get diagnostics v_removidos = row_count;
-  return v_removidos;
-end $$;
-
-comment on function privado.limpar_contas_orfas_sql(integer) is
-  'Limpa contas de auth.users sem cadastro diretamente no banco para testes pgTAP (UC09 2a). Em produção e dev, a Edge Function executa via Admin API.';
-
-revoke execute on function privado.limpar_contas_orfas_sql(integer) from public, anon, authenticated;
-grant  execute on function privado.limpar_contas_orfas_sql(integer) to service_role;
 
 -- ── 3. Retenção de 15 dias para contas anonimizadas ───────────────────────────
 
@@ -194,10 +172,8 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_cron_removidos      integer := 0;
-  v_pgmq_removidos      integer := 0;
-  v_auditoria_removidos integer := 0;
-  v_disp_removidos      integer := 0;
+  v_cron_removidos integer := 0;
+  v_pgmq_removidos integer := 0;
 begin
   -- 1. cron.job_run_details com mais de 7 dias
   if exists (
@@ -219,24 +195,14 @@ begin
     get diagnostics v_pgmq_removidos = row_count;
   end if;
 
-  -- 3. Eventos da auditoria de ciclo com mais de 90 dias
-  delete from privado.auditoria_ciclo
-   where em < privado.agora() - interval '90 days';
-  get diagnostics v_auditoria_removidos = row_count;
-
-  -- 4. Dispositivos sem atualização há mais de 60 dias (reaproveita função existente)
-  v_disp_removidos := privado.limpar_dispositivos_inativos();
-
   return jsonb_build_object(
-    'cron_job_run_details',  v_cron_removidos,
-    'pgmq_arquivo',          v_pgmq_removidos,
-    'auditoria_ciclo',       v_auditoria_removidos,
-    'dispositivos_inativos', v_disp_removidos
+    'cron_job_run_details', v_cron_removidos,
+    'pgmq_arquivo',         v_pgmq_removidos
   );
 end $$;
 
 comment on function privado.higienizar_tabelas() is
-  'Higiene operacional periódica: cron.job_run_details (> 7d), arquivo pgmq (> 30d), auditoria_ciclo (> 90d) e dispositivos inativos (> 60d).';
+  'Higiene operacional periódica: cron.job_run_details (> 7d) e arquivo pgmq (> 30d). Dispositivos inativos são higienizados às 06:17 por rotina dedicada (cartão wpNabtCO).';
 
 revoke execute on function privado.higienizar_tabelas() from public, anon, authenticated;
 grant  execute on function privado.higienizar_tabelas() to service_role;

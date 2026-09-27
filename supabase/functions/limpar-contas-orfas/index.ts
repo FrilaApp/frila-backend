@@ -1,7 +1,7 @@
 // Edge Function limpar-contas-orfas (cartão yClUqOpU).
 //
 // Rotina periódica / diária acionada com segredo do agendador:
-// 1. Valida segredo compartilhado (x-agendador-secret ou Bearer token).
+// 1. Valida segredo compartilhado (exclusivamente via header x-agendador-secret).
 // 2. Consulta contas em auth.users criadas há mais de 24 h sem cadastro em public.usuario
 //    via privado.contas_auth_orfas(p_horas).
 // 3. Purgar cada conta órfã no Supabase Auth via Admin API com service_role (DELETE /auth/v1/admin/users/{id}).
@@ -58,30 +58,14 @@ function segredoValido(req: Request, segredoEsperado: string): boolean {
   if (secretHeader && igualEmTempoConstante(secretHeader, segredoEsperado)) {
     return true;
   }
-
-  const authHeader = req.headers.get("Authorization") ?? "";
-  const match = authHeader.match(/^Bearer\s+(\S+)$/i);
-  if (match && igualEmTempoConstante(match[1], segredoEsperado)) {
-    return true;
-  }
-
   return false;
-}
-
-function getDbUrl(dbUrl?: string): string {
-  return (
-    dbUrl ||
-    Deno.env.get("SUPABASE_DB_URL") ||
-    Deno.env.get("DATABASE_URL") ||
-    "postgresql://postgres:postgres@supabase_db_frila-backend:5432/postgres"
-  );
 }
 
 function criarSqlClient(deps?: HandlerDeps): SqlClient {
   if (deps?.sqlClient) {
     return deps.sqlClient;
   }
-  const dbUrl = getDbUrl(deps?.dbUrl);
+  const dbUrl = obterVariavel("SUPABASE_DB_URL", deps?.dbUrl);
   return {
     async contasOrfas(horas: number): Promise<string[]> {
       const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
@@ -125,7 +109,13 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
     corpo = {};
   }
 
-  const horas = typeof corpo?.horas === "number" && corpo.horas > 0 ? Math.floor(corpo.horas) : 24;
+  let horas = 24;
+  if (typeof corpo?.horas === "number" && Number.isFinite(corpo.horas)) {
+    const horasInteiras = Math.floor(corpo.horas);
+    if (horasInteiras >= 24) {
+      horas = horasInteiras;
+    }
+  }
   const executarRetencaoBanco = corpo?.executar_retencao_banco !== false;
 
   const fetchFn = deps?.fetchFn ?? fetch;

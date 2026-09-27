@@ -8,12 +8,12 @@
 --    (nascimento e ponto base nulos, grade semanal apagada, funções apagadas,
 --     aparelhos apagados, relato da ocorrência de autoria dela substituído por marcador).
 -- 3. Turnos e avaliações da contraparte continuam legíveis, com 'Conta encerrada'.
--- 4. Higiene operacional: cron.job_run_details (> 7 d), arquivo pgmq (> 30 d),
---    auditoria_ciclo (> 90 d), dispositivos inativos (> 60 d).
+-- 4. Higiene operacional: cron.job_run_details (> 7 d) e arquivo pgmq (> 30 d).
+--    auditoria_ciclo é explicitamente preservada (RNF13 sem dado pessoal).
 -- 5. Restrições DDL: nascimento e ponto_base anuláveis SOMENTE quando estado = 'anonimizada'.
 
 begin;
-select plan(45);
+select plan(43);
 
 insert into privado.ambiente (eh_teste) values (true);
 select set_config('frila.agora', '2026-10-20 12:00:00-03', true);
@@ -185,16 +185,10 @@ select is(
   0,
   'contas_auth_orfas(24) não retorna conta que completou cadastro em public.usuario');
 
--- Limpeza de contas órfãs apaga a conta órfã antiga
 select is(
-  privado.limpar_contas_orfas_sql(24),
-  1,
-  'limpar_contas_orfas_sql(24) remove 1 conta órfã antiga');
-
-select is(
-  (select count(*)::int from auth.users where id = 'c3200000-0000-4000-8000-000000000001'),
-  0,
-  'Conta órfã foi de fato apagada de auth.users');
+  (select id from privado.contas_auth_orfas(24) where id = 'c3200000-0000-4000-8000-000000000001'),
+  'c3200000-0000-4000-8000-000000000001'::uuid,
+  'contas_auth_orfas(24) retorna o id correto da conta órfã para expurgo via Admin API');
 
 -- ── 4. Regras DDL: nascimento e ponto_base anuláveis apenas sob anonimização ─
 
@@ -410,20 +404,16 @@ insert into pgmq.a_despacho (msg_id, read_ct, enqueued_at, archived_at, vt, mess
 values (999901, 1, privado.agora() - interval '36 days', privado.agora() - interval '35 days', privado.agora() - interval '35 days', '{}'::jsonb),
        (999902, 1, privado.agora() - interval '6 days', privado.agora() - interval '5 days', privado.agora() - interval '5 days', '{}'::jsonb);
 
--- 7.3 dispositivo inativo: insere token FCM com 65 dias sem atualização
-insert into public.dispositivo (usuario_id, token_fcm, plataforma, atualizado_em)
-values ('c3200000-0000-4000-8000-000000000003', 'token-inativo-65-dias-teste-000000', 'android', privado.agora() - interval '65 days');
-
 -- Executa a rotina de higiene
 select lives_ok(
   $$ select privado.higienizar_tabelas() $$,
   'privado.higienizar_tabelas() roda com sucesso');
 
--- auditoria_ciclo com mais de 90 dias deve ter sido removida
+-- auditoria_ciclo NÃO deve ser apagada pela retenção (RNF13 sem dado pessoal preservada)
 select is(
   (select count(*)::int from privado.auditoria_ciclo where em < privado.agora() - interval '90 days'),
-  0,
-  'Higiene: auditoria_ciclo com mais de 90 dias é removida');
+  1,
+  'Higiene: auditoria_ciclo NÃO é apagada pela retenção (trilha imutável RNF13 preservada)');
 
 -- pgmq.a_despacho com mais de 30 dias deve ter sido removida
 select is(
@@ -435,12 +425,6 @@ select is(
   (select count(*)::int from pgmq.a_despacho where msg_id = 999902),
   1,
   'Higiene: arquivo pgmq com menos de 30 dias é mantido');
-
--- dispositivo inativo há mais de 60 dias deve ter sido removido
-select is(
-  (select count(*)::int from public.dispositivo where token_fcm = 'token-inativo-65-dias-teste-000000'),
-  0,
-  'Higiene: dispositivo inativo há mais de 60 dias é removido');
 
 -- ── 8. Execução consolidada e auxiliares ──────────────────────────────────────
 
