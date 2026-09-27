@@ -229,8 +229,8 @@ begin
   values ('de000000-0000-4000-8000-000000000099',
           v_demo_estab,
           (select id from public.funcao where nome = 'garçom'),
-          v_agora + interval '4 days',
-          v_agora + interval '4 days 6 hours',
+          ((date_trunc('day', v_agora at time zone 'America/Sao_Paulo') + interval '4 days 12 hours') at time zone 'America/Sao_Paulo'),
+          ((date_trunc('day', v_agora at time zone 'America/Sao_Paulo') + interval '4 days 18 hours') at time zone 'America/Sao_Paulo'),
           'Local Demo', 'POINT(-47.8825 -15.7940)'::extensions.geography,
           15000, 1, false, false, false, 'Revisor',
           v_demo_pub, 'urgencia', 'publicada', gen_random_uuid());
