@@ -416,6 +416,13 @@ verify_jwt = false
 enabled = true
 verify_jwt = true
 
+# Rotina diária de limpeza de contas órfãs em auth.users e retenção (cartão yClUqOpU).
+# Invocada pelo agendador com chave secreta (x-agendador-secret ou Bearer).
+# verify_jwt fica desligado porque a proteção é feita pelo segredo do agendador.
+[functions.limpar-contas-orfas]
+enabled = true
+verify_jwt = false
+
 
 [analytics]
 enabled = true
