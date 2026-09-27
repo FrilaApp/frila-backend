@@ -16,14 +16,27 @@
 --     psql -U postgres -d postgres -v carga=1 -f supabase/tests/carga/gerar_df.sql
 
 \if :{?carga}
-\echo 'Iniciando geração de massa sintética do DF (RNF11)...'
+\echo 'Iniciando verificação de segurança e geração de massa sintética do DF (RNF11)...'
 
 do $$
 declare
   t0 timestamptz := clock_timestamp();
   t1 timestamptz;
   v_funcoes uuid[];
+  v_usuarios_existentes bigint;
+  v_server_ip inet;
 begin
+  -- ── Proteção estrita contra execução fora do ambiente local ──────────────────
+  v_server_ip := inet_server_addr();
+  if v_server_ip is not null and not (v_server_ip <<= '127.0.0.0/8'::cidr or v_server_ip <<= '172.16.0.0/12'::cidr or v_server_ip <<= '10.0.0.0/8'::cidr) then
+    raise exception 'Segurança RNF11: execução bloqueada em host remoto/não-local (IP: %)', v_server_ip;
+  end if;
+
+  select count(*) into v_usuarios_existentes from public.usuario;
+  if v_usuarios_existentes > 200 then
+    raise exception 'Segurança RNF11: banco já contém % usuários. Carga cancelada para não poluir base povoada.', v_usuarios_existentes;
+  end if;
+
   select array_agg(id order by id) into v_funcoes from public.funcao;
   if v_funcoes is null or cardinality(v_funcoes) = 0 then
     raise exception 'Tabela public.funcao está vazia. Aplique o seed antes de rodar a carga.';
@@ -58,7 +71,7 @@ begin
          lpad(i::text, 14, '0'),
          case when i % 3 = 0 then 'food_service'::public.tipo_estabelecimento
               when i % 3 = 1 then 'varejo'::public.tipo_estabelecimento
-              else 'hotelaria'::public.tipo_estabelecimento end,
+              else 'evento'::public.tipo_estabelecimento end,
          'Endereço Comercial DF ' || i,
          extensions.ST_SetSRID(
            extensions.ST_MakePoint(
@@ -165,7 +178,7 @@ begin
     responsavel_local, modo, estado, publicado_por, chave_cliente
   )
   select ('c0000000-0000-0000-0000-' || lpad(to_hex(i::bigint), 12, '0'))::uuid,
-         ('e0000000-0000-0000-0000-' || lpad(to_hex(((i - 1) % 30000) + 1)::bigint, 12, '0'))::uuid,
+         ('e0000000-0000-0000-0000-' || lpad(to_hex((((i - 1) % 30000) + 1)::bigint), 12, '0'))::uuid,
          v_funcoes[(i % cardinality(v_funcoes)) + 1],
          '2026-10-01 18:00:00+00'::timestamptz + ((i % 14) || ' days')::interval + ((i % 5) || ' hours')::interval,
          '2026-10-01 18:00:00+00'::timestamptz + ((i % 14) || ' days')::interval + ((i % 5) || ' hours')::interval + interval '6 hours',
@@ -184,7 +197,7 @@ begin
          'Responsável ' || i,
          'urgencia',
          'publicada',
-         ('a0000000-0000-0000-0000-' || lpad(to_hex(((i - 1) % 30000) + 1)::bigint, 12, '0'))::uuid,
+         ('a0000000-0000-0000-0000-' || lpad(to_hex((((i - 1) % 30000) + 1)::bigint), 12, '0'))::uuid,
          gen_random_uuid()
     from generate_series(1, 20000) i
   on conflict (id) do nothing;
