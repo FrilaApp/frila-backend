@@ -45,6 +45,25 @@ Elas não encostam na população real. `usuario.demonstracao` separa as duas em
 leitura de `vaga`** — antes disso quem lesse `rest/v1/vaga` direto passava ao lado do
 filtro, e isso foi medido, não deduzido.
 
+**A janela do registro de presença não se aplica a elas**, e esta é a segunda exceção do
+arquivo. O turno semeado começa dois dias depois de o seed rodar, e `privado.exigir_janela`
+aceita registro de 60 minutos antes do início até o fim previsto: sete horas que abrem 47
+horas depois do seed e depois fecham para sempre. Em produção o seed entra uma vez, e a
+revisão não tem data marcada — medido em 25/09, `fazer_checkin` respondia
+`422 fora_da_janela` para a conta de revisão, o que deixaria check-in, confirmação manual e
+check-out inalcançáveis. A migração `20260925230000_janela_da_demonstracao` faz
+`privado.exigir_janela` devolver cedo quando `privado.conta_de_demonstracao()`.
+
+O que ela **não** afrouxa: `registrado_em` nulo continua `campo_obrigatorio`, registro no
+futuro continua `registro_no_futuro`, e o check-in sem distância continua nascendo `manual` e
+`pendente`, precisando do toque da casa para virar `verificado`. O revisor percorre o RF20,
+e não um atalho. O par de controle está em `supabase/tests/230_janela_da_demonstracao.sql`:
+toda asserção da conta de revisão tem a gêmea da conta real no mesmo relógio, e é ela que
+morre se alguém trocar a condição por `true`.
+
+As notas que vão no campo *App Review Information* do App Store Connect estão em
+[`docs/notas-da-revisao.md`](../docs/notas-da-revisao.md), em português e inglês.
+
 A entrada é a Edge Function `entrar-demonstracao`, que aceita só os endereços declarados
 com um código fixo em segredo. Os segredos não moram no repositório:
 

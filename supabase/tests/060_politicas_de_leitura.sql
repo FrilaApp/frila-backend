@@ -284,7 +284,8 @@ values ('33333333-0000-0000-0000-000000000001','Formatura','2026-12-05','Clube')
 insert into public.dispositivo (usuario_id, token_fcm, plataforma)
 values ('11111111-0000-0000-0000-000000000001', repeat('t', 40), 'ios');
 
-insert into public.notificacao (profissional_id) select ana from ids;
+insert into public.notificacao (profissional_id, usuario_id, tipo, referencia_id)
+select ana, '11111111-0000-0000-0000-000000000001', 'vaga', gen_random_uuid() from ids;
 
 insert into public.ocorrencia (tipo, autor_id, usuario_id, motivo)
 values ('suspensao','22222222-0000-0000-0000-000000000001',

@@ -9,6 +9,7 @@
 -- e o envelope inteiro, que fixa `code` e `details`.
 
 begin;
+set local frila.agendador_secret = 'segredo-de-teste';
 select plan(16);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb
