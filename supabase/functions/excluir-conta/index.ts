@@ -8,17 +8,19 @@
 
 import postgres from "npm:postgres@3.4.4";
 
-type Erro = {
+export interface Erro {
   code: string;
   message: string;
   details: string | null;
-};
+}
+
+export interface SqlClient {
+  query: (userId: string) => Promise<{ dados: Record<string, unknown> }>;
+}
 
 export interface HandlerDeps {
   fetchFn?: typeof fetch;
-  sqlClient?: {
-    query: (userId: string) => Promise<{ dados: Record<string, unknown> }>;
-  };
+  sqlClient?: SqlClient;
   supabaseUrl?: string;
   anonKey?: string;
   serviceRoleKey?: string;
@@ -38,6 +40,50 @@ function obterVariavel(nome: string, injetada?: string): string {
     throw new Error(`${nome} é obrigatório e deve estar configurado no ambiente.`);
   }
   return valor;
+}
+
+export function tratarErroBanco(err: unknown): Response {
+  const erroPg = err as { code?: string; message?: string; detail?: string };
+  if (erroPg?.code === "PGRST" && erroPg.message) {
+    try {
+      const corpoErro = JSON.parse(erroPg.message) as Erro;
+      let status = 400;
+      if (erroPg.detail) {
+        try {
+          const detailObj = JSON.parse(erroPg.detail) as { status?: number };
+          if (typeof detailObj.status === "number") {
+            status = detailObj.status;
+          }
+        } catch {
+          // Mantém 400 se o JSON do detail não contiver status numérico
+        }
+      }
+      return resposta(status, corpoErro);
+    } catch {
+      return resposta(400, { code: erroPg.message, message: erroPg.message, details: null });
+    }
+  }
+  return resposta(500, { code: "erro_interno", message: "erro_interno", details: null });
+}
+
+function criarSqlClient(deps?: HandlerDeps): SqlClient {
+  if (deps?.sqlClient) {
+    return deps.sqlClient;
+  }
+  const dbUrl = obterVariavel("SUPABASE_DB_URL", deps?.dbUrl);
+  return {
+    async query(id: string) {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        const res = await sql`
+          select privado.excluir_conta(${id}::uuid) as dados
+        `;
+        return { dados: (res[0]?.dados ?? {}) as Record<string, unknown> };
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+  };
 }
 
 export async function handler(req: Request, deps?: HandlerDeps): Promise<Response> {
@@ -64,6 +110,7 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   const origem = obterVariavel("SUPABASE_URL", deps?.supabaseUrl);
   const anon = obterVariavel("SUPABASE_ANON_KEY", deps?.anonKey);
   const serviceRole = obterVariavel("SUPABASE_SERVICE_ROLE_KEY", deps?.serviceRoleKey);
+  const sqlClient = criarSqlClient(deps);
 
   // 1. Valida o token e obtém identidade do usuário no Supabase Auth
   const usuarioRes = await fetchFn(`${origem}/auth/v1/user`, {
@@ -84,52 +131,13 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   }
   const userId = usuario.id;
 
-  // 2. Executa privado.excluir_conta(userId) no banco
+  // 2. Executa privado.excluir_conta(userId) no banco através do cliente unificado
   let dadosExclusao: Record<string, unknown>;
-  if (deps?.sqlClient) {
-    try {
-      const res = await deps.sqlClient.query(userId);
-      dadosExclusao = res.dados;
-    } catch (err: unknown) {
-      const erroPg = err as { code?: string; message?: string; detail?: string };
-      if (erroPg.code === "PGRST" && erroPg.message) {
-        try {
-          const corpoErro = JSON.parse(erroPg.message) as Erro;
-          const status = erroPg.detail ? (JSON.parse(erroPg.detail) as { status?: number }).status ?? 400 : 400;
-          return resposta(status, corpoErro);
-        } catch {
-          return resposta(400, { code: erroPg.message, message: erroPg.message, details: null });
-        }
-      }
-      return resposta(500, { code: "erro_interno", message: "erro_interno", details: null });
-    }
-  } else {
-    const dbUrl = deps?.dbUrl ?? (Deno.env.get("SUPABASE_DB_URL") || Deno.env.get("DATABASE_URL"))?.trim();
-    if (!dbUrl) {
-      throw new Error("SUPABASE_DB_URL ou DATABASE_URL é obrigatório e deve estar configurado no ambiente.");
-    }
-
-    const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
-    try {
-      const res = await sql`
-        select privado.excluir_conta(${userId}::uuid) as dados
-      `;
-      dadosExclusao = (res[0]?.dados ?? {}) as Record<string, unknown>;
-    } catch (err: unknown) {
-      const erroPg = err as { code?: string; message?: string; detail?: string };
-      if (erroPg.code === "PGRST" && erroPg.message) {
-        try {
-          const corpoErro = JSON.parse(erroPg.message) as Erro;
-          const status = erroPg.detail ? (JSON.parse(erroPg.detail) as { status?: number }).status ?? 400 : 400;
-          return resposta(status, corpoErro);
-        } catch {
-          return resposta(400, { code: erroPg.message, message: erroPg.message, details: null });
-        }
-      }
-      return resposta(500, { code: "erro_interno", message: "erro_interno", details: null });
-    } finally {
-      await sql.end({ timeout: 2 });
-    }
+  try {
+    const res = await sqlClient.query(userId);
+    dadosExclusao = res.dados;
+  } catch (err: unknown) {
+    return tratarErroBanco(err);
   }
 
   // 3. Remove credencial do auth.users via Admin API usando service_role

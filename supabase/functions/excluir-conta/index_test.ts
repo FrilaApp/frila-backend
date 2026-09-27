@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects } from "jsr:@std/assert@1";
-import { handler, HandlerDeps } from "./index.ts";
+import { handler, HandlerDeps, tratarErroBanco } from "./index.ts";
 
 const MOCK_USER_ID = "a1111111-1111-4000-8000-000000000001";
 const MOCK_URL = "http://127.0.0.1:54321";
@@ -12,6 +12,7 @@ function mockDeps(opcoes: {
   dbErro?: { code: string; message: string; detail?: string };
   dbRetorno?: Record<string, unknown>;
   adminOk?: boolean;
+  onAdminDelete?: () => void;
 }): HandlerDeps {
   const authOk = opcoes.authOk ?? true;
   const adminOk = opcoes.adminOk ?? true;
@@ -30,11 +31,11 @@ function mockDeps(opcoes: {
       if (!adminOk) {
         return Promise.resolve(new Response(JSON.stringify({ error: "admin_error" }), { status: 500 }));
       }
-      // Verifica se o cabeçalho Authorization usou a service_role
       const authHeader = (init?.headers as Record<string, string>)?.["Authorization"];
       if (authHeader !== `Bearer ${MOCK_SERVICE_ROLE}`) {
         return Promise.resolve(new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }));
       }
+      opcoes.onAdminDelete?.();
       return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
     }
 
@@ -155,7 +156,11 @@ Deno.test("propaga conflito 409 administrador_unico", async () => {
 });
 
 Deno.test("sucesso: executa exclusão no banco, apaga credencial em auth.users e retorna 202", async () => {
+  let chamouAdminDelete = false;
   const deps = mockDeps({
+    onAdminDelete: () => {
+      chamouAdminDelete = true;
+    },
     dbRetorno: {
       perfil_removido_em: "2026-09-26T12:00:00Z",
       dados_apagados_ate: "2026-10-11",
@@ -180,6 +185,99 @@ Deno.test("sucesso: executa exclusão no banco, apaga credencial em auth.users e
   assertEquals(corpo.turnos_cancelados, 2);
   assertEquals(corpo.dados_apagados_ate, "2026-10-11");
   assertEquals(corpo.perfil_removido_em, "2026-09-26T12:00:00Z");
+  assertEquals(chamouAdminDelete, true);
+});
+
+Deno.test("idempotência: segunda chamada após falha 502 no Admin API apaga credencial em auth.users e retorna 202", async () => {
+  let adminTentativas = 0;
+  let apagouNoAuth = false;
+
+  // Primeira chamada: banco ok (anonimiza), mas Admin API falha com 502
+  const deps1 = mockDeps({
+    adminOk: false,
+    dbRetorno: {
+      perfil_removido_em: "2026-09-26T12:00:00Z",
+      dados_apagados_ate: "2026-10-11",
+      turnos_cancelados: 1,
+    },
+  });
+
+  const resposta1 = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token-valido",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    deps1,
+  );
+  assertEquals(resposta1.status, 502);
+
+  // Segunda chamada (retentativa): banco vê estado anonimizada, não dá erro e retorna turnos_cancelados = 0;
+  // Admin API agora funciona e apaga a credencial com 202.
+  const deps2 = mockDeps({
+    adminOk: true,
+    onAdminDelete: () => {
+      apagouNoAuth = true;
+      adminTentativas++;
+    },
+    dbRetorno: {
+      perfil_removido_em: "2026-09-26T12:00:00Z",
+      dados_apagados_ate: "2026-10-11",
+      turnos_cancelados: 0,
+    },
+  });
+
+  const resposta2 = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token-valido",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    deps2,
+  );
+  assertEquals(resposta2.status, 202);
+  const corpo2 = await resposta2.json();
+  assertEquals(corpo2.turnos_cancelados, 0);
+  assertEquals(apagouNoAuth, true);
+  assertEquals(adminTentativas, 1);
+});
+
+Deno.test("idempotência: conta autenticada sem registro em public.usuario apaga credencial em auth.users e retorna 202", async () => {
+  let chamouAdmin = false;
+  const deps = mockDeps({
+    adminOk: true,
+    onAdminDelete: () => {
+      chamouAdmin = true;
+    },
+    dbRetorno: {
+      perfil_removido_em: "2026-09-26T12:00:00Z",
+      dados_apagados_ate: "2026-10-11",
+      turnos_cancelados: 0,
+    },
+  });
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token-valido",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 202);
+  const corpo = await resposta.json();
+  assertEquals(corpo.turnos_cancelados, 0);
+  assertEquals(chamouAdmin, true);
 });
 
 Deno.test("falha no Admin API apagar auth.users devolve 502", async () => {
@@ -220,4 +318,33 @@ Deno.test("falha fechado sem variáveis de ambiente obrigatórias", async () => 
     Error,
     "SUPABASE_URL é obrigatório",
   );
+});
+
+Deno.test("mapeamento de erros do banco: tratarErroBanco lida com PGRST e erros genéricos", async () => {
+  // 1. Erro PGRST com status 409
+  const erroPg409 = {
+    code: "PGRST",
+    message: JSON.stringify({ code: "administrador_unico", message: "administrador_unico", details: null }),
+    detail: JSON.stringify({ status: 409, headers: {} }),
+  };
+  const resp409 = tratarErroBanco(erroPg409);
+  assertEquals(resp409.status, 409);
+  const corpo409 = await resp409.json();
+  assertEquals(corpo409.code, "administrador_unico");
+
+  // 2. Erro PGRST sem detail numérico cai no default 400
+  const erroPgSemStatus = {
+    code: "PGRST",
+    message: JSON.stringify({ code: "invalido", message: "invalido", details: null }),
+    detail: "not a json",
+  };
+  const respSemStatus = tratarErroBanco(erroPgSemStatus);
+  assertEquals(respSemStatus.status, 400);
+
+  // 3. Erro genérico de conexão/banco devolve 500 erro_interno
+  const erroGenerico = new Error("Connection terminated");
+  const resp500 = tratarErroBanco(erroGenerico);
+  assertEquals(resp500.status, 500);
+  const corpo500 = await resp500.json();
+  assertEquals(corpo500.code, "erro_interno");
 });
