@@ -79,7 +79,7 @@ mais `tests/carga/gerar_df.sql`.
 | **#27** `s0/despachar-porta` | `ZqmkOaHn` | Cauê | conflito com o `main` |
 
 **O aviso da colisão funcionou:** o #31 trazia `20260925230000_configuracao_do_app.sql`, que
-colidia com a migração do #36. Hoje ele traz `20260927020000_configuracao_do_app.sql`, e não
+colidia com a migração do #36. Hoje ele traz `20260928193700_configuracao_do_app.sql` (renomeada em 28/09 para vir depois da última do `main`), e não
 há versão repetida no `main`.
 
 Mergeados em 25/09: **#23** (contas de demonstração), **#24** (`avaliar` e `perfil_publico`),
