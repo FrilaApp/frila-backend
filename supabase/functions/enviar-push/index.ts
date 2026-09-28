@@ -120,17 +120,77 @@ export function calcularProximaTentativa(
   return new Date(agora.getTime() + segundos * 1000);
 }
 
-// O que o texto precisa saber e o payload não diz (RN15: o payload é só tipo e ids).
-// Lido do banco no envio, pela Edge Function, e nunca vai ao aparelho.
-export interface ContextoDoTexto {
+// Variáveis do texto, lidas no banco na hora do envio (Op. A da planilha de
+// notificações, aprovada em 28/09, e casos de texto variável por ocorrência).
+// Só dado do turno — nome da função do catálogo e horário —, nunca de pessoa, telefone
+// ou endereço (RN10, RN15). Ausentes, o texto cai na Op. B da mesma planilha.
+export interface VariaveisDoTexto {
+  funcao?: string;
+  horario?: string;
   // Cancelamento feito por `reabrir_por_atraso` (caso 17 da planilha, cartão e8XpOZJN).
   reaberturaPorAtraso?: boolean;
+}
+
+export type ContextoDoTexto = VariaveisDoTexto;
+
+// Horário de Brasília em 24 h ("18:00"): o DF não tem horário de verão, e o banco
+// guarda UTC (RN18).
+export function formatarHorario(iso: string): string | undefined {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "America/Sao_Paulo",
+  }).format(d);
+}
+
+// Lê as variáveis de que o texto do tipo precisa. Falha de leitura não segura o push:
+// devolve vazio, e o texto sai pelo fallback genérico / Op. B.
+export async function buscarVariaveisDoTexto(
+  tipo: string,
+  payload: Record<string, unknown> | null | undefined,
+  consultar: (caminho: string) => Promise<Response>,
+): Promise<VariaveisDoTexto> {
+  try {
+    if (tipo === "vaga_vazia") {
+      const posicao = payload?.posicao_id;
+      if (typeof posicao !== "string" || !UUID_REGEX.test(posicao)) return {};
+      const res = await consultar(
+        `posicao?id=eq.${posicao}&select=inicio_em,vaga(funcao(nome))`,
+      );
+      if (!res.ok) return {};
+      const [linha] = await res.json();
+      return {
+        funcao: linha?.vaga?.funcao?.nome ?? undefined,
+        horario: linha?.inicio_em ? formatarHorario(linha.inicio_em) : undefined,
+      };
+    }
+    if (tipo === "cancelamento") {
+      const posicaoId = payload?.posicao_id;
+      if (typeof posicaoId !== "string" || !UUID_REGEX.test(posicaoId)) return {};
+      // O motivo é estável (`reabertura_por_atraso`) e fica no banco; o texto muda, o
+      // payload não. Falha de leitura cai no texto genérico em vez de segurar o push.
+      const ocoRes = await consultar(
+        `ocorrencia?posicao_id=eq.${posicaoId}&tipo=eq.cancelamento&motivo=eq.reabertura_por_atraso&select=id&limit=1`,
+      );
+      if (!ocoRes.ok) return {};
+      const linhas = await ocoRes.json();
+      return {
+        reaberturaPorAtraso: Array.isArray(linhas) && linhas.length > 0,
+      };
+    }
+  } catch {
+    // Sem log do erro: a resposta pode trazer dado do banco.
+  }
+  return {};
 }
 
 export function titulosECorposPorTipo(
   tipo: string,
   _payload: Record<string, unknown> = {},
-  contexto: ContextoDoTexto = {},
+  variaveis: VariaveisDoTexto = {},
 ): { title: string; body: string } {
   switch (tipo) {
     case "vaga":
@@ -174,10 +234,13 @@ export function titulosECorposPorTipo(
         title: "Check-out pendente",
         body: "O horário previsto do turno encerrou. Registre o check-out.",
       };
+    // Push 06 da planilha de notificações (cartão vUR0Ltkb).
     case "vaga_vazia":
       return {
-        title: "Vaga sem confirmação",
-        body: "Sua vaga ainda possui posições abertas na janela crítica.",
+        title: "Vaga ainda em aberto",
+        body: variaveis.funcao && variaveis.horario
+          ? `A posição de ${variaveis.funcao} das ${variaveis.horario} ainda não foi preenchida.`
+          : "Sua vaga ainda possui posição em aberto próxima ao horário.",
       };
     case "checkin":
       return {
@@ -191,7 +254,7 @@ export function titulosECorposPorTipo(
       };
     case "cancelamento":
       // Caso 17 da planilha: a casa reabriu a vaga por falta de check-in.
-      if (contexto.reaberturaPorAtraso) {
+      if (variaveis.reaberturaPorAtraso) {
         return {
           title: "Turno cancelado por atraso",
           body: "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.",
@@ -397,26 +460,12 @@ export async function processarEnvioPush(
       continue;
     }
 
-    // 3. Monta o payload do FCM aplicando whitelist estrita (RN15)
-    const contexto: ContextoDoTexto = {};
-    const posicaoId = n.payload?.posicao_id;
-    if (n.tipo === "cancelamento" && typeof posicaoId === "string" && UUID_REGEX.test(posicaoId)) {
-      // O motivo é estável (`reabertura_por_atraso`) e fica no banco; o texto muda, o
-      // payload não. Falha de leitura cai no texto genérico em vez de segurar o push.
-      try {
-        const ocoRes = await fetchFn(
-          `${supabaseUrl}/rest/v1/ocorrencia?posicao_id=eq.${posicaoId}&tipo=eq.cancelamento&motivo=eq.reabertura_por_atraso&select=id&limit=1`,
-          { headers: dbHeaders },
-        );
-        if (ocoRes.ok) {
-          const linhas = await ocoRes.json();
-          contexto.reaberturaPorAtraso = Array.isArray(linhas) && linhas.length > 0;
-        }
-      } catch {
-        // texto genérico
-      }
-    }
-    const { title, body } = titulosECorposPorTipo(n.tipo, n.payload, contexto);
+    const variaveis = await buscarVariaveisDoTexto(
+      n.tipo,
+      n.payload,
+      (caminho) => fetchFn(`${supabaseUrl}/rest/v1/${caminho}`, { headers: dbHeaders }),
+    );
+    const { title, body } = titulosECorposPorTipo(n.tipo, n.payload, variaveis);
     const dataStrings = filtrarDataPayloadFcm(n.tipo, n.payload);
 
     let algumAceite = false;
