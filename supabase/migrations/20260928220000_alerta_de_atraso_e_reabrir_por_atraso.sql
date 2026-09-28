@@ -311,7 +311,25 @@ begin
     end if;
   end if;
 
-  if v_notif.tipo in ('vaga', 'vagas_agrupadas', 'vaga_sem_elegiveis', 'vaga_vazia') then
+  if v_notif.tipo = 'vaga_vazia' then
+    select g.inicio_em into v_inicio
+      from public.posicao p
+      join public.vaga g on g.id = p.vaga_id
+     where p.id = v_notif.referencia_id;
+
+    if exists (select 1 from public.posicao p
+                where p.id = v_notif.referencia_id and p.estado <> 'aberta') then
+      return true;
+    end if;
+
+    if v_inicio is null then
+      select g.inicio_em into v_inicio from public.vaga g where g.id = v_notif.referencia_id;
+    end if;
+
+    return v_inicio is null or v_inicio <= v_agora;
+  end if;
+
+  if v_notif.tipo in ('vaga', 'vagas_agrupadas', 'vaga_sem_elegiveis') then
     select max(p.fim_em) - interval '1 hour' into v_limite
       from public.posicao p
      where p.vaga_id = v_notif.referencia_id
