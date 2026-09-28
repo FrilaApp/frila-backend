@@ -77,6 +77,12 @@ Um cartão por vez, do quadro ao merge, sem pular etapa.
 
 **Regras que valem para todo mundo:**
 
+- **Branch base e destino de PR: SEMPRE `develop`**:
+  - **PARAR DE FAZER MERGE NA `main`**: Nenhum PR deve ser aberto contra `main` nem mergeado diretamente nela.
+  - Todo novo branch parte de `origin/develop`: `git fetch origin develop && git checkout -b sX/<slug> origin/develop`.
+  - Todo PR deve ser aberto com `--base develop` (`gh pr create --base develop`).
+  - O merge de PR aprovado entra exclusivamente na `develop`.
+  - A branch `main` é estritamente reservada para releases estáveis de produção.
 - No máximo **dois cartões em andamento** por pessoa. É regra do quadro, não estilo.
 - Mover para "Em andamento" **antes** de escrever a primeira linha. O quadro é o
   único sinal que os outros três têm.
