@@ -142,13 +142,13 @@ export function titulosECorposPorTipo(
       };
     case "lembrete_24h":
       return {
-        title: "Lembrete de turno",
+        title: "Lembrete de turno amanhã",
         body: "Você tem um turno agendado para amanhã.",
       };
     case "lembrete_3h":
       return {
-        title: "Lembrete de turno",
-        body: "Seu turno começa em 3 horas. Prepare-se.",
+        title: "Seu turno começa em 3 horas",
+        body: "Seu turno começa em 3 horas. Planeje seu trajeto.",
       };
     case "inicio_sem_checkin":
       return {
@@ -382,7 +382,25 @@ export async function processarEnvioPush(
     }
 
     // 3. Monta o payload do FCM aplicando whitelist estrita (RN15)
-    const { title, body } = titulosECorposPorTipo(n.tipo, n.payload);
+    let { title, body } = titulosECorposPorTipo(n.tipo, n.payload);
+    if (n.tipo === "lembrete_24h" || n.tipo === "lembrete_3h") {
+      try {
+        const conteudoRes = await chamarRpc("obter_conteudo_push_lembrete", {
+          p_turno_id: n.referencia_id,
+          p_usuario_id: n.usuario_id,
+          p_tipo: n.tipo,
+        });
+        if (conteudoRes.ok) {
+          const dados = await conteudoRes.json();
+          if (dados && typeof dados.title === "string" && typeof dados.body === "string") {
+            title = dados.title;
+            body = dados.body;
+          }
+        }
+      } catch (_e) {
+        // Mantém fallback seguro
+      }
+    }
     const dataStrings = filtrarDataPayloadFcm(n.tipo, n.payload);
 
     let algumAceite = false;

@@ -8,7 +8,7 @@
 // 4. Instante real de envio ao FCM gravado em enviada_em e aceita_em medidos no RNF02.
 
 import "./test_setup.ts";
-import { assertEquals, assert, assertMatch } from "jsr:@std/assert@1";
+import { assertEquals, assert } from "jsr:@std/assert@1";
 import {
   processarEnvioPush,
   titulosECorposPorTipo,
@@ -404,7 +404,7 @@ Deno.test("Bloqueio 3: erro transitório agenda proxima_tentativa_em no banco", 
     if (url.includes("/rest/v1/rpc/")) {
       const match = url.match(/\/rpc\/([^?]+)/);
       const nomeRpc = match ? match[1] : "";
-      return Promise.resolve(new Response("null", { status: 200 })).then(async (r) => {
+      return Promise.resolve(new Response("null", { status: 200 })).then((r) => {
         chamadasRpc.push({ nome: nomeRpc, params: {} });
         return r;
       });
@@ -761,6 +761,78 @@ Deno.test("Segurança e Privacidade: títulos e corpos não contêm dados pessoa
     assert(!body.includes("@"), `Corpo não pode conter e-mail (${tipo})`);
     assert(!body.includes("+55"), `Corpo não pode conter telefone (${tipo})`);
   }
+});
+
+Deno.test("Lembretes 24h e 3h: interpolação Opção A homologada (k5R4tzjC)", async () => {
+  const sa = await gerarContaDeServicoTeste();
+
+  const notificacaoLembrete = {
+    id: "e4000000-0000-4000-8000-000000000001",
+    usuario_id: "a3000000-0000-4000-8000-000000000001",
+    tipo: "lembrete_24h",
+    referencia_id: "f4000000-0000-4000-8000-000000000001",
+    payload: { turno_id: "f4000000-0000-4000-8000-000000000001" },
+    tentativas: 0,
+    estado_entrega: "pendente",
+  };
+
+  // deno-lint-ignore no-explicit-any
+  let fcmEnviado: any = null;
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+
+    if (url === "http://mock-oauth/token") {
+      return Promise.resolve(new Response(JSON.stringify({ access_token: "token-123" }), { status: 200 }));
+    }
+    if (url.includes("/rest/v1/notificacao")) {
+      return Promise.resolve(new Response(JSON.stringify([notificacaoLembrete]), { status: 200 }));
+    }
+    if (url.includes("/rest/v1/dispositivo")) {
+      return Promise.resolve(new Response(JSON.stringify([{ id: "disp-1", token_fcm: "fcm-tok-1", plataforma: "ios" }]), { status: 200 }));
+    }
+    if (url.includes("/rpc/notificacao_expirada")) {
+      return Promise.resolve(new Response("false", { status: 200 }));
+    }
+    if (url.includes("/rpc/obter_conteudo_push_lembrete")) {
+      return Promise.resolve(new Response(JSON.stringify({
+        title: "Lembrete de turno amanhã",
+        body: "garçom em Bar Beirute amanhã às 11:00.",
+      }), { status: 200 }));
+    }
+    if (url.includes("/rpc/gravar_aceite_push")) {
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    }
+    if (url.includes("/messages:send")) {
+      fcmEnviado = JSON.parse(init?.body as string);
+      return Promise.resolve(new Response(JSON.stringify({ name: "msg-123" }), { status: 200 }));
+    }
+
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: {
+      "x-agendador-secret": SEGREDO_TESTE,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({}),
+  });
+
+  const res = await processarEnvioPush(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+  });
+
+  assertEquals(res.status, 200);
+  if (!fcmEnviado) {
+    throw new Error("fcmEnviado não deveria ser nulo");
+  }
+  assertEquals(fcmEnviado.message.notification.title, "Lembrete de turno amanhã");
+  assertEquals(fcmEnviado.message.notification.body, "garçom em Bar Beirute amanhã às 11:00.");
 });
 
 // ── Ciclo de vida do token (cartão wpNabtCO) ──────────────────────────────────
