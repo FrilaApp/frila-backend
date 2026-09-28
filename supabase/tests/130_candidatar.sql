@@ -14,6 +14,7 @@
 -- Ids próprios, começando em `ac000000`: o banco não nasce vazio.
 
 begin;
+set local frila.agendador_secret = 'segredo-de-teste';
 select plan(29);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void

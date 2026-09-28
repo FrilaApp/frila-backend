@@ -401,6 +401,29 @@ deno_version = 2
 enabled = true
 verify_jwt = true
 
+# Motor de despacho: consulta elegíveis, cria despachos e notificações.
+# Invocada pontualmente pós-commit (net.http_post) ou periodicamente pelo pg_cron.
+# verify_jwt fica desligado porque a proteção é feita pelo segredo do agendador
+# no cabeçalho x-agendador-secret ou Bearer (validado na própria Edge Function).
+[functions.despachar]
+enabled = true
+verify_jwt = false
+
+# Exclusão de conta de dentro do app (cartão OrS9gEfU).
+# Obrigatória na App Store (5.1.1(v)).
+# Anonimiza a conta, cancela turnos futuros e apaga credencial em auth.users.
+[functions.excluir-conta]
+enabled = true
+verify_jwt = true
+
+# Rotina diária de limpeza de contas órfãs em auth.users e retenção (cartão yClUqOpU).
+# Invocada pelo agendador com chave secreta (x-agendador-secret ou Bearer).
+# verify_jwt fica desligado porque a proteção é feita pelo segredo do agendador.
+[functions.limpar-contas-orfas]
+enabled = true
+verify_jwt = false
+
+
 [analytics]
 enabled = true
 port = 54327

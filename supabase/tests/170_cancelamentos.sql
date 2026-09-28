@@ -11,6 +11,7 @@
 -- Ids próprios, começando em `b0000000`.
 
 begin;
+set local frila.agendador_secret = 'segredo-de-teste';
 select plan(25);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
