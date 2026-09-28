@@ -120,21 +120,53 @@ export function calcularProximaTentativa(
   return new Date(agora.getTime() + segundos * 1000);
 }
 
+// O que o texto interpola no envio, e não no enfileiramento: `urgente` vem da coluna da
+// notificação e `quantidade` de `privado.contexto_do_push`. Nada de dado pessoal (RN15).
+export interface ContextoDoPush {
+  urgente?: boolean;
+  quantidade?: number;
+}
+
+// Os textos de vaga (casos 01 a 04) são os da planilha de notificações do design
+// (proposta de textos aprovada em 28/09). Os de vaga única usam a Opção B: a Opção A
+// interpola `{bairro_ou_regiao}`, e o banco ainda não tem a região — o endereço tem
+// número e não pode ir para a tela bloqueada. A região é cartão próprio.
 export function titulosECorposPorTipo(
   tipo: string,
-  _payload: Record<string, unknown> = {},
+  payload: Record<string, unknown> = {},
+  contexto: ContextoDoPush = {},
 ): { title: string; body: string } {
   switch (tipo) {
     case "vaga":
+      if (payload?.reaberta === true) {
+        return {
+          title: "Vaga reaberta",
+          body: "Uma vaga recente está aberta novamente para candidatura.",
+        };
+      }
+      if (contexto.urgente === true) {
+        return {
+          title: "Vaga urgente no Frila",
+          body: "Vaga com início nas próximas 2 horas. Confira agora.",
+        };
+      }
       return {
-        title: "Nova vaga disponível",
-        body: "Há uma nova vaga compatível com seu perfil no Frila.",
+        title: "Nova vaga no Frila",
+        body: "Nova vaga compatível com seu perfil. Toque para ver detalhes.",
       };
-    case "vagas_agrupadas":
+    case "vagas_agrupadas": {
+      const q = contexto.quantidade;
+      if (typeof q === "number" && Number.isInteger(q) && q >= 2) {
+        return {
+          title: "Vagas disponíveis",
+          body: `${q} vagas novas perto de você. Toque para conferir.`,
+        };
+      }
       return {
         title: "Vagas disponíveis",
-        body: "Novas vagas compatíveis com seu perfil no Frila.",
+        body: "Novas vagas compatíveis perto de você. Toque para conferir.",
       };
+    }
     case "confirmacao":
       return {
         title: "Turno confirmado",
@@ -272,11 +304,12 @@ export async function processarEnvioPush(
     tentativas: number;
     estado_entrega: string;
     proxima_tentativa_em?: string | null;
+    urgente?: boolean;
   }> = [];
 
   if (notificacaoId) {
     const res = await fetchFn(
-      `${supabaseUrl}/rest/v1/notificacao?id=eq.${notificacaoId}&select=id,usuario_id,tipo,referencia_id,payload,tentativas,estado_entrega,proxima_tentativa_em`,
+      `${supabaseUrl}/rest/v1/notificacao?id=eq.${notificacaoId}&select=id,usuario_id,tipo,referencia_id,payload,tentativas,estado_entrega,proxima_tentativa_em,urgente`,
       { headers: dbHeaders },
     );
     if (!res.ok) {
@@ -290,7 +323,7 @@ export async function processarEnvioPush(
     // Processamento da fila de pendentes (não busca notificações cujo backoff ainda não venceu)
     const agoraIso = new Date().toISOString();
     const res = await fetchFn(
-      `${supabaseUrl}/rest/v1/notificacao?estado_entrega=eq.pendente&or=(proxima_tentativa_em.is.null,proxima_tentativa_em.lte.${encodeURIComponent(agoraIso)})&order=enviada_em.asc&limit=${limite}&select=id,usuario_id,tipo,referencia_id,payload,tentativas,estado_entrega,proxima_tentativa_em`,
+      `${supabaseUrl}/rest/v1/notificacao?estado_entrega=eq.pendente&or=(proxima_tentativa_em.is.null,proxima_tentativa_em.lte.${encodeURIComponent(agoraIso)})&order=enviada_em.asc&limit=${limite}&select=id,usuario_id,tipo,referencia_id,payload,tentativas,estado_entrega,proxima_tentativa_em,urgente`,
       { headers: dbHeaders },
     );
     if (!res.ok) {
@@ -382,7 +415,21 @@ export async function processarEnvioPush(
     }
 
     // 3. Monta o payload do FCM aplicando whitelist estrita (RN15)
-    const { title, body } = titulosECorposPorTipo(n.tipo, n.payload);
+    const contexto: ContextoDoPush = { urgente: n.urgente === true };
+    if (n.tipo === "vagas_agrupadas") {
+      // A contagem da agrupada (RN23). Sem ela, o texto cai na Opção B da planilha, que
+      // não tem número: melhor um push sem contagem do que push nenhum.
+      try {
+        const ctxRes = await chamarRpc("contexto_do_push", { p_notificacao_id: n.id });
+        if (ctxRes.ok) {
+          const ctx = await ctxRes.json();
+          if (ctx && typeof ctx.quantidade === "number") contexto.quantidade = ctx.quantidade;
+        }
+      } catch (_e) {
+        // segue sem contagem
+      }
+    }
+    const { title, body } = titulosECorposPorTipo(n.tipo, n.payload, contexto);
     const dataStrings = filtrarDataPayloadFcm(n.tipo, n.payload);
 
     let algumAceite = false;

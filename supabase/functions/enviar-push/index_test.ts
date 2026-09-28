@@ -890,3 +890,120 @@ Deno.test("Ciclo do token: depois de sair da conta, nenhuma notificação sai pa
   assertEquals(relatorio.detalhe, "sem_dispositivo");
   assertEquals(enviados, [], "Aparelho que saiu da conta não recebe push");
 });
+
+// ── Textos de vaga e teto da RN23 (cartão ee3MT3fH) ───────────────────────────
+//
+// Os textos saem da planilha de notificações do design (proposta aprovada em 28/09):
+// vaga única, urgente e reaberta na Opção B (o banco ainda não tem a região), e a
+// agrupada na Opção A, com a quantidade interpolada no envio.
+
+Deno.test("RN23: textos de vaga seguem a planilha (casos 01, 02 e 04)", () => {
+  assertEquals(titulosECorposPorTipo("vaga", { vaga_id: "x" }), {
+    title: "Nova vaga no Frila",
+    body: "Nova vaga compatível com seu perfil. Toque para ver detalhes.",
+  });
+  assertEquals(titulosECorposPorTipo("vaga", {}, { urgente: true }), {
+    title: "Vaga urgente no Frila",
+    body: "Vaga com início nas próximas 2 horas. Confira agora.",
+  });
+  assertEquals(titulosECorposPorTipo("vaga", { reaberta: true }, { urgente: true }), {
+    title: "Vaga reaberta",
+    body: "Uma vaga recente está aberta novamente para candidatura.",
+  });
+});
+
+Deno.test("RN23: a agrupada interpola a quantidade (caso 03) e cai na Opção B sem ela", () => {
+  assertEquals(titulosECorposPorTipo("vagas_agrupadas", {}, { quantidade: 3 }), {
+    title: "Vagas disponíveis",
+    body: "3 vagas novas perto de você. Toque para conferir.",
+  });
+  assertEquals(titulosECorposPorTipo("vagas_agrupadas", {}, {}), {
+    title: "Vagas disponíveis",
+    body: "Novas vagas compatíveis perto de você. Toque para conferir.",
+  });
+  assertEquals(
+    titulosECorposPorTipo("vagas_agrupadas", {}, { quantidade: 1 }).body,
+    "Novas vagas compatíveis perto de você. Toque para conferir.",
+  );
+});
+
+Deno.test("RN23: títulos e corpos de vaga cabem na tela bloqueada do iPhone SE", () => {
+  const casos = [
+    titulosECorposPorTipo("vaga", {}),
+    titulosECorposPorTipo("vaga", {}, { urgente: true }),
+    titulosECorposPorTipo("vaga", { reaberta: true }),
+    titulosECorposPorTipo("vagas_agrupadas", {}, { quantidade: 200 }),
+    titulosECorposPorTipo("vagas_agrupadas", {}, {}),
+  ];
+  for (const { title, body } of casos) {
+    assert(title.length <= 32, `título longo: ${title}`);
+    assert(body.length <= 85, `corpo longo: ${body}`);
+  }
+});
+
+Deno.test("RN23: o envio da agrupada lê a contagem e usa no corpo do push", async () => {
+  const corpos: string[] = [];
+  const chamadas: string[] = [];
+  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    const json = (corpo: unknown) =>
+      Promise.resolve(
+        new Response(JSON.stringify(corpo), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    if (url.includes("oauth2") || url.includes("/token")) {
+      return json({ access_token: "tok", expires_in: 3600, token_type: "Bearer" });
+    }
+    if (url.includes("/rest/v1/notificacao?")) {
+      assert(url.includes("urgente"), "a leitura da fila traz a coluna urgente");
+      return json([{
+        id: "a3300000-0000-4000-8000-000000000001",
+        usuario_id: "a3300000-0000-4000-8000-000000000002",
+        tipo: "vagas_agrupadas",
+        referencia_id: "a3300000-0000-4000-8000-000000000003",
+        payload: { tipo: "vagas_agrupadas" },
+        tentativas: 0,
+        estado_entrega: "pendente",
+        proxima_tentativa_em: null,
+        urgente: false,
+      }]);
+    }
+    if (url.includes("/rest/v1/rpc/notificacao_expirada")) return json(false);
+    if (url.includes("/rest/v1/rpc/contexto_do_push")) {
+      chamadas.push("contexto_do_push");
+      return json({ quantidade: 4 });
+    }
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return json([{ id: "d1", token_fcm: "fcm_token_agrupada_000000001", plataforma: "ios" }]);
+    }
+    if (url.includes("/messages:send")) {
+      const msg = JSON.parse(String(init?.body ?? "{}"));
+      corpos.push(msg?.message?.notification?.body ?? "");
+      return json({ name: "projects/p/messages/1" });
+    }
+    if (url.includes("/rest/v1/rpc/")) return json(null);
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+
+  const res = await processarEnvioPush(
+    new Request("http://localhost/functions/v1/enviar-push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+      body: JSON.stringify({}),
+    }),
+    {
+      supabaseUrl: "http://mock-db",
+      serviceRoleKey: "srk",
+      agendadorSecret: SEGREDO_TESTE,
+      serviceAccount: await gerarContaDeServicoTeste(),
+      fetchFn: mockFetch,
+      fcmApiUrl: "http://mock-fcm/messages:send",
+    },
+  );
+
+  assertEquals(res.status, 200);
+  assertEquals(chamadas, ["contexto_do_push"]);
+  assertEquals(corpos, ["4 vagas novas perto de você. Toque para conferir."]);
+});

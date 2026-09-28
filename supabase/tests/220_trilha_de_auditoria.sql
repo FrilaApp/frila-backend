@@ -219,7 +219,7 @@ select 'ad000000-0000-4000-8000-0000000000d1', (select id from vaga2),
        (select p.id from public.profissional p where p.usuario_id = 'ad000000-0000-4000-8000-000000000002');
 
 select throws_ok(
-  $$ update public.despacho set notificacao_id = gen_random_uuid()
+  $$ update public.despacho set criado_em = criado_em - interval '1 day'
       where id = 'ad000000-0000-4000-8000-0000000000d1' $$,
   '23001',
   null,
