@@ -13,7 +13,7 @@
 -- A tabela fica em `privado`: nenhuma chave do app lê a linha direto, só pela função.
 
 begin;
-select plan(29);
+select plan(32);
 
 -- Executa `sql` como `anon`, a role da chave publicável, sem token de usuário.
 create function pg_temp.anonimo(sql text) returns jsonb
@@ -61,6 +61,20 @@ select is(
       and has_function_privilege('anon', p.oid, 'execute')),
   array['configuracao_do_app'],
   'configuracao_do_app é a única função de public que anon executa');
+
+-- O auxiliar de versão é privado: nem o app, com ou sem sessão, nem o PostgREST o chamam.
+-- O `service_role` recebe o execute explícito, como toda função `privado.*`.
+select ok(
+  not has_function_privilege('anon', 'privado.versao_em_partes(text)', 'execute'),
+  'anon não executa privado.versao_em_partes');
+
+select ok(
+  not has_function_privilege('authenticated', 'privado.versao_em_partes(text)', 'execute'),
+  'authenticated não executa privado.versao_em_partes');
+
+select ok(
+  has_function_privilege('service_role', 'privado.versao_em_partes(text)', 'execute'),
+  'service_role executa privado.versao_em_partes');
 
 -- ── 200: a configuração do iOS, como o app lê ─────────────────────────────────
 

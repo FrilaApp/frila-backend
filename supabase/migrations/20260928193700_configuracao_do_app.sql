@@ -49,6 +49,7 @@ comment on function privado.versao_em_partes(text) is
   'Versão de build como int[] para comparar por ordem natural (1.2.10 > 1.2.9). Null fora do formato.';
 
 revoke execute on function privado.versao_em_partes(text) from public, anon, authenticated;
+grant  execute on function privado.versao_em_partes(text) to service_role;
 
 create table privado.configuracao_app (
   plataforma         public.plataforma primary key,
