@@ -763,6 +763,100 @@ Deno.test("Segurança e Privacidade: títulos e corpos não contêm dados pessoa
   }
 });
 
+// ── Atraso e reabertura (cartão e8XpOZJN) ─────────────────────────────────────
+//
+// Título e corpo copiados da planilha de notificações (casos 13, 16 e 17), e nenhum
+// texto fora dela.
+
+Deno.test("Planilha: início sem check-in (caso 13) e atraso de 15 min (caso 16)", () => {
+  assertEquals(titulosECorposPorTipo("inicio_sem_checkin", {}), {
+    title: "Horário de início do turno",
+    body: "O horário de início chegou. Faça seu check-in ao chegar ao local.",
+  });
+  assertEquals(titulosECorposPorTipo("atraso_15min", {}), {
+    title: "Check-in pendente há 15 min",
+    body: "O profissional ainda não registrou presença. Você pode aguardar ou reabrir a vaga.",
+  });
+});
+
+Deno.test("Planilha: cancelamento por reabertura por atraso (caso 17), e só ele", () => {
+  assertEquals(titulosECorposPorTipo("cancelamento", {}, { reaberturaPorAtraso: true }), {
+    title: "Turno cancelado por atraso",
+    body: "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.",
+  });
+  const generico = titulosECorposPorTipo("cancelamento", {});
+  assert(generico.title !== "Turno cancelado por atraso",
+    "cancelamento comum não pode dizer que foi atraso");
+});
+
+Deno.test("Envio: cancelamento com ocorrência reabertura_por_atraso sai com o texto do caso 17", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const posicao = "e8a00000-0000-4000-8000-00000000aaaa";
+  let enviado: { title?: string; body?: string } = {};
+  let consultouOcorrencia = false;
+
+  const mockFetch: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    const json = (corpo: unknown) =>
+      new Response(JSON.stringify(corpo), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    if (url === "http://mock-oauth/token") {
+      return json({ access_token: "token-ok", token_type: "Bearer", expires_in: 3600 });
+    }
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return json([{
+        id: "e8a00000-0000-4000-8000-00000000bbbb",
+        usuario_id: "e8a00000-0000-4000-8000-0000000000e1",
+        tipo: "cancelamento",
+        referencia_id: posicao,
+        payload: { tipo: "cancelamento", posicao_id: posicao, reaberta: true },
+        tentativas: 0,
+        estado_entrega: "pendente",
+      }]);
+    }
+    if (url.includes("/rest/v1/rpc/notificacao_expirada")) return json(false);
+    if (url.includes("/rest/v1/ocorrencia?")) {
+      consultouOcorrencia = true;
+      assert(url.includes(`posicao_id=eq.${posicao}`));
+      assert(url.includes("motivo=eq.reabertura_por_atraso"));
+      return json([{ id: "e8a00000-0000-4000-8000-00000000cccc" }]);
+    }
+    if (url.includes("/rest/v1/dispositivo?")) {
+      return json([{ id: "d1", token_fcm: "token-e1", plataforma: "ios" }]);
+    }
+    if (url.includes("/messages:send")) {
+      const corpo = JSON.parse(String(init?.body));
+      enviado = corpo.message.notification;
+      return json({ name: "projects/frila-test-project/messages/1" });
+    }
+    if (url.includes("/rest/v1/rpc/")) return json(null);
+    throw new Error(`URL não tratada no mock: ${url}`);
+  };
+
+  const req = new Request("http://localhost/enviar-push", {
+    method: "POST",
+    headers: { "x-agendador-secret": SEGREDO_TESTE, "Content-Type": "application/json" },
+    body: JSON.stringify({ notificacao_id: "e8a00000-0000-4000-8000-00000000bbbb" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    supabaseUrl: "http://mock-supabase",
+    serviceRoleKey: "service-role-de-teste",
+    agendadorSecret: SEGREDO_TESTE,
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+  });
+
+  assertEquals(res.status, 200);
+  assert(consultouOcorrencia, "o motivo do cancelamento é lido do banco no envio");
+  assertEquals(enviado.title, "Turno cancelado por atraso");
+  assertEquals(enviado.body, "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.");
+});
+
 // ── Ciclo de vida do token (cartão wpNabtCO) ──────────────────────────────────
 //
 // A tabela `dispositivo` simulada em memória é o estado que o banco deixa depois de

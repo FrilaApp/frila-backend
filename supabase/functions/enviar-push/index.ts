@@ -120,9 +120,17 @@ export function calcularProximaTentativa(
   return new Date(agora.getTime() + segundos * 1000);
 }
 
+// O que o texto precisa saber e o payload não diz (RN15: o payload é só tipo e ids).
+// Lido do banco no envio, pela Edge Function, e nunca vai ao aparelho.
+export interface ContextoDoTexto {
+  // Cancelamento feito por `reabrir_por_atraso` (caso 17 da planilha, cartão e8XpOZJN).
+  reaberturaPorAtraso?: boolean;
+}
+
 export function titulosECorposPorTipo(
   tipo: string,
   _payload: Record<string, unknown> = {},
+  contexto: ContextoDoTexto = {},
 ): { title: string; body: string } {
   switch (tipo) {
     case "vaga":
@@ -150,15 +158,16 @@ export function titulosECorposPorTipo(
         title: "Lembrete de turno",
         body: "Seu turno começa em 3 horas. Prepare-se.",
       };
+    // Casos 13 e 16 da planilha de notificações (cartão e8XpOZJN).
     case "inicio_sem_checkin":
       return {
-        title: "Hora de iniciar o turno",
-        body: "O horário do turno começou. Não se esqueça de registrar o check-in.",
+        title: "Horário de início do turno",
+        body: "O horário de início chegou. Faça seu check-in ao chegar ao local.",
       };
     case "atraso_15min":
       return {
-        title: "Alerta de atraso",
-        body: "Check-in ainda não registrado 15 minutos após o início do turno.",
+        title: "Check-in pendente há 15 min",
+        body: "O profissional ainda não registrou presença. Você pode aguardar ou reabrir a vaga.",
       };
     case "fim_sem_checkout":
       return {
@@ -181,6 +190,13 @@ export function titulosECorposPorTipo(
         body: "Check-in manual registrado, aguardando confirmação do contratante.",
       };
     case "cancelamento":
+      // Caso 17 da planilha: a casa reabriu a vaga por falta de check-in.
+      if (contexto.reaberturaPorAtraso) {
+        return {
+          title: "Turno cancelado por atraso",
+          body: "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.",
+        };
+      }
       return {
         title: "Aviso de cancelamento",
         body: "Houve um cancelamento relacionado ao seu turno ou vaga.",
@@ -382,7 +398,25 @@ export async function processarEnvioPush(
     }
 
     // 3. Monta o payload do FCM aplicando whitelist estrita (RN15)
-    const { title, body } = titulosECorposPorTipo(n.tipo, n.payload);
+    const contexto: ContextoDoTexto = {};
+    const posicaoId = n.payload?.posicao_id;
+    if (n.tipo === "cancelamento" && typeof posicaoId === "string" && UUID_REGEX.test(posicaoId)) {
+      // O motivo é estável (`reabertura_por_atraso`) e fica no banco; o texto muda, o
+      // payload não. Falha de leitura cai no texto genérico em vez de segurar o push.
+      try {
+        const ocoRes = await fetchFn(
+          `${supabaseUrl}/rest/v1/ocorrencia?posicao_id=eq.${posicaoId}&tipo=eq.cancelamento&motivo=eq.reabertura_por_atraso&select=id&limit=1`,
+          { headers: dbHeaders },
+        );
+        if (ocoRes.ok) {
+          const linhas = await ocoRes.json();
+          contexto.reaberturaPorAtraso = Array.isArray(linhas) && linhas.length > 0;
+        }
+      } catch {
+        // texto genérico
+      }
+    }
+    const { title, body } = titulosECorposPorTipo(n.tipo, n.payload, contexto);
     const dataStrings = filtrarDataPayloadFcm(n.tipo, n.payload);
 
     let algumAceite = false;
