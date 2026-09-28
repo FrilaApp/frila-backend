@@ -8,6 +8,9 @@
 --   reabrir               falta na taxa, posição nova marcada, vaga publicada, despacho
 --   fim − 1 h             a posição reaberta que ninguém pegou é cancelada pelo agendador
 --
+-- E a 0.2.19 do contrato: a posição reaberta por atraso aceita candidatura depois do
+-- início, até fim − 1 h; a exceção é da posição, e não da vaga.
+--
 -- Cada alerta sai uma vez por turno: o agendador roda a cada minuto e a marca de envio
 -- (tipo, referência, conta) é o que impede o segundo push.
 --
@@ -15,7 +18,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(42);
+select plan(56);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -84,22 +87,23 @@ select pg_temp.como('e8a00000-0000-4000-8000-0000000000d2',
        'SCLN 408','{"latitude":-15.7920,"longitude":-47.8870}') $$);
 
 -- Três vagas em dias diferentes, de seis horas cada.
-create function pg_temp.publicar(chave uuid, dias int) returns uuid
+create function pg_temp.publicar(chave uuid, dias int, posicoes int default 1) returns uuid
 language plpgsql as $corpo$
 begin
   return (pg_temp.como('e8a00000-0000-4000-8000-0000000000d1', format(
     $sql$ select public.publicar_vaga(%L, %L, %L, %L, 'CLN 407',
          '{"latitude":-15.7910,"longitude":-47.8860}'::jsonb,
-         18000, 1, true, true, false, 'Seu Zé', 'urgencia', %L) $sql$,
+         18000, %s, true, true, false, 'Seu Zé', 'urgencia', %L) $sql$,
     (select id from casa), (select garcom from fn),
     privado.agora() + (dias || ' days')::interval,
-    privado.agora() + (dias || ' days 6 hours')::interval, chave))->>'vaga_id')::uuid;
+    privado.agora() + (dias || ' days 6 hours')::interval, posicoes, chave))->>'vaga_id')::uuid;
 end $corpo$;
 
 create temp table v as
   select pg_temp.publicar('e8a00000-0000-4000-8000-000000000001', 2) as falta,
          pg_temp.publicar('e8a00000-0000-4000-8000-000000000002', 3) as chegou,
-         pg_temp.publicar('e8a00000-0000-4000-8000-000000000003', 4) as tarde;
+         pg_temp.publicar('e8a00000-0000-4000-8000-000000000003', 4) as tarde,
+         pg_temp.publicar('e8a00000-0000-4000-8000-000000000004', 5, 2) as dupla;
 
 create temp table c as
   select pg_temp.como('e8a00000-0000-4000-8000-0000000000e1',
@@ -107,12 +111,15 @@ create temp table c as
          pg_temp.como('e8a00000-0000-4000-8000-0000000000e2',
            format($$ select public.candidatar(%L) $$, (select chegou from v))) as chegou,
          pg_temp.como('e8a00000-0000-4000-8000-0000000000e3',
-           format($$ select public.candidatar(%L) $$, (select tarde from v))) as tarde;
+           format($$ select public.candidatar(%L) $$, (select tarde from v))) as tarde,
+         pg_temp.como('e8a00000-0000-4000-8000-0000000000e2',
+           format($$ select public.candidatar(%L) $$, (select dupla from v))) as dupla;
 
 create temp table p as
   select (falta->>'posicao_id')::uuid  as falta,  (falta->>'turno_id')::uuid  as turno_falta,
          (chegou->>'posicao_id')::uuid as chegou, (chegou->>'turno_id')::uuid as turno_chegou,
-         (tarde->>'posicao_id')::uuid  as tarde
+         (tarde->>'posicao_id')::uuid  as tarde,
+         (dupla->>'posicao_id')::uuid  as dupla
     from c;
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
@@ -130,6 +137,18 @@ create function pg_temp.avisos(tipo text, conta uuid, turno uuid) returns int
 language sql as $$
   select count(*)::int from public.notificacao n
    where n.tipo::text = tipo and n.usuario_id = conta and n.referencia_id = turno
+$$;
+
+create function pg_temp.na_lista(conta uuid, vaga uuid) returns jsonb
+language sql as $$
+  select (select x from jsonb_array_elements(
+            pg_temp.como(conta, $x$ select public.vagas_abertas(-15.7900, -47.8850) $x$)) x
+           where (x->>'id')::uuid = vaga)
+$$;
+
+create function pg_temp.detalhe(conta uuid, vaga uuid) returns jsonb
+language sql as $$
+  select pg_temp.como(conta, format($x$ select public.detalhe_vaga(%L) $x$, vaga))
 $$;
 
 create function pg_temp.reabrir(conta uuid, posicao uuid) returns jsonb
@@ -379,6 +398,19 @@ select throws_ok(
   '{"code" : "vaga_encerrada", "message" : "vaga_encerrada", "details" : "posicao_cancelada", "hint" : null}',
   'check-in depois da reabertura é 409: a posição não é mais dele');
 
+-- ── 0.2.19: a vitrine mostra a posição reaberta ───────────────────────────────
+select is(
+  (pg_temp.na_lista('e8a00000-0000-4000-8000-0000000000e3', (select falta from v))
+     ->>'posicoes_abertas')::int,
+  1,
+  '0.2.19: vaga começada com posição reaberta por atraso continua na lista, com 1 posição');
+
+select is(
+  (select row(d->>'estado', (d->>'posicoes_abertas')::int)
+     from pg_temp.detalhe('e8a00000-0000-4000-8000-0000000000e3', (select falta from v)) d),
+  row('publicada'::text, 1),
+  '0.2.19: e o detalhe conta a posição reaberta');
+
 -- ── Fim − 1 h: a posição reaberta que ninguém pegou fecha ─────────────────────
 select pg_temp.relogio((select falta from p), interval '-61 minutes', true);
 select privado.alertar_atrasos();
@@ -390,6 +422,20 @@ select is(
   '61 minutos antes do fim, a posição reaberta ainda espera candidato');
 
 select pg_temp.relogio((select falta from p), interval '-60 minutes', true);
+
+select throws_ok(
+  format($$ select pg_temp.como('e8a00000-0000-4000-8000-0000000000e3',
+       $x$ select public.candidatar(%L) $x$) $$, (select falta from v)),
+  'PGRST',
+  '{"code" : "vaga_encerrada", "message" : "vaga_encerrada", "details" : null, "hint" : null}',
+  '0.2.19: a partir de fim − 1 h a posição reaberta recusa candidatura');
+
+select is(
+  (select row(d->>'estado', (d->>'posicoes_abertas')::int)
+     from pg_temp.detalhe('e8a00000-0000-4000-8000-0000000000e3', (select falta from v)) d),
+  row('publicada'::text, 0),
+  '0.2.19: o detalhe continua respondendo, com o estado real e 0 posições');
+
 select privado.alertar_atrasos();
 
 select is(
@@ -428,6 +474,87 @@ select is(
     where n.tipo = 'cancelamento' and n.referencia_id = (select tarde from p)),
   'false'::jsonb,
   'o profissional é avisado com reaberta = false');
+
+-- ── 0.2.19: a exceção é da posição, e não da vaga ─────────────────────────────
+--
+-- A vaga dupla tem duas posições: e2 confirmou uma, a outra ficou aberta sem ninguém.
+-- Depois do início, a original aberta não é oferecida; só a reaberta por atraso.
+select pg_temp.relogio((select dupla from p), interval '20 minutes');
+
+select is(
+  pg_temp.na_lista('e8a00000-0000-4000-8000-0000000000e3', (select dupla from v)),
+  null::jsonb,
+  '0.2.19: vaga que já começou sai da lista, mesmo com posição original aberta');
+
+select is(
+  (select row(d->>'estado', (d->>'posicoes_abertas')::int)
+     from pg_temp.detalhe('e8a00000-0000-4000-8000-0000000000e3', (select dupla from v)) d),
+  row('publicada'::text, 0),
+  '0.2.19: o detalhe da vaga começada responde 200, publicada e sem posição a pegar');
+
+select throws_ok(
+  format($$ select pg_temp.como('e8a00000-0000-4000-8000-0000000000e3',
+       $x$ select public.candidatar(%L) $x$) $$, (select dupla from v)),
+  'PGRST',
+  '{"code" : "vaga_encerrada", "message" : "vaga_encerrada", "details" : null, "hint" : null}',
+  '0.2.19: vaga começada sem posição reaberta recusa a candidatura, mesmo com posição original aberta');
+
+select throws_ok(
+  $$ select pg_temp.como('e8a00000-0000-4000-8000-0000000000e3',
+       $x$ select public.candidatar('e8a00000-0000-4000-8000-00000000ffff') $x$) $$,
+  'PGRST',
+  '{"code" : "nao_encontrado", "message" : "nao_encontrado", "details" : null, "hint" : null}',
+  'vaga que não existe é 404');
+
+create temp table rd as
+  select pg_temp.reabrir('e8a00000-0000-4000-8000-0000000000d1', (select dupla from p)) as j;
+
+select pg_temp.relogio((select dupla from p), interval '21 minutes');
+
+create temp table cd as
+  select pg_temp.como('e8a00000-0000-4000-8000-0000000000e3',
+    format($$ select public.candidatar(%L) $$, (select dupla from v))) as j;
+
+select is(
+  (select (j->>'posicao_id')::uuid from cd),
+  (select (j->>'nova_posicao_id')::uuid from rd),
+  '0.2.19: depois do início, o servidor escolhe a posição reaberta, nunca a original aberta');
+
+-- O substituto tem os mesmos 15 minutos, contados da confirmação.
+select pg_temp.relogio((select dupla from p), interval '30 minutes');
+select privado.alertar_atrasos();
+
+select throws_ok(
+  format($$ select pg_temp.reabrir('e8a00000-0000-4000-8000-0000000000d1', %L) $$,
+         (select j->>'posicao_id' from cd)),
+  'PGRST',
+  '{"code" : "reabertura_antes_da_tolerancia", "message" : "reabertura_antes_da_tolerancia", "details" : null, "hint" : null}',
+  'D06: o substituto ganha 15 minutos contados da confirmação');
+
+select is(
+  pg_temp.avisos('atraso_15min', 'e8a00000-0000-4000-8000-0000000000d1',
+                 (select (j->>'turno_id')::uuid from cd)),
+  0, 'nem a casa é alertada antes de 15 minutos da confirmação do substituto');
+
+select is(
+  pg_temp.avisos('inicio_sem_checkin', 'e8a00000-0000-4000-8000-0000000000e3',
+                 (select (j->>'turno_id')::uuid from cd)),
+  0, 'o substituto não recebe lembrete de início colado na própria confirmação');
+
+select pg_temp.relogio((select dupla from p), interval '36 minutes');
+select privado.alertar_atrasos();
+
+select is(
+  pg_temp.avisos('atraso_15min', 'e8a00000-0000-4000-8000-0000000000d1',
+                 (select (j->>'turno_id')::uuid from cd)),
+  1, 'aos 15 minutos da confirmação sem check-in, a casa é alertada');
+
+select throws_ok(
+  format($$ select pg_temp.como('e8a00000-0000-4000-8000-0000000000e1',
+       $x$ select public.candidatar(%L) $x$) $$, (select dupla from v)),
+  'PGRST',
+  '{"code" : "vaga_encerrada", "message" : "vaga_encerrada", "details" : null, "hint" : null}',
+  '0.2.19: preenchida a reaberta, a original aberta continua fora de alcance');
 
 select * from finish();
 rollback;
