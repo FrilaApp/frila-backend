@@ -83,12 +83,26 @@ ok "$PORTA responde"
 # A limpeza é do registro de tentativas, que é dado de portão e não do produto. Se o
 # contêiner não estiver ao alcance, o script avisa e segue: numa máquina sem Docker
 # local, rodar uma vez por janela continua funcionando.
+#
+# Contra um projeto remoto não há contêiner, e aí a limpeza vai pela `service_role` no
+# PostgREST: `entrada_demonstracao` tem RLS ligada e nenhuma política, e a `service_role`
+# passa por cima das duas. Sem esse caminho, este portão só podia ser medido uma vez por
+# janela de dez minutos no `frila-dev`, e o critério 1 do cartão `7gpPBgTH` pede
+# justamente a medição lá.
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 if docker exec -i "$DB" psql -U postgres -d postgres -q -c \
      'truncate public.entrada_demonstracao' >/dev/null 2>&1; then
-  ok "registro de tentativas zerado, para o teto não vir gasto da execução anterior"
+  ok "registro de tentativas zerado pelo contêiner local"
+elif [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ] && \
+     [ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE \
+            "$URL/rest/v1/entrada_demonstracao?id=gt.0" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H 'Prefer: return=minimal')" = "204" ]; then
+  ok "registro de tentativas zerado pela service_role, sem contêiner"
 else
-  printf '  ⚠ não consegui zerar public.entrada_demonstracao (contêiner %s).\n' "$DB" >&2
+  printf '  ⚠ não consegui zerar public.entrada_demonstracao (contêiner %s, e sem\n' "$DB" >&2
+  printf '    SUPABASE_SERVICE_ROLE_KEY que responda).\n' >&2
   printf '    Se a execução anterior foi há menos de 10 minutos, o teto ainda está gasto.\n' >&2
 fi
 
