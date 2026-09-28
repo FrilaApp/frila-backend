@@ -1,4 +1,4 @@
-# Estado do backend — 25/09/2026
+# Estado do backend — 28/09/2026
 
 Onde o trabalho parou e o que a próxima sessão precisa saber. As regras duráveis estão
 no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
@@ -7,71 +7,104 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-**O ciclo do Sprint 1 fecha inteiro no `main`:** publicar → candidatar → acompanhar →
-contato → check-in → check-out → cancelar → **avaliar**. Falta só o despacho, que é o
-Sprint 2.
+**O ciclo do Sprint 1 fecha inteiro no `main`, e o Sprint 2 andou muito em 26 e 27/09**,
+pelas mãos do João Paulo e do Cauê: notificações, motor de despacho, push pelo FCM,
+`excluir_conta`, retenção de 15 dias e as consultas quentes do DF entraram ou estão em PR.
 
-Vinte e duas RPCs, 36 migrações, e o contrato em **0.2.15**.
+**46 migrações** no `main` e o contrato em **0.2.18**, espelho em dia com o original.
 
-> ## ⛔ A CI não inicia, e é Billing da organização
+> ## ✅ A CI voltou
 >
-> **Medido em 25/09, às 18:40**, e este é o diagnóstico que substitui o de 15:53. A
-> anotação do GitHub é literal, nos três jobs de todos os PRs:
+> **Medido em 28/09:** as execuções de 27/09 saem `success` — `main` às 03:38 e 04:19,
+> `s3/retencao-15-dias`, `s0/configuracao-do-app`. A única anotação que sobra é o aviso de
+> que `actions/checkout@v4` roda em Node 24 porque o Node 20 foi depreciado.
 >
-> > The job was not started because recent account payments have failed or your spending
-> > limit needs to be increased. Please check the 'Billing & plans' section in your
-> > settings
+> O bloqueio de Billing que parou tudo entre 25/09 às 14h e algum momento de 26 ou 27/09
+> **acabou**; não medi o que exatamente foi feito, e a página de Billing continua exigindo
+> escopo `admin:org`, que o token desta máquina não tem.
 >
-> Não é intermitência, não é o `ci.yml` e não é "cota esgotada" no sentido genérico: o
-> GitHub está dizendo que o **limite de gasto** impede o job de começar. `gh api
-> /orgs/FrilaApp` devolve `plan.name: free`, e no plano free o Actions só é ilimitado em
-> repositório **público** — os quatro da organização são privados, então cada minuto sai
-> de uma cota mensal, e com o limite de gasto padrão de US$ 0 os jobs param de iniciar
-> exatamente assim.
+> **Consequência para quem chega agora:** a decisão de 25/09 — "o que entra no `main` entra
+> com prova local, com o placar colado no PR" — **não vale mais**. Voltou a valer o portão
+> remoto. Um PR cuja última execução é de 25/09 está vermelho por um motivo que não existe
+> mais: confira a data do run antes de acreditar no ✗.
 >
-> **Não medido:** a página de Billing exige escopo `admin:org`, que o token desta máquina
-> não tem. A data da virada do ciclo de cobrança continua desconhecida.
->
-> O conserto é da organização: subir o limite de gasto, ou esperar a virada. Depois disso,
-> um `gh run rerun <id> --failed` em cada PR aberto.
->
-> **Enquanto isso, o que entra no `main` entra com prova local.** Foi a decisão de 25/09:
-> a bateria inteira do `ci.yml` rodada na máquina, com `db reset` antes, e o placar colado
-> no PR e no cartão. Vale para os PRs de quem mediu; PR de outra pessoa continua com ela.
+> Foi o caso do **#37**, o único PR meu aberto: os quatro jobs falhavam com a anotação de
+> Billing, num run de 25/09 às 20:59Z. Medido em 28/09, com o `main` fundido no branch.
 
-## Onde cada coisa parou em 25/09
+## Onde cada coisa parou
 
-Mergeado em 25/09 com prova local no lugar do portão remoto:
+### O único PR meu aberto: #37
 
-| PR | Cartão | Merge |
+`s0/migracoes-sem-colisao`, cartão `RNOfNVVU`. Dois portões e dois scripts, e o que segurava
+o merge **deixou de existir**:
+
+- Quando abri, em 25/09, o `contrato-em-dia` reprovava porque o espelho estava na 0.2.15 e o
+  original na 0.2.17. Em 28/09 os dois estão na **0.2.18**, e o portão responde *"Espelho em
+  dia com FrilaApp/frila-docs"*.
+- O `main` foi fundido no branch em 28/09, sem conflito, e o portão de colisão passa com as
+  46 migrações.
+
+**Falta um `git push` e o re-run da CI**, que agora roda. A última execução dele é de 25/09
+e não vale nada.
+
+### O que entrou no `main` em 26 e 27/09, e não é meu
+
+Oito PRs, quase todos do João Paulo e do Cauê. O Sprint 2 andou muito:
+
+| PR | O que trouxe | De quem |
 |---|---|---|
-| **#30** `s3/trilha-de-auditoria` | `6mdX80SC` | `2947a5c8`, às 19:10Z. 12 portões verdes na máquina; cartão **Concluído** |
-| **#36** `s1/janela-da-demonstracao` | `7gpPBgTH` | `ed0c6456`. A janela do registro não se aplica à conta de revisão, e as notas da revisão em português e inglês. 12 portões verdes |
+| **#32** | Notificação para qualquer conta, marcas de envio e payload só com ids | João Paulo |
+| **#41** | Resgate dos PRs #1 a #6 do `frila-backend` temporário | Cauê |
+| **#42** | Resgate do #7: Edge Function `excluir-conta` | Cauê |
+| **#43** | Resgate do #8: ciclo de vida do token de push | Cauê |
+| **#44** | Portão do contrato passa a isentar RPC já declarada, e enxerga função com comentário entre `function` e o nome | João Paulo |
+| **#45** | Segunda rodada de correções do `excluir-conta`, e o espelho 0.2.18: **401 para conta encerrada** em RPCs de escrita | João Paulo |
+| **#46** | Índices para as consultas quentes e script de carga do DF | João Paulo |
+| **#47** | Retenção de 15 dias, higiene de tabelas e limpeza de contas sem cadastro | João Paulo |
 
-Abertos, e nenhum é meu:
+Dez arquivos de teste novos entraram com eles: `240_notificacoes` a `320_retencao_e_limpeza`,
+mais `tests/carga/gerar_df.sql`.
 
-| PR | Cartão | De quem |
-|---|---|---|
-| **#27** `s0/despachar-porta` | `ZqmkOaHn` | Cauê |
-| **#31** `s0/configuracao-do-app` | `CvopSHh6` | João Paulo |
-| **#32** `s2/notificacoes` | `wM63y4qx` | João Paulo |
-| **#34** `s0/corrigir-bancada-sync` | `nNUtbriv` | João Paulo |
-| **#35** `ao/frila-8` | — | Cauê |
+### Abertos em 28/09, e nenhum além do #37 é meu
 
-Mergeados antes em 25/09: **#23** (contas de demonstração), **#24** (`avaliar` e
-`perfil_publico`), **#25** (testes do ciclo), **#26** (`republicar_vaga`), **#28**
-(`meus_estabelecimentos`), **#29** (testes de contrato). No `frila-docs`: **0.2.12** a
-**0.2.15**, e a **0.2.14** é do João Paulo.
+| PR | Cartão | De quem | Estado |
+|---|---|---|---|
+| **#40** `s2/push-fcm` | `36fU0CEO` | João Paulo | conflito com o `main` |
+| **#39** `s2/motor-despacho` | `7XS6MQGg` | João Paulo | conflito com o `main` |
+| **#38** `s2/turnos-nao-verificados` | `NDx7TJ4d` | João Paulo | conflito com o `main` |
+| **#37** `s0/migracoes-sem-colisao` | `RNOfNVVU` | **meu** | resolvido na máquina, falta push e re-run |
+| **#35** `ao/frila-8` | — | Cauê | run velho |
+| **#34** `s0/corrigir-bancada-sync` | `nNUtbriv` | João Paulo | run velho |
+| **#31** `s0/configuracao-do-app` | `CvopSHh6` | João Paulo | **limpo e verde** na CI de 27/09 |
+| **#27** `s0/despachar-porta` | `ZqmkOaHn` | Cauê | conflito com o `main` |
+
+**O aviso da colisão funcionou:** o #31 trazia `20260925230000_configuracao_do_app.sql`, que
+colidia com a migração do #36. Hoje ele traz `20260927020000_configuracao_do_app.sql`, e não
+há versão repetida no `main`.
+
+Mergeados em 25/09: **#23** (contas de demonstração), **#24** (`avaliar` e `perfil_publico`),
+**#25** (testes do ciclo), **#26** (`republicar_vaga`), **#28** (`meus_estabelecimentos`),
+**#29** (testes de contrato), **#30** (trilha de auditoria, `2947a5c8`) e **#36** (a janela da
+demonstração e as notas da revisão, `ed0c6456`).
 
 ## Ambientes
 
 | | |
 |---|---|
-| local | `supabase start` · Postgres 17 · **29** migrações no `main` (contadas em 24/09) |
-| `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · **29** migrações, as mesmas do `main` (conferidas em 24/09) |
+| local | `supabase start` · Postgres 17 · **46** migrações no `main` (contadas em 28/09) |
+| `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · **29** migrações, conferidas em 24/09 — e o `main` tem 46 |
 | `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **vazio**: as migrações entram pelo cartão do ambiente de produção (29/10), com a entrega contínua por tag |
 
-**O `frila-dev` está em dia com o `main`.** As 11 migrações que faltavam, de
+> 🔴 **O `frila-dev` está atrás, e não sei quanto.** Ele tinha as mesmas 29 do `main` em
+> 24/09; o `main` chegou a 46 em 28/09 e **nada foi aplicado lá** por mim. Dezessete
+> migrações de diferença é a conta pelos arquivos, não uma medição do remoto: conferir o
+> `supabase_migrations.schema_migrations` do projeto exige o token de conta, que responde 401.
+> `./scripts/aplicar-remoto.sh jcobftbhbqdikratzizz` é o caminho, e ele é idempotente — pula
+> o que já está registrado. Antes de aplicar qualquer coisa, conferir a tabela de controle.
+
+O parágrafo abaixo descreve como as 29 entraram, e continua valendo como procedimento:
+
+**Em 24/09 o `frila-dev` ficou em dia com o `main`.** As 11 migrações que faltavam, de
 `20260923200000_filtro_de_texto_ofensivo` a `20260925020000_cancelamentos`, entraram em
 24/09 às 15h pelo MCP do Supabase, porque o token do `.env` não responde. Cada uma rodou
 numa transação só, e o md5 do texto foi conferido contra o arquivo **antes** de executar:
@@ -92,28 +125,33 @@ As credenciais estão no `.env` local (fora do git).
 
 ## O quadro
 
-**A lista Revisão foi varrida e esvaziada do que era fechável**, em 25/09. Ela tinha onze
-cartões e ficou com nove; o gargalo não era o código, era checklist não marcada. Cada um
-recebeu no cartão a evidência item a item — o arquivo de teste e o nome da asserção, mais a
-medição por HTTP onde o critério pedia status.
+A lista Revisão foi varrida em 25/09 e ficou com nove cartões. **Em 28/09 ela tem quinze**,
+e o que voltou a enchê-la não é meu: são os seis cartões de Sprint 2 e 3 que o João Paulo e o
+Cauê entregaram em 26 e 27/09 — `36fU0CEO` (push FCM), `7XS6MQGg` (motor de despacho),
+`wpNabtCO` (ciclo do token de push), `yClUqOpU` (retenção de 15 dias), `IYAb8v1i` (consultas
+quentes) e `OrS9gEfU` (`excluir-conta`).
 
 Fecharam em 25/09: `6mdX80SC` (trilha de auditoria, #30), `AvockvHx`
 (`meus_estabelecimentos`, #28) e `0uROtsRX` (testes de contrato, #29). O `yKUkCjSU` (testes
 do ciclo) já estava Concluído com os quatro critérios marcados — as versões anteriores deste
 arquivo o listavam como pendente, e estavam erradas.
 
-**O que sobrou de Backend na Revisão, e por quê:**
+**Os quatro cartões meus que continuam em Revisão, e por quê:**
 
 | Cartão | O que falta, e de quem é |
 |---|---|
-| `7gpPBgTH` Contas de demonstração | Três dos quatro critérios medidos e as notas anexadas. O critério 1 diz "no `frila-dev`", e lá a porta ainda não existe: falta `supabase secrets set` e `functions deploy`, que pedem `supabase login`. **Bloqueio de presença** |
+| `RNOfNVVU` Portão de colisão de versão | Seis dos oito critérios marcados. Falta o push do #37 e o re-run da CI, que agora roda. O oitavo critério é o caminho verde do `demonstracao-remoto.sh`, que depende do token de conta |
+| `7gpPBgTH` Contas de demonstração | Três dos quatro critérios medidos e as notas anexadas. O critério 1 diz "no `frila-dev`", e lá a porta ainda não existe. O caminho está pronto num comando — `./scripts/demonstracao-remoto.sh dev` faz os segredos, o deploy e a medição —, e falta só um `SUPABASE_ACCESS_TOKEN` que responda. **Bloqueio de credencial, e não de navegador** |
 | `RTmRTHbo` Republicar vaga | Os três critérios de backend marcados, inclusive republicar a partir de vaga `encerrada`, medido por HTTP. O quarto é de ponta a ponta e depende da tela: a ação "Publicar de novo" em Minhas vagas. **É iOS** |
-| `ggEzge6h` Filtro de texto | Os três critérios marcados, com a recusa e o falso positivo medidos por HTTP. **Acrescentei um quarto item à checklist**: a revisão da lista de termos pela Júlia, que estava em *O que fazer* e não era cobrada por critério nenhum — com três marcados o cartão fecharia com a lista nunca lida. **É da Júlia** |
-| `CvopSHh6` Versão mínima do app | Do João Paulo, no #31 |
-| `wM63y4qx` Notificações | Do João Paulo, no #32. É de onde descem quatorze dos dezenove cartões de Backend do Sprint 2 |
+| `ggEzge6h` Filtro de texto | Os três critérios marcados, com a recusa e o falso positivo medidos por HTTP. **Um quarto item foi acrescentado à checklist**: a revisão da lista de termos pela Júlia, que estava em *O que fazer* e não era cobrada por critério nenhum — com três marcados o cartão fecharia com a lista nunca lida. **É da Júlia** |
 
 A frase "Cortável, não começado" que este arquivo trazia sobre o `RTmRTHbo` estava errada: o
 #26 já estava mergeado.
+
+**Não há cartão de Backend livre e desbloqueado em 28/09.** O `NDx7TJ4d` (turnos não
+verificados), que em 25/09 era o único, está **Em andamento com o João Paulo** e tem o PR #38.
+O que a lista Em andamento tem de Backend é só ele; o resto é iOS e Infra de outras pessoas.
+Antes de escolher trabalho novo, vale varrer o quadro de novo: ele mudou muito em três dias.
 
 `./scripts/trello.sh` faz tudo: `ver`, `lista`, `pegar`, `revisao`, `concluir`, `comentar`.
 
@@ -124,18 +162,34 @@ virou `api/openapi.yaml`**. O redirect do GitHub cobre o nome antigo da organiza
 não cobre caminho dentro do repositório — quem tiver script ou marcador apontando para o
 caminho antigo precisa ajustar. No backend, o PR #15 ajustou.
 
-Versão vigente: **0.2.15**, espelhada em `contrato/openapi.yaml` e conferida pelo portão
-contra o original de verdade desde 24/09.
+Versão vigente: **0.2.18**, espelhada em `contrato/openapi.yaml` e **em dia com o original**,
+conferido em 28/09 com o `FRILA_DOCS_TOKEN`. A 0.2.18 veio no #45 do João Paulo e traz **401
+para conta encerrada** nas RPCs de escrita.
+
+> **O que aconteceu entre 25 e 28/09, e vale como lição.** Em 25/09 o espelho estava na 0.2.15
+> e o original já na 0.2.17, e **nenhuma medição viu** — porque o `contrato-em-dia.sh` lia
+> `FRILA_DOCS_TOKEN` só do ambiente, e as baterias não faziam `source .env`. Sem o token ele
+> saía **0** avisando em voz alta que não conferiu o original: o único portão capaz de pegar
+> "o contrato mudou lá e ninguém trouxe" era justamente o que estava passando. Consertado no
+> PR #37: lê o `.env`, e sai **2** quando não há token. As 0.2.16 a 0.2.18 subiram com os PRs
+> do João Paulo, como devia ser.
 
 ## O que existe no banco
 
-19 tabelas em `public`, 30 restrições `CHECK`, 1 de exclusão (RN21), 19 políticas de
-leitura, 39 auxiliares no schema `privado`, e nenhuma política de escrita em lugar
-nenhum — toda escrita passa por função `security definer`.
+Recontado em 28/09, com o `main` de hoje: **20 tabelas** em `public`, **33** restrições
+`CHECK`, 1 de exclusão (RN21), **19** políticas de leitura, **71** auxiliares no schema
+`privado`, e nenhuma política de escrita em lugar nenhum — toda escrita passa por função
+`security definer`.
 
-**Vinte e duas RPCs expostas a `authenticated`**, que cobrem o ciclo inteiro. Contadas em
-25/09 com `has_function_privilege`, e não pela lista escrita à mão — as duas versões
-anteriores deste arquivo diziam vinte e já estavam atrasadas:
+```
+avaliacao · bloqueio · candidatura · despacho · disponibilidade · dispositivo
+entrada_demonstracao · equipe_confianca · estabelecimento · evento · funcao
+membro_estabelecimento · notificacao · ocorrencia · posicao · profissional
+profissional_funcao · turno · usuario · vaga
+```
+
+**Vinte e quatro RPCs expostas a `authenticated`**, contadas com `has_function_privilege` e
+não pela lista escrita à mão:
 
 ```
 conta        criar_conta · minha_conta
@@ -145,6 +199,7 @@ vaga         publicar_vaga · republicar_vaga · vagas_abertas · detalhe_vaga �
 turno        candidatar · meus_turnos · contato_do_turno · cancelar_posicao
 presença     fazer_checkin · fazer_checkout · confirmar_checkin_manual
 reputação    avaliar · perfil_publico
+push         registrar_dispositivo · remover_dispositivo
 app          configuracao_do_app   (sem sessão: a única que o anon executa)
 ```
 
@@ -154,12 +209,37 @@ app abaixo da versão mínima precisa descobrir isso antes de conseguir entrar. 
 nova, pelo roteiro em [`supabase/operacao/subir-versao-minima.md`](../supabase/operacao/subir-versao-minima.md).
 A Modelagem no vault ainda não registra a exceção.
 
-Falta do ciclo: nada. O despacho é o Sprint 2.
+**O despacho deixou de ser promessa.** `pg_cron` e `pg_net` **entraram** — a frase "continuam
+fora", que este arquivo repetiu por dias, está morta. Três jobs ativos, medidos em 28/09:
 
-**A fila existe.** `pgmq.q_despacho` recebe `{vaga_id, publicada_em}` na publicação e
+| Job | Quando |
+|---|---|
+| `reprocessar_despacho` | `* * * * *` — a cada minuto |
+| `limpar_dispositivos_inativos` | `17 6 * * *` |
+| `retencao_e_limpeza_diaria` | `30 6 * * *` |
+
+A fila continua: `pgmq.q_despacho` recebe `{vaga_id, publicada_em}` na publicação e
 `{vaga_id, posicao_id, motivo: reabertura, excluir_conta}` no cancelamento — o
 `excluir_conta` é quem **não** deve ser notificado de novo. RLS ligada e sem política.
-`pg_cron` e `pg_net` continuam fora.
+
+> ### ⚠️ A armadilha nova: `frila.agendador_secret`
+>
+> Desde o motor de despacho (26/09), o gatilho de `pgmq.q_despacho` exige
+> `frila.agendador_secret` no banco **antes de qualquer RPC que enfileire uma vaga**. Sem
+> ela, `publicar_vaga` responde:
+>
+> ```
+> {"code":"P0001","message":"Configuração frila.agendador_secret ausente no banco de dados"}
+> ```
+>
+> O `ci.yml` ganhou o passo *"Configurar segredo efêmero do agendador"*, que gera o valor com
+> `openssl rand -hex 32` e o grava com `alter database` e `alter role authenticator`, logo
+> depois do `supabase start` e **antes** do `db reset`.
+>
+> **Quem reproduz a CI à mão tem de reproduzir esse passo.** Medido em 28/09: sem ele,
+> `ciclo-completo.sh` e `contrato-responde.sh` saem vermelhos — e o vermelho é do script de
+> reprodução, não do código. Custou uma bateria inteira até eu olhar o `ci.yml` em vez de
+> acreditar no meu próprio placar.
 
 Depois do `db reset` o banco **não nasce vazio**: `cenarios.sql` põe 12 profissionais, 4
 contratantes, 3 estabelecimentos, 7 vagas, 7 turnos, 6 avaliações, 1 bloqueio e 2
@@ -175,25 +255,31 @@ gatilho de RN07 usava `now()` direto e foi corrigido. Nenhuma RPC nova deve usar
 
 ## Os portões
 
-Medidos na máquina em 24/09 e 25/09, no branch das contas de demonstração já com a
-`main` fundida, com `db reset` antes:
+**Medidos em 28/09**, no branch `s0/migracoes-sem-colisao` já com o `main` fundido, com o
+segredo do agendador e `db reset` antes: **treze portões, treze verdes.**
 
 | Comando | O que garante | Medida |
 |---|---|---|
-| `supabase test db` | pgTAP | **671** asserções em 28 arquivos, em 1 a 3 s na máquina |
-| `./scripts/mutacao.sh` | cada regra morre sem teste | **84** cobertas, 0 sem cobertura |
-| `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | 58 asserções, até o perfil público |
-| `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | **15** conferências: a porta, o que ela recusa, os dados semeados, **o ciclo da presença inteiro** e o teto de tentativas |
+| `supabase test db` | pgTAP | **1010** asserções em **38** arquivos, em 2 a 3 s na máquina |
+| `./scripts/mutacao.sh` | cada regra morre sem teste | **90** cobertas, 0 sem cobertura, 0 não medidas · 294 s |
+| `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | verde até as recusas da presença e o perfil público |
+| `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | **14** conferências: a porta, o que ela recusa, os dados semeados, **o ciclo da presença inteiro** e o teto de tentativas |
 | `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
-| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | 0.2.14 → 0.2.15 |
-| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | na CI, com o secret: espelho 0.2.15 idêntico ao original. **Na máquina sai zero sem conferir nada**, porque não há `FRILA_DOCS_TOKEN` no ambiente local — o script avisa em voz alta, mas o placar fica verde |
+| `./scripts/corrida-cadastrar-estabelecimento.sh` | o mesmo dono com dois cadastros no ar | verde |
+| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | desde o #44 isenta RPC já declarada, e enxerga função com comentário entre `function` e o nome |
+| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | **verde**: *"Espelho em dia com FrilaApp/frila-docs"*, 0.2.18 nos dois lados. Desde 25/09 lê o `.env` e sai **2** quando não tem token, em vez de 0 |
 | `./scripts/lint-conhecido.sh` | `plpgsql_check` | sem achado novo |
 | `./scripts/relogio-do-produto.sh` | nenhuma função usa `now()` direto | só `privado.agora()` |
-| `./scripts/contrato-responde.sh` | a resposta de cada RPC casa com o schema | 22 corpos e 7 envelopes, 18 operações ainda sem implementação |
-| `./scripts/advisor-conhecido.sh` | advisor do Supabase | **não roda**: token vencido |
+| `./scripts/contrato-responde.sh` | a resposta de cada RPC casa com o schema | **24** corpos e 7 envelopes |
+| `./scripts/advisor-conhecido.sh` | advisor do Supabase | **não roda**: token de conta responde 401 |
 | `./scripts/migracoes-imutaveis.sh` | nenhuma migração aplicada foi editada | verde |
+| `./scripts/migracoes-sem-colisao.sh` | duas migrações não têm a mesma versão | as **46** versões distintas · **novo, no PR #37 aberto** — nasceu depois de a colisão matar um `db reset` de verdade |
 
-Todos rodam na CI menos o advisor, que exige token de conta.
+Todos rodam na CI menos o advisor, que exige token de conta. O `migracoes-sem-colisao.sh` só
+existe no branch do #37 até ele entrar.
+
+**Antes de rodar a bateria à mão, o segredo do agendador**, ou dois destes saem vermelhos por
+motivo que não é código. Ver a armadilha na seção *O que existe no banco*.
 
 **A regra que vale para qualquer portão novo:** um caminho que não seja *"medi e o
 resultado foi X"* tem que sair diferente de zero.
@@ -231,8 +317,22 @@ resultado foi X"* tem que sair diferente de zero.
   ser reaberto nem ter a base trocada. O #8 não se perdeu porque o #9 descendia dele; o
   #10 teve de virar o #15. Numa pilha, deletar só o último — ou retargetar os filhos
   para `main` antes.
+- **Dois branches podem escolher a mesma hora redonda, e a colisão mata o `db reset`.**
+  Medido em 25/09: `20260925230000_janela_da_demonstracao` entrou no `main` pelo #36, e o
+  #31 do João Paulo trazia `20260925230000_configuracao_do_app`. Fundidos, o reset aplica
+  os dois e registra um — `duplicate key value violates unique constraint
+  "schema_migrations_pkey"`, com o banco meio migrado. `supabase migration new` usa o
+  segundo corrente e nunca colide; quem nomeia à mão, e aqui é o comum porque o nome conta
+  o que a migração faz, escolhe hora redonda — e hora redonda é o que duas pessoas
+  escolhem igual. Portão novo: `./scripts/migracoes-sem-colisao.sh`.
 
 ## Divergências registradas
+
+> ⚠️ **Esta seção é de 25/09 e não foi reconferida em 28/09.** O `main` ganhou oito PRs nesses
+> três dias — motor de despacho, push, `excluir_conta`, retenção, índices — e cada um pode ter
+> fechado, criado ou mudado uma divergência daqui. O que está abaixo era verdade quando foi
+> medido; nenhuma linha foi remedida depois. Antes de citar qualquer uma como fato atual,
+> meça.
 
 Quatro colunas do esquema não estão na Modelagem de Banco. Todas nasceram de uma RPC, e
 quem precisa reconciliar é o documento:
@@ -333,20 +433,36 @@ E mais estas:
 
 ## Pendências fora do código
 
-1. **`supabase login`.** O `SUPABASE_ACCESS_TOKEN` do `.env` responde **401** na
-   Management API. Sem ele o advisor de segurança do `frila-dev` não é verificado por
-   ninguém. Depende de alguém presente: o comando abre o navegador. Em 24/09 o advisor
-   rodou pelo MCP do Supabase, que tem acesso à organização, mas o script continua sem token.
+1. **Um `SUPABASE_ACCESS_TOKEN` que responda.** O do `.env` (`sbp_8f8e…`) responde **401**
+   na Management API, remedido em 25/09 às 17h30. Sem ele: o advisor de segurança do
+   `frila-dev` não é verificado por ninguém, o `aplicar-remoto.sh` não roda, e a porta da
+   demonstração não sobe no `frila-dev` nem no `frila-prod`.
+
+   **E não precisa de `supabase login` interativo**, ao contrário do que as versões
+   anteriores deste arquivo diziam: a CLI aceita `SUPABASE_ACCESS_TOKEN` do ambiente, e o
+   `.env` já tem a variável. O que falta é o valor. Token novo em
+   https://supabase.com/dashboard/account/tokens, colado no `.env`, e daí
+   `./scripts/demonstracao-remoto.sh dev` faz os três passos e mede o resultado. Medido em
+   25/09: a CLI responde 401 e não "faça login", nos três casos — token do `.env`, token
+   falso e nenhum token —, o que é consistente com ela usar a variável; o que **não** foi
+   medido, por falta de token válido, é o caminho verde.
+
+   Em 24/09 o advisor rodou pelo MCP do Supabase, que tem acesso à organização. O MCP não
+   está na sessão de 25/09.
 2. ~~**PAT com leitura em `FrilaApp/frila-docs`.**~~ **Resolvido em 24/09.** O secret
    `FRILA_DOCS_TOKEN` existe no repositório e o portão passou a conferir o original de
    verdade: `./scripts/contrato-em-dia.sh` com o token respondeu *"Espelho em dia com
    FrilaApp/frila-docs"* sobre o contrato 0.2.11. Fine-grained, *Resource owner*
    `FrilaApp`, *Contents: Read-only*, validade até 23/09/2027.
-   **O que continua aberto:** sem token, `contrato-em-dia.sh` sai com **0** (linha 58),
-   e isso contraria a regra dos portões — caminho que não mediu tem de sair diferente de
-   zero. Hoje o secret existe e o ponto é teórico; quando o PAT vencer, em 23/09/2027, o
-   portão volta a ficar verde sem ter medido nada e ninguém vai saber. A correção é do
-   tamanho de uma linha e não entrou junto porque pertence a outro cartão.
+   ~~**O que continua aberto:** sem token, `contrato-em-dia.sh` sai com **0**.~~
+   **Resolvido em 25/09, e deixou de ser teórico no caminho.** O script passou a ler o
+   `.env` e a sair **2** quando não há token em lugar nenhum. Custou o seguinte: em 25/09 o
+   portão saiu 0 em quatro baterias seguidas, avisando que não conferiu o original, **e o
+   token estava no `.env` todo esse tempo** — os outros scripts do repositório leem o
+   `.env`; este não lia. Enquanto isso o espelho envelhecia atrás de uma 0.2.17 que já
+   existia no `frila-docs`, e o único portão que pega isso era justamente o que estava
+   passando. O ponto que era "quando o PAT vencer em 2027 ninguém vai saber" já tinha
+   acontecido, por outro caminho.
 3. **`git push` no `FrilaApp/Bancada`**, que exige Touch ID. Sem ele as notas diárias não
    saem e o site `bancada-buu.pages.dev` não republica.
 4. **Revisão da Júlia** na lista de termos bloqueados. Sem ela o `ggEzge6h` não fecha.
@@ -358,37 +474,47 @@ E mais estas:
 7. **Avisar o Cauê** que o projeto Supabase que ele criou em 22/09 virou o `frila-dev`, e
    que a mensagem da fila de despacho traz `vaga_id` e `publicada_em` — é o que o motor
    do Sprint 2 vai consumir.
-8. **Billing do Actions na organização `FrilaApp`.** É o que mantém a CI parada, e ninguém
-   deste repositório resolve: precisa de quem tem acesso a *Billing & plans* da
-   organização. Ver o bloco no topo deste arquivo.
+8. ~~**Billing do Actions na organização `FrilaApp`.**~~ **Resolvido** entre 25/09 e 27/09:
+   as execuções de 27/09 saem `success`. Não medi o que foi feito. Ver o bloco no topo.
 9. **O segredo da demonstração no `frila-dev` e no `frila-prod`**, e o `functions deploy` da
-   `entrar-demonstracao`. Os dois passam por `supabase secrets set`, que pede o login da
-   pendência 1. É o que falta para o critério 1 do `7gpPBgTH` valer *no `frila-dev`*, como o
-   cartão pede, e não só na máquina.
+   `entrar-demonstracao`. É o que falta para o critério 1 do `7gpPBgTH` valer *no
+   `frila-dev`*, como o cartão pede, e não só na máquina. **O trabalho já está escrito:**
+   `./scripts/demonstracao-remoto.sh dev` faz os segredos, o deploy e a medição por HTTP, e
+   recusa antes de escrever se o token não responde, se o código é o de exemplo, se ele tem
+   menos de 8 caracteres, ou se o alvo é produção sem `EU_SEI_QUE_E_PRODUCAO=1`. Depende só
+   da pendência 1.
+
+   O `--seco` foi medido em 25/09 e para no primeiro passo com a mensagem certa. O caminho
+   verde nunca rodou, por falta de token.
 
 ## Por onde continuar
 
-1. **A Revisão já foi varrida** em 25/09, e o que sobrou de Backend está bloqueado por
-   presença ou é de outra pessoa — ver a seção *O quadro*. O molde de fechamento está nos
-   comentários que o `6mdX80SC`, o `AvockvHx`, o `0uROtsRX`, o `RTmRTHbo` e o `ggEzge6h`
-   receberam: um item da checklist por asserção nomeada, com o arquivo; e medição por HTTP
-   quando o critério fala em status, porque o pgTAP alcança `sqlstate` e `code` e não o
-   status. Vale repetir o molde em cartão novo, e não reinventá-lo.
+**O passo imediato, e é de dois minutos:** `git push` do branch `s0/migracoes-sem-colisao` e
+o re-run da CI no **#37**. O `main` já está fundido no branch, sem conflito, e a bateria foi
+medida em 28/09. O que segurava o merge — o espelho atrasado — não existe mais.
+
+Depois disso, em ordem:
+
+1. **Varrer o quadro antes de escolher trabalho.** Ele mudou muito em três dias: seis cartões
+   de Sprint 2 e 3 entraram em Revisão, e o `NDx7TJ4d`, que era o único livre de Backend,
+   está com o João Paulo. Qualquer lista deste arquivo sobre "o que está livre" envelhece em
+   um dia — `./scripts/trello.sh lista revisao` e `lista andamento` são a fonte.
 2. `7gpPBgTH` — contas de demonstração. O que falta é **fora do código**: o segredo
-   `DEMONSTRACAO_EMAILS`/`DEMONSTRACAO_CODIGO` no `frila-dev` e no `frila-prod` e o
-   `functions deploy`, os dois por `supabase secrets set`, que pedem `supabase login` — e o
-   token do `.env` responde 401. O critério 1 da checklist diz "no frila-dev": até o segredo
-   entrar lá, ele está medido só na máquina.
-3. **Sprint 2, o despacho.** Mas não os cartões: varridos em 25/09, quatorze dos dezenove
-   cartões de Backend do Sprint 2 descem de `wM63y4qx` (notificações), que está com o João
-   Paulo no #32, e `7XS6MQGg` (motor de despacho) é do Cauê por escrito no corpo do #27.
-   Livre e desbloqueado sobrou `NDx7TJ4d` (turnos não verificados e taxa de comparecimento),
-   e dois dos cinco critérios dele dependem de uma decisão de produto que não existe
-   (`8zLfn0mt`) e do `pg_cron`, que entra com o motor.
-   A fila já recebe as duas mensagens que o motor vai consumir:
-   `{vaga_id, publicada_em}` na publicação e `{vaga_id, posicao_id, motivo: reabertura,
-   excluir_conta}` no cancelamento. `pg_cron` e `pg_net` entram com ele.
+   `DEMONSTRACAO_EMAILS`/`DEMONSTRACAO_CODIGO` no `frila-dev` e no `frila-prod`, e o
+   `functions deploy`. **Não precisa de `supabase login` interativo** — a CLI aceita
+   `SUPABASE_ACCESS_TOKEN` do ambiente e o `.env` já tem a variável; falta o valor, porque o
+   atual responde 401. Com um token novo colado no `.env`,
+   `./scripts/demonstracao-remoto.sh dev` faz os três passos e mede o resultado por HTTP.
+3. **Os três cartões meus travados por outra pessoa** — `RTmRTHbo` (a tela do iOS), `ggEzge6h`
+   (a revisão da lista pela Júlia) e o quarto critério do `7gpPBgTH`. Nenhum deles avança
+   aqui; todos têm o motivo escrito no cartão.
+4. **O molde de fechamento de cartão**, que vale repetir e não reinventar: um item da
+   checklist por asserção nomeada, com o arquivo; e medição por HTTP quando o critério fala em
+   status, porque o pgTAP alcança `sqlstate` e `code` e não o status. Está nos comentários do
+   `6mdX80SC`, `AvockvHx`, `0uROtsRX`, `RTmRTHbo`, `ggEzge6h` e `RNOfNVVU`.
 5. Toda RPC nova nasce com quatro coisas, e nenhuma é negociável: o filtro de texto nos
    campos livres, a recusa correspondente no `ciclo-completo.sh`, a linha no
    `openapi.yaml` com a versão subindo, e a asserção de mutação que morre quando a regra
    some. O portão do contrato cobra a terceira; as outras três dependem de quem escreve.
+6. **E antes de rodar a bateria à mão: o segredo do agendador.** Ver a armadilha na seção *O
+   que existe no banco*. Sem ele, dois portões saem vermelhos por motivo que não é código.

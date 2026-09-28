@@ -262,13 +262,13 @@ select is(
 
 select is(
   (select t.verificacao::text from public.turno t, ids where t.id = ids.turno_sem_prova),
-  'pendente',
-  'turno sem check-in mantém o comportamento pendente até a decisão 8zLfn0mt');
+  'nao_verificado',
+  'turno sem check-in fica nao_verificado por no-show (decisão 8zLfn0mt)');
 
 select is(
   (select p.estado::text from public.posicao p, ids where p.id = ids.posicao_sem_prova),
-  'cumprida',
-  'posição confirmada é concluída sem decidir o destino do turno sem check-in');
+  'cancelada',
+  'posição confirmada sem check-in é cancelada por no-show (decisão 8zLfn0mt)');
 
 select is(
   (select count(*)::int from public.notificacao n, ids
