@@ -18,6 +18,7 @@
 --      véspera até depois do fim do turno, e é isso que prova que os prazos existem.
 
 begin;
+set local frila.agendador_secret = 'segredo-de-teste';
 select plan(20);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb

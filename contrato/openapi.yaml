@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.15
+  version: 0.2.18
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -62,7 +62,7 @@ info:
 
     | HTTP | `code` | Quando |
     |---|---|---|
-    | 401 | `PGRST301` e afins | Token ausente, expirado ou inválido (vem do PostgREST) |
+    | 401 | `nao_autenticado`, `PGRST301` e afins | Token ausente, expirado, inválido ou de conta já encerrada/anonimizada (RF25) |
     | 403 | `sem_permissao` | Autenticado, mas sem papel para a ação (RF21). `details`: `conta_suspensa` quando a conta está suspensa e a ação exige conta ativa (RN13) |
     | 403 | `contato_expirado` | Contato pedido depois de 7 dias do fim do turno (RN10) |
     | 404 | `nao_encontrado` | O recurso não existe ou não é visível para quem pede (inclui bloqueio, RF26) |
@@ -92,6 +92,70 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.18, de 26/09/2026.** Exclusão de conta e proteção de escrita para contas
+    encerradas (RF25, RN15). A exclusão de conta agora conta com a Edge Function
+    `excluir-conta` e a rotina transacional no banco. Para proteger o estado das vagas e a
+    reputação das partes, qualquer token emitido antes da exclusão passa a ser recusado com
+    `401 nao_autenticado` em todas as operações de escrita. O que a implementação fixou:
+
+    - **Token de conta encerrada recebe `401 nao_autenticado`.** O backend não cria código
+      novo de 403 (`conta_encerrada`): uma conta cujos dados foram anonimizados e cuja
+      credencial em `auth.users` foi apagada é tratada como não autenticada. Todo cliente que
+      receber `401` deve encerrar a sessão local e conduzir a pessoa ao início.
+    - **Isenção de falta exclusiva da exclusão.** Na exclusão de profissional com turnos
+      futuros confirmados, a posição é cancelada e a vaga reaberta sem falta (RN12). A
+      isenção é interna da transação de exclusão: chamar `cancelar_posicao` com o texto
+      "exclusão de conta" a menos de 24 h continua marcando falta e recalculando a taxa de
+      comparecimento normalmente.
+    - **Contratante único membro cancela turnos futuros sem falta.** Vagas abertas são
+      canceladas, candidaturas pendentes são marcadas como `retirada` e os profissionais
+      são avisados por notificação com `reaberta: false`. Vaga preenchida com turno em
+      andamento vai para `cancelada`, mas o turno segue até o fim para fins de histórico e
+      auditoria.
+    - **Idempotência da exclusão.** Chamar a exclusão em conta já anonimizada ou cuja linha
+      nem chegou a ser gravada em `public.usuario` devolve `202` com `turnos_cancelados: 0`
+      e garante a remoção em `auth.users`, permitindo retentativa segura pós-502.
+    - **Administrador único com outros membros recebe `409 administrador_unico`.** O
+      estabelecimento não pode ficar sem liderança; a titularidade precisa ser transferida
+      antes de excluir a conta.
+
+    ---
+
+    **Versão 0.2.17, de 25/09/2026.** O aviso descrito na 0.2.14 passou a existir no
+    backend: `candidatar`, `fazer_checkin`, `cancelar_posicao` e `cancelar_vaga` enfileiram
+    as notificações daquela versão. Nenhuma assinatura, campo de resposta ou código de erro
+    muda. O que a implementação fixou, e aquela versão não dizia:
+
+    - **Reenviar não avisa de novo.** A chamada repetida de `candidatar` ou de
+      `fazer_checkin`, que devolve o registro já gravado, não enfileira segunda notificação.
+    - **Enfileirar ainda não é enviar.** A linha nasce pendente; o push sai com o cartão do
+      envio pelo FCM, que ainda não está no ar. Até lá, o app não recebe estes avisos por
+      push, e a tela não deve depender deles para mostrar confirmação, check-in ou
+      cancelamento: o estado continua saindo de `meus_turnos` e do painel.
+    - **O membro do estabelecimento lê as próprias.** A leitura de `notificacao` é pela conta
+      destinatária (`usuario_id`), então o contratante passa a ver os avisos da casa que
+      recebeu, e só eles.
+
+    ---
+
+    **Versão 0.2.16, de 25/09/2026.** `configuracao_do_app` foi implementada. O app iOS
+    já a chamava, e sem ela a checagem de versão mínima falhava aberta: ninguém era
+    bloqueado, e ninguém percebia. O que a implementação fixou, e este documento não dizia:
+
+    - **Plataforma sem configuração é `404 nao_encontrado`, com `details: plataforma`.** Hoje
+      só `ios` tem loja e versão. Android e web ainda não publicaram, e gravar uma URL de loja
+      inventada em dado de produção seria pior do que responder que não há configuração. O
+      `422` deixa de ser "a única recusa possível".
+    - **Os dois `422` têm código próprio:** `campo_obrigatorio` para `plataforma` ausente ou em
+      branco, `campo_invalido` para valor fora do enum. Os dois com `details: plataforma`.
+    - **Versão é só números e pontos, até quatro partes de até seis dígitos** (`1`, `1.2`,
+      `1.2.10`, `1.2.10.3`), e `versao_recomendada` nunca fica abaixo de `versao_minima`. O
+      banco recusa o resto, então o cliente pode confiar no formato ao comparar.
+    - **`POST` responde igual ao `GET`**, como toda RPC do PostgREST, com `{"plataforma": ...}`
+      no corpo. O app iOS usa `POST`.
+
+    ---
 
     **Versão 0.2.15, de 25/09/2026.** `meus_estabelecimentos` foi implementada. Ela está
     descrita aqui desde a 0.2.1 e **nunca tinha sido escrita** — o cartão de backend que
@@ -649,11 +713,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ConfiguracaoDoApp'
+        '404':
+          description: |
+            `nao_encontrado` com `details: plataforma`: a plataforma existe no enum, mas ainda não
+            tem configuração (hoje, só `ios` tem). Bloquear quem não tem loja para onde ir não
+            ajudaria ninguém.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
         '422':
           description: |
-            `plataforma` ausente ou fora do enum. É a única recusa possível aqui — não há
-            autenticação a falhar, porque esta operação existe justamente para o app que ainda
-            não conseguiu entrar.
+            `campo_obrigatorio` quando `plataforma` está ausente ou em branco; `campo_invalido`
+            quando está fora do enum. Os dois com `details: plataforma`. Não há autenticação a
+            falhar, porque esta operação existe justamente para o app que ainda não conseguiu entrar.
           content:
             application/json:
               schema:
@@ -2340,14 +2413,15 @@ paths:
     post:
       tags: [Exportação e conta]
       operationId: excluirConta
-      summary: Excluir a conta de dentro do app
+      summary: Excluir a conta e anonimizar os dados pessoais (RF25, RN15)
       description: |
-        Obrigatória no MVP, nos dois perfis (App Store 5.1.1(v)). O perfil sai do despacho e da busca na
-        hora e as sessões são encerradas; os dados pessoais são apagados em até 15 dias, e os turnos já
-        realizados são anonimizados, preservando o histórico da contraparte. Turnos confirmados no
-        futuro são cancelados com o motivo "exclusão de conta". O único administrador de um
-        estabelecimento com outros usuários precisa transferir a administração antes (`409
-        administrador_unico`). Roda como Edge Function porque apaga a credencial no Supabase Auth.
+        Exclusão definitiva de conta exigida pelas diretrizes de privacidade das lojas (App Store 5.1.1(v)).
+        Anonimiza o registro em `usuario`, cancela turnos futuros sem gerar falta para o profissional,
+        notifica as contrapartes, remove registros de aparelhos e apaga a credencial em `auth.users`.
+        Idempotente: reenviar em conta já anonimizada ou sem registro no banco devolve 202 com
+        `turnos_cancelados: 0`. O único administrador de um estabelecimento com outros usuários precisa
+        transferir a administração antes (`409 administrador_unico`). Roda como Edge Function porque
+        apaga a credencial no Supabase Auth.
       x-requisitos: [RF25, RNF08, UC16]
       requestBody:
         required: true
@@ -2359,18 +2433,32 @@ paths:
               properties:
                 confirmar:
                   type: boolean
-                  const: true
+                  enum: [true]
+                  description: Confirmação explícita obrigatória.
       responses:
         '202':
-          description: Exclusão em andamento.
+          description: Exclusão aceita e processada.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ExclusaoDeConta'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '405':
+          description: Método não permitido (apenas POST).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              example:
+                code: metodo_nao_permitido
+                message: metodo_nao_permitido
+                details: null
+                hint: null
         '409':
           $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
 components:
 
@@ -2396,16 +2484,26 @@ components:
 
   responses:
     NaoAutenticado:
-      description: Token ausente, expirado ou inválido.
+      description: Token ausente, expirado, inválido ou pertencente a conta encerrada/anonimizada (RF25).
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Erro'
-          example:
-            code: PGRST301
-            message: JWT expired
-            details: null
-            hint: null
+          examples:
+            jwt_invalido:
+              summary: Token ausente ou expirado na camada PostgREST
+              value:
+                code: PGRST301
+                message: JWT expired
+                details: null
+                hint: null
+            conta_encerrada:
+              summary: Token de conta cuja exclusão já foi processada
+              value:
+                code: nao_autenticado
+                message: nao_autenticado
+                details: null
+                hint: null
     SemPermissao:
       description: Autenticado, mas sem papel para a ação, ou prazo de acesso vencido.
       content:
@@ -2453,6 +2551,12 @@ components:
               value:
                 code: vaga_encerrada
                 message: vaga_encerrada
+                details: null
+                hint: null
+            administrador_unico:
+              value:
+                code: administrador_unico
+                message: administrador_unico
                 details: null
                 hint: null
     RegraRecusou:
@@ -3354,11 +3458,13 @@ components:
           $ref: '#/components/schemas/Plataforma'
         versao_minima:
           type: string
+          pattern: '^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$'
           description: Abaixo desta, o app bloqueia e leva à loja. Nenhuma tela do produto abre.
           example: "1.0.0"
         versao_recomendada:
           type: string
-          description: Aviso dispensável, uma vez por versão.
+          pattern: '^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$'
+          description: Aviso dispensável, uma vez por versão. Nunca abaixo de `versao_minima`.
           example: "1.1.0"
         url_da_loja:
           type: string
@@ -3455,7 +3561,9 @@ components:
         dados_apagados_ate:
           type: string
           format: date
-          description: Até 15 dias depois do pedido (RF25).
+          example: '2026-10-11'
+          description: Até 15 dias depois do pedido (RF25). Limite para purga dos backups/retenção LGPD.
         turnos_cancelados:
           type: integer
           minimum: 0
+          example: 2

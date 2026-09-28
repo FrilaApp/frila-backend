@@ -45,6 +45,25 @@ Elas não encostam na população real. `usuario.demonstracao` separa as duas em
 leitura de `vaga`** — antes disso quem lesse `rest/v1/vaga` direto passava ao lado do
 filtro, e isso foi medido, não deduzido.
 
+**A janela do registro de presença não se aplica a elas**, e esta é a segunda exceção do
+arquivo. O turno semeado começa dois dias depois de o seed rodar, e `privado.exigir_janela`
+aceita registro de 60 minutos antes do início até o fim previsto: sete horas que abrem 47
+horas depois do seed e depois fecham para sempre. Em produção o seed entra uma vez, e a
+revisão não tem data marcada — medido em 25/09, `fazer_checkin` respondia
+`422 fora_da_janela` para a conta de revisão, o que deixaria check-in, confirmação manual e
+check-out inalcançáveis. A migração `20260925230000_janela_da_demonstracao` faz
+`privado.exigir_janela` devolver cedo quando `privado.conta_de_demonstracao()`.
+
+O que ela **não** afrouxa: `registrado_em` nulo continua `campo_obrigatorio`, registro no
+futuro continua `registro_no_futuro`, e o check-in sem distância continua nascendo `manual` e
+`pendente`, precisando do toque da casa para virar `verificado`. O revisor percorre o RF20,
+e não um atalho. O par de controle está em `supabase/tests/230_janela_da_demonstracao.sql`:
+toda asserção da conta de revisão tem a gêmea da conta real no mesmo relógio, e é ela que
+morre se alguém trocar a condição por `true`.
+
+As notas que vão no campo *App Review Information* do App Store Connect estão em
+[`docs/notas-da-revisao.md`](../docs/notas-da-revisao.md), em português e inglês.
+
 A entrada é a Edge Function `entrar-demonstracao`, que aceita só os endereços declarados
 com um código fixo em segredo. Os segredos não moram no repositório:
 
@@ -53,9 +72,26 @@ cp supabase/functions/.env.exemplo supabase/functions/.env.local   # local
 supabase functions serve --env-file supabase/functions/.env.local
 ./scripts/demonstracao.sh                                          # o portão
 
-supabase secrets set DEMONSTRACAO_EMAILS=… DEMONSTRACAO_CODIGO=…   # frila-dev e prod
-supabase functions deploy entrar-demonstracao
+./scripts/demonstracao-remoto.sh dev --seco                        # o que faria
+./scripts/demonstracao-remoto.sh dev                               # segredos, deploy e a medida
 ```
+
+O `demonstracao-remoto.sh` faz os três passos do remoto na ordem e **mede o resultado**:
+`secrets set`, `functions deploy`, e o `demonstracao.sh` apontado ao projeto. O terceiro é
+o motivo de ele existir — segredo gravado e função no ar não provam que o revisor entra. Na
+primeira vez que isto foi montado à mão, a função subiu e respondeu 404 em tudo, porque os
+segredos foram para o processo da CLI e não para o worker.
+
+Ele recusa antes de escrever: token que não responde 200 na Management API, código de
+exemplo (`troque-este-codigo`, `codigo-de-ci-sem-valor`, que estão em arquivo versionado),
+código com menos de 8 caracteres, e `prod` sem `EU_SEI_QUE_E_PRODUCAO=1` — porque o
+`demonstracao.sh` **grava**: percorre o ciclo da presença no turno semeado e gasta o teto de
+tentativas.
+
+**Não precisa de `supabase login` interativo.** A CLI aceita `SUPABASE_ACCESS_TOKEN` do
+ambiente, e o `.env` já tem a variável; o que ela precisa é de um token válido, de
+https://supabase.com/dashboard/account/tokens. Em 25/09 o token do `.env` respondia **401**,
+e é a primeira coisa que o script mede.
 
 **`cenarios.sql` deixa as colunas de token do GoTrue em NULL**, e com NULL o
 `POST /auth/v1/admin/generate_link` responde `500 Database error finding user` — o GoTrue
