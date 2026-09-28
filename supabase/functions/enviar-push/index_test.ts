@@ -14,6 +14,7 @@ import {
   titulosECorposPorTipo,
   filtrarDataPayloadFcm,
   calcularProximaTentativa,
+  formatarHorario,
 } from "./index.ts";
 import { FcmServiceAccount, sendFcmMessage, getAccessToken } from "./fcm.ts";
 
@@ -889,4 +890,163 @@ Deno.test("Ciclo do token: depois de sair da conta, nenhuma notificação sai pa
   assertEquals(relatorio.status, "falhou");
   assertEquals(relatorio.detalhe, "sem_dispositivo");
   assertEquals(enviados, [], "Aparelho que saiu da conta não recebe push");
+});
+
+// ── Alerta de vaga vazia na janela crítica (cartão vUR0Ltkb) ──────────────────
+//
+// Texto da planilha de notificações, push 06, Op. A aprovada em 28/09: a função e o
+// horário são lidos no banco na hora do envio. Sem as duas variáveis, sai a Op. B da
+// mesma planilha — nunca um texto inventado aqui.
+
+Deno.test("vaga_vazia: Op. A com função e horário interpolados", () => {
+  const { title, body } = titulosECorposPorTipo("vaga_vazia", {}, {
+    funcao: "Garçom",
+    horario: "18:00",
+  });
+  assertEquals(title, "Vaga ainda em aberto");
+  assertEquals(body, "A posição de Garçom das 18:00 ainda não foi preenchida.");
+  assert(title.length <= 32, "título cabe na tela bloqueada do iPhone SE");
+  assert(body.length <= 85, "corpo cabe na tela bloqueada do iPhone SE");
+});
+
+Deno.test("vaga_vazia: sem as variáveis, cai na Op. B da planilha", () => {
+  const { title, body } = titulosECorposPorTipo("vaga_vazia", {});
+  assertEquals(title, "Vaga ainda em aberto");
+  assertEquals(body, "Sua vaga ainda possui posição em aberto próxima ao horário.");
+});
+
+Deno.test("formatarHorario: horário de Brasília, 24 h", () => {
+  assertEquals(formatarHorario("2026-10-03T21:00:00+00:00"), "18:00");
+  assertEquals(formatarHorario("2026-10-03T22:30:00Z"), "19:30");
+  assertEquals(formatarHorario("não é data"), undefined);
+});
+
+Deno.test("vaga_vazia: a enviar-push lê função e horário da posição e manda a Op. A", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const POSICAO = "c3400000-0000-4000-8000-000000000041";
+  const VAGA = "c3400000-0000-4000-8000-000000000031";
+  const enviado: { mensagem?: { notification: { title: string; body: string }; data: Record<string, string> } } = {};
+  let consultaPosicao = "";
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+
+    if (url === "http://mock-oauth/token") {
+      return Promise.resolve(new Response(
+        JSON.stringify({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 }),
+        { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(new Response(JSON.stringify([{
+        id: "c3400000-0000-4000-8000-0000000000a1",
+        usuario_id: "c3400000-0000-4000-8000-000000000001",
+        tipo: "vaga_vazia",
+        referencia_id: POSICAO,
+        payload: { tipo: "vaga_vazia", vaga_id: VAGA, posicao_id: POSICAO },
+        tentativas: 0,
+        estado_entrega: "pendente",
+        proxima_tentativa_em: null,
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/rpc/notificacao_expirada")) {
+      return Promise.resolve(new Response("false", { status: 200 }));
+    }
+    if (url.includes("/rest/v1/posicao?")) {
+      consultaPosicao = url;
+      return Promise.resolve(new Response(JSON.stringify([{
+        inicio_em: "2026-10-03T21:00:00+00:00",
+        vaga: { funcao: { nome: "Garçom" } },
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(new Response(
+        JSON.stringify([{ id: "disp-1", token_fcm: "fcm_token_casa", plataforma: "ios" }]),
+        { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/messages:send")) {
+      enviado.mensagem = JSON.parse(init?.body as string).message;
+      return Promise.resolve(new Response(
+        JSON.stringify({ name: "projects/frila-test-project/messages/msg_vv" }),
+        { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/rpc/gravar_aceite_push")) {
+      return Promise.resolve(new Response("null", { status: 200 }));
+    }
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+
+  const res = await processarEnvioPush(
+    new Request("http://localhost/functions/v1/enviar-push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+      body: JSON.stringify({ notificacao_id: "c3400000-0000-4000-8000-0000000000a1" }),
+    }),
+    { serviceAccount: sa, fetchFn: mockFetch, fcmApiUrl: "http://mock-fcm/messages:send" },
+  );
+
+  assertEquals(res.status, 200);
+  assertMatch(consultaPosicao, new RegExp(`id=eq\\.${POSICAO}`));
+  assert(enviado.mensagem !== undefined, "o FCM foi chamado");
+  assertEquals(enviado.mensagem!.notification.title, "Vaga ainda em aberto");
+  assertEquals(enviado.mensagem!.notification.body,
+    "A posição de Garçom das 18:00 ainda não foi preenchida.");
+  // O destino do toque: Minhas vagas com a vaga em alerta. Só ids (RN15).
+  assertEquals(enviado.mensagem!.data, { tipo: "vaga_vazia", vaga_id: VAGA, posicao_id: POSICAO });
+});
+
+Deno.test("vaga_vazia: se a leitura da posição falha, o push sai com a Op. B", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const enviado: { mensagem?: { notification: { title: string; body: string }; data: Record<string, string> } } = {};
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    if (url === "http://mock-oauth/token") {
+      return Promise.resolve(new Response(
+        JSON.stringify({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 }),
+        { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(new Response(JSON.stringify([{
+        id: "c3400000-0000-4000-8000-0000000000a2",
+        usuario_id: "c3400000-0000-4000-8000-000000000001",
+        tipo: "vaga_vazia",
+        referencia_id: "c3400000-0000-4000-8000-000000000041",
+        payload: { vaga_id: "c3400000-0000-4000-8000-000000000031",
+                   posicao_id: "c3400000-0000-4000-8000-000000000041" },
+        tentativas: 0, estado_entrega: "pendente", proxima_tentativa_em: null,
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/rpc/notificacao_expirada")) {
+      return Promise.resolve(new Response("false", { status: 200 }));
+    }
+    if (url.includes("/rest/v1/posicao?")) {
+      return Promise.resolve(new Response("erro", { status: 500 }));
+    }
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(new Response(
+        JSON.stringify([{ id: "disp-1", token_fcm: "fcm_token_casa", plataforma: "ios" }]),
+        { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/messages:send")) {
+      enviado.mensagem = JSON.parse(init?.body as string).message;
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }
+    if (url.includes("/rest/v1/rpc/gravar_aceite_push")) {
+      return Promise.resolve(new Response("null", { status: 200 }));
+    }
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+
+  const res = await processarEnvioPush(
+    new Request("http://localhost/functions/v1/enviar-push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+      body: JSON.stringify({ notificacao_id: "c3400000-0000-4000-8000-0000000000a2" }),
+    }),
+    { serviceAccount: sa, fetchFn: mockFetch, fcmApiUrl: "http://mock-fcm/messages:send" },
+  );
+
+  assertEquals(res.status, 200);
+  assertEquals(enviado.mensagem!.notification.body,
+    "Sua vaga ainda possui posição em aberto próxima ao horário.");
 });
