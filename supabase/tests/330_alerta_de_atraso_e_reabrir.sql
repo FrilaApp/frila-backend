@@ -133,10 +133,10 @@ begin
        from public.posicao x where x.id = posicao), true);
 end $$;
 
-create function pg_temp.avisos(tipo text, conta uuid, turno uuid) returns int
+create function pg_temp.avisos(p_tipo text, p_conta uuid, p_turno uuid) returns int
 language sql as $$
   select count(*)::int from public.notificacao n
-   where n.tipo::text = tipo and n.usuario_id = conta and n.referencia_id = turno
+   where n.tipo::text = p_tipo and n.usuario_id = p_conta and n.referencia_id = p_turno
 $$;
 
 create function pg_temp.na_lista(conta uuid, vaga uuid) returns jsonb
