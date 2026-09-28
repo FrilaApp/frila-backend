@@ -9,13 +9,13 @@
 -- 5. Turno cancelado antes do horário não dispara lembrete.
 -- 6. Lembrete de 3 h é enviado na janela correta (entre 3 h e o início).
 -- 7. Textos da Opção A homologada (proposta-textos.md, pushes 09–12):
---    - Local = estabelecimento + região (ex.: 'Bar Beirute (Asa Sul)')
+--    - Local = apenas o nome do estabelecimento ({estabelecimento}) per RN10 e aviso do orquestrador
 --    - Nunca telefone nem endereço com número (RN10)
 --    - Tamanho seguro para iPhone SE (título <= 32, corpo <= 85)
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(30);
+select plan(34);
 
 insert into privado.ambiente (eh_teste) values (true);
 
@@ -113,6 +113,18 @@ select is(
   true,
   'service_role pode executar privado.obter_conteudo_push_lembrete');
 
+select is(
+  (select count(*)::int from cron.job
+    where jobname = 'enviar_lembretes_turno'
+      and command = 'select privado.enviar_lembretes_turno()'),
+  1,
+  'Job enviar_lembretes_turno está agendado no pg_cron');
+
+select is(
+  (select schedule from cron.job where jobname = 'enviar_lembretes_turno'),
+  '*/5 * * * *',
+  'Job enviar_lembretes_turno roda a cada 5 minutos no pg_cron');
+
 -- ── 2. Critério 1: Turno criado para daqui a 25 h recebe lembrete de 24 h no minuto certo ───
 
 -- T0: 2026-10-10 10:00:00-03. Vaga para 25 h no futuro: 2026-10-11 11:00:00-03.
@@ -170,6 +182,14 @@ select is(
       and usuario_id in ((select contratante_user from ids), (select contratante_socio from ids))),
   2,
   'Critério 1: exatamente às 24 h antes, todos os membros do contratante recebem o lembrete de 24 h');
+
+select is(
+  (select payload->>'estabelecimento_id' from public.notificacao
+    where tipo = 'lembrete_24h'
+      and usuario_id = (select contratante_user from ids)
+    limit 1),
+  (select estabelecimento::text from ids),
+  'Notificação do contratante carrega estabelecimento_id no payload para uso no fallback');
 
 -- ── 3. Critério 2: Reiniciar o job não duplica; atrasados saem uma vez ao voltar ────────
 
@@ -237,6 +257,13 @@ select is(
       and profissional_id is not null),
   0,
   'Critério 3: notificações de lembrete têm profissional_id nulo por CHECK e não entram no índice de teto da RN23');
+
+select is(
+  (select count(*)::int from public.notificacao
+    where profissional_id = (select profissional from ids)
+      and tipo in ('vaga', 'vagas_agrupadas')),
+  0,
+  'Critério 3: o envio de lembretes não altera o contador de vagas recebidas para o teto da RN23');
 
 -- ── 5. Critério 4: Turno confirmado com menos de 3 h não recebe lembrete atrasado ───
 
@@ -372,7 +399,7 @@ select is(
 
 select is(
   (select privado.obter_conteudo_push_lembrete((select turno_id from turno_25h), (select prof_user from ids), 'lembrete_24h')->>'body'),
-  'garçom em Bar Beirute amanhã às 11:00.',
+  'Garçom em Bar Beirute amanhã às 11:00.',
   'Push 09: corpo do lembrete 24 h do profissional interpola função, local (apenas estabelecimento) e horário');
 
 -- Push 10: Lembrete 24 h Contratante
@@ -394,7 +421,7 @@ select is(
 
 select is(
   (select privado.obter_conteudo_push_lembrete((select turno_id from turno_25h), (select prof_user from ids), 'lembrete_3h')->>'body'),
-  'garçom em Bar Beirute às 11:00. Planeje seu trajeto.',
+  'Garçom em Bar Beirute às 11:00. Planeje seu trajeto.',
   'Push 11: corpo do lembrete 3 h do profissional interpola função, local (apenas estabelecimento) e horário');
 
 -- Push 12: Lembrete 3 h Contratante

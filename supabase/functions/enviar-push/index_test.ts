@@ -797,7 +797,7 @@ Deno.test("Lembretes 24h e 3h: interpolação Opção A homologada (k5R4tzjC)", 
     if (url.includes("/rpc/obter_conteudo_push_lembrete")) {
       return Promise.resolve(new Response(JSON.stringify({
         title: "Lembrete de turno amanhã",
-        body: "garçom em Bar Beirute amanhã às 11:00.",
+        body: "Garçom em Bar Beirute amanhã às 11:00.",
       }), { status: 200 }));
     }
     if (url.includes("/rpc/gravar_aceite_push")) {
@@ -832,7 +832,107 @@ Deno.test("Lembretes 24h e 3h: interpolação Opção A homologada (k5R4tzjC)", 
     throw new Error("fcmEnviado não deveria ser nulo");
   }
   assertEquals(fcmEnviado.message.notification.title, "Lembrete de turno amanhã");
-  assertEquals(fcmEnviado.message.notification.body, "garçom em Bar Beirute amanhã às 11:00.");
+  assertEquals(fcmEnviado.message.notification.body, "Garçom em Bar Beirute amanhã às 11:00.");
+});
+
+Deno.test("Lembretes 24h e 3h: caminho de reserva (Opção B) para profissional e contratante", () => {
+  // Profissional: usa textos direcionados à pessoa do profissional (Opção B da proposta-textos.md)
+  const p24 = titulosECorposPorTipo("lembrete_24h", { turno_id: "f4000000-0000-4000-8000-000000000001" });
+  assertEquals(p24.title, "Lembrete de turno amanhã");
+  assertEquals(p24.body, "Você tem um turno confirmado para amanhã. Confira os detalhes.");
+
+  const p3 = titulosECorposPorTipo("lembrete_3h", { turno_id: "f4000000-0000-4000-8000-000000000001" });
+  assertEquals(p3.title, "Seu turno começa em 3 horas");
+  assertEquals(p3.body, "Seu turno começa em 3 horas. Toque para ver endereço e contato.");
+
+  // Contratante: usa textos direcionados à casa/painel (Opção B da proposta-textos.md), sem dizer "Seu turno"
+  const c24 = titulosECorposPorTipo("lembrete_24h", {
+    turno_id: "f4000000-0000-4000-8000-000000000001",
+    estabelecimento_id: "e4000000-0000-4000-8000-000000000001",
+  });
+  assertEquals(c24.title, "Turno agendado para amanhã");
+  assertEquals(c24.body, "Você tem turno confirmado para amanhã. Confira no painel.");
+
+  const c3 = titulosECorposPorTipo("lembrete_3h", {
+    turno_id: "f4000000-0000-4000-8000-000000000001",
+    estabelecimento_id: "e4000000-0000-4000-8000-000000000001",
+  });
+  assertEquals(c3.title, "Turno em 3 horas");
+  assertEquals(c3.body, "Turno confirmado começa em 3 horas. Acompanhe pelo app.");
+});
+
+Deno.test("Lembretes 24h e 3h: envio com fallback para contratante usa textos da casa (Opção B)", async () => {
+  const sa = await gerarContaDeServicoTeste();
+
+  const notificacaoLembreteContratante = {
+    id: "e4000000-0000-4000-8000-000000000002",
+    usuario_id: "a3000000-0000-4000-8000-000000000002",
+    tipo: "lembrete_3h",
+    referencia_id: "f4000000-0000-4000-8000-000000000001",
+    payload: {
+      turno_id: "f4000000-0000-4000-8000-000000000001",
+      estabelecimento_id: "e4000000-0000-4000-8000-000000000001",
+    },
+    tentativas: 0,
+    estado_entrega: "pendente",
+  };
+
+  // deno-lint-ignore no-explicit-any
+  let fcmEnviado: any = null;
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+
+    if (url === "http://mock-oauth/token") {
+      return Promise.resolve(new Response(JSON.stringify({ access_token: "token-123" }), { status: 200 }));
+    }
+    if (url.includes("/rest/v1/notificacao")) {
+      return Promise.resolve(new Response(JSON.stringify([notificacaoLembreteContratante]), { status: 200 }));
+    }
+    if (url.includes("/rest/v1/dispositivo")) {
+      return Promise.resolve(new Response(JSON.stringify([{ id: "disp-2", token_fcm: "fcm-tok-2", plataforma: "ios" }]), { status: 200 }));
+    }
+    if (url.includes("/rpc/notificacao_expirada")) {
+      return Promise.resolve(new Response("false", { status: 200 }));
+    }
+    // Simula falha da RPC privada (404/500), ativando o fallback
+    if (url.includes("/rpc/obter_conteudo_push_lembrete")) {
+      return Promise.resolve(new Response(JSON.stringify({ error: "not_found" }), { status: 404 }));
+    }
+    if (url.includes("/rpc/gravar_aceite_push")) {
+      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    }
+    if (url.includes("/messages:send")) {
+      fcmEnviado = JSON.parse(init?.body as string);
+      return Promise.resolve(new Response(JSON.stringify({ name: "msg-456" }), { status: 200 }));
+    }
+
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: {
+      "x-agendador-secret": SEGREDO_TESTE,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({}),
+  });
+
+  const res = await processarEnvioPush(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+  });
+
+  assertEquals(res.status, 200);
+  if (!fcmEnviado) {
+    throw new Error("fcmEnviado não deveria ser nulo");
+  }
+  // Garante que contratante recebe "Turno em 3 horas" e NÃO "Seu turno começa em 3 horas"
+  assertEquals(fcmEnviado.message.notification.title, "Turno em 3 horas");
+  assertEquals(fcmEnviado.message.notification.body, "Turno confirmado começa em 3 horas. Acompanhe pelo app.");
 });
 
 // ── Ciclo de vida do token (cartão wpNabtCO) ──────────────────────────────────

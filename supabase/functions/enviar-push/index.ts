@@ -122,8 +122,14 @@ export function calcularProximaTentativa(
 
 export function titulosECorposPorTipo(
   tipo: string,
-  _payload: Record<string, unknown> = {},
+  payload: Record<string, unknown> = {},
 ): { title: string; body: string } {
+  const ehContratante = Boolean(
+    payload?.estabelecimento_id ||
+      payload?.destinatario === "contratante" ||
+      payload?.papel === "contratante",
+  );
+
   switch (tipo) {
     case "vaga":
       return {
@@ -141,14 +147,26 @@ export function titulosECorposPorTipo(
         body: "O seu turno foi confirmado. Acesse os detalhes no app.",
       };
     case "lembrete_24h":
+      if (ehContratante) {
+        return {
+          title: "Turno agendado para amanhã",
+          body: "Você tem turno confirmado para amanhã. Confira no painel.",
+        };
+      }
       return {
         title: "Lembrete de turno amanhã",
-        body: "Você tem um turno agendado para amanhã.",
+        body: "Você tem um turno confirmado para amanhã. Confira os detalhes.",
       };
     case "lembrete_3h":
+      if (ehContratante) {
+        return {
+          title: "Turno em 3 horas",
+          body: "Turno confirmado começa em 3 horas. Acompanhe pelo app.",
+        };
+      }
       return {
         title: "Seu turno começa em 3 horas",
-        body: "Seu turno começa em 3 horas. Planeje seu trajeto.",
+        body: "Seu turno começa em 3 horas. Toque para ver endereço e contato.",
       };
     case "inicio_sem_checkin":
       return {

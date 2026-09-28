@@ -1,9 +1,6 @@
 -- S2 · Backend · Lembretes 24 h e 3 h antes do turno (k5R4tzjC)
 --
 -- Job a cada 5 minutos que envia os lembretes de 24 h e 3 h antes do turno.
--- Configuração do cron de produção (documentada sem aplicação na migração):
--- select cron.schedule('enviar-lembretes-turno', '*/5 * * * *',
---                      $$select privado.enviar_lembretes_turno();$$);
 
 -- ── 1. privado.obter_conteudo_push_lembrete ───────────────────────────────────
 -- Monta o conteúdo do push interpolado com Opção A homologada (proposta-textos.md).
@@ -46,7 +43,7 @@ begin
   end if;
 
   v_eh_prof := (privado.usuario_do_profissional(v_turno.profissional_id) = p_usuario_id);
-  v_funcao  := v_turno.funcao_nome;
+  v_funcao  := concat(upper(substring(v_turno.funcao_nome from 1 for 1)), substring(v_turno.funcao_nome from 2));
   v_estab   := v_turno.estab_nome;
   v_horario := to_char(v_turno.inicio_em at time zone 'America/Sao_Paulo', 'HH24:MI');
 
@@ -64,10 +61,10 @@ begin
   else
     if p_tipo = 'lembrete_24h' then
       v_title := 'Turno agendado para amanhã';
-      v_body  := format('Turno de %s confirmado para amanhã às %s.', v_funcao, v_horario);
+      v_body  := format('Turno de %s confirmado para amanhã às %s.', v_turno.funcao_nome, v_horario);
     elsif p_tipo = 'lembrete_3h' then
       v_title := 'Turno em 3 horas';
-      v_body  := format('Turno de %s começa às %s. O profissional foi lembrado.', v_funcao, v_horario);
+      v_body  := format('Turno de %s começa às %s. O profissional foi lembrado.', v_turno.funcao_nome, v_horario);
     end if;
   end if;
 
@@ -91,7 +88,7 @@ set search_path = ''
 as $$
 declare
   v_agora     timestamptz := privado.agora();
-  v_enviados  integer := 0;
+  v_processados integer := 0;
   v_turno     record;
   v_user_prof uuid;
 begin
@@ -120,7 +117,7 @@ begin
           v_turno.turno_id,
           jsonb_build_object('turno_id', v_turno.turno_id)
         );
-        v_enviados := v_enviados + 1;
+        v_processados := v_processados + 1;
       end if;
     end if;
 
@@ -128,9 +125,9 @@ begin
       v_turno.estabelecimento_id,
       'lembrete_24h'::public.tipo_notificacao,
       v_turno.turno_id,
-      jsonb_build_object('turno_id', v_turno.turno_id)
+      jsonb_build_object('turno_id', v_turno.turno_id, 'estabelecimento_id', v_turno.estabelecimento_id)
     );
-    v_enviados := v_enviados + 1;
+    v_processados := v_processados + 1;
   end loop;
 
   -- 2. Lembretes de 3 horas:
@@ -157,7 +154,7 @@ begin
           v_turno.turno_id,
           jsonb_build_object('turno_id', v_turno.turno_id)
         );
-        v_enviados := v_enviados + 1;
+        v_processados := v_processados + 1;
       end if;
     end if;
 
@@ -165,28 +162,31 @@ begin
       v_turno.estabelecimento_id,
       'lembrete_3h'::public.tipo_notificacao,
       v_turno.turno_id,
-      jsonb_build_object('turno_id', v_turno.turno_id)
+      jsonb_build_object('turno_id', v_turno.turno_id, 'estabelecimento_id', v_turno.estabelecimento_id)
     );
-    v_enviados := v_enviados + 1;
+    v_processados := v_processados + 1;
   end loop;
 
-  return v_enviados;
+  return v_processados;
 end $$;
 
 comment on function privado.enviar_lembretes_turno() is
-  'Job a cada 5 minutos que envia lembrete_24h e lembrete_3h para profissional e membros do contratante. Idempotente pela marca de envio em notificacao. Não envia vencidos nem turnos cancelados.';
+  'Job a cada 5 minutos que envia lembrete_24h e lembrete_3h para profissional e membros do contratante. Idempotente pela marca de envio em notificacao. Não envia vencidos nem turnos cancelados. Retorna a contagem de destinatários processados.';
 
 revoke execute on function privado.enviar_lembretes_turno() from public, anon, authenticated;
 grant execute on function privado.enviar_lembretes_turno() to service_role;
 
-create or replace function privado.enviar_lembretes()
-returns integer
-language sql
-security definer
-set search_path = ''
-as $$
-  select privado.enviar_lembretes_turno();
-$$;
-
-revoke execute on function privado.enviar_lembretes() from public, anon, authenticated;
-grant execute on function privado.enviar_lembretes() to service_role;
+-- ── 3. Agendamento no pg_cron ──────────────────────────────────────────────────
+-- Execução a cada 5 minutos do job de lembretes de turno.
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.unschedule('enviar_lembretes_turno')
+      where exists (select 1 from cron.job where jobname = 'enviar_lembretes_turno');
+    perform cron.schedule(
+      'enviar_lembretes_turno',
+      '*/5 * * * *',
+      'select privado.enviar_lembretes_turno()'
+    );
+  end if;
+end $$;
