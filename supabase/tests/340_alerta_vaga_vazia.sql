@@ -167,6 +167,12 @@ select pg_temp.posicao(pos_cancelada, vaga_cancelada) from ids;
 
 update public.vaga set estado = 'cancelada' where id = (select vaga_cancelada from ids);
 
+-- A semente de demonstração publica vaga em `agora() + 5 days`: conforme a hora em que a
+-- suíte roda, ela cai dentro da janela do relógio deste teste e muda a contagem que o
+-- agendador devolve. Aqui só contam as vagas desta casa; o rollback desfaz.
+update public.vaga set estado = 'encerrada'
+ where estado = 'publicada' and estabelecimento_id <> (select estabelecimento from ids);
+
 -- O motor de despacho já avisou que ninguém é elegível: o alerta de vaga vazia é outro
 -- aviso e sai do mesmo jeito (US07, cenário 4).
 select privado.notificar(admin, 'vaga_sem_elegiveis', vaga_sem_elegiveis,
