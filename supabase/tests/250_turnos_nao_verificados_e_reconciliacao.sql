@@ -3,8 +3,8 @@
 --
 -- Critérios cobertos:
 --   (1) Turno manual não confirmado até o fim fica `nao_verificado` e a taxa não muda.
---   (2) [BLOQUEADO] Turno confirmado sem check-in — depende da decisão de produto 8zLfn0mt.
---       Esqueleto do teste registrado como pendente.
+--   (2) Turno confirmado sem check-in até o fim: cancelamento por no-show com falta (decisão 8zLfn0mt Opção 2).
+--       Posição cancelada, falta=true, ocorrência registrada, taxa recalculada.
 --   (3) Reconciliação sobre o seed não encontra divergência; divergência forçada é corrigida e registrada.
 --   (4) Perfil público lê a taxa sem agregação na leitura (EXPLAIN).
 --   (5) pgTAP passando.
@@ -17,7 +17,7 @@
 -- Ids próprios, começando em `b6000000`.
 
 begin;
-select plan(35);
+select plan(40);
 
 insert into privado.ambiente (eh_teste) values (true);
 
@@ -263,23 +263,96 @@ select is(
   'Critério 1: turnos_realizados continua 1 (nao_verificado fica fora)'
 );
 
--- ── 4. Critério (2): Esqueleto do teste pendente (bloqueado por 8zLfn0mt) ────────
+-- ── 4. Critério (2): Turno confirmado sem check-in até o fim → cancelamento por no-show ──
 --
--- Decisão em aberto com Júlia:
--- 'Turno confirmado sem check-in e sem reabertura: nao_verificado (Modelagem) ou falta (glossário do Backlog)?'
--- Se for falta, a migração trocará a constraint CHECK falta_so_em_cancelada.
--- Enquanto a decisão não fecha, o teste é mantido como esqueleto pendente.
+-- Decisão 8zLfn0mt Opção 2 aprovada pela PO e liderança.
+-- Cria vaga/posição confirmada para o profissional, sem check-in.
+-- Avança o relógio além do fim e executa fechar_turnos_passados().
+-- Valida: posicao cancelada com falta, turno nao_verificado, ocorrência registrada,
+-- e taxa de comparecimento cai proporcionalmente.
 
+-- Vaga 4 (no-show: posição confirmada, profissional não faz check-in)
+insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+                         valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+                         exige_material_proprio, responsavel_local, traje, participa_rateio,
+                         modo, estado, publicado_em, chave_cliente, publicado_por)
+select 'b6000000-0000-4000-8000-000000000014'::uuid, ids.estab, ids.funcao,
+       timestamptz '2026-10-05 18:00:00-03', timestamptz '2026-10-05 23:00:00-03',
+       'Bar Reconcilia', 'POINT(-47.8800 -15.7700)'::extensions.geography,
+       15000, 1, true, false, false, 'Dona', null, false,
+       'urgencia', 'publicada', timestamptz '2026-10-03 18:00:00-03', gen_random_uuid(),
+       'b6000000-0000-4000-8000-0000000000d1'::uuid
+  from ids;
+
+insert into public.posicao (vaga_id, inicio_em, fim_em)
+select 'b6000000-0000-4000-8000-000000000014'::uuid,
+       timestamptz '2026-10-05 18:00:00-03', timestamptz '2026-10-05 23:00:00-03';
+
+-- Profissional se candidata (cria posição confirmada + turno)
+select pg_temp.como('b6000000-0000-4000-8000-0000000000e1',
+  $$ select public.candidatar('b6000000-0000-4000-8000-000000000014') $$);
+
+-- Salva os IDs do turno e posição do no-show
+create temp table noshow_ids as
+  select t.id as turno_id, p.id as posicao_id
+    from public.turno t
+    join public.posicao p on p.id = t.posicao_id
+   where p.vaga_id = 'b6000000-0000-4000-8000-000000000014';
+
+-- NÃO faz check-in. Avança o relógio para depois do fim do turno.
+select set_config('frila.agora', '2026-10-05 23:10:00-03', true);
+
+-- Executa o job de fechamento
 select ok(
+  privado.fechar_turnos_passados() >= 1,
+  'Critério 2: job de fechamento processa pelo menos 1 no-show'
+);
+
+-- Valida posicao.estado = 'cancelada'
+select is(
+  (select p.estado::text from public.posicao p where p.id = (select posicao_id from noshow_ids)),
+  'cancelada',
+  'Critério 2: posição sem check-in é cancelada por no-show'
+);
+
+-- Valida posicao.falta = true
+select is(
+  (select p.falta from public.posicao p where p.id = (select posicao_id from noshow_ids)),
   true,
-  'Critério 2 [PENDENTE - decisão 8zLfn0mt]: turno confirmado sem check-in aguarda fechamento de produto'
+  'Critério 2: posição cancelada por no-show marca falta = true'
+);
+
+-- Valida turno.verificacao = 'nao_verificado'
+select is(
+  (select t.verificacao::text from public.turno t where t.id = (select turno_id from noshow_ids)),
+  'nao_verificado',
+  'Critério 2: turno sem check-in fica nao_verificado'
+);
+
+-- Valida ocorrencia.motivo = 'no_show_sem_checkin'
+select is(
+  (select o.motivo from public.ocorrencia o
+    where o.posicao_id = (select posicao_id from noshow_ids)
+      and o.tipo = 'cancelamento'
+    order by o.id desc limit 1),
+  'no_show_sem_checkin',
+  'Critério 2: ocorrência registrada com motivo no_show_sem_checkin'
+);
+
+-- Valida que a taxa de comparecimento cai proporcionalmente
+-- Estado antes: 1 turno verificado (turno 1), 0 faltas → taxa = 1.000
+-- Estado agora: 1 turno verificado (turno 1), 1 falta (no-show) → taxa = 1/(1+1) = 0.500
+select is(
+  (select p.taxa_comparecimento from public.profissional p where p.id = (select prof from ids)),
+  0.500::numeric,
+  'Critério 2: taxa de comparecimento cai para 0.500 com a falta por no-show (1 verificado / 2 denominador)'
 );
 
 -- ── 5. Critério (3): Reconciliação corrige divergência forçada e a registra ───────
 
 -- Força divergência na taxa e em turnos_realizados
 update public.profissional
-   set taxa_comparecimento = 0.500,
+   set taxa_comparecimento = 0.800,
        turnos_realizados   = 10
  where id = (select prof from ids);
 
@@ -291,8 +364,8 @@ select is(
 
 select is(
   (select p.taxa_comparecimento from public.profissional p where p.id = (select prof from ids)),
-  1.000::numeric,
-  'Critério 3: taxa_comparecimento restaurada para o valor canônico (1.000)'
+  0.500::numeric,
+  'Critério 3: taxa_comparecimento restaurada para o valor canônico (0.500 após no-show)'
 );
 
 select is(
@@ -309,8 +382,8 @@ select is(
 
 select is(
   (select taxa_anterior from privado.divergencia_reputacao where profissional_id = (select prof from ids)),
-  0.500::numeric,
-  'divergência registrada guardou taxa_anterior (0.500)'
+  0.800::numeric,
+  'divergência registrada guardou taxa_anterior (0.800)'
 );
 
 -- Segunda execução é idempotente
@@ -326,8 +399,8 @@ select is(
   (select (r->'reputacao'->>'taxa_comparecimento')::numeric
      from pg_temp.como('b6000000-0000-4000-8000-0000000000d1',
        format($$ select public.perfil_publico(%L) $$, (select prof from ids))) as r),
-  1.000::numeric,
-  'Critério 4: perfil_publico devolve taxa_comparecimento correta'
+  0.500::numeric,
+  'Critério 4: perfil_publico devolve taxa_comparecimento correta (0.500 após no-show)'
 );
 
 -- Prova do caminho real de public.perfil_publico:
@@ -422,8 +495,8 @@ update public.posicao
 
 select is(
   (select p.taxa_comparecimento from public.profissional p where p.id = (select prof from ids)),
-  0.500::numeric,
-  'trigger posicao_recalcula_comparecimento recalcula taxa para 0.500 ao marcar falta em posicao'
+  0.333::numeric,
+  'trigger posicao_recalcula_comparecimento recalcula taxa para 0.333 ao marcar falta em posicao (2 faltas, 1 verificado)'
 );
 
 -- Teste do trigger turno_recalcula_comparecimento:
@@ -441,8 +514,8 @@ select is(
 
 select is(
   (select p.taxa_comparecimento from public.profissional p where p.id = (select prof from ids)),
-  0.667::numeric,
-  'trigger turno_recalcula_comparecimento recalcula taxa para 0.667 ao alterar verificacao'
+  0.500::numeric,
+  'trigger turno_recalcula_comparecimento recalcula taxa para 0.500 ao alterar verificacao (2 verificados, 2 faltas)'
 );
 
 select set_config('frila.agora', '', true);
