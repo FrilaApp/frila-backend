@@ -180,6 +180,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Mesmo motivo do job do contrato, na linha de cima deste arquivo: o portão é
+      # testado antes de julgar o PR, porque um portão com furo aprova calado. Este nasceu
+      # sem autoteste e o furo apareceu — a versão era lida como "o que vem antes do
+      # primeiro `_`", e um arquivo sem `_` no nome passava como versão distinta, embora a
+      # CLI o ignore em silêncio e nunca o aplique.
+      - name: O portão fecha nos casos conhecidos
+        run: ./scripts/teste-migracoes-sem-colisao.sh
+
       - run: ./scripts/migracoes-sem-colisao.sh
 
   contrato:
