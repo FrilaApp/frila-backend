@@ -16,15 +16,15 @@
 -- O pgTAP roda numa sessão só e não abre a segunda transação. O que ele faz é pôr o
 -- candidato exatamente no ponto da corrida: um gatilho de teste, criado e desfeito dentro
 -- desta transação, confirma a posição aberta no instante em que `cancelar_vaga` chega a
--- ela e devolve nulo — o `update` pula a linha, como pula sob a corrida de verdade. Com a
--- ordem antiga (confirmadas antes das abertas), a posição sobra confirmada. Com a nova
--- (trava, abertas, depois confirmadas), o laço das confirmadas a encontra e cancela.
+-- ela e devolve nulo — o `update` pula a linha, como pula sob a corrida de verdade. Sem
+-- o gatilho `vaga_cancelada_recolhe_confirmadas`, a posição sobra confirmada. Com ele, o
+-- `update` final da vaga a encontra e a cancela pelo caminho de sempre.
 --
 -- Ids próprios, começando em `c5c00000`.
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(8);
+select plan(12);
 
 create function pg_temp.conta(id uuid, email text, perfil public.perfil_conta, fone text)
 returns void
@@ -77,6 +77,8 @@ values ('c5c00000-0000-4000-8000-0000000000d1', 'c5c00000-0000-4000-8000-0000000
 
 -- a1: uma posição, aberta — o candidato chega nela no meio do cancelamento.
 -- a2: duas posições, uma confirmada e uma aberta — o caminho de sempre, sem corrida.
+-- a3: turno confirmado que já começou — o gatilho não mexe (como em excluir_conta).
+-- a4: turno confirmado futuro, cancelado sem conta no JWT — o gatilho não tem autor.
 insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
                          valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
                          exige_material_proprio, responsavel_local, modo, chave_cliente,
@@ -88,7 +90,9 @@ select x.id, 'c5c00000-0000-4000-8000-0000000000c1',
        18000, x.posicoes, true, true, false, 'Seu Zé', 'urgencia', gen_random_uuid(),
        'c5c00000-0000-4000-8000-0000000000d1'
   from (values ('c5c00000-0000-4000-8000-0000000000a1'::uuid, 1, interval '0'),
-               ('c5c00000-0000-4000-8000-0000000000a2'::uuid, 2, interval '1 day')) x(id, posicoes, dia);
+               ('c5c00000-0000-4000-8000-0000000000a2'::uuid, 2, interval '1 day'),
+               ('c5c00000-0000-4000-8000-0000000000a3'::uuid, 1, interval '-3 days -1 hour'),
+               ('c5c00000-0000-4000-8000-0000000000a4'::uuid, 1, interval '2 days')) x(id, posicoes, dia);
 
 insert into public.posicao (id, vaga_id, inicio_em, fim_em, estado, profissional_id, confirmado_em)
 select x.id, v.id, v.inicio_em, v.fim_em, x.estado::public.estado_posicao, x.prof, x.confirmado
@@ -98,11 +102,24 @@ select x.id, v.id, v.inicio_em, v.fim_em, x.estado::public.estado_posicao, x.pro
     ('c5c00000-0000-4000-8000-0000000000b2'::uuid, 'c5c00000-0000-4000-8000-0000000000a2'::uuid,
      'confirmada', 'c5c00000-0000-4000-8000-0000000000f2'::uuid, now()),
     ('c5c00000-0000-4000-8000-0000000000b3'::uuid, 'c5c00000-0000-4000-8000-0000000000a2'::uuid,
-     'aberta', null::uuid, null::timestamptz)) x(id, vaga, estado, prof, confirmado)
+     'aberta', null::uuid, null::timestamptz),
+    ('c5c00000-0000-4000-8000-0000000000b4'::uuid, 'c5c00000-0000-4000-8000-0000000000a3'::uuid,
+     'confirmada', 'c5c00000-0000-4000-8000-0000000000f1'::uuid, now() - interval '1 day'),
+    ('c5c00000-0000-4000-8000-0000000000b5'::uuid, 'c5c00000-0000-4000-8000-0000000000a4'::uuid,
+     'confirmada', 'c5c00000-0000-4000-8000-0000000000f2'::uuid, now())) x(id, vaga, estado, prof, confirmado)
   join public.vaga v on v.id = x.vaga;
 
 insert into public.turno (posicao_id, valor_acordado_centavos)
-values ('c5c00000-0000-4000-8000-0000000000b2', 18000);
+values ('c5c00000-0000-4000-8000-0000000000b2', 18000),
+       ('c5c00000-0000-4000-8000-0000000000b4', 18000),
+       ('c5c00000-0000-4000-8000-0000000000b5', 18000);
+
+select has_trigger('public', 'vaga', 'vaga_cancelada_recolhe_confirmadas',
+  'vaga tem o gatilho que recolhe a confirmada ao cancelar');
+
+select ok(coalesce(not has_function_privilege('authenticated',
+            to_regprocedure('privado.vaga_cancelada_recolhe_confirmadas()'), 'execute'), false),
+  'e a função do gatilho não é executável por authenticated');
 
 -- ── O candidato no ponto da corrida ──────────────────────────────────────────
 --
@@ -136,8 +153,8 @@ create trigger teste_candidato_chega_no_meio
 select is(
   pg_temp.como('c5c00000-0000-4000-8000-0000000000d1',
     $$ select public.cancelar_vaga('c5c00000-0000-4000-8000-0000000000a1', 'a casa fechou') $$)
-    - 'vaga_id',
-  '{"estado": "cancelada", "posicoes_canceladas": 1}'::jsonb,
+    - 'vaga_id' - 'posicoes_canceladas',
+  '{"estado": "cancelada"}'::jsonb,
   'cancelar_vaga com o candidato chegando no meio: a vaga sai cancelada, com a posição dele');
 
 select is((select estado::text from public.posicao where id = 'c5c00000-0000-4000-8000-0000000000b1'),
@@ -153,8 +170,10 @@ select is((select falta from public.posicao where id = 'c5c00000-0000-4000-8000-
 
 select ok(exists (select 1 from public.ocorrencia o
                    where o.posicao_id = 'c5c00000-0000-4000-8000-0000000000b1'
-                     and o.tipo = 'cancelamento'),
-          'e fica a ocorrência do cancelamento, que é a trilha que a auditoria lê');
+                     and o.tipo = 'cancelamento'
+                     and o.motivo = 'vaga_cancelada'
+                     and o.autor_id = 'c5c00000-0000-4000-8000-0000000000d1'),
+          'e fica a ocorrência do cancelamento, com o motivo estável e a casa como autora');
 
 drop trigger teste_candidato_chega_no_meio on public.posicao;
 
@@ -171,13 +190,31 @@ select is((select count(*)::int from public.posicao
             where vaga_id = 'c5c00000-0000-4000-8000-0000000000a2' and estado = 'confirmada'),
           0, 'e nenhuma posição da vaga cancelada fica confirmada');
 
--- A releitura depois da trava: a segunda chamada vê a vaga já cancelada.
 select throws_ok(
   $$ select pg_temp.como('c5c00000-0000-4000-8000-0000000000d1',
        $x$ select public.cancelar_vaga('c5c00000-0000-4000-8000-0000000000a2', 'de novo') $x$) $$,
   'PGRST',
   '{"code" : "vaga_encerrada", "message" : "vaga_encerrada", "details" : null, "hint" : null}',
   'cancelar de novo a vaga cancelada é 409 vaga_encerrada');
+
+-- ── Onde o gatilho não entra ────────────────────────────────────────────────
+
+-- O turno em andamento segue até o fim quando a vaga é cancelada por fora de
+-- cancelar_vaga (excluir_conta, decisão de produto). O gatilho só recolhe o que não começou.
+select set_config('request.jwt.claims',
+  json_build_object('sub', 'c5c00000-0000-4000-8000-0000000000d1', 'role', 'authenticated')::text, true);
+update public.vaga set estado = 'cancelada' where id = 'c5c00000-0000-4000-8000-0000000000a3';
+select set_config('request.jwt.claims', '', true);
+
+select is((select estado::text from public.posicao where id = 'c5c00000-0000-4000-8000-0000000000b4'),
+          'confirmada', 'turno já começado continua confirmado na vaga cancelada');
+
+-- Sem conta no JWT não há autor para a ocorrência: o gatilho não age, e não derruba o
+-- comando de quem cancelou.
+update public.vaga set estado = 'cancelada' where id = 'c5c00000-0000-4000-8000-0000000000a4';
+
+select is((select estado::text from public.posicao where id = 'c5c00000-0000-4000-8000-0000000000b5'),
+          'confirmada', 'sem conta no JWT, o gatilho não recolhe nada');
 
 select * from finish();
 rollback;
