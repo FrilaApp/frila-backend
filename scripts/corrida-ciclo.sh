@@ -39,20 +39,23 @@
 #   7. quem segura a posição desfaz (rollback) — a desistência leva statement_timeout e
 #      desfaz no meio do cancelamento da vaga (revisão do #63). Nenhuma posição viva em
 #      vaga cancelada.
+#   8. candidatar × reabrir_por_atraso, turno começado (atraso) — a candidatura aceita a
+#      posição reaberta por atraso enquanto a casa declara outra falta na mesma vaga
+#      (revisão do #63, rodada 2). Nenhum 40P01, e as duas passam.
 #
 # Os de candidatura (vinte para duas posições, profissional em dobro) seguem em
 # `corrida-candidatar.sh`.
 #
 # Uso:  ./scripts/corrida-ciclo.sh
 #       RODADAS=10 ./scripts/corrida-ciclo.sh
-#       CENARIOS="checkin cancelar teto posicao impasse janela rollback" ./scripts/corrida-ciclo.sh
+#       CENARIOS="checkin cancelar teto posicao impasse janela rollback atraso" ./scripts/corrida-ciclo.sh
 #       MANTER=1 ./scripts/corrida-ciclo.sh     # não limpa: o placar fica em corrida_ciclo
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 RODADAS=${RODADAS:-50}
-CENARIOS=${CENARIOS:-checkin cancelar teto posicao impasse janela rollback}
+CENARIOS=${CENARIOS:-checkin cancelar teto posicao impasse janela rollback atraso}
 
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -204,8 +207,8 @@ begin
   select id into v_funcao from public.funcao where nome = 'garçom';
 
   -- Um profissional por rodada no check-in, dois por rodada no cancelamento da vaga,
-  -- um por rodada na desistência, um no impasse, dois na janela alargada e dois no
-  -- rollback.
+  -- um por rodada na desistência, um no impasse, dois na janela alargada, dois no
+  -- rollback e dois na vaga começada.
   for r in select 'atrasado' as papel, n from generate_series(1, $RODADAS) n
            union all
            select 'candidato', n from generate_series(1, 2 * $RODADAS) n
@@ -217,6 +220,8 @@ begin
            select 'janela', n from generate_series(1, 2 * $RODADAS) n
            union all
            select 'rollback', n from generate_series(1, 2 * $RODADAS) n
+           union all
+           select 'reaberta', n from generate_series(1, 2 * $RODADAS) n
   loop
     v_seq := v_seq + 1;
     v_conta := gen_random_uuid();
@@ -915,6 +920,122 @@ cenario_rollback() {
     ok "$RODADAS rodadas, $desfeitas desistências desfeitas por timeout: nenhuma posição viva na vaga cancelada, nenhum impasse"
   else
     falhou "rodadas fora da regra, $desfeitas desistências desfeitas (rodada, cancelar_vaga, candidatar, cancelar_posicao, vaga, posições vivas, cancelamentos de P, de Q, travas):"
+    printf '%s\n' "$ruins" | sed 's/^/      /' >&2
+  fi
+}
+
+# ── 8. candidatar × reabrir_por_atraso, turno começado (atraso) ───────────────
+#
+# O cenário da rodada 2 da revisão do #63. A vaga começou há 40 minutos e tem duas
+# posições vivas: P1, confirmada e sem check-in, e P2, reaberta por atraso de uma falta
+# anterior (aceita candidato até 1 h antes do fim, contrato 0.2.19). Um profissional
+# aceita P2 enquanto a casa declara a falta de P1.
+#
+#   t     lado
+#   0     trava de serviço segura o profissional do candidato (até 0,5 s)
+#   0,1   candidatar: trava a vaga, pega P2 e espera no update de P2 (a chave
+#         estrangeira de profissional_id pede `key share` na linha que a trava segura)
+#   0,2   reabrir_por_atraso de P1: trava P1 e o turno, cancela, cria P1' (`key share`
+#         na vaga) e o gatilho da rodada pede a vaga
+#   0,5   a trava solta o profissional
+#
+# Se `candidatar` travasse a vaga em `no key update` e subisse para `update` no fim, a
+# subida esperaria o `key share` de P1', e a reabertura, a vaga: 40P01. Travando em
+# `update` desde o começo, a reabertura espera a candidatura já no insert de P1', e as
+# duas passam, uma depois da outra.
+cenario_atraso() {
+  echo
+  echo "▸ Cenário 8: candidatar × reabrir_por_atraso, turno começado ($RODADAS rodadas)"
+
+  psql >/dev/null <<SQL || { falhou "não consegui montar as vagas começadas"; return; }
+create table corrida_ciclo.atraso8 (n int, vaga uuid, p0 uuid, p1 uuid, p2 uuid,
+                                    faltoso uuid, candidato uuid, cand_prof uuid);
+
+insert into corrida_ciclo.atraso8
+select r.n, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
+       (select conta from corrida_ciclo.contas where papel = 'reaberta' and n = 2 * r.n - 1),
+       (select conta from corrida_ciclo.contas where papel = 'reaberta' and n = 2 * r.n),
+       null
+  from generate_series(1, $RODADAS) r(n);
+
+update corrida_ciclo.atraso8 a
+   set cand_prof = (select p.id from public.profissional p where p.usuario_id = a.candidato);
+
+-- A vaga já está na segunda rodada de despacho: P2 nasceu de uma falta anterior (P0).
+insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+                         valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+                         exige_material_proprio, responsavel_local, modo, estado,
+                         chave_cliente, publicado_por, rodada_despacho)
+select a.vaga, e.id, (select id from public.funcao where nome = 'garçom'),
+       now() - interval '40 minutes', now() + interval '4 hours',
+       'corrida-ciclo-$MARCA', 'POINT(-47.8860 -15.7910)'::extensions.geography,
+       18000, 2, true, true, false, 'Seu Zé', 'urgencia', 'publicada',
+       gen_random_uuid(), '$DONA', 2
+  from corrida_ciclo.atraso8 a, public.estabelecimento e
+ where e.endereco = 'corrida-ciclo-$MARCA';
+
+insert into public.posicao (id, vaga_id, inicio_em, fim_em, estado, falta)
+select a.p0, v.id, v.inicio_em, v.fim_em, 'cancelada', false
+  from public.vaga v join corrida_ciclo.atraso8 a on a.vaga = v.id;
+
+insert into public.posicao (id, vaga_id, inicio_em, fim_em, estado, profissional_id, confirmado_em)
+select a.p1, v.id, v.inicio_em, v.fim_em, 'confirmada', pr.id, now() - interval '1 day'
+  from public.vaga v
+  join corrida_ciclo.atraso8 a on a.vaga = v.id
+  join public.profissional pr on pr.usuario_id = a.faltoso;
+
+insert into public.turno (posicao_id, valor_acordado_centavos)
+select a.p1, 18000 from corrida_ciclo.atraso8 a;
+
+-- Direto na tabela, para não disparar o gatilho que abre outra rodada.
+set session_replication_role = 'replica';
+insert into public.posicao (id, vaga_id, inicio_em, fim_em, reaberta_por_atraso_de)
+select a.p2, v.id, v.inicio_em, v.fim_em, a.p0
+  from public.vaga v join corrida_ciclo.atraso8 a on a.vaga = v.id;
+set session_replication_role = 'origin';
+SQL
+
+  psql -tA -F' ' -c "select n, vaga, p1, candidato, cand_prof from corrida_ciclo.atraso8 order by n" \
+    >"$TMP/atraso8"
+  while read -r n vaga p1 candidato cand_prof; do
+    lado atraso "$n" 1 ""          "select to_jsonb(count(*)) from (select 1 from public.profissional where id = '$cand_prof' for update) x" "0 0.5"
+    lado atraso "$n" 2 "$candidato" "select public.candidatar('$vaga')" "0.1 0"
+    lado atraso "$n" 3 "$DONA"      "select public.reabrir_por_atraso('$p1')" "0.2 0"
+    wait
+  done <"$TMP/atraso8"
+
+  # Por rodada: o código de cada lado, a vaga, a rodada de despacho, P2 e as posições
+  # reabertas pela falta de P1.
+  psql -tA -F' ' >"$TMP/atraso8.res" <<'SQL'
+select a.n,
+       coalesce((select code from corrida_ciclo.placar p
+                  where p.cenario = 'atraso' and p.rodada = a.n and p.lado = '1'), 'nada'),
+       coalesce((select code from corrida_ciclo.placar p
+                  where p.cenario = 'atraso' and p.rodada = a.n and p.lado = '2'), 'nada'),
+       coalesce((select code from corrida_ciclo.placar p
+                  where p.cenario = 'atraso' and p.rodada = a.n and p.lado = '3'), 'nada'),
+       v.estado, v.rodada_despacho,
+       (select estado from public.posicao where id = a.p2),
+       (select estado from public.posicao where id = a.p1),
+       (select count(*) from public.posicao o where o.reaberta_por_atraso_de = a.p1)
+  from corrida_ciclo.atraso8 a
+  join public.vaga v on v.id = a.vaga
+ order by a.n;
+SQL
+
+  # O desfecho certo é um só: a candidatura confirma P2, a falta de P1 é declarada e
+  # reabre P1' na rodada 3.
+  local ruins impasses
+  ruins=$(awk '
+    $2 == "ok" && $3 == "ok" && $4 == "ok" && $6 == 3 &&
+    $7 == "confirmada" && $8 == "cancelada" && $9 == 1 { next }
+    { print }' "$TMP/atraso8.res")
+  impasses=$(grep -c 'sqlstate:40P01' "$TMP/atraso8.res" || true)
+
+  if [ -z "$ruins" ]; then
+    ok "$RODADAS rodadas: nenhum impasse; a candidatura confirma e a falta reabre na rodada seguinte"
+  else
+    falhou "rodadas fora da regra, $impasses com impasse 40P01 (rodada, trava, candidatar, reabrir_por_atraso, vaga, rodada, P2, P1, reabertas de P1):"
     printf '%s\n' "$ruins" | sed 's/^/      /' >&2
   fi
 }
