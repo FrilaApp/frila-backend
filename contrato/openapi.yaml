@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.23
+  version: 0.2.24
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -93,6 +93,35 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.24, de 29/09/2026.** Modo seleção liberado (cartão d3A1WjG3, US12, RF09, RN24,
+    UC04). O contrato já declarava `escolher_candidato`, `candidatos_da_vaga`,
+    `retirar_candidatura` e `minhas_candidaturas`, mas `publicar_vaga` recusava `modo = selecao`.
+    Nenhuma assinatura, schema ou código de erro novo: muda o comportamento de `publicar_vaga` e
+    de `candidatar`, e entram dois tipos de aviso.
+
+    - **`publicar_vaga` aceita `modo = selecao`** quando o início está a mais de 24 horas. Com 24
+      horas ou menos, `422 selecao_sem_antecedencia` (RN24), no lugar do `campo_invalido` com
+      `details: modo` da v1.0.
+    - **`candidatar` numa vaga de seleção** devolve `estado: pendente`, com `posicao_id`,
+      `turno_id` e `contato` nulos: a posição só é decidida na escolha. Reenviar devolve a mesma
+      candidatura; a retirada volta a `pendente` se o profissional se candidatar de novo. A partir
+      de 24 horas antes do início a vaga de seleção não aceita candidatura (`409 vaga_encerrada`).
+    - **`escolher_candidato`** é do membro do estabelecimento (`403 sem_permissao` para os demais).
+      O escolhido recebe o aviso `confirmacao`. Quando a escolha ocupa a última posição, as
+      candidaturas ainda pendentes passam a `recusada` e cada profissional recebe
+      `candidatura_recusada`. Escolher de novo uma candidatura já escolhida responde `409
+      candidatura_indisponivel`; escolher depois do fechamento das 24 horas, `409 vaga_encerrada`.
+    - **Fechamento automático (RN24).** A 24 horas do início, o agendador fecha a vaga de seleção:
+      as posições ainda abertas passam a `cancelada`, as candidaturas pendentes a `expirada`, e
+      cada candidato pendente e cada membro do estabelecimento recebem `selecao_encerrada`. A vaga
+      vai a `encerrada` quando ninguém foi escolhido, ou a `preenchida` quando alguma posição foi.
+    - **Dois tipos de aviso novos:** `candidatura_recusada` e `selecao_encerrada`. O payload é o de
+      sempre (RN15): `tipo` e `vaga_id`, nada mais. Os textos do push são do design; até eles
+      chegarem, sai o texto genérico.
+    - A 0.2.23 (vaga ocultada pela moderação) vem antes desta.
+
+    ---
 
     **Versão 0.2.23, de 29/09/2026.** Vaga ocultada pela moderação da Equipe Frila (cartão
     Oxh0AWE7, diretriz 1.2 da App Store). Ocultar é moderação **reversível** e **não cancela** a
@@ -1291,9 +1320,11 @@ paths:
         sem_permissao`, e é o que responde também quando o estabelecimento não existe; conta
         suspensa recebe `403 sem_permissao` com `details: conta_suspensa` (RN13).
 
-        **Na v1.0, `modo = selecao` é recusado** com `campo_invalido` e `details: modo` — o escopo
-        do MVP tem só urgência. `selecao_sem_antecedencia` é a regra das 24 horas (RN24) e volta na
-        v1.1, quando houver modo seleção para recusar.
+        **Modo seleção (RN24), desde a 0.2.24:** `modo = selecao` é aceito quando o início está a
+        mais de 24 horas; com 24 horas ou menos, `422 selecao_sem_antecedencia`. A vaga nova é
+        notificada igual nos dois modos; no seleção, os candidatos ficam pendentes até a escolha
+        (`escolher_candidato`). Até a 0.2.23 o modo seleção era recusado com `campo_invalido` e
+        `details: modo`.
 
         `chave` torna o reenvio seguro: a mesma chave devolve a mesma vaga, com as mesmas posições,
         e não enfileira o despacho de novo.
@@ -1551,8 +1582,11 @@ paths:
         - **Modo urgência:** o primeiro elegível que aceita é confirmado na hora, por escrita
           condicional no banco (RN19). A resposta já traz o turno e o contato da outra parte (RN10).
           O profissional e cada membro do estabelecimento recebem o aviso `confirmacao` (RF10).
-        - **Modo seleção:** a candidatura fica pendente até o contratante escolher. Ela vale até a vaga
-          fechar, e a vaga fecha sozinha 24 horas antes do início se ninguém for escolhido (RN24).
+        - **Modo seleção:** a candidatura fica pendente até o contratante escolher, com `posicao_id`,
+          `turno_id` e `contato` nulos — a posição só é decidida na escolha. Ela vale até a vaga
+          fechar, e a vaga fecha sozinha 24 horas antes do início se ninguém for escolhido (RN24); a
+          partir daí a candidatura recebe `409 vaga_encerrada`. Reenviar devolve a mesma candidatura
+          pendente, e a retirada volta a `pendente` quando o profissional se candidata de novo.
 
         As três respostas são normais: `200` (entrou), `409 posicao_ja_preenchida` (alguém chegou
         antes — a tela diz "que pena, foi rápido", não "algo deu errado") e `422 inelegivel`
@@ -1623,7 +1657,7 @@ paths:
       tags: [Candidatura e confirmação]
       operationId: retirarCandidatura
       summary: Retirar a candidatura antes de ser escolhido
-      description: Sem penalidade (RN24). Candidatura já escolhida não se retira; vira cancelamento (`cancelar_posicao`).
+      description: Sem penalidade (RN24). Candidatura já escolhida não se retira; vira cancelamento (`cancelar_posicao`). Retirar de novo devolve a mesma candidatura retirada; recusada ou expirada responde `409 candidatura_indisponivel`.
       x-requisitos: [RN16, RN24, UC04]
       requestBody:
         required: true
@@ -1720,6 +1754,12 @@ paths:
         foi confirmado em outro turno que se cruza com este (RN21); `422 vaga_oculta` se a vaga foi
         ocultada pela moderação da Equipe Frila — a candidatura segue pendente, e a escolha volta a
         valer se a Equipe reexibir a vaga (0.2.23).
+
+        Só membro do estabelecimento escolhe (`403 sem_permissao`). Candidatura já escolhida responde
+        `409 candidatura_indisponivel`; vaga fechada pelas 24 horas (RN24), cancelada ou encerrada,
+        `409 vaga_encerrada`. O escolhido recebe o aviso `confirmacao`; quando a escolha ocupa a
+        última posição, as candidaturas ainda pendentes passam a `recusada`, com o aviso
+        `candidatura_recusada`.
       x-requisitos: [RF09, RF10, RF11, RN10, RN19, RN21, UC04]
       requestBody:
         required: true
