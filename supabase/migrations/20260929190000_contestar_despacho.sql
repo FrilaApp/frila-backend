@@ -49,7 +49,8 @@ begin
                         order by f.nome)
          from public.profissional_funcao pf
          join public.funcao f on f.id = pf.funcao_id
-        where pf.profissional_id = v_prof.id),
+        where pf.profissional_id = v_prof.id
+          and f.ativo is true),
       '[]'::jsonb),
     'disponibilidades', coalesce(
       (select jsonb_agg(jsonb_build_object(
@@ -134,11 +135,6 @@ begin
     v_relato,
     v_agora
   ) returning * into v_oc;
-
-  -- Garante que a fila email existe
-  if not exists (select 1 from pgmq.meta where queue_name = 'email') then
-    perform pgmq.create('email');
-  end if;
 
   -- Enfileira o aviso de e-mail à Equipe Frila, só com o ID (RN15: sem relato nem dado pessoal na fila)
   perform pgmq.send('email', jsonb_build_object(

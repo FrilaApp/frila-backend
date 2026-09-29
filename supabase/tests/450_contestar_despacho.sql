@@ -14,7 +14,7 @@
 --      e devolve Protocolo com prazo de resposta em até 5 dias úteis (privado.prazo_de_resposta).
 
 begin;
-select plan(24);
+select plan(26);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb
 language plpgsql as $$
@@ -71,11 +71,14 @@ insert into public.profissional (id, usuario_id, ponto_base) values
   ('c7000000-0000-4000-8000-000000000014', 'c7000000-0000-4000-8000-000000000001', 'POINT(-47.8800 -15.7900)'::extensions.geography),
   ('c7000000-0000-4000-8000-000000000015', 'c7000000-0000-4000-8000-000000000003', 'POINT(-47.8800 -15.7900)'::extensions.geography);
 
--- Funções da Paula: garçom e bartender
+-- Funções da Paula: garçom e bartender (ativas), e sommelier (inativa)
+insert into public.funcao (id, nome, categoria, ativo) values
+  ('c7000000-0000-4000-8000-000000000099', 'sommelier', 'atendimento', false);
+
 insert into public.profissional_funcao (profissional_id, funcao_id)
 select 'c7000000-0000-4000-8000-000000000014'::uuid, id
   from public.funcao
- where nome in ('garçom', 'bartender');
+ where nome in ('garçom', 'bartender', 'sommelier');
 
 -- Disponibilidade da Paula: sexta e sábado, 18:00 às 23:59
 insert into public.disponibilidade (profissional_id, dia_semana, hora_inicio, hora_fim) values
@@ -173,7 +176,15 @@ select is(
 select is(
   jsonb_array_length((select c from res_crit)->'funcoes'),
   2,
-  'funcoes retorna as 2 funções cadastradas da Paula');
+  'funcoes retorna apenas as 2 funções ativas da Paula');
+
+select ok(
+  not exists (
+    select 1
+      from jsonb_array_elements((select c from res_crit)->'funcoes') f
+     where f->>'nome' = 'sommelier'
+  ),
+  'função inativa não aparece em criterios_de_notificacao');
 
 select is(
   jsonb_array_length((select c from res_crit)->'disponibilidades'),
@@ -228,6 +239,15 @@ select is(
       and message->>'ocorrencia_id' = ((select p from res_rev)->>'ocorrencia_id')),
   1,
   'mensagem enfileirada na fila email com tipo e ocorrencia_id (sem relato nem dados pessoais)');
+
+select is(
+  (select message from pgmq.q_email
+    where message->>'ocorrencia_id' = ((select p from res_rev)->>'ocorrencia_id')),
+  jsonb_build_object(
+    'tipo',          'revisao_despacho',
+    'ocorrencia_id', ((select p from res_rev)->>'ocorrencia_id')
+  ),
+  'o payload da fila email contém exatamente tipo e ocorrencia_id (sem relato nem dados pessoais, RN15)');
 
 select * from finish();
 rollback;
