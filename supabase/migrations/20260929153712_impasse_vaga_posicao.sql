@@ -1,13 +1,10 @@
 -- O impasse entre o gatilho da vaga cancelada e a desistência que reabre (cartão
 -- CPD2c74A, RNF14). Observado na revisão do #62.
 --
--- Todos os caminhos de escrita travam a posição antes da vaga: `candidatar` (a posição
--- com `skip locked`, depois a vaga), o laço e o update das abertas de `cancelar_vaga`,
--- `reabrir_por_atraso`, `excluir_conta`, o fechamento. O gatilho do #60
--- (`vaga_cancelada_recolhe_confirmadas`) é a exceção: ele é `BEFORE UPDATE` em `vaga`,
--- então já segura a linha da vaga quando pede as posições confirmadas. A desistência
--- (`cancelar_uma_posicao` com reabertura) faz o contrário: segura a posição e pede a
--- vaga para voltá-la a `publicada`. Numa corrida a três o ciclo fecha:
+-- O gatilho do #60 (`vaga_cancelada_recolhe_confirmadas`) é `BEFORE UPDATE` em `vaga`:
+-- ele já segura a linha da vaga quando pede as posições confirmadas. A desistência
+-- (`cancelar_uma_posicao` com reabertura) fazia o contrário: segurava a posição e pedia
+-- a vaga para voltá-la a `publicada`. Numa corrida a três o ciclo fechava:
 --
 --   cancelar_vaga (casa)       candidatar (prof)      cancelar_posicao (o mesmo prof)
 --   ────────────────────       ─────────────────      ───────────────────────────────
@@ -21,39 +18,72 @@
 --   gatilho: espera P
 --                                                     update de V: espera V → 40P01
 --
--- O Postgres aborta um dos lados, quase sempre o `cancelar_vaga` da casa, que recebe
--- 500. Medido em `scripts/corrida-ciclo.sh`: no cenário 5 (tempos sorteados) a janela é
--- de microssegundos e não abriu em 500 rodadas; no cenário 6, com duas travas de serviço
+-- O Postgres abortava um dos lados, quase sempre o `cancelar_vaga` da casa (500).
+-- Medido em `scripts/corrida-ciclo.sh`: no cenário 5 (tempos sorteados) a janela é de
+-- microssegundos e não abriu em 500 rodadas; no cenário 6, com duas travas de serviço
 -- alargando a janela para um segundo, o impasse veio em 10 de 10 rodadas.
 --
--- Pôr tudo na ordem vaga → posição exigiria recriar `candidatar`, `cancelar_vaga` e
--- `reabrir_por_atraso`, que travam a posição primeiro, e recriar função de `public`
--- passa pelo portão do contrato. A correção fica do outro lado: a ordem posição → vaga
--- passa a valer também no gatilho.
+-- A correção é a ordem das travas: **a vaga antes da posição**, em todo caminho que
+-- mexe nas duas e que não começou. Sem pular linha travada (`skip locked`): a versão
+-- anterior deste PR pulava, e se quem segurava a posição fizesse rollback depois de o
+-- gatilho passar, a posição voltava a `confirmada` numa vaga já cancelada (revisão do
+-- #63, cenário 7). Com a ordem, todo mundo espera, e quem espera relê o que o outro
+-- deixou, tenha ele comitado ou desfeito.
 --
---   · O gatilho não espera posição travada: `for no key update skip locked`. A posição
---     que ele pula é de quem a segura para escrever nela, e o único que escreve numa
---     posição confirmada de turno futuro é um cancelamento (`cancelar_uma_posicao`), que
---     a cancela de qualquer jeito. `no key update`, e não `update`: esse modo não
---     conflita com o `key share` de quem só insere uma linha que aponta para a posição
---     (ocorrência, candidatura), e o gatilho não pula a posição por causa disso.
---   · A desistência trava a vaga antes de reabrir, e não reabre em vaga cancelada ou
---     encerrada. Ela esperava a vaga do mesmo jeito (o `update` para `publicada`); o
---     que muda é que a espera vem antes de criar a posição nova, e que ela relê a vaga
---     depois dela. Quando a casa comitou antes, a desistência vale (a falta é do
---     profissional, RN12), a posição não reabre e a casa é avisada com
---     `reaberta = false`, como em qualquer turno descoberto.
---   · O gatilho recolhe também a posição aberta. O update das abertas de
---     `cancelar_vaga` não vê a posição que uma desistência reabriu e comitou depois
---     dele; ela sobrava aberta na vaga cancelada. A aberta sai sem ocorrência, como sai
---     no update das abertas.
+--   · `candidatar` trava a vaga no começo, por `privado.travar_candidatura`, a primeira
+--     trava que ela pede. A candidatura que chega durante um `cancelar_vaga` espera o
+--     commit da casa e lê a vaga cancelada (`vaga_encerrada`), em vez de confirmar uma
+--     posição no meio do cancelamento. As candidaturas da mesma vaga já se
+--     enfileiravam na trava da vaga do fim da função; agora se enfileiram no começo.
+--   · `cancelar_uma_posicao` trava a vaga antes da posição quando o turno não começou.
+--     É o caminho de `cancelar_posicao`, do laço de `cancelar_vaga`, do gatilho e de
+--     `excluir_conta`. A desistência que chega durante um `cancelar_vaga` espera a
+--     casa e encontra a posição cancelada (409 `posicao_nao_cancelavel`).
+--   · O gatilho segura a vaga (é o `update` dela) e trava as posições por id, esperando.
 --
--- Limite conhecido: uma quarta transação que pegue a posição reaberta com `candidatar`
--- entre o update das abertas e o da vaga segura essa posição, o gatilho a pula, e ela
--- confirma na vaga cancelada. Fechar isso é conferir a vaga dentro de `candidatar`,
--- que é função de `public`.
+-- O turno que já começou fica de fora da ordem nova, de propósito: `reabrir_por_atraso`
+-- trava a posição antes da vaga, é função de `public`, e travar a vaga antes numa
+-- posição começada abriria com ela o mesmo ciclo. O gatilho não mexe em turno começado,
+-- e a desistência dele não reabre; ali a ordem continua posição → vaga, como era.
+--
+-- O gatilho recolhe também a posição **aberta**: a que uma desistência reabriu e
+-- comitou depois do update das abertas de `cancelar_vaga` sobrava viva na vaga
+-- cancelada. Ele faz isso antes da saída sem conta, então vale também no caminho de
+-- serviço de `excluir_conta` (que já cancelou as abertas antes; ali não há o que pegar).
+--
+-- Limite conhecido, fora do alcance sem recriar `public.cancelar_vaga`: quando a vaga
+-- não tem confirmada futura, o laço não chama `cancelar_uma_posicao` e a primeira trava
+-- de `cancelar_vaga` é o update das abertas (posição antes da vaga). Se uma candidatura
+-- comita a posição enquanto esse update espera por ela, o Postgres deixa a linha
+-- travada depois da reconferência, e uma desistência que pegue a vaga antes do `update`
+-- da vaga (microssegundos) fecha outro ciclo. O desfecho é 40P01 e rollback — visível e
+-- reenviável, sem estado inconsistente. `excluir_conta` da casa tem o mesmo desenho.
 
--- ── 1. O gatilho da vaga cancelada ──────────────────────────────────────────
+-- ── 1. candidatar trava a vaga primeiro ─────────────────────────────────────
+
+create or replace function privado.travar_candidatura(vaga uuid, prof uuid)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+begin
+  -- A vaga antes de qualquer posição (CPD2c74A). `no key update`, e não `update`: não
+  -- espera quem só insere uma linha que aponta para a vaga (a chave estrangeira segura
+  -- `key share`). A trava de `update` do fim de `candidatar` continua lá.
+  perform 1 from public.vaga g where g.id = vaga for no key update;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtext(vaga::text), pg_catalog.hashtext(prof::text));
+end $$;
+
+comment on function privado.travar_candidatura(uuid, uuid) is
+  'Primeira trava de candidatar: a linha da vaga (ordem vaga → posição, CPD2c74A) e a trava de transação por par (vaga, profissional), que impede o mesmo profissional de tomar duas posições da mesma vaga com duas chamadas em paralelo.';
+
+revoke execute on function privado.travar_candidatura(uuid, uuid)
+  from public, anon, authenticated;
+grant execute on function privado.travar_candidatura(uuid, uuid) to service_role;
+
+-- ── 2. O gatilho da vaga cancelada ──────────────────────────────────────────
 
 create or replace function privado.vaga_cancelada_recolhe_confirmadas()
 returns trigger
@@ -68,15 +98,15 @@ declare
 begin
   -- A posição aberta que nasceu depois do update das abertas de `cancelar_vaga` (uma
   -- desistência que reabriu e comitou no meio). Não tem de quem ser ocorrência, e por
-  -- isso vem antes da saída sem conta. A que outra transação segura é de uma
-  -- candidatura em curso, que espera esta vaga: esperar por ela aqui seria o impasse.
+  -- isso vem antes da saída sem conta. A vaga já está travada (é este `update`), e as
+  -- posições vêm por id.
   update public.posicao p
      set estado = 'cancelada'
    where p.id in (select x.id from public.posicao x
                    where x.vaga_id = new.id
                      and x.estado = 'aberta'
                    order by x.id
-                     for no key update skip locked);
+                     for no key update);
 
   -- Sem conta no JWT não há autor para a ocorrência (`autor_id not null`). O único
   -- caminho assim é o de serviço de `excluir_conta`, que cancela as confirmadas futuras
@@ -85,15 +115,17 @@ begin
     return new;
   end if;
 
-  -- Por id, e sem esperar: a posição que outra transação segura é de um cancelamento
-  -- em curso, que a cancela e, ao reabrir, espera esta vaga e a encontra cancelada.
+  -- Por id, esperando quem segura a linha: todo caminho que mexe numa posição de turno
+  -- futuro trava a vaga antes (CPD2c74A), então quem a segura aqui não espera esta vaga.
+  -- Se ele comitou o cancelamento, `cancelar_uma_posicao` relê e segue; se desfez, a
+  -- posição volta confirmada e é recolhida aqui.
   for v_pos in
     select p.id from public.posicao p
      where p.vaga_id = new.id
        and p.estado = 'confirmada'
        and p.inicio_em > v_agora
      order by p.id
-       for no key update skip locked
+       for no key update
   loop
     -- Motivo estável, e não texto da casa: o texto dela não chega ao gatilho, e é este
     -- código que distingue na auditoria a posição recolhida depois da corrida.
@@ -104,13 +136,13 @@ begin
 end $$;
 
 comment on function privado.vaga_cancelada_recolhe_confirmadas() is
-  'Gatilho BEFORE de vaga: ao ir para cancelada, cancela as posições ainda abertas e (sem reabrir, com ocorrência de motivo vaga_cancelada) as confirmadas cujo turno não começou. Recolhe o que confirmou ou reabriu durante cancelar_vaga (RNF14, nspP9YDU). Pula a posição que outra transação segura (skip locked), para não esperar posição segurando a vaga (CPD2c74A). Turno em andamento segue, como em excluir_conta.';
+  'Gatilho BEFORE de vaga: ao ir para cancelada, cancela as posições ainda abertas e (sem reabrir, com ocorrência de motivo vaga_cancelada) as confirmadas cujo turno não começou. Recolhe o que confirmou ou reabriu durante cancelar_vaga (RNF14, nspP9YDU). Segura a vaga e trava as posições por id, na ordem vaga → posição de todos os caminhos de turno futuro (CPD2c74A). Turno em andamento segue, como em excluir_conta.';
 
 revoke execute on function privado.vaga_cancelada_recolhe_confirmadas()
   from public, anon, authenticated;
 grant execute on function privado.vaga_cancelada_recolhe_confirmadas() to service_role;
 
--- ── 2. A desistência trava a vaga antes de reabrir ──────────────────────────
+-- ── 3. cancelar_uma_posicao trava a vaga antes da posição ───────────────────
 
 create or replace function privado.cancelar_uma_posicao(
   posicao uuid,
@@ -129,15 +161,31 @@ declare
   v_falta boolean := false;
   v_nova  uuid;
   v_eh_prof boolean;
+  v_vaga  uuid;
+  v_inicio timestamptz;
   v_estado_vaga public.estado_vaga;
 begin
   perform privado.exigir_conta_ativa();
 
+  -- A ordem das travas (CPD2c74A): a vaga antes da posição, quando o turno não começou.
+  -- A vaga e o início de uma posição não mudam depois de ela existir, então a leitura
+  -- sem trava basta para saber qual vaga travar. O turno começado fica na ordem antiga
+  -- (posição → vaga), a de `reabrir_por_atraso`; ali não se reabre e o gatilho não
+  -- entra.
+  select p.vaga_id, p.inicio_em into v_vaga, v_inicio
+    from public.posicao p where p.id = posicao;
+
+  if v_inicio > v_agora then
+    select g.estado into v_estado_vaga
+      from public.vaga g where g.id = v_vaga for no key update;
+  end if;
+
   -- A trava e a reconferência (xJ53t3tX). Quem chama já conferiu que a posição estava
   -- confirmada, mas num snapshot sem trava: com o outro lado cancelando no mesmo
-  -- instante, a linha que chega aqui depois da espera pode já estar cancelada. O
-  -- `for update` espera o commit dele e devolve a linha como ficou.
-  select * into v_pos from public.posicao p where p.id = posicao for update;
+  -- instante, a linha que chega aqui depois da espera pode já estar cancelada. A trava
+  -- espera o commit dele e devolve a linha como ficou. `no key update`: só estado e
+  -- falta mudam, e esse modo não espera quem insere uma linha que aponta para a posição.
+  select * into v_pos from public.posicao p where p.id = posicao for no key update;
 
   if v_pos.estado is distinct from 'confirmada' then
     -- A desistência do profissional (`cancelar_posicao`, que reabre fora da exclusão de
@@ -182,32 +230,26 @@ begin
 
   -- Antes do início, a vaga ganha uma posição nova e o despacho sai de novo. Depois do
   -- início não há o que reabrir: o turno ficou descoberto, e quem precisa saber disso é
-  -- o contratante.
-  if reabrir and v_pos.inicio_em > v_agora then
-    -- A vaga travada antes da posição nova (CPD2c74A), na ordem posição → vaga de todos
-    -- os caminhos. Se a casa cancelou a vaga no meio, o gatilho dela pulou esta posição
-    -- (que estava travada aqui) e a espera termina com a vaga cancelada: a desistência
-    -- vale, e a posição não reabre numa vaga que não existe mais.
-    select g.estado into v_estado_vaga
-      from public.vaga g where g.id = v_pos.vaga_id for no key update;
+  -- o contratante. A vaga já está travada desde o começo, e o estado dela é o que ficou
+  -- depois da espera: cancelada ou encerrada, não se reabre numa vaga que não existe
+  -- mais.
+  if reabrir and v_pos.inicio_em > v_agora
+     and v_estado_vaga in ('publicada', 'preenchida') then
+    insert into public.posicao (vaga_id, inicio_em, fim_em)
+    values (v_pos.vaga_id, v_pos.inicio_em, v_pos.fim_em)
+    returning id into v_nova;
 
-    if v_estado_vaga in ('publicada', 'preenchida') then
-      insert into public.posicao (vaga_id, inicio_em, fim_em)
-      values (v_pos.vaga_id, v_pos.inicio_em, v_pos.fim_em)
-      returning id into v_nova;
+    -- A vaga estava preenchida e volta a ter posição aberta.
+    update public.vaga g set estado = 'publicada'
+     where g.id = v_pos.vaga_id and g.estado = 'preenchida';
 
-      -- A vaga estava preenchida e volta a ter posição aberta.
-      update public.vaga g set estado = 'publicada'
-       where g.id = v_pos.vaga_id and g.estado = 'preenchida';
-
-      perform pgmq.send('despacho', jsonb_build_object(
-        'vaga_id',        v_pos.vaga_id,
-        'posicao_id',     v_nova,
-        'motivo',         'reabertura',
-        -- Quem cancelou não é notificado de novo da própria vaga. Receber a notificação
-        -- da vaga que se acabou de largar é o tipo de detalhe que faz desinstalar o app.
-        'excluir_conta',  autor));
-    end if;
+    perform pgmq.send('despacho', jsonb_build_object(
+      'vaga_id',        v_pos.vaga_id,
+      'posicao_id',     v_nova,
+      'motivo',         'reabertura',
+      -- Quem cancelou não é notificado de novo da própria vaga. Receber a notificação
+      -- da vaga que se acabou de largar é o tipo de detalhe que faz desinstalar o app.
+      'excluir_conta',  autor));
   end if;
 
   if v_falta then
@@ -238,7 +280,7 @@ begin
 end $$;
 
 comment on function privado.cancelar_uma_posicao(uuid, uuid, text, boolean) is
-  'Desiste de uma posição confirmada com motivo (RF14, RN12). Trava a posição e reconfere o estado: já cancelada por outro caminho, devolve 409 posicao_nao_cancelavel à desistência avulsa e nulo aos laços (xJ53t3tX). Quando é do profissional e a menos de 24 h do início, marca falta e recalcula a taxa. Se pedido e antes do início, trava a vaga e, se ela segue publicada ou preenchida, reabre a posição criando outra e redisparando o despacho (CPD2c74A). Notifica a outra parte. Exige conta ativa.';
+  'Desiste de uma posição confirmada com motivo (RF14, RN12). Turno futuro: trava a vaga antes da posição (ordem vaga → posição, CPD2c74A). Trava a posição e reconfere o estado: já cancelada por outro caminho, devolve 409 posicao_nao_cancelavel à desistência avulsa e nulo aos laços (xJ53t3tX). Quando é do profissional e a menos de 24 h do início, marca falta e recalcula a taxa. Se pedido, antes do início e com a vaga publicada ou preenchida, reabre a posição criando outra e redisparando o despacho. Notifica a outra parte. Exige conta ativa.';
 
 revoke execute on function privado.cancelar_uma_posicao(uuid, uuid, text, boolean)
   from public, anon, authenticated;
