@@ -9,12 +9,35 @@
 //    - Erro transitório faz nova tentativa com backoff exponencial respeitando o teto de 5 tentativas.
 //    - Não reenvia se a vaga ou turno já tiver iniciado, nem antes de proxima_tentativa_em.
 
+import postgres from "npm:postgres@3.4.4";
 import {
   FcmServiceAccount,
   getAccessToken,
   sendFcmMessage,
   FcmSendResult,
 } from "./fcm.ts";
+
+export interface GravarFalhaPushParams {
+  notificacaoId: string;
+  motivo: string;
+  permanente?: boolean;
+  teto?: number;
+  proximaTentativaEm?: string | null;
+  enviadaEm?: string | null;
+}
+
+export interface GravarAceitePushParams {
+  notificacaoId: string;
+  enviadaEm?: string | null;
+  aceitaEm?: string | null;
+}
+
+export interface SqlClient {
+  notificacaoExpirada: (notificacaoId: string) => Promise<boolean>;
+  gravarFalhaPush: (params: GravarFalhaPushParams) => Promise<void>;
+  gravarAceitePush: (params: GravarAceitePushParams) => Promise<void>;
+  removerTokenFcm: (token: string) => Promise<number>;
+}
 
 export interface Dependencias {
   supabaseUrl?: string;
@@ -24,6 +47,8 @@ export interface Dependencias {
   fetchFn?: typeof fetch;
   fcmApiUrl?: string;
   fcmTokenUri?: string;
+  dbUrl?: string;
+  sqlClient?: SqlClient;
 }
 
 function igualEmTempoConstante(a: string, b: string): boolean {
@@ -277,6 +302,76 @@ export function titulosECorposPorTipo(
   }
 }
 
+function obterDbUrl(injetada?: string): string {
+  const valor = (injetada || Deno.env.get("DATABASE_URL") || Deno.env.get("SUPABASE_DB_URL"))?.trim();
+  if (!valor) {
+    throw new Error("DATABASE_URL ou SUPABASE_DB_URL é obrigatório e deve estar configurado no ambiente.");
+  }
+  return valor;
+}
+
+export function criarSqlClient(deps?: Dependencias): SqlClient {
+  if (deps?.sqlClient) {
+    return deps.sqlClient;
+  }
+  const dbUrl = obterDbUrl(deps?.dbUrl);
+  return {
+    async notificacaoExpirada(notificacaoId: string): Promise<boolean> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        const res = await sql`
+          select privado.notificacao_expirada(${notificacaoId}::uuid) as expirada
+        `;
+        return res[0]?.expirada === true;
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+    async gravarFalhaPush(params: GravarFalhaPushParams): Promise<void> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        await sql`
+          select privado.gravar_falha_push(
+            p_notificacao_id => ${params.notificacaoId}::uuid,
+            p_motivo => ${params.motivo}::text,
+            p_permanente => ${params.permanente ?? false}::boolean,
+            p_teto => ${params.teto ?? 5}::integer,
+            p_proxima_tentativa_em => ${params.proximaTentativaEm ?? null}::timestamptz,
+            p_enviada_em => ${params.enviadaEm ?? null}::timestamptz
+          )
+        `;
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+    async gravarAceitePush(params: GravarAceitePushParams): Promise<void> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        await sql`
+          select privado.gravar_aceite_push(
+            p_notificacao_id => ${params.notificacaoId}::uuid,
+            p_aceita_em => ${params.aceitaEm ?? null}::timestamptz,
+            p_enviada_em => ${params.enviadaEm ?? null}::timestamptz
+          )
+        `;
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+    async removerTokenFcm(token: string): Promise<number> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        const res = await sql`
+          select privado.remover_token_fcm(${token}::text) as removidos
+        `;
+        return Number(res[0]?.removidos ?? 0);
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+  };
+}
+
 export async function processarEnvioPush(
   req: Request,
   deps: Dependencias = {},
@@ -332,15 +427,6 @@ export async function processarEnvioPush(
     Prefer: "return=representation",
   };
 
-  // Helper para chamar RPCs privadas
-  async function chamarRpc(nome: string, params: Record<string, unknown>) {
-    const res = await fetchFn(`${supabaseUrl}/rest/v1/rpc/${nome}`, {
-      method: "POST",
-      headers: dbHeaders,
-      body: JSON.stringify(params),
-    });
-    return res;
-  }
 
   let notificacoes: Array<{
     id: string;
@@ -388,6 +474,8 @@ export async function processarEnvioPush(
     );
   }
 
+  const sqlClient = criarSqlClient(deps);
+
   // Obter token de acesso do Google OAuth
   let accessToken = "";
   try {
@@ -418,22 +506,19 @@ export async function processarEnvioPush(
     }
 
     // 1. Verifica se a vaga ou turno já iniciou (sem reenviar depois do início)
-    const expRes = await chamarRpc("notificacao_expirada", { p_notificacao_id: n.id });
-    if (expRes.ok) {
-      const expirada = await expRes.json();
-      if (expirada === true) {
-        await chamarRpc("gravar_falha_push", {
-          p_notificacao_id: n.id,
-          p_motivo: "vaga_ou_turno_ja_iniciado",
-          p_permanente: true,
-        });
-        relatorio.push({
-          notificacao_id: n.id,
-          status: "falhou",
-          detalhe: "vaga_ou_turno_ja_iniciado",
-        });
-        continue;
-      }
+    const expirada = await sqlClient.notificacaoExpirada(n.id);
+    if (expirada) {
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: "vaga_ou_turno_ja_iniciado",
+        permanente: true,
+      });
+      relatorio.push({
+        notificacao_id: n.id,
+        status: "falhou",
+        detalhe: "vaga_ou_turno_ja_iniciado",
+      });
+      continue;
     }
 
     // 2. Busca todos os aparelhos registrados da conta destinatária
@@ -447,10 +532,10 @@ export async function processarEnvioPush(
 
     if (aparelhos.length === 0) {
       // Usuário sem nenhum aparelho registrado
-      await chamarRpc("gravar_falha_push", {
-        p_notificacao_id: n.id,
-        p_motivo: "sem_dispositivo",
-        p_permanente: true,
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: "sem_dispositivo",
+        permanente: true,
       });
       relatorio.push({
         notificacao_id: n.id,
@@ -498,7 +583,7 @@ export async function processarEnvioPush(
         if (resultado.unregistered) {
           algumUnregistered = true;
           // 404/410 UNREGISTERED remove o token do banco
-          await chamarRpc("remover_token_fcm", { p_token: disp.token_fcm });
+          await sqlClient.removerTokenFcm(disp.token_fcm);
         }
         if (resultado.transient) {
           algumTransient = true;
@@ -510,18 +595,18 @@ export async function processarEnvioPush(
     if (algumAceite) {
       // 200 grava o aceite com instante real do envio e do aceite
       const instanteAceite = new Date().toISOString();
-      await chamarRpc("gravar_aceite_push", {
-        p_notificacao_id: n.id,
-        p_enviada_em: instanteEnvio,
-        p_aceita_em: instanteAceite,
+      await sqlClient.gravarAceitePush({
+        notificacaoId: n.id,
+        enviadaEm: instanteEnvio,
+        aceitaEm: instanteAceite,
       });
       relatorio.push({ notificacao_id: n.id, status: "enviada" });
     } else if (algumUnregistered && aparelhos.length === 1) {
-      await chamarRpc("gravar_falha_push", {
-        p_notificacao_id: n.id,
-        p_motivo: "UNREGISTERED",
-        p_permanente: true,
-        p_enviada_em: instanteEnvio,
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: "UNREGISTERED",
+        permanente: true,
+        enviadaEm: instanteEnvio,
       });
       relatorio.push({
         notificacao_id: n.id,
@@ -537,13 +622,13 @@ export async function processarEnvioPush(
         ? null
         : calcularProximaTentativa(novaTentativa);
 
-      await chamarRpc("gravar_falha_push", {
-        p_notificacao_id: n.id,
-        p_motivo: `erro_transitorio: ${erroUltimo}`,
-        p_permanente: false,
-        p_teto: teto,
-        p_proxima_tentativa_em: proximaTentativa ? proximaTentativa.toISOString() : null,
-        p_enviada_em: instanteEnvio,
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: `erro_transitorio: ${erroUltimo}`,
+        permanente: false,
+        teto: teto,
+        proximaTentativaEm: proximaTentativa ? proximaTentativa.toISOString() : null,
+        enviadaEm: instanteEnvio,
       });
       relatorio.push({
         notificacao_id: n.id,
@@ -551,11 +636,11 @@ export async function processarEnvioPush(
         detalhe: `erro_transitorio: ${erroUltimo}`,
       });
     } else {
-      await chamarRpc("gravar_falha_push", {
-        p_notificacao_id: n.id,
-        p_motivo: erroUltimo || "falha_envio",
-        p_permanente: true,
-        p_enviada_em: instanteEnvio,
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: erroUltimo || "falha_envio",
+        permanente: true,
+        enviadaEm: instanteEnvio,
       });
       relatorio.push({
         notificacao_id: n.id,
