@@ -200,6 +200,13 @@ segundas-feiras.
 | `d…05` | publicada | Empório | vendedor extra | sexta seguinte 14:00–20:00 | **Modo seleção** (RN24): publicada com mais de 24 h de antecedência |
 | `d…06` | preenchida | Buffet | garçom | sexta 18:00–02:00 | Cruza com a `d…01`. É o que torna a Gabi inelegível |
 | `d…07` | encerrada | Bar | garçom | sexta passada 18:00–02:00 | O histórico da Ana e do bar: turno cumprido e avaliado dos dois lados |
+| `d…08` | preenchida | Buffet | garçom | **em andamento**: 1 h antes do reset até 7 h depois | O check-in manual esperando a casa. Única vaga fora da âncora da sexta |
+
+A `d…08` pende de `now()`, e não da sexta, porque o check-in manual `pendente` só existe
+durante o turno: no fim, sem confirmação, o fechamento agendado no pg_cron
+(`fechar_turnos_e_vagas`, a cada cinco minutos) o vira `nao_verificado`. Sete horas
+depois do `db reset` o turno termina e o `090_cenarios` fica vermelho no teste do
+pendente; outro `db reset` devolve o cenário.
 
 As duas vagas do passado descontam **14** dias da âncora, não 7 — a âncora já está no
 futuro, e `- 7 dias` cairia no futuro em metade das execuções. O trigger de RN07
@@ -215,7 +222,8 @@ apareceu na primeira vez.
 | Ana na `d…07` | geolocalizado, 45 m | `verificado` | O caminho feliz. Guarda a **distância**, nunca a coordenada |
 | João na `d…03` | geolocalizado, 80 m | `verificado` | Check-out a 120 m: sai do local e encerra assim mesmo |
 | Heitor na `d…03` | manual, confirmado pelo contratante | `verificado` | Sem GPS, com prova |
-| Carla na `d…03` | manual, sem confirmação | `pendente` | O contratante não respondeu. Não vira presença por decurso de prazo |
+| Carla na `d…03` | manual, sem confirmação | `nao_verificado` | O contratante não respondeu até o fim. Não vira presença por decurso de prazo: vira `nao_verificado` (decisão 8zLfn0mt, critério 1) |
+| Heitor na `d…08` | manual, sem confirmação | `pendente` | O turno está acontecendo e a casa ainda pode confirmar |
 | Bruno na `d…03` | nenhum | `nao_verificado` | **O turno que aconteceu e não tem prova.** É o que costuma faltar num cenário montado às pressas |
 | Léo na `d…03` | — | — | Posição cancelada com `falta = true`. Sem turno |
 | Ana na `d…02` e Gabi na `d…06` | — | `pendente` | Confirmados, ainda não começaram |
