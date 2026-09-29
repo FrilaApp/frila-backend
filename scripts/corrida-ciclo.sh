@@ -23,20 +23,24 @@
 #   3. dois executores do despacho × teto (RN23) — duas vagas não urgentes despachadas
 #      ao mesmo tempo para os mesmos elegíveis, e o agendador do teto rodando junto.
 #      Nenhum profissional recebe duas notificações no teto em 30 minutos.
+#   4. cancelar_vaga × cancelar_posicao (cartão xJ53t3tX) — a casa cancela a vaga no
+#      mesmo instante em que o profissional confirmado desiste dela. Nenhuma posição
+#      aberta ou confirmada sobra na vaga cancelada, a posição dele tem um cancelamento
+#      só, e a falta (RN12) fica com quem de fato cancelou.
 #
 # Os de candidatura (vinte para duas posições, profissional em dobro) seguem em
 # `corrida-candidatar.sh`.
 #
 # Uso:  ./scripts/corrida-ciclo.sh
 #       RODADAS=10 ./scripts/corrida-ciclo.sh
-#       CENARIOS="checkin cancelar teto" ./scripts/corrida-ciclo.sh
+#       CENARIOS="checkin cancelar teto posicao" ./scripts/corrida-ciclo.sh
 #       MANTER=1 ./scripts/corrida-ciclo.sh     # não limpa: o placar fica em corrida_ciclo
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 RODADAS=${RODADAS:-50}
-CENARIOS=${CENARIOS:-checkin cancelar teto}
+CENARIOS=${CENARIOS:-checkin cancelar teto posicao}
 
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -180,10 +184,13 @@ begin
 
   select id into v_funcao from public.funcao where nome = 'garçom';
 
-  -- Um profissional por rodada no check-in, dois por rodada no cancelamento.
+  -- Um profissional por rodada no check-in, dois por rodada no cancelamento da vaga e
+  -- um por rodada na desistência.
   for r in select 'atrasado' as papel, n from generate_series(1, $RODADAS) n
            union all
            select 'candidato', n from generate_series(1, 2 * $RODADAS) n
+           union all
+           select 'desistente', n from generate_series(1, $RODADAS) n
   loop
     v_seq := v_seq + 1;
     v_conta := gen_random_uuid();
@@ -488,6 +495,99 @@ rodada $r: erros=[$erros] fora_de_uma=$duas esperando=$esperando/$n_livres"
     ok "$RODADAS rodadas, $total decisões de teto: cada livre recebeu exatamente uma notificação em 30 minutos, e a outra vaga esperou"
   else
     falhou "rodadas fora da regra:$ruins"
+  fi
+}
+
+# ── 4. cancelar_vaga × cancelar_posicao ───────────────────────────────────────
+cenario_posicao() {
+  echo
+  echo "▸ Cenário 4: cancelar_vaga × cancelar_posicao ($RODADAS rodadas)"
+
+  # Cada rodada tem a sua vaga, com uma posição confirmada que começa daqui a 12 horas:
+  # dentro das 24 h, a desistência do profissional é falta (RN12), e o cancelamento
+  # pela casa não é. É o que mostra quem cancelou de fato. A confirmação entra direto na
+  # tabela porque o que se mede é o que acontece depois dela.
+  psql >/dev/null <<SQL || { falhou "não consegui montar as posições confirmadas"; return; }
+create table corrida_ciclo.desistencia (n int, vaga uuid, posicao uuid, conta uuid);
+
+do \$desistencia\$
+declare
+  c        record;
+  v_estab  uuid := (select id from public.estabelecimento where endereco = 'corrida-ciclo-$MARCA');
+  v_funcao uuid := (select id from public.funcao where nome = 'garçom');
+  v_vaga   uuid;
+  v_pos    uuid;
+begin
+  for c in select n, conta from corrida_ciclo.contas where papel = 'desistente' order by n loop
+    insert into public.vaga (estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+                             valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+                             exige_material_proprio, responsavel_local, modo, estado,
+                             chave_cliente, publicado_por)
+    values (v_estab, v_funcao, now() + interval '12 hours', now() + interval '18 hours',
+            'corrida-ciclo-$MARCA', 'POINT(-47.8860 -15.7910)'::extensions.geography,
+            18000, 1, true, true, false, 'Seu Zé', 'urgencia', 'preenchida',
+            gen_random_uuid(), '$DONA')
+    returning id into v_vaga;
+
+    insert into public.posicao (vaga_id, estado, profissional_id, confirmado_em, inicio_em, fim_em)
+    select v_vaga, 'confirmada', p.id, now() - interval '1 day',
+           now() + interval '12 hours', now() + interval '18 hours'
+      from public.profissional p where p.usuario_id = c.conta
+    returning id into v_pos;
+
+    insert into public.turno (posicao_id, valor_acordado_centavos) values (v_pos, 18000);
+
+    insert into corrida_ciclo.desistencia values (c.n, v_vaga, v_pos, c.conta);
+  end loop;
+end
+\$desistencia\$;
+SQL
+
+  psql -tA -F' ' -c "select n, vaga, posicao, conta from corrida_ciclo.desistencia order by n" \
+    >"$TMP/desistencia"
+  while read -r n vaga pos conta; do
+    lado posicao "$n" 1 "$DONA"  "select public.cancelar_vaga('$vaga', 'a casa fechou mais cedo')"
+    lado posicao "$n" 2 "$conta" "select public.cancelar_posicao('$pos', 'imprevisto de família')"
+    wait
+  done <"$TMP/desistencia"
+
+  # Por rodada: o código de cada lado, a vaga, as posições vivas nela, e da posição do
+  # profissional as ocorrências de cancelamento e a falta.
+  psql -tA -F' ' >"$TMP/posicao.res" <<'SQL'
+select d.n,
+       coalesce((select code from corrida_ciclo.placar p
+                  where p.cenario = 'posicao' and p.rodada = d.n and p.lado = '1'), 'nada'),
+       coalesce((select code from corrida_ciclo.placar p
+                  where p.cenario = 'posicao' and p.rodada = d.n and p.lado = '2'), 'nada'),
+       v.estado,
+       (select count(*) from public.posicao o
+         where o.vaga_id = d.vaga and o.estado in ('aberta', 'confirmada')),
+       (select count(*) from public.ocorrencia oc
+         where oc.posicao_id = d.posicao and oc.tipo = 'cancelamento'),
+       o.falta
+  from corrida_ciclo.desistencia d
+  join public.vaga v    on v.id = d.vaga
+  join public.posicao o on o.id = d.posicao
+ order by d.n;
+SQL
+
+  # Dois desfechos certos. O profissional desistiu antes: a falta é dele, e a posição
+  # que ele reabriu cai junto com a vaga. A casa cancelou antes: não há falta, e quem
+  # chega depois recebe posicao_nao_cancelavel. Nos dois, a vaga fica sem posição viva
+  # e a posição dele tem um cancelamento só.
+  local ruins n_prof n_casa
+  ruins=$(awk '
+    $2 == "ok" && $4 == "cancelada" && $5 == 0 && $6 == 1 &&
+      (($3 == "ok" && $7 == "t") || ($3 == "posicao_nao_cancelavel" && $7 == "f")) { next }
+    { print }' "$TMP/posicao.res")
+  n_prof=$(awk '$3 == "ok"' "$TMP/posicao.res" | grep -c . || true)
+  n_casa=$(awk '$3 == "posicao_nao_cancelavel"' "$TMP/posicao.res" | grep -c . || true)
+
+  if [ -z "$ruins" ] && [ "$((n_prof + n_casa))" -eq "$RODADAS" ]; then
+    ok "$RODADAS rodadas: $n_prof com a desistência antes (falta dele), $n_casa com a casa antes (posicao_nao_cancelavel); nenhuma posição viva em vaga cancelada, um cancelamento por posição"
+  else
+    falhou "rodadas fora da regra (rodada, cancelar_vaga, cancelar_posicao, vaga, posições vivas, cancelamentos da posição, falta):"
+    printf '%s\n' "$ruins" | sed 's/^/      /' >&2
   fi
 }
 

@@ -24,7 +24,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(12);
+select plan(13);
 
 create function pg_temp.conta(id uuid, email text, perfil public.perfil_conta, fone text)
 returns void
@@ -174,6 +174,15 @@ select ok(exists (select 1 from public.ocorrencia o
                      and o.motivo = 'vaga_cancelada'
                      and o.autor_id = 'c5c00000-0000-4000-8000-0000000000d1'),
           'e fica a ocorrência do cancelamento, com o motivo estável e a casa como autora');
+
+-- O contrato (0.2.20) promete que os confirmados são avisados. O recolhido pelo gatilho
+-- também: é o mesmo `privado.cancelar_uma_posicao`, que avisa a outra parte.
+select ok(exists (select 1 from public.notificacao n
+                   where n.usuario_id = 'c5c00000-0000-4000-8000-0000000000e1'
+                     and n.tipo = 'cancelamento'
+                     and n.referencia_id = 'c5c00000-0000-4000-8000-0000000000b1'
+                     and n.payload @> '{"reaberta": false}'),
+          'e o profissional recolhido recebe o aviso do cancelamento, sem reabertura');
 
 drop trigger teste_candidato_chega_no_meio on public.posicao;
 
