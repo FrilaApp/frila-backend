@@ -691,8 +691,11 @@ TETO=$(docker exec -i "${DB_CONTAINER:-supabase_db_frila-backend}" \
   psql -U postgres -d postgres -tAc 'select privado.limite_de_escrita_por_minuto()')
 [ -n "$TETO" ] || falhou "não li o teto de escrita no banco"
 
+# A janela é o minuto do relógio: se a rajada atravessa a virada, a contagem recomeça no
+# meio dela. Com 2 × teto + 2 tentativas, uma virada só (a rajada leva segundos) não
+# impede a recusa; com teto + 1, a rajada que cruzasse o minuto passaria sem 429.
 aceitas=0; recusa_http=""; recusa_corpo=""
-for _ in $(seq 1 $((TETO + 1))); do
+for _ in $(seq 1 $((2 * TETO + 2))); do
   tmp=$(mktemp)
   http=$(curl -s -o "$tmp" -w '%{http_code}' -X POST "$URL/rest/v1/rpc/registrar_dispositivo" \
     -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
@@ -702,7 +705,7 @@ for _ in $(seq 1 $((TETO + 1))); do
   recusa_http="$http"; recusa_corpo="$corpo"; break
 done
 
-[ -n "$recusa_http" ] || falhou "$((TETO + 1)) escritas seguidas e nenhuma recusa: o teto de $TETO não segurou"
+[ -n "$recusa_http" ] || falhou "$((2 * TETO + 2)) escritas seguidas e nenhuma recusa: o teto de $TETO não segurou"
 [ "$recusa_http" = "429" ] || falhou "a rajada parou em HTTP $recusa_http, esperado 429: $recusa_corpo"
 code=$(printf '%s' "$recusa_corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || true)
 [ "$code" = "limite_excedido" ] || falhou "a recusa veio com code '$code', e o contrato pede limite_excedido"
