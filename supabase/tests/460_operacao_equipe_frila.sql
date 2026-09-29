@@ -10,7 +10,7 @@
 
 begin;
 
-select plan(58);
+select plan(64);
 
 set local frila.agendador_secret = 'segredo-de-teste';
 
@@ -375,6 +375,11 @@ values ('d7000000-0000-4000-8000-000000000067', 'd7000000-0000-4000-8000-0000000
 insert into public.turno (id, posicao_id, valor_acordado_centavos)
 values ('d7000000-0000-4000-8000-000000000069', 'd7000000-0000-4000-8000-000000000067', 14000);
 
+-- Candidatura pendente de Carlos: ocultar não a retira (0.2.23).
+insert into public.candidatura (id, posicao_id, profissional_id, estado)
+values ('d7000000-0000-4000-8000-000000000082', 'd7000000-0000-4000-8000-000000000068',
+        'd7000000-0000-4000-8000-000000000011', 'pendente');
+
 -- Antes de ocultar, a vaga está na vitrine: o teste abaixo não é vazio.
 select ok(
   (pg_temp.como('d7000000-0000-4000-8000-000000000005',
@@ -417,10 +422,39 @@ select throws_ok(
   'PGRST', null,
   'ninguém se candidata à vaga ocultada');
 
-select lives_ok(
-  $$ select pg_temp.como('d7000000-0000-4000-8000-000000000004',
-       $q$ select public.detalhe_vaga('d7000000-0000-4000-8000-000000000066') $q$) $$,
-  'o confirmado ainda abre o detalhe da vaga ocultada');
+select is(
+  pg_temp.como('d7000000-0000-4000-8000-000000000004',
+    $$ select public.detalhe_vaga('d7000000-0000-4000-8000-000000000066') $$)->>'oculta',
+  'true',
+  'o confirmado ainda abre o detalhe da vaga ocultada, com oculta: true');
+
+select is(
+  pg_temp.como('d7000000-0000-4000-8000-000000000001',
+    $$ select public.detalhe_vaga('d7000000-0000-4000-8000-000000000066') $$)->>'oculta',
+  'true',
+  'o candidato pendente abre o detalhe da vaga ocultada, com oculta: true (0.2.23)');
+
+select is(
+  (select c.estado from public.candidatura c where c.id = 'd7000000-0000-4000-8000-000000000082'),
+  'pendente'::public.estado_candidatura,
+  'a candidatura pendente segue pendente na vaga ocultada');
+
+select is(
+  (select e->>'oculta'
+     from jsonb_array_elements(
+            pg_temp.como('d7000000-0000-4000-8000-000000000002',
+              format($$ select public.painel_estabelecimento(%L, %L, %L) $$,
+                     'd7000000-0000-4000-8000-000000000022', now(), now() + interval '30 days'))->'vagas') e
+    where e->'vaga'->>'id' = 'd7000000-0000-4000-8000-000000000066'),
+  'true',
+  'a casa vê a vaga como oculta no painel, com o estado de sempre');
+
+select throws_like(
+  $$ select pg_temp.como('d7000000-0000-4000-8000-000000000002',
+       $q$ select public.republicar_vaga('d7000000-0000-4000-8000-000000000066',
+             now() + interval '8 days', now() + interval '8 days 6 hours', gen_random_uuid()) $q$) $$,
+  '%"vaga_oculta"%',
+  'republicar a partir da vaga ocultada é recusado com 422 vaga_oculta');
 
 select is(
   privado.despachar_vaga('d7000000-0000-4000-8000-000000000066'),
@@ -470,6 +504,22 @@ select ok(
          $$ select public.vagas_abertas(limite => 100) $$)
        @> '[{"id": "d7000000-0000-4000-8000-000000000066"}]'::jsonb),
   'a vaga reexibida volta à vitrine');
+
+select is(
+  pg_temp.como('d7000000-0000-4000-8000-000000000005',
+    $$ select public.detalhe_vaga('d7000000-0000-4000-8000-000000000066') $$)->>'oculta',
+  'false',
+  'a vaga reexibida responde oculta: false a qualquer um');
+
+select is(
+  (select e->>'oculta'
+     from jsonb_array_elements(
+            pg_temp.como('d7000000-0000-4000-8000-000000000002',
+              format($$ select public.painel_estabelecimento(%L, %L, %L) $$,
+                     'd7000000-0000-4000-8000-000000000022', now(), now() + interval '30 days'))->'vagas') e
+    where e->'vaga'->>'id' = 'd7000000-0000-4000-8000-000000000066'),
+  'false',
+  'depois de reexibida, o painel mostra oculta: false');
 
 -- Reexibir não republica a vaga que a casa cancelou.
 insert into public.vaga (id, estabelecimento_id, publicado_por, funcao_id, inicio_em, fim_em, local, regiao_administrativa, responsavel_local, valor_centavos, posicoes, modo, estado, ponto, inclui_refeicao, inclui_transporte, exige_material_proprio, chave_cliente)
