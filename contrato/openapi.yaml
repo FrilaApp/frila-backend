@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.21
+  version: 0.2.22
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -63,7 +63,7 @@ info:
     | HTTP | `code` | Quando |
     |---|---|---|
     | 401 | `nao_autenticado`, `PGRST301` e afins | Token ausente, expirado, inválido ou de conta já encerrada/anonimizada (RF25) |
-    | 403 | `sem_permissao` | Autenticado, mas sem papel para a ação (RF21). `details`: `conta_suspensa` quando a conta está suspensa e a ação exige conta ativa (RN13) |
+    | 403 | `sem_permissao` | Autenticado, mas sem papel para a ação (RF21); ou profissional sem turno verificado prévio na casa ao incluir na equipe (UC11). `details`: `conta_suspensa` quando a conta está suspensa e a ação exige conta ativa (RN13), ou `sem_turno_cumprido` (UC11) |
     | 403 | `contato_expirado` | Contato pedido depois de 7 dias do fim do turno (RN10) |
     | 404 | `nao_encontrado` | O recurso não existe ou não é visível para quem pede (inclui bloqueio, RF26) |
     | 409 | `posicao_ja_preenchida` | Alguém chegou antes (RN19). **Funcionamento normal no modo urgência** |
@@ -92,6 +92,21 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.22, de 29/09/2026.** Documentação da recusa por ausência de turno cumprido
+    ao incluir profissional na equipe de confiança em `/rpc/incluir_na_equipe` (cartão jl6nbekI,
+    UC11). O catálogo de erros passa a documentar explicitamente `sem_turno_cumprido` como
+    motivo complementar (`details`) em `sem_permissao` (403), cobrindo a regra de negócio
+    segundo a qual apenas profissionais com histórico de presença verificada no estabelecimento
+    podem ser adicionados à equipe de confiança pelo administrador da casa:
+
+    - **`sem_turno_cumprido`:** Em `/rpc/incluir_na_equipe`, recusa com HTTP 403 `sem_permissao`
+      (`details: sem_turno_cumprido`) quando o profissional indicado não possui nenhum turno
+      com presença verificada no estabelecimento.
+    - **Catálogo de respostas (`SemPermissao`):** Acrescentado o exemplo `sem_turno_cumprido`
+      nos exemplos de `components/responses/SemPermissao`.
+
+    ---
 
     **Versão 0.2.21, de 29/09/2026.** Respostas de erro e catálogo de validação em
     `/rpc/denunciar` e `/rpc/bloquear` (cartão JWJOPAOL). `/rpc/denunciar` passa a documentar
@@ -1145,6 +1160,10 @@ paths:
         O profissional da equipe recebe a notificação das vagas do estabelecimento mesmo além de 15 km,
         desde que tenha a função e esteja disponível (RF18). Não há exclusividade de tempo nem ordem.
         Idempotente.
+
+        Apenas o administrador do estabelecimento pode incluir profissionais na equipe (RF21). Exige que
+        o profissional tenha cumprido ao menos um turno com presença verificada no estabelecimento (UC11);
+        caso contrário, recusa com `403 sem_permissao` (`details: sem_turno_cumprido`).
       x-requisitos: [RF18, RN05, UC11]
       requestBody:
         required: true
@@ -2617,6 +2636,13 @@ components:
                 code: contato_expirado
                 message: contato_expirado
                 details: null
+                hint: null
+            sem_turno_cumprido:
+              summary: Profissional sem turno verificado prévio no estabelecimento
+              value:
+                code: sem_permissao
+                message: sem_permissao
+                details: sem_turno_cumprido
                 hint: null
     NaoEncontrado:
       description: Não existe, ou não é visível para quem pede.

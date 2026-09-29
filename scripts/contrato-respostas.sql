@@ -212,6 +212,20 @@ select pg_temp.guarda('cancelarVaga', pg_temp.como('cc000000-0000-4000-8000-0000
   $$ select public.cancelar_vaga(%L::uuid, 'evento adiado') $$,
   ((select r from vaga2)->>'vaga_id')::uuid)));
 
+-- ── Equipe de confiança ───────────────────────────────────────────────────────
+select pg_temp.guarda('incluirNaEquipe', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.incluir_na_equipe(%L::uuid, %L::uuid) $$,
+  (select casa_id from ids),
+  (select p.id from public.profissional p where p.usuario_id = 'cc000000-0000-4000-8000-000000000002'))));
+
+select pg_temp.guarda('equipeDeConfianca', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.equipe_de_confianca(%L::uuid) $$, (select casa_id from ids))));
+
+select pg_temp.guarda('removerDaEquipe', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.remover_da_equipe(%L::uuid, %L::uuid) $$,
+  (select casa_id from ids),
+  (select p.id from public.profissional p where p.usuario_id = 'cc000000-0000-4000-8000-000000000002'))));
+
 -- ── A configuração do app, sem sessão ─────────────────────────────────────────
 --
 -- É a única RPC que o app chama antes de entrar, então colhe como `anon`, e não pelo
