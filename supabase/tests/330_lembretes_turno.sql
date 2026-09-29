@@ -399,8 +399,8 @@ select is(
 
 select is(
   (select privado.obter_conteudo_push_lembrete((select turno_id from turno_25h), (select prof_user from ids), 'lembrete_24h')->>'body'),
-  'Garçom em Bar Beirute amanhã às 11:00.',
-  'Push 09: corpo do lembrete 24 h do profissional interpola função, local (apenas estabelecimento) e horário');
+  'Garçom em Bar Beirute (Plano Piloto) amanhã às 11:00.',
+  'Push 09: corpo do lembrete 24 h do profissional interpola função, local ({estabelecimento} ({regiao})) e horário');
 
 -- Push 10: Lembrete 24 h Contratante
 select is(
@@ -421,8 +421,8 @@ select is(
 
 select is(
   (select privado.obter_conteudo_push_lembrete((select turno_id from turno_25h), (select prof_user from ids), 'lembrete_3h')->>'body'),
-  'Garçom em Bar Beirute às 11:00. Planeje seu trajeto.',
-  'Push 11: corpo do lembrete 3 h do profissional interpola função, local (apenas estabelecimento) e horário');
+  'Garçom em Bar Beirute (Plano Piloto) às 11:00. Planeje seu trajeto.',
+  'Push 11: corpo do lembrete 3 h do profissional interpola função, local ({estabelecimento} ({regiao})) e horário');
 
 -- Push 12: Lembrete 3 h Contratante
 select is(
