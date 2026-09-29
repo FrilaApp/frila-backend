@@ -117,6 +117,13 @@ jobs:
       # política — e afrouxa cada política para `using (true)` — exigindo que o pgTAP
       # fique vermelho em cada caso. Escrito depois de duas revisões medirem que 11 de
       # 31 restrições e 6 de 19 políticas passavam sem nenhum teste reclamar.
+      # Mesmo motivo dos dois jobs baratos no fim deste arquivo: o portão é testado antes de
+      # julgar o PR. Aqui o alvo é estreito — só a linha de base, que é a parte do
+      # `mutacao.sh` que reprova e precisa dizer **onde**. Roda sem Postgres, com o
+      # `supabase` dublado, e leva menos de um segundo.
+      - name: A linha de base da mutação nomeia o vermelho
+        run: ./scripts/teste-mutacao-linha-de-base.sh
+
       - name: Os testes cobrem as regras
         run: ./scripts/mutacao.sh
 
