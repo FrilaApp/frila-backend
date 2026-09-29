@@ -423,6 +423,15 @@ verify_jwt = true
 enabled = true
 verify_jwt = false
 
+# E-mails transacionais e a caixa da Equipe Frila (cartão 7yq1flLG).
+# Consome a fila `email` do pgmq: protocolo de denúncia e de contestação, e o alerta do
+# monitoramento. Acordada pelo gatilho da própria fila e pelo job `processar_fila_email`.
+# verify_jwt fica desligado porque a proteção é o segredo do agendador, como nas outras
+# duas do agendador: quem chama é o Postgres, que não tem sessão de usuário.
+[functions.enviar-email]
+enabled = true
+verify_jwt = false
+
 
 [analytics]
 enabled = true
