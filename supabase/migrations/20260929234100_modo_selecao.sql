@@ -336,6 +336,12 @@ begin
       'contato',        privado.contato_do_estabelecimento(candidatar.vaga_id));
   end if;
 
+  -- Ocultada pela Equipe Frila: o mesmo 404 das leituras. Depois da idempotência, para o
+  -- reenvio de quem já confirmou devolver o próprio turno.
+  if privado.vaga_oculta(v.id) then
+    perform public.erro(404, 'nao_encontrado');
+  end if;
+
   v_agora := privado.agora();
 
   -- Dois 409 diferentes, e a diferença importa para a tela. `vaga_encerrada` é "esta
@@ -633,6 +639,12 @@ begin
     perform public.erro(409, 'candidatura_indisponivel');
   end if;
 
+  -- Ocultada pela moderação da Equipe Frila (contrato 0.2.23): a escolha é recusada e a
+  -- candidatura segue pendente; volta a valer se a Equipe reexibir a vaga.
+  if privado.vaga_oculta(v.id) then
+    perform public.erro(422, 'vaga_oculta');
+  end if;
+
   v_agora := privado.agora();
 
   if v.estado = 'preenchida' then
@@ -712,7 +724,7 @@ begin
 end $$;
 
 comment on function public.escolher_candidato(uuid) is
-  'Modo seleção: a casa confirma um candidato pendente numa posição aberta (RN19, RN21, contrato 0.2.24). A última escolha fecha a vaga e recusa os pendentes com aviso candidatura_recusada. O escolhido recebe confirmacao.';
+  'Modo seleção: a casa confirma um candidato pendente numa posição aberta (RN19, RN21, contrato 0.2.24). Vaga ocultada pela Equipe Frila: 422 vaga_oculta (0.2.23). A última escolha fecha a vaga e recusa os pendentes com aviso candidatura_recusada. O escolhido recebe confirmacao.';
 
 revoke execute on function public.escolher_candidato(uuid) from public, anon;
 grant  execute on function public.escolher_candidato(uuid) to authenticated;

@@ -20,7 +20,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(68);
+select plan(70);
 
 insert into privado.ambiente (id, eh_teste) values (true, true);
 select set_config('frila.agora', '2026-11-02 12:00:00+00', true);
@@ -332,6 +332,19 @@ select throws_ok(
   'RN21: escolher quem ficou com turno sobreposto é recusado');
 select is(pg_temp.estado_cand(2, (select s2 from vagas)), 'pendente',
   'a escolha recusada não mexe na candidatura');
+
+-- Ocultada pela moderação da Equipe Frila (0.2.23), assinada por d2, que não é da casa.
+select privado.operacao_moderar_conteudo((select s2 from vagas), 'ocultar',
+  'Texto ofensivo reportado em denúncia', 'c9000000-0000-4000-8000-0000000000d2');
+select throws_ok(
+  format($$ select pg_temp.escolher('c9000000-0000-4000-8000-0000000000d1', %L) $$,
+         pg_temp.cand(3, (select s2 from vagas))),
+  'PGRST', pg_temp.erro('vaga_oculta'),
+  'vaga ocultada pela Equipe Frila não aceita escolha: 422 vaga_oculta');
+select is(pg_temp.estado_cand(3, (select s2 from vagas)), 'pendente',
+  'e a candidatura segue pendente');
+select privado.operacao_moderar_conteudo((select s2 from vagas), 'reexibir',
+  'Conteúdo revisado pela Equipe', 'c9000000-0000-4000-8000-0000000000d2');
 
 select is(pg_temp.escolher('c9000000-0000-4000-8000-0000000000d1',
             pg_temp.cand(3, (select s2 from vagas)))->>'estado', 'confirmada',
