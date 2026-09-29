@@ -10,7 +10,7 @@
 
 begin;
 
-select plan(57);
+select plan(58);
 
 set local frila.agendador_secret = 'segredo-de-teste';
 
@@ -426,6 +426,16 @@ select is(
   privado.despachar_vaga('d7000000-0000-4000-8000-000000000066'),
   0,
   'a vaga ocultada não é despachada');
+
+-- O aviso de vaga que já estava na fila não sai depois de ocultada.
+create temp table aviso_vaga as
+  select privado.notificar('d7000000-0000-4000-8000-000000000005', 'vaga',
+           'd7000000-0000-4000-8000-000000000066',
+           jsonb_build_object('vaga_id', 'd7000000-0000-4000-8000-000000000066')) as id;
+
+select ok(
+  privado.notificacao_expirada((select id from aviso_vaga)),
+  'o aviso de vaga já enfileirado expira quando ela é ocultada');
 
 select is(
   (select count(*)::int from public.ocorrencia o
