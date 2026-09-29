@@ -271,6 +271,18 @@ set local frila.agora = '2027-02-01 21:20:00+00';
 select pg_temp.guarda('reabrirPorAtraso', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.reabrir_por_atraso(%L::uuid) $$, ((select r from cand3)->>'posicao_id')::uuid)));
 
+-- ── Denunciar e bloquear ──────────────────────────────────────────────────────
+--
+-- Por último, porque o bloqueio esconderia a casa de quem bloqueou em tudo o que vem
+-- depois. O Pê Dois bloqueia a casa; a casa denuncia o Pê.
+select pg_temp.guarda('bloquear', pg_temp.como('cc000000-0000-4000-8000-000000000003', format(
+  $$ select public.bloquear('estabelecimento', %L::uuid) $$, (select casa_id from ids))));
+select pg_temp.guarda('denunciar', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.denunciar('profissional', %L::uuid, 'outro',
+       'Relato do teste de contrato.', gen_random_uuid()) $$,
+  (select p.id from public.profissional p
+    where p.usuario_id = 'cc000000-0000-4000-8000-000000000002'))));
+
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o
 \pset format unaligned

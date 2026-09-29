@@ -19,7 +19,7 @@
 -- (a…06 / e…06) já estava bloqueado pela Zélia.
 
 begin;
-select plan(58);
+select plan(62);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -106,7 +106,7 @@ select throws_ok(
 -- ── 2. Antes do bloqueio, todos os caminhos estão abertos ─────────────────────
 
 create temp table antes as select
-  pg_temp.como((select ana from ids), $$ select public.vagas_abertas(limite => 500) $$) as lista;
+  pg_temp.como((select ana from ids), $$ select public.vagas_abertas(limite => 100) $$) as lista;
 
 select ok(
   exists (select 1 from jsonb_array_elements((select lista from antes)) v
@@ -146,7 +146,8 @@ select posicao, karen_prof from ids;
 select is(
   (pg_temp.como((select zelia from ids), format(
      $$ select to_jsonb(count(*)) from public.candidatura c
-         where c.profissional_id = %L $$, (select karen_prof from ids))))::int,
+         where c.profissional_id = %L and c.posicao_id = %L $$,
+     (select karen_prof from ids), (select posicao from ids))))::int,
   1,
   'antes: a Zélia vê a candidatura da Karen');
 
@@ -185,7 +186,7 @@ select is(
 
 select ok(
   not exists (select 1 from jsonb_array_elements(
-                pg_temp.como((select ana from ids), $$ select public.vagas_abertas(limite => 500) $$)) v
+                pg_temp.como((select ana from ids), $$ select public.vagas_abertas(limite => 100) $$)) v
                where (v->>'id')::uuid = (select vaga from ids)),
   'depois: a vaga do bar some de vagas_abertas');
 
@@ -259,14 +260,16 @@ select ok(
 select is(
   (pg_temp.como((select zelia from ids), format(
      $$ select to_jsonb(count(*)) from public.candidatura c
-         where c.profissional_id = %L $$, (select karen_prof from ids))))::int,
+         where c.profissional_id = %L and c.posicao_id = %L $$,
+     (select karen_prof from ids), (select posicao from ids))))::int,
   0,
   'a outra administradora também deixa de ver a candidatura da Karen');
 
 select is(
   (pg_temp.como((select paulo from ids), format(
      $$ select to_jsonb(count(*)) from public.candidatura c
-         where c.profissional_id = %L $$, (select karen_prof from ids))))::int,
+         where c.profissional_id = %L and c.posicao_id = %L $$,
+     (select karen_prof from ids), (select posicao from ids))))::int,
   0,
   'quem bloqueou não vê a Karen na lista de candidatos');
 
