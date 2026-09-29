@@ -334,7 +334,7 @@ resultado foi X"* tem que sair diferente de zero.
 > medido; nenhuma linha foi remedida depois. Antes de citar qualquer uma como fato atual,
 > meça.
 
-Cinco colunas do esquema não estão na Modelagem de Banco. Todas nasceram de uma RPC, e
+Oito colunas do esquema não estão na Modelagem de Banco. Todas nasceram de uma RPC, e
 quem precisa reconciliar é o documento:
 
 | Coluna | Por quê |
@@ -344,6 +344,9 @@ quem precisa reconciliar é o documento:
 | `turno.checkin_recebido_em` | `checkin_em` é a hora do **toque**; sem as duas, registro offline vira indistinguível |
 | `turno.checkout_recebido_em` | o mesmo, do outro lado |
 | `posicao.reaberta_por_atraso_de` | `reabrir_por_atraso` (e8XpOZJN, 28/09): a posição nova sabe de qual falta nasceu; é ela que aceita candidato depois do início, até 1 h antes do fim (8zLfn0mt item 5) |
+| `vaga.rodada_despacho` | rodada de despacho (9DbPXis7, 29/09): 1 na publicação, mais um a cada `reabrir_por_atraso`; a vaga reaberta volta a chegar a quem já a tinha recebido (8zLfn0mt item 2) |
+| `despacho.rodada` | o mesmo cartão: a unicidade do despacho passou de `(vaga_id, profissional_id)` para `(vaga_id, profissional_id, rodada)` |
+| `notificacao.rodada` | o mesmo cartão: a marca de envio de `vaga` é por rodada, senão o push da rodada nova seria engolido pelo da primeira |
 
 E mais estas:
 
