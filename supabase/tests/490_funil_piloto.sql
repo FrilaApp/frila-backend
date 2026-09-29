@@ -3,15 +3,17 @@
 --
 -- Critérios cobertos:
 -- 1. Schema `metrica` e views sem acesso de `anon` e `authenticated` (só `service_role`).
--- 2. Números do funil sobre o seed (cenários):
+-- 2. Tabela `privado.conta_equipe` sem acesso de `anon` e `authenticated` (só `service_role`).
+-- 3. Números do funil sobre o seed (cenários):
 --    - Vagas publicadas, notificações, candidaturas, confirmações, check-ins e avaliações.
 --    - Tempo mediano entre publicação e confirmação.
 --    - Consistência por dia e por estabelecimento.
--- 3. Exclusão de contas de demonstração (usuario.demonstracao = true) de todos os cálculos.
--- 4. Contabilização correta de notificações enviadas.
+-- 4. Exclusão de contas de demonstração (usuario.demonstracao = true) de todos os cálculos.
+-- 5. Exclusão de contas da equipe (privado.conta_equipe) de todos os cálculos.
+-- 6. Contabilização correta de notificações enviadas.
 
 begin;
-select plan(35);
+select plan(43);
 
 create function pg_temp.como(papel text, sql text) returns void
 language plpgsql as $$
@@ -21,7 +23,7 @@ begin
   reset role;
 end $$;
 
--- ── 1. Permissões de Acesso ──────────────────────────────────────────────────
+-- ── 1. Permissões de Acesso ao Schema metrica ────────────────────────────────
 -- anon e authenticated não podem acessar o schema metrica nem as views.
 
 select throws_ok(
@@ -81,7 +83,41 @@ select lives_ok(
   'service_role pode consultar metrica.funil_geral'
 );
 
--- ── 2. Números sobre o Seed (cenarios.sql) ──────────────────────────────────
+-- ── 2. Permissões de Acesso à Tabela privado.conta_equipe ────────────────────
+select throws_ok(
+  $$ select pg_temp.como('anon', 'select * from privado.conta_equipe') $$,
+  '42501',
+  null,
+  'anon não pode consultar privado.conta_equipe'
+);
+
+select throws_ok(
+  $$ select pg_temp.como('anon', 'insert into privado.conta_equipe (usuario_id) values (gen_random_uuid())') $$,
+  '42501',
+  null,
+  'anon não pode inserir em privado.conta_equipe'
+);
+
+select throws_ok(
+  $$ select pg_temp.como('authenticated', 'select * from privado.conta_equipe') $$,
+  '42501',
+  null,
+  'authenticated não pode consultar privado.conta_equipe'
+);
+
+select throws_ok(
+  $$ select pg_temp.como('authenticated', 'insert into privado.conta_equipe (usuario_id) values (gen_random_uuid())') $$,
+  '42501',
+  null,
+  'authenticated não pode inserir em privado.conta_equipe'
+);
+
+select lives_ok(
+  $$ select pg_temp.como('service_role', 'select count(*) from privado.conta_equipe') $$,
+  'service_role pode consultar privado.conta_equipe'
+);
+
+-- ── 3. Números sobre o Seed (cenarios.sql) ──────────────────────────────────
 -- Resumo Geral sobre os estabelecimentos semeados
 select cmp_ok(
   (select vagas_publicadas from metrica.funil_geral),
@@ -135,7 +171,7 @@ select is(
   'soma dos 3 estabelecimentos de cenário totaliza 8 vagas'
 );
 
--- ── 3. Funil por Estabelecimento sobre o Seed ────────────────────────────────
+-- ── 4. Funil por Estabelecimento sobre o Seed ────────────────────────────────
 -- Bar do Cerrado
 select is(
   (select vagas_publicadas from metrica.funil_por_estabelecimento
@@ -216,7 +252,7 @@ select is(
   'Empório Lago Sul: 2 candidaturas (d05)'
 );
 
--- ── 4. Funil por Dia: Consistência ───────────────────────────────────────────
+-- ── 5. Funil por Dia: Consistência ───────────────────────────────────────────
 select is(
   (select sum(vagas_publicadas)::bigint from metrica.funil_por_dia),
   (select vagas_publicadas from metrica.funil_geral),
@@ -229,7 +265,7 @@ select is(
   'funil por dia: soma das candidaturas bate com total geral'
 );
 
--- ── 5. Exclusão de Contas de Demonstração ─────────────────────────────────────
+-- ── 6. Exclusão de Contas de Demonstração ─────────────────────────────────────
 -- Cria uma conta de demonstração, publica uma vaga e verifica que os números do funil
 -- permanecem inalterados.
 do $$
@@ -282,7 +318,79 @@ select ok(
   'estabelecimento de demonstração é excluído do funil por estabelecimento'
 );
 
--- ── 6. Incremento de Notificações e Isolamento de Candidatura Demo ────────────
+-- ── 7. Exclusão de Contas da Equipe (privado.conta_equipe) ───────────────────
+do $$
+declare
+  v_vagas_antes bigint := (select vagas_publicadas from metrica.funil_geral);
+  v_equipe_user uuid := gen_random_uuid();
+  v_equipe_estab uuid := gen_random_uuid();
+  v_equipe_vaga uuid := gen_random_uuid();
+  v_equipe_prof_usr uuid := gen_random_uuid();
+  v_equipe_prof uuid := gen_random_uuid();
+  v_funcao uuid;
+begin
+  select id into v_funcao from public.funcao limit 1;
+
+  -- 1. Cria usuário contratante e marca como conta_equipe
+  insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
+  values (v_equipe_user, 'contratante', 'Membro Equipe', '+5561999990077', 'equipe_admin@frila.test', '1990-01-01', '2026-09-22', now());
+
+  insert into privado.conta_equipe (usuario_id) values (v_equipe_user);
+
+  insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto)
+  values (v_equipe_estab, 'Bar da Equipe Frila', '09123456000777', 'food_service', 'Endereço Equipe', 'POINT(-47.8869 -15.7620)'::extensions.geography);
+
+  insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
+  values (v_equipe_user, v_equipe_estab, 'administrador');
+
+  insert into public.vaga (
+    id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+    valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+    exige_material_proprio, responsavel_local, modo, estado, publicado_em,
+    chave_cliente, publicado_por
+  ) values (
+    v_equipe_vaga, v_equipe_estab, v_funcao, now() + interval '3 days', now() + interval '3 days 8 hours',
+    'Local Equipe', 'POINT(-47.8869 -15.7620)'::extensions.geography,
+    15000, 1, false, false, false, 'Gerente Equipe', 'urgencia', 'publicada',
+    now(), gen_random_uuid(), v_equipe_user
+  );
+
+  -- 2. Cria profissional da equipe e candidata na vaga d01 do Bar do Cerrado
+  insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
+  values (v_equipe_prof_usr, 'profissional', 'Profissional Equipe', '+5561999990066', 'equipe_prof@frila.test', '1992-01-01', '2026-09-22', now());
+
+  insert into privado.conta_equipe (usuario_id) values (v_equipe_prof_usr);
+
+  insert into public.profissional (id, usuario_id, ponto_base)
+  values (v_equipe_prof, v_equipe_prof_usr, 'POINT(-47.8869 -15.7620)'::extensions.geography);
+
+  insert into public.candidatura (posicao_id, profissional_id, estado, criada_em)
+  values ('f1000000-0000-4000-8000-000000000101'::uuid, v_equipe_prof, 'pendente', now());
+
+  perform set_config('frila.teste_equipe_vagas_antes', v_vagas_antes::text, true);
+end $$;
+
+select is(
+  (select vagas_publicadas from metrica.funil_geral),
+  current_setting('frila.teste_equipe_vagas_antes')::bigint,
+  'vaga da equipe Frila é excluída do funil geral'
+);
+
+select ok(
+  not exists (
+    select 1 from metrica.funil_por_estabelecimento where estabelecimento_nome = 'Bar da Equipe Frila'
+  ),
+  'estabelecimento da equipe Frila é excluído do funil por estabelecimento'
+);
+
+select is(
+  (select candidaturas from metrica.funil_por_estabelecimento
+    where estabelecimento_id = 'c0000000-0000-4000-8000-000000000001'::uuid),
+  3::bigint,
+  'candidatura de membro da equipe é ignorada no funil do Bar do Cerrado'
+);
+
+-- ── 8. Incremento de Notificações e Isolamento de Candidatura Demo ────────────
 do $$
 declare
   v_vaga_id uuid := 'd0000000-0000-4000-8000-000000000001'::uuid; -- Bar do Cerrado

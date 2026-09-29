@@ -1,12 +1,33 @@
 -- 20260930150000_views_funil_piloto.sql
--- Views SQL do funil do piloto por dia e por estabelecimento (Cartão 1MK1CGyF, T-0017, T-0020).
+-- Views SQL do funil do piloto por dia e por estabelecimento e tabela privado.conta_equipe (Cartão 1MK1CGyF, T-0017, T-0020).
 --
 -- O ciclo que este repositório fecha:
 --   publicar → notificar → candidatar → confirmar → executar (check-in) → avaliar
 --
 -- Restrito a service_role (sem acesso de anon / authenticated).
--- Exclui contas de demonstração (usuario.demonstracao = true).
+-- Exclui contas de demonstração (usuario.demonstracao = true) e contas da Equipe Frila (privado.conta_equipe).
 
+-- ── 0. privado.conta_equipe ──────────────────────────────────────────────────
+-- Tabela privada para identificar contas do time Frila sem tocar em public.usuario,
+-- preservando o contrato público e mantendo a equipe fora da API e das métricas.
+create table if not exists privado.conta_equipe (
+  usuario_id uuid primary key references public.usuario(id) on delete cascade,
+  criado_em timestamptz not null default now()
+);
+
+comment on table privado.conta_equipe is
+  'Contas de membros da Equipe Frila. Excluídas do funil e das métricas do piloto (1MK1CGyF). Restrito a service_role.';
+
+comment on column privado.conta_equipe.usuario_id is
+  'Identificador da conta de usuário pertencente à Equipe Frila.';
+
+comment on column privado.conta_equipe.criado_em is
+  'Instante em que a conta foi registrada na equipe.';
+
+revoke all on table privado.conta_equipe from public, anon, authenticated;
+grant select, insert, update, delete on table privado.conta_equipe to service_role;
+
+-- ── 1. Schema metrica ─────────────────────────────────────────────────────────
 create schema if not exists metrica;
 
 comment on schema metrica is
@@ -15,9 +36,7 @@ comment on schema metrica is
 revoke all on schema metrica from public, anon, authenticated;
 grant usage on schema metrica to service_role;
 
--- ── 1. metrica.funil_por_vaga (base de cálculo detalhada) ─────────────────────
--- Base de apoio: métricas desagregadas por vaga, exposta em metrica para consultas
--- aprofundadas ou auditoria de cada publicação do piloto.
+-- ── 2. metrica.funil_por_vaga (base de cálculo detalhada) ─────────────────────
 create or replace view metrica.funil_por_vaga as
 select
   v.id as vaga_id,
@@ -32,6 +51,7 @@ select
       from public.notificacao n
       join public.usuario un on un.id = n.usuario_id
      where not coalesce(un.demonstracao, false)
+       and not exists (select 1 from privado.conta_equipe ce where ce.usuario_id = un.id)
        and (
          (n.tipo = 'vaga' and n.referencia_id = v.id)
          or exists (
@@ -50,6 +70,7 @@ select
       join public.usuario uc on uc.id = prof.usuario_id
      where p.vaga_id = v.id
        and not coalesce(uc.demonstracao, false)
+       and not exists (select 1 from privado.conta_equipe ce where ce.usuario_id = uc.id)
   ) as candidaturas,
   -- Confirmações
   (
@@ -60,6 +81,7 @@ select
      where p.vaga_id = v.id
        and p.confirmado_em is not null
        and not coalesce(up.demonstracao, false)
+       and not exists (select 1 from privado.conta_equipe ce where ce.usuario_id = up.id)
   ) as confirmacoes,
   -- Check-ins
   (
@@ -71,6 +93,7 @@ select
      where p.vaga_id = v.id
        and t.checkin_em is not null
        and not coalesce(ut.demonstracao, false)
+       and not exists (select 1 from privado.conta_equipe ce where ce.usuario_id = ut.id)
   ) as checkins,
   -- Avaliações
   (
@@ -81,16 +104,18 @@ select
       join public.usuario ua on ua.id = a.autor_id
      where p.vaga_id = v.id
        and not coalesce(ua.demonstracao, false)
+       and not exists (select 1 from privado.conta_equipe ce where ce.usuario_id = ua.id)
   ) as avaliacoes
 from public.vaga v
 join public.estabelecimento e on e.id = v.estabelecimento_id
 join public.usuario uv on uv.id = v.publicado_por
-where not coalesce(uv.demonstracao, false);
+where not coalesce(uv.demonstracao, false)
+  and not exists (select 1 from privado.conta_equipe ce where ce.usuario_id = uv.id);
 
 comment on view metrica.funil_por_vaga is
-  'Funil por vaga individual: contagem de notificações, candidaturas, confirmações, check-ins e avaliações. Exclui contas de demonstração.';
+  'Funil por vaga individual: contagem de notificações, candidaturas, confirmações, check-ins e avaliações. Exclui demonstração e contas da equipe.';
 
--- ── 2. metrica.funil_confirmacoes (base de tempos de confirmação) ───────────────
+-- ── 3. metrica.funil_confirmacoes (base de tempos de confirmação) ───────────────
 create or replace view metrica.funil_confirmacoes as
 select
   p.id as posicao_id,
@@ -107,12 +132,14 @@ join public.profissional prof on prof.id = p.profissional_id
 join public.usuario up on up.id = prof.usuario_id
 where p.confirmado_em is not null
   and not coalesce(uv.demonstracao, false)
-  and not coalesce(up.demonstracao, false);
+  and not exists (select 1 from privado.conta_equipe ce where ce.usuario_id = uv.id)
+  and not coalesce(up.demonstracao, false)
+  and not exists (select 1 from privado.conta_equipe ce where ce.usuario_id = up.id);
 
 comment on view metrica.funil_confirmacoes is
-  'Posições confirmadas com duração em segundos entre a publicação da vaga e a confirmação. Exclui contas de demonstração.';
+  'Posições confirmadas com duração em segundos entre a publicação da vaga e a confirmação. Exclui demonstração e contas da equipe.';
 
--- ── 3. metrica.funil_por_dia ───────────────────────────────────────────────────
+-- ── 4. metrica.funil_por_dia ───────────────────────────────────────────────────
 create or replace view metrica.funil_por_dia as
 with metricas_vaga as (
   select
@@ -153,9 +180,9 @@ left join medianas med on med.dia = m.dia
 order by m.dia desc;
 
 comment on view metrica.funil_por_dia is
-  'Funil do piloto consolidado por dia (data da publicação): vagas publicadas, notificações enviadas, candidaturas, confirmações, check-ins, avaliações e tempo mediano de confirmação. Exclui demonstração.';
+  'Funil do piloto consolidado por dia (data da publicação): vagas publicadas, notificações enviadas, candidaturas, confirmações, check-ins, avaliações e tempo mediano de confirmação. Exclui demonstração e equipe.';
 
--- ── 4. metrica.funil_por_estabelecimento ───────────────────────────────────────
+-- ── 5. metrica.funil_por_estabelecimento ───────────────────────────────────────
 create or replace view metrica.funil_por_estabelecimento as
 with metricas_vaga as (
   select
@@ -201,14 +228,17 @@ where not exists (
     join public.usuario u on u.id = me.usuario_id
    where me.estabelecimento_id = e.id
      and me.papel = 'administrador'
-     and coalesce(u.demonstracao, false) = true
+     and (
+       coalesce(u.demonstracao, false) = true
+       or exists (select 1 from privado.conta_equipe ce where ce.usuario_id = u.id)
+     )
 )
 order by vagas_publicadas desc, e.nome asc;
 
 comment on view metrica.funil_por_estabelecimento is
-  'Funil do piloto consolidado por estabelecimento: vagas publicadas, notificações enviadas, candidaturas, confirmações, check-ins, avaliações e tempo mediano de confirmação. Exclui demonstração.';
+  'Funil do piloto consolidado por estabelecimento: vagas publicadas, notificações enviadas, candidaturas, confirmações, check-ins, avaliações e tempo mediano de confirmação. Exclui demonstração e equipe.';
 
--- ── 5. metrica.funil_geral (resumo consolidado do piloto) ─────────────────────
+-- ── 6. metrica.funil_geral (resumo consolidado do piloto) ─────────────────────
 create or replace view metrica.funil_geral as
 with totais as (
   select
@@ -243,7 +273,7 @@ from totais t
 cross join mediana m;
 
 comment on view metrica.funil_geral is
-  'Resumo global do funil do piloto: totais de vagas, notificações, candidaturas, confirmações, check-ins, avaliações e tempo mediano geral. Exclui demonstração.';
+  'Resumo global do funil do piloto: totais de vagas, notificações, candidaturas, confirmações, check-ins, avaliações e tempo mediano geral. Exclui demonstração e equipe.';
 
 -- ── Permissões: restrito exclusivamente a service_role ────────────────────────
 revoke all on schema metrica from public, anon, authenticated;
