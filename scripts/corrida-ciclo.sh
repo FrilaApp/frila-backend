@@ -91,7 +91,10 @@ limpar() {
   psql >/dev/null 2>&1 <<SQL || echo "  aviso: a limpeza falhou; sobrou o schema corrida_ciclo" >&2
 set session_replication_role = 'replica';
 create temp table vagas as select id from public.vaga where local = 'corrida-ciclo-$MARCA';
-create temp table contas as select id from public.usuario where email like 'corrida-ciclo-$MARCA-%';
+create temp table contas as
+  select id from auth.users where email like 'corrida-ciclo-$MARCA-%'
+  union
+  select id from public.usuario where email like 'corrida-ciclo-$MARCA-%';
 create temp table posicoes as select id from public.posicao where vaga_id in (select id from vagas);
 -- A reabertura por atraso enfileira despacho, e o agendador pode tê-lo consumido e
 -- notificado gente do seed: sai tudo que aponta para uma vaga ou posição da corrida.
@@ -100,23 +103,27 @@ delete from public.notificacao
     or referencia_id in (select id from vagas union all select id from posicoes);
 delete from pgmq.q_despacho where (message->>'vaga_id')::uuid in (select id from vagas);
 delete from public.despacho    where vaga_id in (select id from vagas);
-delete from public.ocorrencia  where posicao_id in (select id from public.posicao where vaga_id in (select id from vagas));
-delete from public.turno       where posicao_id in (select id from public.posicao where vaga_id in (select id from vagas));
-delete from public.candidatura where posicao_id in (select id from public.posicao where vaga_id in (select id from vagas));
+delete from public.ocorrencia  where autor_id in (select id from contas)
+                                  or posicao_id in (select id from posicoes);
+delete from public.turno       where posicao_id in (select id from posicoes);
+delete from public.candidatura where profissional_id in (select id from public.profissional where usuario_id in (select id from contas))
+                                  or posicao_id in (select id from posicoes);
 delete from public.posicao     where vaga_id in (select id from vagas);
 delete from public.vaga        where id in (select id from vagas);
-delete from public.membro_estabelecimento where estabelecimento_id in (select id from public.estabelecimento where endereco = 'corrida-ciclo-$MARCA');
+delete from public.membro_estabelecimento
+ where usuario_id in (select id from contas)
+    or estabelecimento_id in (select id from public.estabelecimento where endereco = 'corrida-ciclo-$MARCA');
 delete from public.estabelecimento where endereco = 'corrida-ciclo-$MARCA';
 delete from public.profissional_funcao where profissional_id in (select id from public.profissional where usuario_id in (select id from contas));
 delete from public.profissional where usuario_id in (select id from contas);
 delete from public.usuario  where id in (select id from contas);
-delete from auth.users      where email like 'corrida-ciclo-$MARCA-%';
+delete from auth.users      where id in (select id from contas) or email like 'corrida-ciclo-$MARCA-%';
 set session_replication_role = 'origin';
 drop schema if exists corrida_ciclo cascade;
 SQL
   rm -rf "$TMP"
 }
-[ -n "${MANTER:-}" ] || trap limpar EXIT
+[ -n "${MANTER:-}" ] || trap limpar EXIT INT TERM
 
 # ── O palco ───────────────────────────────────────────────────────────────────
 #
