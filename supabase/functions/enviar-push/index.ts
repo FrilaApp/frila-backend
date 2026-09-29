@@ -37,6 +37,11 @@ export interface SqlClient {
   gravarFalhaPush: (params: GravarFalhaPushParams) => Promise<void>;
   gravarAceitePush: (params: GravarAceitePushParams) => Promise<void>;
   removerTokenFcm: (token: string) => Promise<number>;
+  obterConteudoPushLembrete?: (
+    turnoId: string,
+    usuarioId: string,
+    tipo: string,
+  ) => Promise<{ title: string; body: string } | null>;
 }
 
 export interface Dependencias {
@@ -214,9 +219,15 @@ export async function buscarVariaveisDoTexto(
 
 export function titulosECorposPorTipo(
   tipo: string,
-  _payload: Record<string, unknown> = {},
+  payload: Record<string, unknown> = {},
   variaveis: VariaveisDoTexto = {},
 ): { title: string; body: string } {
+  const ehContratante = Boolean(
+    payload?.estabelecimento_id ||
+      payload?.destinatario === "contratante" ||
+      payload?.papel === "contratante",
+  );
+
   switch (tipo) {
     case "vaga":
       return {
@@ -234,14 +245,26 @@ export function titulosECorposPorTipo(
         body: "O seu turno foi confirmado. Acesse os detalhes no app.",
       };
     case "lembrete_24h":
+      if (ehContratante) {
+        return {
+          title: "Turno agendado para amanhã",
+          body: "Você tem turno confirmado para amanhã. Confira no painel.",
+        };
+      }
       return {
-        title: "Lembrete de turno",
-        body: "Você tem um turno agendado para amanhã.",
+        title: "Lembrete de turno amanhã",
+        body: "Você tem um turno confirmado para amanhã. Confira os detalhes.",
       };
     case "lembrete_3h":
+      if (ehContratante) {
+        return {
+          title: "Turno em 3 horas",
+          body: "Turno confirmado começa em 3 horas. Acompanhe pelo app.",
+        };
+      }
       return {
-        title: "Lembrete de turno",
-        body: "Seu turno começa em 3 horas. Prepare-se.",
+        title: "Seu turno começa em 3 horas",
+        body: "Seu turno começa em 3 horas. Toque para ver endereço e contato.",
       };
     // Casos 13 e 16 da planilha de notificações (cartão e8XpOZJN).
     case "inicio_sem_checkin":
@@ -365,6 +388,25 @@ export function criarSqlClient(deps?: Dependencias): SqlClient {
           select privado.remover_token_fcm(${token}::text) as removidos
         `;
         return Number(res[0]?.removidos ?? 0);
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+    async obterConteudoPushLembrete(
+      turnoId: string,
+      usuarioId: string,
+      tipo: string,
+    ): Promise<{ title: string; body: string } | null> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        const res = await sql`
+          select privado.obter_conteudo_push_lembrete(
+            ${turnoId}::uuid,
+            ${usuarioId}::uuid,
+            ${tipo}::text
+          ) as conteudo
+        `;
+        return (res[0]?.conteudo as { title: string; body: string } | null) ?? null;
       } finally {
         await sql.end({ timeout: 2 });
       }
@@ -545,12 +587,31 @@ export async function processarEnvioPush(
       continue;
     }
 
+    // 3. Monta o payload do FCM aplicando whitelist estrita (RN15)
     const variaveis = await buscarVariaveisDoTexto(
       n.tipo,
       n.payload,
       (caminho) => fetchFn(`${supabaseUrl}/rest/v1/${caminho}`, { headers: dbHeaders }),
     );
-    const { title, body } = titulosECorposPorTipo(n.tipo, n.payload, variaveis);
+    let { title, body } = titulosECorposPorTipo(n.tipo, n.payload, variaveis);
+
+    if (n.tipo === "lembrete_24h" || n.tipo === "lembrete_3h") {
+      try {
+        if (sqlClient.obterConteudoPushLembrete) {
+          const dados = await sqlClient.obterConteudoPushLembrete(
+            n.referencia_id,
+            n.usuario_id,
+            n.tipo,
+          );
+          if (dados && typeof dados.title === "string" && typeof dados.body === "string") {
+            title = dados.title;
+            body = dados.body;
+          }
+        }
+      } catch (_e) {
+        // Mantém fallback seguro
+      }
+    }
     const dataStrings = filtrarDataPayloadFcm(n.tipo, n.payload);
 
     let algumAceite = false;
