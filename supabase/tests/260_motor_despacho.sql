@@ -67,6 +67,21 @@ update public.usuario
  )
  and id <> 'de000000-0000-4000-8000-000000000002';
 
+-- Isola também o teto da RN23, pelo mesmo motivo do bloco acima. A CI roda esta suíte
+-- duas vezes, e a segunda é depois dos scripts HTTP, que notificam de verdade. RN23 tem
+-- `teto_janela` de 30 minutos entre notificações de vaga para o mesmo profissional, e
+-- `privado.ultima_no_teto` a mede por `max(enviada_em)`: com uma notificação recente, as
+-- cinco deste arquivo sairiam seguradas e os testes 21, 22 e 25 cairiam — os despachos
+-- continuariam cinco, que é por que 19 e 20 passavam e os de notificação não.
+--
+-- Empurrar para trás em vez de apagar é deliberado: `public.despacho.notificacao_id` tem
+-- chave estrangeira para `public.notificacao`, e um `delete` na segunda passada morre com
+-- `despacho_notificacao_id_fkey`. Tudo isto vive dentro do `begin ... rollback` do teste.
+update public.notificacao
+   set enviada_em = privado.agora() - interval '1 day'
+ where enviada_em is not null
+   and enviada_em > privado.agora() - interval '1 day';
+
 -- Garante disponibilidade da conta de demonstração para os testes
 insert into public.disponibilidade (profissional_id, dia_semana, hora_inicio, hora_fim)
 select (select prof_demo from ids), d, '00:00'::time, '23:59'::time
