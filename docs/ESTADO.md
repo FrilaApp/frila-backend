@@ -1,4 +1,4 @@
-# Estado do backend — 28/09/2026
+# Estado do backend — 29/09/2026
 
 Onde o trabalho parou e o que a próxima sessão precisa saber. As regras duráveis estão
 no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
@@ -7,100 +7,142 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-**O ciclo do Sprint 1 fecha inteiro no `main`, e o Sprint 2 andou muito em 26 e 27/09**,
-pelas mãos do João Paulo e do Cauê: notificações, motor de despacho, push pelo FCM,
-`excluir_conta`, retenção de 15 dias e as consultas quentes do DF entraram ou estão em PR.
+**O trabalho agora vive na `develop`, e a `main` está congelada desde 28/09 às 19h13.**
+Em pouco mais de sete horas, de 28/09 às 19h14 a 29/09 às 02h37 (horário de Brasília), a
+`develop` recebeu onze PRs por cima do `main` — quase todo o Sprint 2 de turno e despacho:
+atraso e reabertura, lembretes, vaga vazia, teto da RN23, região administrativa, denunciar
+e bloquear, e a rodada de despacho.
 
-**46 migrações** no `main` e o contrato em **0.2.18**, espelho em dia com o original.
+**55 migrações** na `develop` (47 no `main`) e o contrato em **0.2.20**, espelho em dia com o
+original. A **0.2.21** (frila-docs #26) está aprovada na revisão e espera merge.
 
-> ## ✅ A CI voltou
+> ## 🚦 A regra nova: PR e merge só na `develop`
 >
-> **Medido em 28/09:** as execuções de 27/09 saem `success` — `main` às 03:38 e 04:19,
-> `s3/retencao-15-dias`, `s0/configuracao-do-app`. A única anotação que sobra é o aviso de
-> que `actions/checkout@v4` roda em Node 24 porque o Node 20 foi depreciado.
+> Desde o `898fa8a` (28/09, 19h13, `docs(pipeline)`), o [`CLAUDE.md`](../CLAUDE.md) manda:
+> branch nasce de `origin/develop`, PR abre com `--base develop`, merge entra só na
+> `develop`. **A `main` é para release estável de produção** e ninguém mergeia nela.
 >
-> O bloqueio de Billing que parou tudo entre 25/09 às 14h e algum momento de 26 ou 27/09
-> **acabou**; não medi o que exatamente foi feito, e a página de Billing continua exigindo
-> escopo `admin:org`, que o token desta máquina não tem.
+> Conferido em 29/09: a `main` para em `c190836` (#48) e está **inteira contida** na
+> `develop` — `git log origin/develop..origin/main` sai vazio. Nada entrou na `main` depois
+> da regra.
 >
-> **Consequência para quem chega agora:** a decisão de 25/09 — "o que entra no `main` entra
-> com prova local, com o placar colado no PR" — **não vale mais**. Voltou a valer o portão
-> remoto. Um PR cuja última execução é de 25/09 está vermelho por um motivo que não existe
-> mais: confira a data do run antes de acreditar no ✗.
+> **Três PRs ainda apontam para a `main`, e nenhum deve entrar lá como está:**
 >
-> Foi o caso do **#37**, o único PR meu aberto: os quatro jobs falhavam com a anotação de
-> Billing, num run de 25/09 às 20:59Z. Medido em 28/09, com o `main` fundido no branch.
+> | PR | De quem | Estado em 29/09 |
+> |---|---|---|
+> | **#56** `ao/blendops-2-autoteste-colisao` | Matheus | aberto 29/09 às 04:35Z contra a `main`, **depois** da regra; sem conflito, última CI `failure` (04:39Z). Precisa trocar a base para `develop` |
+> | **#35** `ao/frila-8` | Cauê | **conflito**; parado desde 25/09 |
+> | **#27** `s0/despachar-porta` | Cauê | **conflito**; parado desde 25/09 |
+>
+> Os dois do Cauê precisam ser rebaseados sobre a `develop` e retargetados — decisão dele.
+>
+> **A CI não roda em push na `develop`.** O `ci.yml` dispara em `push: [main]` e em
+> `pull_request`. Todo merge na `develop` foi medido no PR, e ninguém mede a `develop`
+> depois de dois PRs se cruzarem. Conferido em 29/09: `gh run list --branch develop` vem
+> vazio.
 
 ## Onde cada coisa parou
 
-### O único PR meu aberto: #37
+### O que entrou desde 28/09
 
-`s0/migracoes-sem-colisao`, cartão `RNOfNVVU`. Dois portões e dois scripts, e o que segurava
-o merge **deixou de existir**:
+Na `main`, antes da regra: **#37** (portão de colisão de versão, `RNOfNVVU`, Matheus, 28/09
+às 16h15) e **#48** (falta por no-show depois do fim do turno, `NDx7TJ4d`/`8zLfn0mt`, 28/09
+às 17h14). As 47 migrações do `main` são as 46 de 28/09 mais
+`20260928160000_fechar_turnos_noshow`.
 
-- Quando abri, em 25/09, o `contrato-em-dia` reprovava porque o espelho estava na 0.2.15 e o
-  original na 0.2.17. Em 28/09 os dois estão na **0.2.18**, e o portão responde *"Espelho em
-  dia com FrilaApp/frila-docs"*.
-- O `main` foi fundido no branch em 28/09, sem conflito, e o portão de colisão passa com as
-  46 migrações.
+Na `develop`, em ordem de merge:
 
-**Falta um `git push` e o re-run da CI**, que agora roda. A última execução dele é de 25/09
-e não vale nada.
+| PR | Cartão | O que trouxe | Migração | Cartão está em |
+|---|---|---|---|---|
+| **#51** | `vUR0Ltkb` | alerta de vaga vazia na janela crítica | `20260928200000_alerta_vaga_vazia` | Revisão, 0/4 |
+| **#31** | `CvopSHh6` | `configuracao_do_app`: a versão mínima do app | `20260928193700_configuracao_do_app` | Concluído |
+| **#34** | `nNUtbriv` | `bancada-sync` pela data do autor | — | Concluído |
+| **#49** | `e8XpOZJN` | alerta de atraso aos 15 min e `reabrir_por_atraso`; candidatura na reaberta (0.2.19) | `20260928220000_alerta_de_atraso_e_reabrir_por_atraso` | Revisão, 0/5 |
+| **#53** | `IoQPWtWs` | `enviar-push` fala com o Postgres direto para chamar `privado.*` (o PostgREST devolvia 404 calado) | — | Concluído |
+| **#50** | `k5R4tzjC` | lembretes 24 h e 3 h antes do turno | `20260928180000_lembretes_24h_e_3h` | Revisão, 0/4 |
+| **#54** | `x0jkygj0` | `regiao_administrativa` em estabelecimento e vaga, e interpolada nos pushes (0.2.20) | `20260928230000_regiao_administrativa` | Revisão, 0/6 |
+| **#52** | `ee3MT3fH` | teto e agrupamento de notificações de vaga (RN23), e `scripts/corrida-teto.sh` | `20260928210000_teto_e_agrupamento_rn23` | Revisão, 0/5 |
+| **#55** | — | teste Deno da falha fechada sem `AGENDADOR_SECRET` deixa de depender do diretório | — | — |
+| **#57** | `JWJOPAOL` | RPCs `denunciar` e `bloquear`; o bloqueio filtra o teto e o push | `20260929100000_denunciar_e_bloquear` | Revisão, 0/4 |
+| **#58** | `9DbPXis7` | rodada de despacho para posição reaberta por atraso | `20260929110000_rodada_de_despacho` | Revisão, 0/7 |
 
-### O que entrou no `main` em 26 e 27/09, e não é meu
+Todos são do João Paulo, pelos workers do AO. Oito arquivos de teste novos vieram junto, de
+`330_alerta_de_atraso_e_reabrir` a `370_rodada_despacho_posicao_reaberta`, e são **45** no
+total.
 
-Oito PRs, quase todos do João Paulo e do Cauê. O Sprint 2 andou muito:
+**Duas numerações colidem, sem quebrar nada:** há quatro arquivos `330_…` em
+`supabase/tests/`. O pgTAP roda em ordem alfabética e nenhum depende de outro, mas quem
+criar o próximo deve seguir de `380`.
 
-| PR | O que trouxe | De quem |
-|---|---|---|
-| **#32** | Notificação para qualquer conta, marcas de envio e payload só com ids | João Paulo |
-| **#41** | Resgate dos PRs #1 a #6 do `frila-backend` temporário | Cauê |
-| **#42** | Resgate do #7: Edge Function `excluir-conta` | Cauê |
-| **#43** | Resgate do #8: ciclo de vida do token de push | Cauê |
-| **#44** | Portão do contrato passa a isentar RPC já declarada, e enxerga função com comentário entre `function` e o nome | João Paulo |
-| **#45** | Segunda rodada de correções do `excluir-conta`, e o espelho 0.2.18: **401 para conta encerrada** em RPCs de escrita | João Paulo |
-| **#46** | Índices para as consultas quentes e script de carga do DF | João Paulo |
-| **#47** | Retenção de 15 dias, higiene de tabelas e limpeza de contas sem cadastro | João Paulo |
+**O #58 reprovou antes de entrar**, e a revisão pegou: a CI de 04:42Z caiu no portão *"O
+contrato acompanhou o código"* porque a migração redeclarava `public.reabrir_por_atraso` sem
+mexer no contrato. Corrigido, a CI de 05:10Z saiu verde e o merge foi às 05:37Z (02h37 em Brasília).
 
-Dez arquivos de teste novos entraram com eles: `240_notificacoes` a `320_retencao_e_limpeza`,
-mais `tests/carga/gerar_df.sql`.
+**Os cartões em Revisão estão com a checklist em zero** — nenhum critério marcado, embora os
+comentários digam que os testes provam cada um. Pela regra do quadro quem marca é quem
+revisa, e ninguém revisou pelo quadro ainda. Os comentários de merge estão em cada cartão.
 
-### Abertos em 28/09, e nenhum além do #37 é meu
+Fechados sem merge: **#38**, **#39** e **#40** (turnos não verificados, motor de despacho e
+push FCM), que tinham entrado por outro caminho no resgate #41.
 
-| PR | Cartão | De quem | Estado |
-|---|---|---|---|
-| **#40** `s2/push-fcm` | `36fU0CEO` | João Paulo | conflito com o `main` |
-| **#39** `s2/motor-despacho` | `7XS6MQGg` | João Paulo | conflito com o `main` |
-| **#38** `s2/turnos-nao-verificados` | `NDx7TJ4d` | João Paulo | conflito com o `main` |
-| **#37** `s0/migracoes-sem-colisao` | `RNOfNVVU` | **meu** | resolvido na máquina, falta push e re-run |
-| **#35** `ao/frila-8` | — | Cauê | run velho |
-| **#34** `s0/corrigir-bancada-sync` | `nNUtbriv` | João Paulo | run velho |
-| **#31** `s0/configuracao-do-app` | `CvopSHh6` | João Paulo | **limpo e verde** na CI de 27/09 |
-| **#27** `s0/despachar-porta` | `ZqmkOaHn` | Cauê | conflito com o `main` |
+### Pendências no `frila-dev`, cartão a cartão
 
-**O aviso da colisão funcionou:** o #31 trazia `20260925230000_configuracao_do_app.sql`, que
-colidia com a migração do #36. Hoje ele traz `20260928193700_configuracao_do_app.sql` (renomeada em 28/09 para vir depois da última do `main`), e não
-há versão repetida no `main`.
+Nenhum destes foi medido no remoto: o `frila-dev` não recebe nada da `develop` sozinho, e
+em 29/09 o MCP do Supabase desta máquina responde *"You do not have permission"* para o
+projeto `jcobftbhbqdikratzizz`. O que cada cartão deixou para conferir **depois do deploy**:
 
-Mergeados em 25/09: **#23** (contas de demonstração), **#24** (`avaliar` e `perfil_publico`),
-**#25** (testes do ciclo), **#26** (`republicar_vaga`), **#28** (`meus_estabelecimentos`),
-**#29** (testes de contrato), **#30** (trilha de auditoria, `2947a5c8`) e **#36** (a janela da
-demonstração e as notas da revisão, `ed0c6456`).
+| Cartão | O que conferir no `frila-dev` |
+|---|---|
+| `e8XpOZJN` atraso | o job `alertar_atrasos` (`* * * * *`) existe em `cron.job` e roda sem erro |
+| `vUR0Ltkb` vaga vazia | o job `alertar_vagas_vazias` (`*/5 * * * *`) em `cron.job`, e um push real a 3 h do início |
+| `k5R4tzjC` lembretes | o job `enviar_lembretes_turno` (`*/5 * * * *`) em `cron.job` |
+| `ee3MT3fH` teto RN23 | o job `liberar_teto` (`* * * * *`) em `cron.job` |
+| `JWJOPAOL` denunciar | a fila `pgmq` `email` existe; o e-mail em si depende do `7yq1flLG` (abaixo) |
+| `IoQPWtWs` `enviar-push` | `functions deploy enviar-push` com a conexão direta ao Postgres |
+| `x0jkygj0` região | `functions deploy enviar-push`, que interpola a região nos pushes 09 e 11 |
+| `NDx7TJ4d` no-show | os agendamentos de fechamento (ver a armadilha em *O que existe no banco*) |
+
+Os quatro jobs novos são criados pelas próprias migrações, em bloco que faz `unschedule`
+antes de `schedule`, como os três de 28/09. Com eles, **sete jobs** — medidos no banco local
+em 29/09: `alertar_atrasos`, `alertar_vagas_vazias`, `enviar_lembretes_turno`,
+`liberar_teto`, `limpar_dispositivos_inativos`, `reprocessar_despacho` e
+`retencao_e_limpeza_diaria`.
+
+### Cartões bloqueados, e por quê
+
+| Cartão | O que trava |
+|---|---|
+| `7yq1flLG` E-mails transacionais e caixa da Equipe Frila | **SMTP e provedor de e-mail.** Depende de *S1 · Infra · SMTP próprio no Supabase Auth* e de *S1 · Design + Produto · Modelos de e-mail*. Trava também o critério 3 do `JWJOPAOL` (a denúncia chega à caixa da equipe): a denúncia já enfileira `{tipo, ocorrencia_id}` na fila `email`, e ninguém consome |
+| `5bPJvMIo` Monitoramento e alertas | **Infra**: depende de `ZqmkOaHn` (ambientes e segredos), Em andamento com o Cauê |
+| `kT7NhMGV` Endurecimento para produção | **Infra**: depende do ambiente de produção (`frila-prod`, segredos e monitoramento) |
+| `qcVimM84` Aviso de hora excedida | **Design**: os textos saem da planilha de notificações e do cartão de permissões e notificações; a metade iOS abre o turno com o check-out em destaque |
+| `nUpPFCpM` Exportar meus dados | **Design**: alta fidelidade de denúncia, bloqueio, conta suspensa, exportar e excluir conta; a metade da tela é **iOS** |
+| `3zsjXW60` Telemetria do piloto | **Produto**: o plano de métricas e o dicionário de eventos (T-0017); a coleta é **iOS** |
+| `RTmRTHbo` Republicar vaga | o quarto critério é a ação "Publicar de novo" na tela: **iOS** |
+| `ggEzge6h` Filtro de texto | a revisão da lista de termos pela **Júlia** |
+| `7gpPBgTH` Contas de demonstração | o critério 1 é no `frila-dev`, e falta um `SUPABASE_ACCESS_TOKEN` que responda: **infra/credencial** |
+
+Em andamento em 29/09, de Backend: `BsXIZHOw` (suspensão e `contestar_suspensao`) e
+`nspP9YDU` (concorrência além da RN19), com o João Paulo; `zptkprHt` (índice de
+`elegiveis`), com o Matheus, 9/10 critérios e commit local `a656c49` feito **sobre o `main`**
+— vai precisar de rebase na `develop` antes do PR.
 
 ## Ambientes
 
 | | |
 |---|---|
-| local | `supabase start` · Postgres 17 · **46** migrações no `main` (contadas em 28/09) |
-| `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · **29** migrações, conferidas em 24/09 — e o `main` tem 46 |
+| local | `supabase start` · Postgres 17 · **55** migrações na `develop`, **47** no `main` (contadas em 29/09) |
+| `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · **29** migrações, conferidas em 24/09 — e a `develop` tem 55 |
 | `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **vazio**: as migrações entram pelo cartão do ambiente de produção (29/10), com a entrega contínua por tag |
 
 > 🔴 **O `frila-dev` está atrás, e não sei quanto.** Ele tinha as mesmas 29 do `main` em
-> 24/09; o `main` chegou a 46 em 28/09 e **nada foi aplicado lá** por mim. Dezessete
-> migrações de diferença é a conta pelos arquivos, não uma medição do remoto: conferir o
-> `supabase_migrations.schema_migrations` do projeto exige o token de conta, que responde 401.
-> `./scripts/aplicar-remoto.sh jcobftbhbqdikratzizz` é o caminho, e ele é idempotente — pula
-> o que já está registrado. Antes de aplicar qualquer coisa, conferir a tabela de controle.
+> 24/09; a `develop` chegou a 55 em 29/09 e **nada foi aplicado lá** que alguém tenha
+> registrado. Vinte e seis migrações de diferença é a conta pelos arquivos, não uma medição
+> do remoto: conferir o `supabase_migrations.schema_migrations` do projeto exige o token de
+> conta, que responde 401, e o MCP do Supabase desta máquina responde sem permissão (medido
+> em 29/09). `./scripts/aplicar-remoto.sh jcobftbhbqdikratzizz` é o caminho, e ele é
+> idempotente — pula o que já está registrado. Antes de aplicar qualquer coisa, conferir a
+> tabela de controle, **e aplicar a partir da `develop`**, que é onde as 55 estão.
 
 O parágrafo abaixo descreve como as 29 entraram, e continua valendo como procedimento:
 
@@ -125,33 +167,34 @@ As credenciais estão no `.env` local (fora do git).
 
 ## O quadro
 
-A lista Revisão foi varrida em 25/09 e ficou com nove cartões. **Em 28/09 ela tem quinze**,
-e o que voltou a enchê-la não é meu: são os seis cartões de Sprint 2 e 3 que o João Paulo e o
-Cauê entregaram em 26 e 27/09 — `36fU0CEO` (push FCM), `7XS6MQGg` (motor de despacho),
-`wpNabtCO` (ciclo do token de push), `yClUqOpU` (retenção de 15 dias), `IYAb8v1i` (consultas
-quentes) e `OrS9gEfU` (`excluir-conta`).
+**A lista Revisão tem vinte e dois cartões em 29/09** (eram quinze em 28/09). Entraram os sete do
+Sprint 2 que a `develop` recebeu — `e8XpOZJN`, `k5R4tzjC`, `vUR0Ltkb`, `ee3MT3fH`,
+`x0jkygj0`, `JWJOPAOL` e `9DbPXis7` —, todos com a checklist em zero, esperando quem
+revise. Continuam lá cinco dos seis de 26 e 27/09 (`36fU0CEO`, `7XS6MQGg`, `wpNabtCO`, `IYAb8v1i`
+e `OrS9gEfU`), os quatro do Matheus de antes e seis de Infra e iOS.
 
-Fecharam em 25/09: `6mdX80SC` (trilha de auditoria, #30), `AvockvHx`
-(`meus_estabelecimentos`, #28) e `0uROtsRX` (testes de contrato, #29). O `yKUkCjSU` (testes
-do ciclo) já estava Concluído com os quatro critérios marcados — as versões anteriores deste
-arquivo o listavam como pendente, e estavam erradas.
+Fecharam desde 28/09: `yClUqOpU` (retenção de 15 dias, 3/3), `NDx7TJ4d` (turnos não verificados, 5/5, com o #48), `CvopSHh6`
+(`configuracao_do_app`, com o #31), `nNUtbriv` (`bancada-sync`, com o #34) e `IoQPWtWs`
+(`enviar-push`, com o #53).
 
-**Os quatro cartões meus que continuam em Revisão, e por quê:**
+**O `8zLfn0mt` (decisões de produto) tem as decisões registradas em comentário de 28/09**,
+aprovadas pelo João Paulo item a item — no-show vira falta automática, despacho único por
+rodada, suspensão cancela em cascata, checkout sem teto de 200 m, reaberta aceita candidato
+até 1 h antes do fim —, mas a checklist continua 0/9. A Modelagem e o Backlog v1.2.1 ainda
+não foram atualizados com elas.
+
+**Os quatro cartões do Matheus que continuam em Revisão, e por quê:**
 
 | Cartão | O que falta, e de quem é |
 |---|---|
-| `RNOfNVVU` Portão de colisão de versão | Seis dos oito critérios marcados. Falta o push do #37 e o re-run da CI, que agora roda. O oitavo critério é o caminho verde do `demonstracao-remoto.sh`, que depende do token de conta |
+| `RNOfNVVU` Portão de colisão de versão | O #37 **entrou na `main`** em 28/09 às 16h15 e o portão roda: *"As 55 migrações têm versões distintas"* (29/09). O critério que sobra é o caminho verde do `demonstracao-remoto.sh`, que depende do token de conta. O autoteste do portão está no #56, aberto contra a `main` |
 | `7gpPBgTH` Contas de demonstração | Três dos quatro critérios medidos e as notas anexadas. O critério 1 diz "no `frila-dev`", e lá a porta ainda não existe. O caminho está pronto num comando — `./scripts/demonstracao-remoto.sh dev` faz os segredos, o deploy e a medição —, e falta só um `SUPABASE_ACCESS_TOKEN` que responda. **Bloqueio de credencial, e não de navegador** |
 | `RTmRTHbo` Republicar vaga | Os três critérios de backend marcados, inclusive republicar a partir de vaga `encerrada`, medido por HTTP. O quarto é de ponta a ponta e depende da tela: a ação "Publicar de novo" em Minhas vagas. **É iOS** |
-| `ggEzge6h` Filtro de texto | Os três critérios marcados, com a recusa e o falso positivo medidos por HTTP. **Um quarto item foi acrescentado à checklist**: a revisão da lista de termos pela Júlia, que estava em *O que fazer* e não era cobrada por critério nenhum — com três marcados o cartão fecharia com a lista nunca lida. **É da Júlia** |
+| `ggEzge6h` Filtro de texto | Os três critérios marcados, com a recusa e o falso positivo medidos por HTTP. O quarto item é a revisão da lista de termos pela Júlia. **É da Júlia** |
 
-A frase "Cortável, não começado" que este arquivo trazia sobre o `RTmRTHbo` estava errada: o
-#26 já estava mergeado.
-
-**Não há cartão de Backend livre e desbloqueado em 28/09.** O `NDx7TJ4d` (turnos não
-verificados), que em 25/09 era o único, está **Em andamento com o João Paulo** e tem o PR #38.
-O que a lista Em andamento tem de Backend é só ele; o resto é iOS e Infra de outras pessoas.
-Antes de escolher trabalho novo, vale varrer o quadro de novo: ele mudou muito em três dias.
+**Não há cartão de Backend livre e desbloqueado em 29/09** que não dependa de SMTP, infra,
+iOS ou design — ver *Cartões bloqueados*. Antes de escolher trabalho novo, varrer o quadro
+de novo: ele mudou em uma noite mais do que em três dias.
 
 `./scripts/trello.sh` faz tudo: `ver`, `lista`, `pegar`, `revisao`, `concluir`, `comentar`.
 
@@ -162,9 +205,25 @@ virou `api/openapi.yaml`**. O redirect do GitHub cobre o nome antigo da organiza
 não cobre caminho dentro do repositório — quem tiver script ou marcador apontando para o
 caminho antigo precisa ajustar. No backend, o PR #15 ajustou.
 
-Versão vigente: **0.2.18**, espelhada em `contrato/openapi.yaml` e **em dia com o original**,
-conferido em 28/09 com o `FRILA_DOCS_TOKEN`. A 0.2.18 veio no #45 do João Paulo e traz **401
-para conta encerrada** nas RPCs de escrita.
+Versão vigente: **0.2.20**, espelhada em `contrato/openapi.yaml` e **em dia com o original**,
+conferido em 29/09 com o portão: *"Espelho em dia com FrilaApp/frila-docs"*. Desde 28/09
+entraram no `frila-docs`:
+
+| Versão | PR no `frila-docs` | O que trouxe | Backend |
+|---|---|---|---|
+| **0.2.19** | #23, 28/09 | posição reaberta por atraso aceita candidatura depois do início | #49 |
+| **0.2.20** | #24, 29/09 | `regiao_administrativa` do estabelecimento e do local da vaga | #54 |
+| **0.2.21** | **#26, aberto** | validação e respostas de erro de `denunciar` e `bloquear` | #57 |
+
+**A 0.2.21 está aprovada e espera merge.** A revisão (comentário de 29/09 às 04:30Z) dá
+*"VEREDITO: aprovaria"*, sem bloqueio, e o PR está sem conflito. Não há review formal no
+GitHub, só o comentário. Enquanto ela não entra, o `422` de `denunciar` do #57 está no código
+e não no contrato; quando entrar, o espelho daqui precisa subir para 0.2.21 num PR contra a
+`develop`, senão o `contrato-em-dia` reprova.
+
+**Atenção a quem roda o portão à mão:** o `.env` desta máquina não tem `FRILA_DOCS_TOKEN`, e
+sem ele o `contrato-em-dia.sh` sai **2** (medido em 29/09). `FRILA_DOCS_TOKEN=$(gh auth token)`
+basta quando o `gh` tem acesso ao `frila-docs`.
 
 > **O que aconteceu entre 25 e 28/09, e vale como lição.** Em 25/09 o espelho estava na 0.2.15
 > e o original já na 0.2.17, e **nenhuma medição viu** — porque o `contrato-em-dia.sh` lia
@@ -175,6 +234,12 @@ para conta encerrada** nas RPCs de escrita.
 > do João Paulo, como devia ser.
 
 ## O que existe no banco
+
+> **Não recontado em 29/09.** Os números desta seção são do `main` de 28/09. A `develop`
+> acrescentou, pela conta dos arquivos: as RPCs `reabrir_por_atraso`, `denunciar` e
+> `bloquear`; as tabelas `privado.configuracao_app`, `privado.parametro_notificacao` e
+> `privado.tipo_no_teto`; a fila `pgmq` `email`; as colunas `regiao_administrativa` e as
+> de rodada (ver *Divergências*). Recontar com `has_function_privilege` antes de citar.
 
 Recontado em 28/09, com o `main` de hoje: **20 tabelas** em `public`, **33** restrições
 `CHECK`, 1 de exclusão (RN21), **19** políticas de leitura, **71** auxiliares no schema
@@ -210,13 +275,27 @@ nova, pelo roteiro em [`supabase/operacao/subir-versao-minima.md`](../supabase/o
 A Modelagem no vault ainda não registra a exceção.
 
 **O despacho deixou de ser promessa.** `pg_cron` e `pg_net` **entraram** — a frase "continuam
-fora", que este arquivo repetiu por dias, está morta. Três jobs ativos, medidos em 28/09:
+fora", que este arquivo repetiu por dias, está morta. **Sete jobs** ativos, medidos no banco
+local com as migrações da `develop` em 29/09:
 
 | Job | Quando |
 |---|---|
 | `reprocessar_despacho` | `* * * * *` — a cada minuto |
 | `limpar_dispositivos_inativos` | `17 6 * * *` |
 | `retencao_e_limpeza_diaria` | `30 6 * * *` |
+| `alertar_atrasos` | `* * * * *` — #49 |
+| `liberar_teto` | `* * * * *` — #52 |
+| `enviar_lembretes_turno` | `*/5 * * * *` — #50 |
+| `alertar_vagas_vazias` | `*/5 * * * *` — #51 |
+
+> ⚠️ **Três agendamentos estão só em comentário.** `fechar_turnos_passados` (`*/15`),
+> `reconciliar_reputacao_diaria` (`0 4 * * *`) e `fechar-turnos-e-vagas` (`*/5`) aparecem em
+> `20260926000000_turnos_nao_verificados_e_reconciliacao` e
+> `20260926040000_fechamento_turno_vaga` como `-- select cron.schedule(…)`, "configuração de
+> produção documentada sem ser aplicada". Nenhum está em `cron.job`. As funções existem e os
+> testes as chamam direto, mas **no `frila-dev` ninguém fecha turno passado nem reconcilia
+> a taxa** até alguém agendar — e o no-show do #48 depende do fechamento. Decidir se entra
+> como migração nova ou no procedimento do deploy.
 
 A fila continua: `pgmq.q_despacho` recebe `{vaga_id, publicada_em}` na publicação e
 `{vaga_id, posicao_id, motivo: reabertura, excluir_conta}` no cancelamento — o
@@ -255,6 +334,12 @@ gatilho de RN07 usava `now()` direto e foi corrigido. Nenhuma RPC nova deve usar
 
 ## Os portões
 
+> **A bateria inteira não foi remedida em 29/09.** Cada PR da `develop` passou nos quatro jobs
+> da CI no próprio PR, mas a CI não roda em push na `develop` (ver o topo), e ninguém mediu a
+> soma. Em 29/09, sobre a `develop` em `35728b3`, rodaram só dois portões que não mexem no
+> banco: `migracoes-sem-colisao.sh` (*"As 55 migrações têm versões distintas"*) e
+> `contrato-em-dia.sh` (*"Espelho em dia"*, 0.2.20). A tabela abaixo é de 28/09.
+
 **Medidos em 28/09**, no branch `s0/migracoes-sem-colisao` já com o `main` fundido, com o
 segredo do agendador e `db reset` antes: **treze portões, treze verdes.**
 
@@ -273,10 +358,10 @@ segredo do agendador e `db reset` antes: **treze portões, treze verdes.**
 | `./scripts/contrato-responde.sh` | a resposta de cada RPC casa com o schema | **24** corpos e 7 envelopes |
 | `./scripts/advisor-conhecido.sh` | advisor do Supabase | **não roda**: token de conta responde 401 |
 | `./scripts/migracoes-imutaveis.sh` | nenhuma migração aplicada foi editada | verde |
-| `./scripts/migracoes-sem-colisao.sh` | duas migrações não têm a mesma versão | as **46** versões distintas · **novo, no PR #37 aberto** — nasceu depois de a colisão matar um `db reset` de verdade |
+| `./scripts/migracoes-sem-colisao.sh` | duas migrações não têm a mesma versão | as **55** versões distintas em 29/09 · entrou com o #37 — nasceu depois de a colisão matar um `db reset` de verdade |
 
-Todos rodam na CI menos o advisor, que exige token de conta. O `migracoes-sem-colisao.sh` só
-existe no branch do #37 até ele entrar.
+Todos rodam na CI menos o advisor, que exige token de conta. O #52 acrescentou
+`./scripts/corrida-teto.sh`, para o teto da RN23 sob concorrência.
 
 **Antes de rodar a bateria à mão, o segredo do agendador**, ou dois destes saem vermelhos por
 motivo que não é código. Ver a armadilha na seção *O que existe no banco*.
@@ -328,11 +413,13 @@ resultado foi X"* tem que sair diferente de zero.
 
 ## Divergências registradas
 
-> ⚠️ **Esta seção é de 25/09 e não foi reconferida em 28/09.** O `main` ganhou oito PRs nesses
-> três dias — motor de despacho, push, `excluir_conta`, retenção, índices — e cada um pode ter
-> fechado, criado ou mudado uma divergência daqui. O que está abaixo era verdade quando foi
-> medido; nenhuma linha foi remedida depois. Antes de citar qualquer uma como fato atual,
-> meça.
+> ⚠️ **Esta seção é de 25/09 e não foi reconferida em 28/09 nem em 29/09.** O `main` ganhou
+> oito PRs entre 25 e 28/09 — motor de despacho, push, `excluir_conta`, retenção, índices — e
+> a `develop` mais onze numa noite; cada um pode ter fechado, criado ou mudado uma divergência
+> daqui. As quatro últimas linhas da tabela abaixo entraram com o #49 e o #58, e
+> `regiao_administrativa` (#54) ainda não foi conferida contra a Modelagem. O resto era
+> verdade quando foi medido e não foi remedido. Antes de citar qualquer linha como fato
+> atual, meça.
 
 Oito colunas do esquema não estão na Modelagem de Banco. Todas nasceram de uma RPC, e
 quem precisa reconciliar é o documento:
@@ -452,7 +539,8 @@ E mais estas:
    medido, por falta de token válido, é o caminho verde.
 
    Em 24/09 o advisor rodou pelo MCP do Supabase, que tem acesso à organização. O MCP não
-   está na sessão de 25/09.
+   está na sessão de 25/09, e em 29/09 o desta máquina responde *"You do not have
+   permission to perform this action"* ao listar as migrações do `frila-dev`.
 2. ~~**PAT com leitura em `FrilaApp/frila-docs`.**~~ **Resolvido em 24/09.** O secret
    `FRILA_DOCS_TOKEN` existe no repositório e o portão passou a conferir o original de
    verdade: `./scripts/contrato-em-dia.sh` com o token respondeu *"Espelho em dia com
@@ -470,7 +558,10 @@ E mais estas:
 3. **`git push` no `FrilaApp/Bancada`**, que exige Touch ID. Sem ele as notas diárias não
    saem e o site `bancada-buu.pages.dev` não republica.
 4. **Revisão da Júlia** na lista de termos bloqueados. Sem ela o `ggEzge6h` não fecha.
-5. ~~**Aplicar as migrações novas no `frila-dev`.**~~ **Resolvido em 24/09**: as 29 estão lá (ver Ambientes).
+5. **Aplicar as migrações novas no `frila-dev`, de novo.** Resolvido em 24/09 com as 29;
+   **reaberto em 29/09**: a `develop` tem 55, e cada cartão de Sprint 2 em Revisão deixou
+   um critério para conferir lá depois do deploy (ver *Pendências no `frila-dev`*). Depende
+   da pendência 1, e mais o `functions deploy` de `enviar-push`.
 6. **Decidir as operações do contrato sem cartão no quadro** — `renovarSessao`,
    `criteriosDeNotificacao`, `pedirRevisaoDespacho`, `equipeDeConfianca`,
    `incluirNaEquipe`, `removerDaEquipe`, `listarFuncoes`, `candidatosDaVaga`,
@@ -493,32 +584,37 @@ E mais estas:
 
 ## Por onde continuar
 
-**O passo imediato, e é de dois minutos:** `git push` do branch `s0/migracoes-sem-colisao` e
-o re-run da CI no **#37**. O `main` já está fundido no branch, sem conflito, e a bateria foi
-medida em 28/09. O que segurava o merge — o espelho atrasado — não existe mais.
+**O passo imediato é de revisão, não de código:** sete cartões de Sprint 2 estão em Revisão
+com a checklist em zero (`e8XpOZJN`, `k5R4tzjC`, `vUR0Ltkb`, `ee3MT3fH`, `x0jkygj0`,
+`JWJOPAOL`, `9DbPXis7`). Quem revisa marca item por item, com o arquivo pgTAP que prova cada
+um; o que é do `frila-dev` fica desmarcado com o motivo no cartão.
 
 Depois disso, em ordem:
 
-1. **Varrer o quadro antes de escolher trabalho.** Ele mudou muito em três dias: seis cartões
-   de Sprint 2 e 3 entraram em Revisão, e o `NDx7TJ4d`, que era o único livre de Backend,
-   está com o João Paulo. Qualquer lista deste arquivo sobre "o que está livre" envelhece em
-   um dia — `./scripts/trello.sh lista revisao` e `lista andamento` são a fonte.
-2. `7gpPBgTH` — contas de demonstração. O que falta é **fora do código**: o segredo
-   `DEMONSTRACAO_EMAILS`/`DEMONSTRACAO_CODIGO` no `frila-dev` e no `frila-prod`, e o
-   `functions deploy`. **Não precisa de `supabase login` interativo** — a CLI aceita
-   `SUPABASE_ACCESS_TOKEN` do ambiente e o `.env` já tem a variável; falta o valor, porque o
-   atual responde 401. Com um token novo colado no `.env`,
-   `./scripts/demonstracao-remoto.sh dev` faz os três passos e mede o resultado por HTTP.
-3. **Os três cartões meus travados por outra pessoa** — `RTmRTHbo` (a tela do iOS), `ggEzge6h`
-   (a revisão da lista pela Júlia) e o quarto critério do `7gpPBgTH`. Nenhum deles avança
-   aqui; todos têm o motivo escrito no cartão.
-4. **O molde de fechamento de cartão**, que vale repetir e não reinventar: um item da
+1. **Mergear o frila-docs #26 (0.2.21)** e subir o espelho para 0.2.21 num PR contra a
+   `develop`. Até lá o `422` de `denunciar` está no código e fora do contrato.
+2. **Trazer para a `develop` o que ainda aponta para a `main`:** o #56 do Matheus (trocar a
+   base), e o #27 e o #35 do Cauê, em conflito desde 25/09 — rebase é decisão dele. O
+   `a656c49` do `zptkprHt` também foi feito sobre o `main`.
+3. **Decidir os três agendamentos comentados** (`fechar_turnos_passados`,
+   `reconciliar_reputacao_diaria`, `fechar-turnos-e-vagas`): sem eles o `frila-dev` não fecha
+   turno nem aplica o no-show do #48. Ver a armadilha em *O que existe no banco*.
+4. **Medir a `develop` inteira de uma vez**: `db reset`, `test db`, a bateria dos portões
+   com o segredo do agendador. Onze PRs verdes um a um não provam a soma, e a CI não roda em
+   push na `develop`.
+5. **O `frila-dev`**, quando houver token que responda: aplicar as 55, `functions deploy
+   enviar-push`, e conferir os sete jobs em `cron.job` — é o que falta para os critérios
+   remotos da tabela *Pendências no `frila-dev`*.
+6. **Os bloqueados continuam bloqueados** — `7yq1flLG` (SMTP), `5bPJvMIo` e `kT7NhMGV`
+   (infra), `qcVimM84` e `nUpPFCpM` (design e iOS), `3zsjXW60` (plano de métricas),
+   `RTmRTHbo` (iOS), `ggEzge6h` (Júlia), `7gpPBgTH` (token). Nenhum avança aqui.
+7. **O molde de fechamento de cartão**, que vale repetir e não reinventar: um item da
    checklist por asserção nomeada, com o arquivo; e medição por HTTP quando o critério fala em
    status, porque o pgTAP alcança `sqlstate` e `code` e não o status. Está nos comentários do
    `6mdX80SC`, `AvockvHx`, `0uROtsRX`, `RTmRTHbo`, `ggEzge6h` e `RNOfNVVU`.
-5. Toda RPC nova nasce com quatro coisas, e nenhuma é negociável: o filtro de texto nos
+8. Toda RPC nova nasce com quatro coisas, e nenhuma é negociável: o filtro de texto nos
    campos livres, a recusa correspondente no `ciclo-completo.sh`, a linha no
    `openapi.yaml` com a versão subindo, e a asserção de mutação que morre quando a regra
    some. O portão do contrato cobra a terceira; as outras três dependem de quem escreve.
-6. **E antes de rodar a bateria à mão: o segredo do agendador.** Ver a armadilha na seção *O
+9. **E antes de rodar a bateria à mão: o segredo do agendador.** Ver a armadilha na seção *O
    que existe no banco*. Sem ele, dois portões saem vermelhos por motivo que não é código.
