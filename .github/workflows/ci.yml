@@ -113,6 +113,16 @@ jobs:
       - name: Contas de demonstração por HTTP
         run: ./scripts/demonstracao.sh
 
+      # O limite de requisições é decidido no `pgrst.db_pre_request`, que é configuração
+      # do PostgREST: o pgTAP alcança a função e a janela, mas não prova que o PostgREST a
+      # chama, nem devolve o status. Uma recusa tem três eixos — sqlstate, code e status —
+      # e o terceiro só a chamada por HTTP mede. Roda aqui, depois da Edge Function estar
+      # servida, porque a sessão sai pela porta da demonstração.
+      - name: O limite de escrita responde 429
+        env:
+          DEMONSTRACAO_CODIGO: codigo-de-ci-sem-valor
+        run: ./scripts/limite-de-requisicoes.sh
+
       # Suíte verde não diz o que ela protege. Derruba cada restrição, trigger e
       # política — e afrouxa cada política para `using (true)` — exigindo que o pgTAP
       # fique vermelho em cada caso. Escrito depois de duas revisões medirem que 11 de
