@@ -75,7 +75,14 @@ select
   gen_random_uuid(),
   v.publicado_por
 from generate_series(1, 500) i
-cross join (select * from public.vaga where estado = 'publicada' limit 1) v;
+-- A vaga-modelo em modo urgência, e escolhida por id. Sem o filtro, `limit 1` pegava a
+-- primeira da ordem física da tabela; se fosse a d…05 do cenário, em modo seleção, o
+-- CHECK `selecao_com_antecedencia` compara as datas fixas de outubro com o
+-- `publicado_em` dela, que anda com o dia do reset — e o teste passaria a falhar a
+-- partir de 01/10/2026, dependendo de qual linha o agendador tivesse regravado antes.
+cross join (select * from public.vaga
+             where estado = 'publicada' and modo = 'urgencia'
+             order by id limit 1) v;
 
 analyze public.vaga;
 
