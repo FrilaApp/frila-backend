@@ -10,7 +10,7 @@
 
 begin;
 
-select plan(21);
+select plan(36);
 
 set local frila.agendador_secret = 'segredo-de-teste';
 
@@ -69,6 +69,63 @@ values ('d7000000-0000-4000-8000-000000000044',
 
 insert into public.turno (id, posicao_id, valor_acordado_centavos)
 values ('d7000000-0000-4000-8000-000000000055', 'd7000000-0000-4000-8000-000000000044', 15000);
+
+-- Membro da Equipe Frila que age nos scripts (bloqueio 4 da revisão do #74): é ele o
+-- autor das ocorrências operacionais, nunca o alvo.
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
+values
+  ('00000000-0000-0000-0000-000000000000', 'd7000000-0000-4000-8000-000000000003', 'authenticated', 'authenticated', 'operacao-equipe@frila.test', now(), now(), false, false),
+  ('00000000-0000-0000-0000-000000000000', 'd7000000-0000-4000-8000-000000000004', 'authenticated', 'authenticated', 'operacao-prof2@frila.test', now(), now(), false, false),
+  ('00000000-0000-0000-0000-000000000000', 'd7000000-0000-4000-8000-000000000005', 'authenticated', 'authenticated', 'operacao-prof3@frila.test', now(), now(), false, false),
+  ('00000000-0000-0000-0000-000000000000', 'd7000000-0000-4000-8000-000000000006', 'authenticated', 'authenticated', 'operacao-casa2@frila.test', now(), now(), false, false);
+
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, estado, termos_versao, termos_aceite_em)
+values
+  ('d7000000-0000-4000-8000-000000000003', 'contratante',  'Equipe Frila Operador', '+5561955550003', 'operacao-equipe@frila.test', '1990-01-01', 'ativa', '2026-09-22', now()),
+  ('d7000000-0000-4000-8000-000000000004', 'profissional', 'Beatriz Confirmada',    '+5561955550004', 'operacao-prof2@frila.test',  '1992-01-01', 'ativa', '2026-09-22', now()),
+  ('d7000000-0000-4000-8000-000000000005', 'profissional', 'Davi Candidato',        '+5561955550005', 'operacao-prof3@frila.test',  '1993-01-01', 'ativa', '2026-09-22', now()),
+  ('d7000000-0000-4000-8000-000000000006', 'contratante',  'Casa Suspensa',         '+5561955550006', 'operacao-casa2@frila.test',  '1980-01-01', 'ativa', '2026-09-22', now());
+
+insert into public.profissional (id, usuario_id, ponto_base)
+values ('d7000000-0000-4000-8000-000000000014', 'd7000000-0000-4000-8000-000000000004', 'POINT(-47.8800 -15.7900)'::extensions.geography),
+       ('d7000000-0000-4000-8000-000000000015', 'd7000000-0000-4000-8000-000000000005', 'POINT(-47.8800 -15.7900)'::extensions.geography);
+
+insert into public.estabelecimento (id, nome, documento, tipo, regiao_administrativa, endereco, ponto)
+values ('d7000000-0000-4000-8000-000000000023', 'Casa da Suspensao', '11222333000181', 'food_service', 'Plano Piloto', 'SCLRN 706', 'POINT(-47.8850 -15.7950)'::extensions.geography);
+
+insert into public.membro_estabelecimento (estabelecimento_id, usuario_id, papel)
+values ('d7000000-0000-4000-8000-000000000023', 'd7000000-0000-4000-8000-000000000006', 'administrador');
+
+-- Vaga publicada de 3 posições com 1 confirmada, 2 abertas e 1 candidatura pendente,
+-- e vaga preenchida de 1 posição confirmada. É o cenário do bloqueio 2.
+insert into public.vaga (id, estabelecimento_id, publicado_por, funcao_id, inicio_em, fim_em, local, regiao_administrativa, responsavel_local, valor_centavos, posicoes, modo, estado, ponto, inclui_refeicao, inclui_transporte, exige_material_proprio, chave_cliente)
+select v.id, 'd7000000-0000-4000-8000-000000000023'::uuid, 'd7000000-0000-4000-8000-000000000006'::uuid,
+       f.id, v.inicio, v.inicio + interval '6 hours', 'Casa da Suspensao', 'Plano Piloto', 'Gerente',
+       15000, v.posicoes, 'urgencia', v.estado::public.estado_vaga,
+       'POINT(-47.8850 -15.7950)'::extensions.geography, false, false, false, gen_random_uuid()
+  from public.funcao f,
+       (values ('d7000000-0000-4000-8000-000000000034'::uuid, now() + interval '4 days', 3, 'publicada'),
+               ('d7000000-0000-4000-8000-000000000035'::uuid, now() + interval '5 days', 1, 'preenchida'))
+         as v(id, inicio, posicoes, estado)
+ where f.nome = 'garçom';
+
+insert into public.posicao (id, vaga_id, estado, inicio_em, fim_em, profissional_id, confirmado_em)
+values ('d7000000-0000-4000-8000-000000000045', 'd7000000-0000-4000-8000-000000000034', 'confirmada',
+        now() + interval '4 days', now() + interval '4 days 6 hours', 'd7000000-0000-4000-8000-000000000014', now()),
+       ('d7000000-0000-4000-8000-000000000046', 'd7000000-0000-4000-8000-000000000034', 'aberta',
+        now() + interval '4 days', now() + interval '4 days 6 hours', null, null),
+       ('d7000000-0000-4000-8000-000000000047', 'd7000000-0000-4000-8000-000000000034', 'aberta',
+        now() + interval '4 days', now() + interval '4 days 6 hours', null, null),
+       ('d7000000-0000-4000-8000-000000000048', 'd7000000-0000-4000-8000-000000000035', 'confirmada',
+        now() + interval '5 days', now() + interval '5 days 6 hours', 'd7000000-0000-4000-8000-000000000014', now());
+
+insert into public.turno (id, posicao_id, valor_acordado_centavos)
+values ('d7000000-0000-4000-8000-000000000056', 'd7000000-0000-4000-8000-000000000045', 15000),
+       ('d7000000-0000-4000-8000-000000000057', 'd7000000-0000-4000-8000-000000000048', 15000);
+
+insert into public.candidatura (id, posicao_id, profissional_id, estado)
+values ('d7000000-0000-4000-8000-000000000081', 'd7000000-0000-4000-8000-000000000046',
+        'd7000000-0000-4000-8000-000000000015', 'pendente');
 
 -- ── 2. Segurança e permissões de acesso ─────────────────────────────────────────
 
@@ -148,6 +205,13 @@ select is(
   1,
   'relatório indica 1 turno cancelado');
 
+select is(
+  (select o.autor_id from public.ocorrencia o
+    where o.tipo = 'suspensao'
+      and o.usuario_id = 'd7000000-0000-4000-8000-000000000001'),
+  'd7000000-0000-4000-8000-000000000003'::uuid,
+  'autor da ocorrência de suspensão é o membro da Equipe Frila, não o suspenso');
+
 -- Idempotência de suspensão
 create temp table res_suspensao_2 as
   select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', 'Outra tentativa de suspender') as r;
@@ -174,6 +238,14 @@ select is(
       and o.resultado like '%reativada%'),
   1,
   'ocorrência de suporte foi registrada para a reativação');
+
+select is(
+  (select o.autor_id from public.ocorrencia o
+    where o.tipo = 'suporte'
+      and o.usuario_id = 'd7000000-0000-4000-8000-000000000001'
+      and o.resultado like '%reativada%'),
+  'd7000000-0000-4000-8000-000000000003'::uuid,
+  'autor da ocorrência de reativação é o membro da Equipe Frila');
 
 -- Idempotência de reativação
 create temp table res_reativacao_2 as
@@ -223,6 +295,18 @@ select is(
   1,
   'ocorrência de moderação de conteúdo gravada');
 
+select is(
+  (select o.autor_id from public.ocorrencia o
+    where o.motivo like '%Linguagem ofensiva reportada%'),
+  'd7000000-0000-4000-8000-000000000003'::uuid,
+  'autor da ocorrência de moderação é o membro da Equipe Frila, não quem publicou');
+
+select isnt(
+  (select o.tipo from public.ocorrencia o
+    where o.motivo like '%Linguagem ofensiva reportada%'),
+  'denuncia'::public.tipo_ocorrencia,
+  'moderação não se registra como denúncia escrita pelo moderado');
+
 -- Reexibir vaga
 create temp table res_mod_reexibir as
   select privado.operacao_moderar_conteudo('d7000000-0000-4000-8000-000000000066', 'reexibir', 'Denúncia improcedente após verificação') as r;
@@ -231,5 +315,88 @@ select is(
   (select g.estado from public.vaga g where g.id = 'd7000000-0000-4000-8000-000000000066'),
   'publicada'::public.estado_vaga,
   'moderação pode reexibir vaga antes do início');
+
+-- ── 7. Suspender contratante com vaga parcialmente preenchida (bloqueio 2) ────────
+
+create temp table res_suspensao_casa as
+  select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000006', 'Fraude confirmada na publicação') as r;
+
+select is(
+  (select g.estado from public.vaga g where g.id = 'd7000000-0000-4000-8000-000000000034'),
+  'cancelada'::public.estado_vaga,
+  'vaga publicada da casa suspensa é cancelada');
+
+select is(
+  (select p.estado from public.posicao p where p.id = 'd7000000-0000-4000-8000-000000000045'),
+  'cancelada'::public.estado_posicao,
+  'posição confirmada da vaga publicada é cancelada junto');
+
+select is(
+  (select p.falta from public.posicao p where p.id = 'd7000000-0000-4000-8000-000000000045'),
+  false,
+  'a profissional da casa suspensa não leva falta (RN12)');
+
+select is(
+  (select count(*)::int from public.posicao p
+     join public.vaga g on g.id = p.vaga_id
+    where g.estabelecimento_id = 'd7000000-0000-4000-8000-000000000023'
+      and g.estado = 'cancelada'
+      and p.estado = 'confirmada'),
+  0,
+  'nenhuma posição confirmada sobra em vaga cancelada da casa suspensa');
+
+select is(
+  (select g.estado from public.vaga g where g.id = 'd7000000-0000-4000-8000-000000000035'),
+  'cancelada'::public.estado_vaga,
+  'vaga preenchida da casa suspensa também é cancelada');
+
+select is(
+  (select p.estado from public.posicao p where p.id = 'd7000000-0000-4000-8000-000000000048'),
+  'cancelada'::public.estado_posicao,
+  'posição confirmada da vaga preenchida é cancelada');
+
+select is(
+  (select c.estado from public.candidatura c where c.id = 'd7000000-0000-4000-8000-000000000081'),
+  'retirada'::public.estado_candidatura,
+  'candidatura pendente na vaga cancelada é retirada');
+
+select ok(
+  exists (select 1 from public.notificacao n
+           where n.usuario_id = 'd7000000-0000-4000-8000-000000000004'
+             and n.tipo = 'cancelamento'
+             and n.referencia_id = 'd7000000-0000-4000-8000-000000000045'),
+  'a profissional confirmada é avisada do cancelamento');
+
+select ok(
+  exists (select 1 from public.notificacao n
+           where n.usuario_id = 'd7000000-0000-4000-8000-000000000005'
+             and n.tipo = 'cancelamento'
+             and n.referencia_id = 'd7000000-0000-4000-8000-000000000034'),
+  'o candidato pendente é avisado do cancelamento da vaga');
+
+select is(
+  (select o.autor_id from public.ocorrencia o
+    where o.tipo = 'cancelamento'
+      and o.posicao_id = 'd7000000-0000-4000-8000-000000000045'),
+  'd7000000-0000-4000-8000-000000000003'::uuid,
+  'o cancelamento da posição confirmada tem o membro da Equipe Frila como autor');
+
+-- ── 8. Retenção não apaga o motivo da suspensão (bloqueio 4) ─────────────────────
+
+-- A conta suspensa é anonimizada e passa o prazo; a limpeza apaga o relato das
+-- ocorrências de autoria dela. A suspensão não é de autoria dela.
+update public.usuario
+   set estado = 'anonimizada', anonimizado_em = now() - interval '20 days',
+       nome = 'Conta encerrada', telefone = null, email = null
+ where id = 'd7000000-0000-4000-8000-000000000001';
+
+select privado.limpar_contas_anonimizadas(15);
+
+select is(
+  (select o.motivo from public.ocorrencia o
+    where o.tipo = 'suspensao'
+      and o.usuario_id = 'd7000000-0000-4000-8000-000000000001'),
+  'Denúncia grave de assédio confirmada',
+  'o motivo da suspensão sobrevive à limpeza da conta suspensa');
 
 rollback;

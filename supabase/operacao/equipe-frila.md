@@ -68,10 +68,13 @@ Toda denúncia registrada deve ser avaliada sob três critérios objetivos:
 
 Todos os scripts operacionais utilizam transações atômicas e gravam ocorrências auditáveis em `public.ocorrencia`. **Nunca altere diretamente as tabelas por UPDATE sem registro de ocorrência.**
 
+Todo script exige `operador_id`: o id em `public.usuario` da conta do membro da Equipe Frila que executa. Ele é o autor da ocorrência, nunca o alvo. Assim o motivo de uma suspensão não some quando a conta suspensa é excluída (a retenção apaga o relato das ocorrências de autoria da conta excluída), e a exportação de dados do alvo não lhe atribui o texto interno da equipe. A conta do operador precisa estar ativa e não pode ser a do alvo.
+
 ### 4.1. Suspender Conta
 ```bash
 psql -v usuario_id="<uuid-do-usuario>" \
      -v motivo="Denúncia grave confirmada: assédio verbal no turno do dia 28/09." \
+     -v operador_id="<uuid-do-operador>" \
      -f supabase/operacao/suspender-conta.sql
 ```
 
@@ -79,6 +82,7 @@ psql -v usuario_id="<uuid-do-usuario>" \
 ```bash
 psql -v usuario_id="<uuid-do-usuario>" \
      -v justificativa="Contestação aceita: comprovado que o profissional esteve no local e não houve recusa dolosa." \
+     -v operador_id="<uuid-do-operador>" \
      -f supabase/operacao/reativar-conta.sql
 ```
 
@@ -88,12 +92,14 @@ psql -v usuario_id="<uuid-do-usuario>" \
 psql -v vaga_id="<uuid-da-vaga>" \
      -v acao="ocultar" \
      -v motivo="Observações contêm texto desrespeitoso aos candidatos." \
+     -v operador_id="<uuid-do-operador>" \
      -f supabase/operacao/moderar-conteudo.sql
 
 # Reexibir vaga corrigida
 psql -v vaga_id="<uuid-da-vaga>" \
      -v acao="reexibir" \
      -v motivo="Vaga revisada e conteúdo regularizado pelo contratante." \
+     -v operador_id="<uuid-do-operador>" \
      -f supabase/operacao/moderar-conteudo.sql
 ```
 
