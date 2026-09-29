@@ -280,7 +280,7 @@ select is(
 select is(
   (select array_agg(k order by k) from p,
           jsonb_object_keys(pg_temp.vaga_de(j,'d5000000-0000-4000-8000-000000000001')) k),
-  array['alerta_vaga_vazia','candidatos_pendentes','estado','modo','posicoes','vaga'],
+  array['alerta_vaga_vazia','candidatos_pendentes','estado','modo','oculta','posicoes','vaga'],
   'cada vaga traz exatamente os campos de VagaNoPainel');
 select is(
   (select (pg_temp.vaga_de(j,'d5000000-0000-4000-8000-000000000001')->'vaga') - 'inicio_em' - 'fim_em' from p),

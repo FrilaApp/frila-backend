@@ -331,10 +331,16 @@ grant  execute on function privado.operacao_reativar_conta(uuid, text, uuid) to 
 --
 -- Cada ponto que oferece a vaga a quem procura turno passa a conferir a marca. As
 -- funções abaixo são cópias das definições mais recentes na develop, com uma linha a
--- mais cada: `vagas_abertas` e `detalhe_vaga` (20260928230000), `candidatar`
+-- mais cada: `vagas_abertas`, `detalhe_vaga`, `painel_estabelecimento` e `republicar_vaga`
+-- (20260928230000), `candidatar`
 -- (20260928220000), `despachar_vaga` (20260929110000), `liberar_teto_do_profissional` e
 -- `notificacao_expirada` (20260929100000) e a política `vaga_leitura` (20260925120000).
 -- `privado.elegiveis` fica intocada: o filtro vive em `despachar_vaga`, que a chama.
+--
+-- Contrato 0.2.23: a candidatura pendente segue pendente e o detalhe abre para quem a
+-- tem; `detalhe_vaga` e `painel_estabelecimento` trazem `oculta`; `republicar_vaga` a
+-- partir da vaga ocultada é `422 vaga_oculta`. `escolher_candidato` ainda não existe
+-- neste backend: quando existir, recusa a vaga ocultada com o mesmo `422 vaga_oculta`.
 
 create table privado.vaga_ocultada (
   vaga_id       uuid primary key references public.vaga(id) on delete cascade,
@@ -502,9 +508,12 @@ begin
     perform public.erro(404, 'nao_encontrado');
   end if;
 
-  -- Ocultada pela Equipe Frila: some para quem procura turno, e só quem já está nela
-  -- (o confirmado segue confirmado) ainda a abre.
-  if privado.vaga_oculta(v.id) and not privado.ocupa_posicao_na_vaga(v.id) then
+  -- Ocultada pela Equipe Frila: some para quem procura turno. Quem já está nela (o
+  -- confirmado segue confirmado, a candidatura segue pendente) ainda a abre, com
+  -- `oculta: true` (contrato 0.2.23).
+  if privado.vaga_oculta(v.id)
+     and not privado.ocupa_posicao_na_vaga(v.id)
+     and not privado.candidatou_na_vaga(v.id) then
     perform public.erro(404, 'nao_encontrado');
   end if;
 
@@ -533,6 +542,7 @@ begin
     'observacoes',           v.observacoes,
     'modo',                  v.modo,
     'estado',                v.estado,
+    'oculta',                privado.vaga_oculta(v.id),
     'publicado_em',          v.publicado_em);
 end $$;
 
@@ -972,6 +982,187 @@ comment on function privado.notificacao_expirada(uuid) is
 
 revoke execute on function privado.notificacao_expirada(uuid) from public, anon, authenticated;
 grant  execute on function privado.notificacao_expirada(uuid) to service_role;
+
+create or replace function public.painel_estabelecimento(
+  estabelecimento_id uuid,
+  de                 timestamptz,
+  ate                timestamptz
+)
+returns jsonb
+language plpgsql
+security definer set search_path = ''
+as $$
+#variable_conflict use_column
+declare
+  v_uid       uuid := (select auth.uid());
+  v_estab     uuid := painel_estabelecimento.estabelecimento_id;
+  v_de        timestamptz := painel_estabelecimento.de;
+  v_ate       timestamptz := painel_estabelecimento.ate;
+  v_agora     timestamptz;
+  v_vagas     jsonb;
+  v_pendentes jsonb;
+begin
+  if v_uid is null then
+    perform public.erro(401, 'nao_autenticado');
+  end if;
+
+  if v_estab is null or not privado.eh_membro(v_estab) then
+    perform public.erro(403, 'sem_permissao');
+  end if;
+
+  if v_de is null then
+    perform public.erro(422, 'campo_obrigatorio', 'de');
+  end if;
+  if v_ate is null then
+    perform public.erro(422, 'campo_obrigatorio', 'ate');
+  end if;
+
+  v_agora := privado.agora();
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'vaga', jsonb_build_object(
+              'id',                    v.id,
+              'funcao',                f.nome,
+              'local',                 v.local,
+              'regiao_administrativa', v.regiao_administrativa,
+              'inicio_em',             v.inicio_em,
+              'fim_em',                v.fim_em,
+              'valor_centavos',        v.valor_centavos),
+           'modo',   v.modo,
+           'estado', v.estado,
+           -- A casa vê "oculta pela Equipe"; o estado segue o do ciclo de vida (0.2.23).
+           'oculta', privado.vaga_oculta(v.id),
+           'alerta_vaga_vazia',
+              v.estado = 'publicada'
+              and v_agora >= v.inicio_em - v.alerta_antecedencia
+              and v_agora <  v.inicio_em
+              and exists (select 1 from public.posicao pa
+                           where pa.vaga_id = v.id and pa.estado = 'aberta'),
+           'candidatos_pendentes',
+              (select count(distinct c.profissional_id)
+                 from public.candidatura c
+                 join public.posicao pc on pc.id = c.posicao_id
+                where pc.vaga_id = v.id
+                  and c.estado = 'pendente'
+                  and not privado.bloqueado_com_estabelecimento(
+                            privado.usuario_do_profissional(c.profissional_id), v_estab)),
+           'posicoes',
+              (select coalesce(jsonb_agg(jsonb_build_object(
+                        'id',     p.id,
+                        'estado', p.estado,
+                        'profissional',
+                           case when p.profissional_id is null then null
+                                else privado.perfil_publico_profissional(p.profissional_id) end,
+                        'turno_id',    t.id,
+                        'verificacao', t.verificacao,
+                        'em_atraso',
+                           p.estado = 'confirmada'
+                           and t.checkin_em is null
+                           and v_agora >= p.inicio_em + interval '15 minutes'
+                           and v_agora <  p.fim_em)
+                      order by p.id), '[]'::jsonb)
+                 from public.posicao p
+                 left join public.turno t on t.posicao_id = p.id
+                where p.vaga_id = v.id))
+         order by v.inicio_em, v.id), '[]'::jsonb)
+    into v_vagas
+    from public.vaga v
+    join public.funcao f on f.id = v.funcao_id
+   where v.estabelecimento_id = v_estab
+     and v.inicio_em < v_ate
+     and v.fim_em    > v_de;
+
+  select coalesce(jsonb_agg(t.id order by t.checkin_em, t.id), '[]'::jsonb)
+    into v_pendentes
+    from public.turno t
+    join public.posicao p on p.id = t.posicao_id
+    join public.vaga v    on v.id = p.vaga_id
+   where v.estabelecimento_id = v_estab
+     and v.inicio_em < v_ate
+     and v.fim_em    > v_de
+     and p.estado in ('confirmada', 'cumprida')
+     and t.checkin_tipo = 'manual'
+     and t.checkin_confirmado_em is null;
+
+  return jsonb_build_object(
+    'estabelecimento_id', v_estab,
+    'vagas',              v_vagas,
+    'checkins_pendentes', v_pendentes);
+end $$;
+
+comment on function public.painel_estabelecimento(uuid, timestamptz, timestamptz) is
+  'Vagas, candidatos, contratados, check-ins e turnos do estabelecimento (RF20, RF13, UC07). Expõe regiao_administrativa em VagaResumo.';
+
+revoke execute on function public.painel_estabelecimento(uuid, timestamptz, timestamptz) from public, anon;
+grant  execute on function public.painel_estabelecimento(uuid, timestamptz, timestamptz) to authenticated;
+
+create or replace function public.republicar_vaga(
+  vaga_id   uuid,
+  inicio_em timestamptz,
+  fim_em    timestamptz,
+  chave     uuid)
+returns jsonb
+language plpgsql
+security definer set search_path = ''
+as $$
+#variable_conflict use_column
+declare
+  v_uid    uuid := (select auth.uid());
+  v_origem public.vaga%rowtype;
+begin
+  if v_uid is null then
+    perform public.erro(401, 'nao_autenticado');
+  end if;
+
+  perform privado.exigir_perfil('contratante');
+
+  if republicar_vaga.vaga_id is null then
+    perform public.erro(422, 'campo_obrigatorio', 'vaga_id');
+  end if;
+
+  select * into v_origem from public.vaga g where g.id = republicar_vaga.vaga_id;
+  if not found then
+    perform public.erro(404, 'nao_encontrado');
+  end if;
+
+  if not privado.eh_membro(v_origem.estabelecimento_id) then
+    perform public.erro(403, 'sem_permissao');
+  end if;
+
+  -- A cópia levaria o conteúdo moderado de volta à vitrine como vaga nova (0.2.23).
+  if privado.vaga_oculta(v_origem.id) then
+    perform public.erro(422, 'vaga_oculta');
+  end if;
+
+  return public.publicar_vaga(
+    estabelecimento_id     => v_origem.estabelecimento_id,
+    funcao_id              => v_origem.funcao_id,
+    inicio_em              => republicar_vaga.inicio_em,
+    fim_em                 => republicar_vaga.fim_em,
+    local                  => v_origem.local,
+    ponto                  => jsonb_build_object(
+                                'latitude',  extensions.ST_Y(v_origem.ponto::extensions.geometry),
+                                'longitude', extensions.ST_X(v_origem.ponto::extensions.geometry)),
+    valor_centavos         => v_origem.valor_centavos,
+    posicoes               => v_origem.posicoes,
+    inclui_refeicao        => v_origem.inclui_refeicao,
+    inclui_transporte      => v_origem.inclui_transporte,
+    exige_material_proprio => v_origem.exige_material_proprio,
+    responsavel_local      => v_origem.responsavel_local,
+    modo                   => v_origem.modo,
+    chave                  => republicar_vaga.chave,
+    traje                  => v_origem.traje,
+    participa_rateio       => v_origem.participa_rateio,
+    observacoes            => v_origem.observacoes,
+    alerta_antecedencia_min => (extract(epoch from v_origem.alerta_antecedencia) / 60)::int,
+    regiao_administrativa  => v_origem.regiao_administrativa);
+end $$;
+
+comment on function public.republicar_vaga(uuid, timestamptz, timestamptz, uuid) is
+  'Copia os campos da vaga de origem mudando início, fim e chave (RF05, US05). Preserva regiao_administrativa.';
+
+revoke execute on function public.republicar_vaga(uuid, timestamptz, timestamptz, uuid) from public, anon;
+grant  execute on function public.republicar_vaga(uuid, timestamptz, timestamptz, uuid) to authenticated;
 
 -- ── 4. Moderação de Conteúdo (Diretriz 1.2 da App Store) ─────────────────────────
 

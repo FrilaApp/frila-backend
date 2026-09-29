@@ -54,7 +54,8 @@ Toda denúncia registrada deve ser avaliada sob três critérios objetivos:
   - Vaga contendo termo ofensivo que escapou ao filtro, dados de contato explícitos na descrição, ou exigências discriminatórias.
 - **Ação:**
   - Executar `moderar-conteudo.sql` com ação `ocultar`.
-  - A vaga é cancelada, os candidatos são liberados e o autor é notificado por e-mail com a orientação. **Não suspender sumariamente** se for a primeira infração leve de texto (RN13).
+  - A vaga **não é cancelada** (decisão de 29/09, contrato 0.2.23): sai da vitrine, do despacho e dos avisos de vaga, não recebe candidatura nova, a casa não escolhe candidato nem a republica (`422 vaga_oculta`) e vê a vaga como "oculta pela Equipe" no painel. Confirmados seguem confirmados e candidaturas pendentes seguem pendentes. O autor é orientado por e-mail. **Não suspender sumariamente** se for a primeira infração leve de texto (RN13).
+  - Corrigido o conteúdo, executar `moderar-conteudo.sql` com ação `reexibir`. Reexibir **só vale para a vaga que a Equipe ocultou** (senão `422 campo_invalido`, `details: vaga_nao_ocultada`) e não muda o estado: vaga que a casa cancelou continua cancelada.
 
 ### 3.3. Denúncia Improcedente ou Desentendimento Leve
 - **Hipóteses:**
