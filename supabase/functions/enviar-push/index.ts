@@ -9,12 +9,40 @@
 //    - Erro transitório faz nova tentativa com backoff exponencial respeitando o teto de 5 tentativas.
 //    - Não reenvia se a vaga ou turno já tiver iniciado, nem antes de proxima_tentativa_em.
 
+import postgres from "npm:postgres@3.4.4";
 import {
   FcmServiceAccount,
   getAccessToken,
   sendFcmMessage,
   FcmSendResult,
 } from "./fcm.ts";
+
+export interface GravarFalhaPushParams {
+  notificacaoId: string;
+  motivo: string;
+  permanente?: boolean;
+  teto?: number;
+  proximaTentativaEm?: string | null;
+  enviadaEm?: string | null;
+}
+
+export interface GravarAceitePushParams {
+  notificacaoId: string;
+  enviadaEm?: string | null;
+  aceitaEm?: string | null;
+}
+
+export interface SqlClient {
+  notificacaoExpirada: (notificacaoId: string) => Promise<boolean>;
+  gravarFalhaPush: (params: GravarFalhaPushParams) => Promise<void>;
+  gravarAceitePush: (params: GravarAceitePushParams) => Promise<void>;
+  removerTokenFcm: (token: string) => Promise<number>;
+  obterConteudoPushLembrete?: (
+    turnoId: string,
+    usuarioId: string,
+    tipo: string,
+  ) => Promise<{ title: string; body: string } | null>;
+}
 
 export interface Dependencias {
   supabaseUrl?: string;
@@ -24,6 +52,8 @@ export interface Dependencias {
   fetchFn?: typeof fetch;
   fcmApiUrl?: string;
   fcmTokenUri?: string;
+  dbUrl?: string;
+  sqlClient?: SqlClient;
 }
 
 function igualEmTempoConstante(a: string, b: string): boolean {
@@ -120,9 +150,77 @@ export function calcularProximaTentativa(
   return new Date(agora.getTime() + segundos * 1000);
 }
 
+// Variáveis do texto, lidas no banco na hora do envio (Op. A da planilha de
+// notificações, aprovada em 28/09, e casos de texto variável por ocorrência).
+// Só dado do turno — nome da função do catálogo e horário —, nunca de pessoa, telefone
+// ou endereço (RN10, RN15). Ausentes, o texto cai na Op. B da mesma planilha.
+export interface VariaveisDoTexto {
+  funcao?: string;
+  horario?: string;
+  // Cancelamento feito por `reabrir_por_atraso` (caso 17 da planilha, cartão e8XpOZJN).
+  reaberturaPorAtraso?: boolean;
+}
+
+export type ContextoDoTexto = VariaveisDoTexto;
+
+// Horário de Brasília em 24 h ("18:00"): o DF não tem horário de verão, e o banco
+// guarda UTC (RN18).
+export function formatarHorario(iso: string): string | undefined {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return new Intl.DateTimeFormat("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "America/Sao_Paulo",
+  }).format(d);
+}
+
+// Lê as variáveis de que o texto do tipo precisa. Falha de leitura não segura o push:
+// devolve vazio, e o texto sai pelo fallback genérico / Op. B.
+export async function buscarVariaveisDoTexto(
+  tipo: string,
+  payload: Record<string, unknown> | null | undefined,
+  consultar: (caminho: string) => Promise<Response>,
+): Promise<VariaveisDoTexto> {
+  try {
+    if (tipo === "vaga_vazia") {
+      const posicao = payload?.posicao_id;
+      if (typeof posicao !== "string" || !UUID_REGEX.test(posicao)) return {};
+      const res = await consultar(
+        `posicao?id=eq.${posicao}&select=inicio_em,vaga(funcao(nome))`,
+      );
+      if (!res.ok) return {};
+      const [linha] = await res.json();
+      return {
+        funcao: linha?.vaga?.funcao?.nome ?? undefined,
+        horario: linha?.inicio_em ? formatarHorario(linha.inicio_em) : undefined,
+      };
+    }
+    if (tipo === "cancelamento") {
+      const posicaoId = payload?.posicao_id;
+      if (typeof posicaoId !== "string" || !UUID_REGEX.test(posicaoId)) return {};
+      // O motivo é estável (`reabertura_por_atraso`) e fica no banco; o texto muda, o
+      // payload não. Falha de leitura cai no texto genérico em vez de segurar o push.
+      const ocoRes = await consultar(
+        `ocorrencia?posicao_id=eq.${posicaoId}&tipo=eq.cancelamento&motivo=eq.reabertura_por_atraso&select=id&limit=1`,
+      );
+      if (!ocoRes.ok) return {};
+      const linhas = await ocoRes.json();
+      return {
+        reaberturaPorAtraso: Array.isArray(linhas) && linhas.length > 0,
+      };
+    }
+  } catch {
+    // Sem log do erro: a resposta pode trazer dado do banco.
+  }
+  return {};
+}
+
 export function titulosECorposPorTipo(
   tipo: string,
   payload: Record<string, unknown> = {},
+  variaveis: VariaveisDoTexto = {},
 ): { title: string; body: string } {
   const ehContratante = Boolean(
     payload?.estabelecimento_id ||
@@ -168,25 +266,29 @@ export function titulosECorposPorTipo(
         title: "Seu turno começa em 3 horas",
         body: "Seu turno começa em 3 horas. Toque para ver endereço e contato.",
       };
+    // Casos 13 e 16 da planilha de notificações (cartão e8XpOZJN).
     case "inicio_sem_checkin":
       return {
-        title: "Hora de iniciar o turno",
-        body: "O horário do turno começou. Não se esqueça de registrar o check-in.",
+        title: "Horário de início do turno",
+        body: "O horário de início chegou. Faça seu check-in ao chegar ao local.",
       };
     case "atraso_15min":
       return {
-        title: "Alerta de atraso",
-        body: "Check-in ainda não registrado 15 minutos após o início do turno.",
+        title: "Check-in pendente há 15 min",
+        body: "O profissional ainda não registrou presença. Você pode aguardar ou reabrir a vaga.",
       };
     case "fim_sem_checkout":
       return {
         title: "Check-out pendente",
         body: "O horário previsto do turno encerrou. Registre o check-out.",
       };
+    // Push 06 da planilha de notificações (cartão vUR0Ltkb).
     case "vaga_vazia":
       return {
-        title: "Vaga sem confirmação",
-        body: "Sua vaga ainda possui posições abertas na janela crítica.",
+        title: "Vaga ainda em aberto",
+        body: variaveis.funcao && variaveis.horario
+          ? `A posição de ${variaveis.funcao} das ${variaveis.horario} ainda não foi preenchida.`
+          : "Sua vaga ainda possui posição em aberto próxima ao horário.",
       };
     case "checkin":
       return {
@@ -199,6 +301,13 @@ export function titulosECorposPorTipo(
         body: "Check-in manual registrado, aguardando confirmação do contratante.",
       };
     case "cancelamento":
+      // Caso 17 da planilha: a casa reabriu a vaga por falta de check-in.
+      if (variaveis.reaberturaPorAtraso) {
+        return {
+          title: "Turno cancelado por atraso",
+          body: "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.",
+        };
+      }
       return {
         title: "Aviso de cancelamento",
         body: "Houve um cancelamento relacionado ao seu turno ou vaga.",
@@ -214,6 +323,95 @@ export function titulosECorposPorTipo(
         body: "Você tem uma nova notificação no Frila.",
       };
   }
+}
+
+function obterDbUrl(injetada?: string): string {
+  const valor = (injetada || Deno.env.get("DATABASE_URL") || Deno.env.get("SUPABASE_DB_URL"))?.trim();
+  if (!valor) {
+    throw new Error("DATABASE_URL ou SUPABASE_DB_URL é obrigatório e deve estar configurado no ambiente.");
+  }
+  return valor;
+}
+
+export function criarSqlClient(deps?: Dependencias): SqlClient {
+  if (deps?.sqlClient) {
+    return deps.sqlClient;
+  }
+  const dbUrl = obterDbUrl(deps?.dbUrl);
+  return {
+    async notificacaoExpirada(notificacaoId: string): Promise<boolean> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        const res = await sql`
+          select privado.notificacao_expirada(${notificacaoId}::uuid) as expirada
+        `;
+        return res[0]?.expirada === true;
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+    async gravarFalhaPush(params: GravarFalhaPushParams): Promise<void> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        await sql`
+          select privado.gravar_falha_push(
+            p_notificacao_id => ${params.notificacaoId}::uuid,
+            p_motivo => ${params.motivo}::text,
+            p_permanente => ${params.permanente ?? false}::boolean,
+            p_teto => ${params.teto ?? 5}::integer,
+            p_proxima_tentativa_em => ${params.proximaTentativaEm ?? null}::timestamptz,
+            p_enviada_em => ${params.enviadaEm ?? null}::timestamptz
+          )
+        `;
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+    async gravarAceitePush(params: GravarAceitePushParams): Promise<void> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        await sql`
+          select privado.gravar_aceite_push(
+            p_notificacao_id => ${params.notificacaoId}::uuid,
+            p_aceita_em => ${params.aceitaEm ?? null}::timestamptz,
+            p_enviada_em => ${params.enviadaEm ?? null}::timestamptz
+          )
+        `;
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+    async removerTokenFcm(token: string): Promise<number> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        const res = await sql`
+          select privado.remover_token_fcm(${token}::text) as removidos
+        `;
+        return Number(res[0]?.removidos ?? 0);
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+    async obterConteudoPushLembrete(
+      turnoId: string,
+      usuarioId: string,
+      tipo: string,
+    ): Promise<{ title: string; body: string } | null> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        const res = await sql`
+          select privado.obter_conteudo_push_lembrete(
+            ${turnoId}::uuid,
+            ${usuarioId}::uuid,
+            ${tipo}::text
+          ) as conteudo
+        `;
+        return (res[0]?.conteudo as { title: string; body: string } | null) ?? null;
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+  };
 }
 
 export async function processarEnvioPush(
@@ -271,15 +469,6 @@ export async function processarEnvioPush(
     Prefer: "return=representation",
   };
 
-  // Helper para chamar RPCs privadas
-  async function chamarRpc(nome: string, params: Record<string, unknown>) {
-    const res = await fetchFn(`${supabaseUrl}/rest/v1/rpc/${nome}`, {
-      method: "POST",
-      headers: dbHeaders,
-      body: JSON.stringify(params),
-    });
-    return res;
-  }
 
   let notificacoes: Array<{
     id: string;
@@ -327,6 +516,8 @@ export async function processarEnvioPush(
     );
   }
 
+  const sqlClient = criarSqlClient(deps);
+
   // Obter token de acesso do Google OAuth
   let accessToken = "";
   try {
@@ -357,22 +548,19 @@ export async function processarEnvioPush(
     }
 
     // 1. Verifica se a vaga ou turno já iniciou (sem reenviar depois do início)
-    const expRes = await chamarRpc("notificacao_expirada", { p_notificacao_id: n.id });
-    if (expRes.ok) {
-      const expirada = await expRes.json();
-      if (expirada === true) {
-        await chamarRpc("gravar_falha_push", {
-          p_notificacao_id: n.id,
-          p_motivo: "vaga_ou_turno_ja_iniciado",
-          p_permanente: true,
-        });
-        relatorio.push({
-          notificacao_id: n.id,
-          status: "falhou",
-          detalhe: "vaga_ou_turno_ja_iniciado",
-        });
-        continue;
-      }
+    const expirada = await sqlClient.notificacaoExpirada(n.id);
+    if (expirada) {
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: "vaga_ou_turno_ja_iniciado",
+        permanente: true,
+      });
+      relatorio.push({
+        notificacao_id: n.id,
+        status: "falhou",
+        detalhe: "vaga_ou_turno_ja_iniciado",
+      });
+      continue;
     }
 
     // 2. Busca todos os aparelhos registrados da conta destinatária
@@ -386,10 +574,10 @@ export async function processarEnvioPush(
 
     if (aparelhos.length === 0) {
       // Usuário sem nenhum aparelho registrado
-      await chamarRpc("gravar_falha_push", {
-        p_notificacao_id: n.id,
-        p_motivo: "sem_dispositivo",
-        p_permanente: true,
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: "sem_dispositivo",
+        permanente: true,
       });
       relatorio.push({
         notificacao_id: n.id,
@@ -400,16 +588,21 @@ export async function processarEnvioPush(
     }
 
     // 3. Monta o payload do FCM aplicando whitelist estrita (RN15)
-    let { title, body } = titulosECorposPorTipo(n.tipo, n.payload);
+    const variaveis = await buscarVariaveisDoTexto(
+      n.tipo,
+      n.payload,
+      (caminho) => fetchFn(`${supabaseUrl}/rest/v1/${caminho}`, { headers: dbHeaders }),
+    );
+    let { title, body } = titulosECorposPorTipo(n.tipo, n.payload, variaveis);
+
     if (n.tipo === "lembrete_24h" || n.tipo === "lembrete_3h") {
       try {
-        const conteudoRes = await chamarRpc("obter_conteudo_push_lembrete", {
-          p_turno_id: n.referencia_id,
-          p_usuario_id: n.usuario_id,
-          p_tipo: n.tipo,
-        });
-        if (conteudoRes.ok) {
-          const dados = await conteudoRes.json();
+        if (sqlClient.obterConteudoPushLembrete) {
+          const dados = await sqlClient.obterConteudoPushLembrete(
+            n.referencia_id,
+            n.usuario_id,
+            n.tipo,
+          );
           if (dados && typeof dados.title === "string" && typeof dados.body === "string") {
             title = dados.title;
             body = dados.body;
@@ -451,7 +644,7 @@ export async function processarEnvioPush(
         if (resultado.unregistered) {
           algumUnregistered = true;
           // 404/410 UNREGISTERED remove o token do banco
-          await chamarRpc("remover_token_fcm", { p_token: disp.token_fcm });
+          await sqlClient.removerTokenFcm(disp.token_fcm);
         }
         if (resultado.transient) {
           algumTransient = true;
@@ -463,18 +656,18 @@ export async function processarEnvioPush(
     if (algumAceite) {
       // 200 grava o aceite com instante real do envio e do aceite
       const instanteAceite = new Date().toISOString();
-      await chamarRpc("gravar_aceite_push", {
-        p_notificacao_id: n.id,
-        p_enviada_em: instanteEnvio,
-        p_aceita_em: instanteAceite,
+      await sqlClient.gravarAceitePush({
+        notificacaoId: n.id,
+        enviadaEm: instanteEnvio,
+        aceitaEm: instanteAceite,
       });
       relatorio.push({ notificacao_id: n.id, status: "enviada" });
     } else if (algumUnregistered && aparelhos.length === 1) {
-      await chamarRpc("gravar_falha_push", {
-        p_notificacao_id: n.id,
-        p_motivo: "UNREGISTERED",
-        p_permanente: true,
-        p_enviada_em: instanteEnvio,
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: "UNREGISTERED",
+        permanente: true,
+        enviadaEm: instanteEnvio,
       });
       relatorio.push({
         notificacao_id: n.id,
@@ -490,13 +683,13 @@ export async function processarEnvioPush(
         ? null
         : calcularProximaTentativa(novaTentativa);
 
-      await chamarRpc("gravar_falha_push", {
-        p_notificacao_id: n.id,
-        p_motivo: `erro_transitorio: ${erroUltimo}`,
-        p_permanente: false,
-        p_teto: teto,
-        p_proxima_tentativa_em: proximaTentativa ? proximaTentativa.toISOString() : null,
-        p_enviada_em: instanteEnvio,
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: `erro_transitorio: ${erroUltimo}`,
+        permanente: false,
+        teto: teto,
+        proximaTentativaEm: proximaTentativa ? proximaTentativa.toISOString() : null,
+        enviadaEm: instanteEnvio,
       });
       relatorio.push({
         notificacao_id: n.id,
@@ -504,11 +697,11 @@ export async function processarEnvioPush(
         detalhe: `erro_transitorio: ${erroUltimo}`,
       });
     } else {
-      await chamarRpc("gravar_falha_push", {
-        p_notificacao_id: n.id,
-        p_motivo: erroUltimo || "falha_envio",
-        p_permanente: true,
-        p_enviada_em: instanteEnvio,
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: erroUltimo || "falha_envio",
+        permanente: true,
+        enviadaEm: instanteEnvio,
       });
       relatorio.push({
         notificacao_id: n.id,

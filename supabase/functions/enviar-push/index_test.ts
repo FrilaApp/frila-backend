@@ -8,16 +8,59 @@
 // 4. Instante real de envio ao FCM gravado em enviada_em e aceita_em medidos no RNF02.
 
 import "./test_setup.ts";
-import { assertEquals, assert } from "jsr:@std/assert@1";
+import { assertEquals, assert, assertMatch } from "jsr:@std/assert@1";
 import {
   processarEnvioPush,
   titulosECorposPorTipo,
   filtrarDataPayloadFcm,
   calcularProximaTentativa,
+  formatarHorario,
+  criarSqlClient,
+  SqlClient,
+  GravarFalhaPushParams,
+  GravarAceitePushParams,
 } from "./index.ts";
 import { FcmServiceAccount, sendFcmMessage, getAccessToken } from "./fcm.ts";
 
 const SEGREDO_TESTE = "frila-teste-segredo-agendador-local";
+
+interface MockSqlOpcoes {
+  notificacaoExpirada?: boolean | ((id: string) => boolean | Promise<boolean>);
+  chamadasFalha?: Array<GravarFalhaPushParams>;
+  chamadasAceite?: Array<GravarAceitePushParams>;
+  tokensRemovidos?: string[];
+  obterConteudoPushLembrete?: (
+    turnoId: string,
+    usuarioId: string,
+    tipo: string,
+  ) => Promise<{ title: string; body: string } | null>;
+}
+
+function criarMockSqlClient(opcoes: MockSqlOpcoes = {}): SqlClient {
+  return {
+    notificacaoExpirada: (id: string) => {
+      if (typeof opcoes.notificacaoExpirada === "function") {
+        return Promise.resolve(opcoes.notificacaoExpirada(id));
+      }
+      return Promise.resolve(opcoes.notificacaoExpirada ?? false);
+    },
+    gravarFalhaPush: (params: GravarFalhaPushParams) => {
+      opcoes.chamadasFalha?.push(params);
+      return Promise.resolve();
+    },
+    gravarAceitePush: (params: GravarAceitePushParams) => {
+      opcoes.chamadasAceite?.push(params);
+      return Promise.resolve();
+    },
+    removerTokenFcm: (token: string) => {
+      opcoes.tokensRemovidos?.push(token);
+      return Promise.resolve(1);
+    },
+    obterConteudoPushLembrete: opcoes.obterConteudoPushLembrete
+      ? opcoes.obterConteudoPushLembrete
+      : () => Promise.resolve(null),
+  };
+}
 
 // Helper para gerar par de chaves RSA em memória para os testes
 async function gerarContaDeServicoTeste(): Promise<FcmServiceAccount> {
@@ -331,6 +374,7 @@ Deno.test("Bloqueio 3: worker não reenvia notificação antes do vencimento de 
   const res = await processarEnvioPush(req, {
     serviceAccount: sa,
     fetchFn: mockFetch,
+    sqlClient: criarMockSqlClient(),
   });
 
   assertEquals(res.status, 200);
@@ -342,7 +386,8 @@ Deno.test("Bloqueio 3: worker não reenvia notificação antes do vencimento de 
 
 Deno.test("Bloqueio 3: erro transitório agenda proxima_tentativa_em no banco", async () => {
   const sa = await gerarContaDeServicoTeste();
-  const chamadasRpc: Array<{ nome: string; params: Record<string, unknown> }> = [];
+  const chamadasFalha: GravarFalhaPushParams[] = [];
+  const sqlClient = criarMockSqlClient({ chamadasFalha });
 
   const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
     const url = input.toString();
@@ -376,10 +421,6 @@ Deno.test("Bloqueio 3: erro transitório agenda proxima_tentativa_em no banco", 
       );
     }
 
-    if (url.includes("/rest/v1/rpc/notificacao_expirada")) {
-      return Promise.resolve(new Response("false", { status: 200 }));
-    }
-
     if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
       return Promise.resolve(
         new Response(
@@ -401,15 +442,6 @@ Deno.test("Bloqueio 3: erro transitório agenda proxima_tentativa_em no banco", 
       );
     }
 
-    if (url.includes("/rest/v1/rpc/")) {
-      const match = url.match(/\/rpc\/([^?]+)/);
-      const nomeRpc = match ? match[1] : "";
-      return Promise.resolve(new Response("null", { status: 200 })).then((r) => {
-        chamadasRpc.push({ nome: nomeRpc, params: {} });
-        return r;
-      });
-    }
-
     return Promise.reject(new Error(`URL não tratada: ${url}`));
   };
 
@@ -424,38 +456,30 @@ Deno.test("Bloqueio 3: erro transitório agenda proxima_tentativa_em no banco", 
 
   const res = await processarEnvioPush(req, {
     serviceAccount: sa,
-    fetchFn: (input, init) => {
-      const url = input.toString();
-      if (url.includes("/rest/v1/rpc/gravar_falha_push") && init?.body) {
-        chamadasRpc.push({
-          nome: "gravar_falha_push",
-          params: JSON.parse(init.body as string),
-        });
-        return Promise.resolve(new Response("null", { status: 200 }));
-      }
-      return mockFetch(input, init);
-    },
+    fetchFn: mockFetch,
+    sqlClient,
   });
 
   assertEquals(res.status, 200);
   const data = await res.json();
   assertEquals(data.relatorio[0].status, "pendente");
 
-  const rpcFalha = chamadasRpc.find((c) => c.nome === "gravar_falha_push");
+  const rpcFalha = chamadasFalha[0];
   assert(rpcFalha !== undefined, "gravar_falha_push deve ser chamada");
-  assertEquals(rpcFalha.params.p_permanente, false);
-  assertEquals(rpcFalha.params.p_teto, 5);
-  assert(rpcFalha.params.p_proxima_tentativa_em !== null, "proxima_tentativa_em deve ser preenchido");
-  assert(rpcFalha.params.p_enviada_em !== null, "enviada_em deve ser registrado com o instante do envio");
+  assertEquals(rpcFalha.permanente, false);
+  assertEquals(rpcFalha.teto, 5);
+  assert(rpcFalha.proximaTentativaEm !== null, "proxima_tentativa_em deve ser preenchido");
+  assert(rpcFalha.enviadaEm !== null, "enviada_em deve ser registrado com o instante do envio");
 });
 
 // ── Bloqueio 4: Instante real de envio ao FCM e medição RNF02 ────────────────
 
 Deno.test("Bloqueio 4: 200 grava instante real de envio e aceite para medir RNF02", async () => {
   const sa = await gerarContaDeServicoTeste();
-  const chamadasRpc: Array<{ nome: string; params: Record<string, unknown> }> = [];
+  const chamadasAceite: GravarAceitePushParams[] = [];
+  const sqlClient = criarMockSqlClient({ chamadasAceite });
 
-  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+  const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
     const url = input.toString();
 
     if (url === "http://mock-oauth/token") {
@@ -491,10 +515,6 @@ Deno.test("Bloqueio 4: 200 grava instante real de envio e aceite para medir RNF0
       );
     }
 
-    if (url.includes("/rest/v1/rpc/notificacao_expirada")) {
-      return Promise.resolve(new Response("false", { status: 200 }));
-    }
-
     if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
       return Promise.resolve(
         new Response(
@@ -515,14 +535,6 @@ Deno.test("Bloqueio 4: 200 grava instante real de envio e aceite para medir RNF0
       );
     }
 
-    if (url.includes("/rest/v1/rpc/gravar_aceite_push") && init?.body) {
-      chamadasRpc.push({
-        nome: "gravar_aceite_push",
-        params: JSON.parse(init.body as string),
-      });
-      return Promise.resolve(new Response("null", { status: 200 }));
-    }
-
     return Promise.reject(new Error(`URL não tratada: ${url}`));
   };
 
@@ -539,20 +551,21 @@ Deno.test("Bloqueio 4: 200 grava instante real de envio e aceite para medir RNF0
     serviceAccount: sa,
     fetchFn: mockFetch,
     fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient,
   });
 
   assertEquals(res.status, 200);
   const data = await res.json();
   assertEquals(data.relatorio[0].status, "enviada");
 
-  const rpcAceite = chamadasRpc.find((c) => c.nome === "gravar_aceite_push");
+  const rpcAceite = chamadasAceite[0];
   assert(rpcAceite !== undefined, "gravar_aceite_push deve ter sido invocada");
-  assert(typeof rpcAceite.params.p_enviada_em === "string", "p_enviada_em deve ser registrado com timestamp real");
-  assert(typeof rpcAceite.params.p_aceita_em === "string", "p_aceita_em deve ser registrado com timestamp de aceite");
+  assert(typeof rpcAceite.enviadaEm === "string", "p_enviada_em deve ser registrado com timestamp real");
+  assert(typeof rpcAceite.aceitaEm === "string", "p_aceita_em deve ser registrado com timestamp de aceite");
 
   // Valida que o intervalo medido entre o disparo e o aceite é inferior a 60 segundos
-  const tEnvio = new Date(rpcAceite.params.p_enviada_em as string).getTime();
-  const tAceite = new Date(rpcAceite.params.p_aceita_em as string).getTime();
+  const tEnvio = new Date(rpcAceite.enviadaEm as string).getTime();
+  const tAceite = new Date(rpcAceite.aceitaEm as string).getTime();
   const diferencaSegundos = (tAceite - tEnvio) / 1000;
   assert(diferencaSegundos <= 60, "Tempo do envio até aceite deve cumprir RNF02 (<= 60 s)");
 });
@@ -561,9 +574,11 @@ Deno.test("Bloqueio 4: 200 grava instante real de envio e aceite para medir RNF0
 
 Deno.test("Edge Function: 404/410 UNREGISTERED remove o token do aparelho", async () => {
   const sa = await gerarContaDeServicoTeste();
-  const chamadasRpc: Array<{ nome: string; params: Record<string, unknown> }> = [];
+  const tokensRemovidos: string[] = [];
+  const chamadasFalha: GravarFalhaPushParams[] = [];
+  const sqlClient = criarMockSqlClient({ tokensRemovidos, chamadasFalha });
 
-  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+  const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
     const url = input.toString();
 
     if (url === "http://mock-oauth/token") {
@@ -595,10 +610,6 @@ Deno.test("Edge Function: 404/410 UNREGISTERED remove o token do aparelho", asyn
       );
     }
 
-    if (url.includes("/rest/v1/rpc/notificacao_expirada")) {
-      return Promise.resolve(new Response("false", { status: 200 }));
-    }
-
     if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
       return Promise.resolve(
         new Response(
@@ -626,16 +637,6 @@ Deno.test("Edge Function: 404/410 UNREGISTERED remove o token do aparelho", asyn
       );
     }
 
-    if (url.includes("/rest/v1/rpc/remover_token_fcm") && init?.body) {
-      chamadasRpc.push({ nome: "remover_token_fcm", params: JSON.parse(init.body as string) });
-      return Promise.resolve(new Response("1", { status: 200 }));
-    }
-
-    if (url.includes("/rest/v1/rpc/gravar_falha_push") && init?.body) {
-      chamadasRpc.push({ nome: "gravar_falha_push", params: JSON.parse(init.body as string) });
-      return Promise.resolve(new Response("null", { status: 200 }));
-    }
-
     return Promise.reject(new Error(`URL não tratada: ${url}`));
   };
 
@@ -652,6 +653,7 @@ Deno.test("Edge Function: 404/410 UNREGISTERED remove o token do aparelho", asyn
     serviceAccount: sa,
     fetchFn: mockFetch,
     fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient,
   });
 
   assertEquals(res.status, 200);
@@ -659,14 +661,19 @@ Deno.test("Edge Function: 404/410 UNREGISTERED remove o token do aparelho", asyn
   assertEquals(data.relatorio[0].status, "falhou");
   assertEquals(data.relatorio[0].detalhe, "UNREGISTERED");
 
-  const rpcRemover = chamadasRpc.find((c) => c.nome === "remover_token_fcm");
-  assert(rpcRemover !== undefined, "remover_token_fcm deve ser chamada");
-  assertEquals(rpcRemover.params.p_token, "fcm_token_invalido_unregistered");
+  assert(tokensRemovidos.includes("fcm_token_invalido_unregistered"), "remover_token_fcm deve ser chamada");
+  assertEquals(chamadasFalha[0]?.motivo, "UNREGISTERED");
+  assertEquals(chamadasFalha[0]?.permanente, true);
 });
 
 Deno.test("Edge Function: não reenvia se início da vaga ou turno já passou", async () => {
   const sa = await gerarContaDeServicoTeste();
   let fcmChamado = false;
+  const chamadasFalha: GravarFalhaPushParams[] = [];
+  const sqlClient = criarMockSqlClient({
+    notificacaoExpirada: true,
+    chamadasFalha,
+  });
 
   const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
     const url = input.toString();
@@ -700,14 +707,6 @@ Deno.test("Edge Function: não reenvia se início da vaga ou turno já passou", 
       );
     }
 
-    if (url.includes("/rest/v1/rpc/notificacao_expirada")) {
-      return Promise.resolve(new Response("true", { status: 200 }));
-    }
-
-    if (url.includes("/rest/v1/rpc/gravar_falha_push")) {
-      return Promise.resolve(new Response("null", { status: 200 }));
-    }
-
     if (url.includes("/messages:send")) {
       fcmChamado = true;
       return Promise.resolve(new Response("{}", { status: 200 }));
@@ -729,6 +728,7 @@ Deno.test("Edge Function: não reenvia se início da vaga ou turno já passou", 
     serviceAccount: sa,
     fetchFn: mockFetch,
     fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient,
   });
 
   assertEquals(res.status, 200);
@@ -736,6 +736,8 @@ Deno.test("Edge Function: não reenvia se início da vaga ou turno já passou", 
   assertEquals(data.relatorio[0].status, "falhou");
   assertEquals(data.relatorio[0].detalhe, "vaga_ou_turno_ja_iniciado");
   assertEquals(fcmChamado, false, "FCM não deve ser chamado para notificação de turno/vaga já iniciado");
+  assertEquals(chamadasFalha[0]?.motivo, "vaga_ou_turno_ja_iniciado");
+  assertEquals(chamadasFalha[0]?.permanente, true);
 });
 
 Deno.test("Segurança e Privacidade: títulos e corpos não contêm dados pessoais (RN15)", () => {
@@ -761,6 +763,101 @@ Deno.test("Segurança e Privacidade: títulos e corpos não contêm dados pessoa
     assert(!body.includes("@"), `Corpo não pode conter e-mail (${tipo})`);
     assert(!body.includes("+55"), `Corpo não pode conter telefone (${tipo})`);
   }
+});
+
+// ── Atraso e reabertura (cartão e8XpOZJN) ─────────────────────────────────────
+//
+// Título e corpo copiados da planilha de notificações (casos 13, 16 e 17), e nenhum
+// texto fora dela.
+
+Deno.test("Planilha: início sem check-in (caso 13) e atraso de 15 min (caso 16)", () => {
+  assertEquals(titulosECorposPorTipo("inicio_sem_checkin", {}), {
+    title: "Horário de início do turno",
+    body: "O horário de início chegou. Faça seu check-in ao chegar ao local.",
+  });
+  assertEquals(titulosECorposPorTipo("atraso_15min", {}), {
+    title: "Check-in pendente há 15 min",
+    body: "O profissional ainda não registrou presença. Você pode aguardar ou reabrir a vaga.",
+  });
+});
+
+Deno.test("Planilha: cancelamento por reabertura por atraso (caso 17), e só ele", () => {
+  assertEquals(titulosECorposPorTipo("cancelamento", {}, { reaberturaPorAtraso: true }), {
+    title: "Turno cancelado por atraso",
+    body: "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.",
+  });
+  const generico = titulosECorposPorTipo("cancelamento", {});
+  assert(generico.title !== "Turno cancelado por atraso",
+    "cancelamento comum não pode dizer que foi atraso");
+});
+
+Deno.test("Envio: cancelamento com ocorrência reabertura_por_atraso sai com o texto do caso 17", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const posicao = "e8a00000-0000-4000-8000-00000000aaaa";
+  let enviado: { title?: string; body?: string } = {};
+  let consultouOcorrencia = false;
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    const json = (corpo: unknown) =>
+      Promise.resolve(new Response(JSON.stringify(corpo), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+
+    if (url === "http://mock-oauth/token") {
+      return json({ access_token: "token-ok", token_type: "Bearer", expires_in: 3600 });
+    }
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return json([{
+        id: "e8a00000-0000-4000-8000-00000000bbbb",
+        usuario_id: "e8a00000-0000-4000-8000-0000000000e1",
+        tipo: "cancelamento",
+        referencia_id: posicao,
+        payload: { tipo: "cancelamento", posicao_id: posicao, reaberta: true },
+        tentativas: 0,
+        estado_entrega: "pendente",
+      }]);
+    }
+    if (url.includes("/rest/v1/rpc/notificacao_expirada")) return json(false);
+    if (url.includes("/rest/v1/ocorrencia?")) {
+      consultouOcorrencia = true;
+      assert(url.includes(`posicao_id=eq.${posicao}`));
+      assert(url.includes("motivo=eq.reabertura_por_atraso"));
+      return json([{ id: "e8a00000-0000-4000-8000-00000000cccc" }]);
+    }
+    if (url.includes("/rest/v1/dispositivo?")) {
+      return json([{ id: "d1", token_fcm: "token-e1", plataforma: "ios" }]);
+    }
+    if (url.includes("/messages:send")) {
+      const corpo = JSON.parse(String(init?.body));
+      enviado = corpo.message.notification;
+      return json({ name: "projects/frila-test-project/messages/1" });
+    }
+    if (url.includes("/rest/v1/rpc/")) return json(null);
+    throw new Error(`URL não tratada no mock: ${url}`);
+  };
+
+  const req = new Request("http://localhost/enviar-push", {
+    method: "POST",
+    headers: { "x-agendador-secret": SEGREDO_TESTE, "Content-Type": "application/json" },
+    body: JSON.stringify({ notificacao_id: "e8a00000-0000-4000-8000-00000000bbbb" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    supabaseUrl: "http://mock-supabase",
+    serviceRoleKey: "service-role-de-teste",
+    agendadorSecret: SEGREDO_TESTE,
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient: criarMockSqlClient({ notificacaoExpirada: false }),
+  });
+
+  assertEquals(res.status, 200);
+  assert(consultouOcorrencia, "o motivo do cancelamento é lido do banco no envio");
+  assertEquals(enviado.title, "Turno cancelado por atraso");
+  assertEquals(enviado.body, "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.");
 });
 
 Deno.test("Lembretes 24h e 3h: interpolação Opção A homologada (k5R4tzjC)", async () => {
@@ -791,18 +888,6 @@ Deno.test("Lembretes 24h e 3h: interpolação Opção A homologada (k5R4tzjC)", 
     if (url.includes("/rest/v1/dispositivo")) {
       return Promise.resolve(new Response(JSON.stringify([{ id: "disp-1", token_fcm: "fcm-tok-1", plataforma: "ios" }]), { status: 200 }));
     }
-    if (url.includes("/rpc/notificacao_expirada")) {
-      return Promise.resolve(new Response("false", { status: 200 }));
-    }
-    if (url.includes("/rpc/obter_conteudo_push_lembrete")) {
-      return Promise.resolve(new Response(JSON.stringify({
-        title: "Lembrete de turno amanhã",
-        body: "Garçom em Bar Beirute amanhã às 11:00.",
-      }), { status: 200 }));
-    }
-    if (url.includes("/rpc/gravar_aceite_push")) {
-      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    }
     if (url.includes("/messages:send")) {
       fcmEnviado = JSON.parse(init?.body as string);
       return Promise.resolve(new Response(JSON.stringify({ name: "msg-123" }), { status: 200 }));
@@ -825,6 +910,13 @@ Deno.test("Lembretes 24h e 3h: interpolação Opção A homologada (k5R4tzjC)", 
     serviceAccount: sa,
     fetchFn: mockFetch,
     fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient: criarMockSqlClient({
+      notificacaoExpirada: false,
+      obterConteudoPushLembrete: () => Promise.resolve({
+        title: "Lembrete de turno amanhã",
+        body: "Garçom em Bar Beirute amanhã às 11:00.",
+      }),
+    }),
   });
 
   assertEquals(res.status, 200);
@@ -892,16 +984,6 @@ Deno.test("Lembretes 24h e 3h: envio com fallback para contratante usa textos da
     if (url.includes("/rest/v1/dispositivo")) {
       return Promise.resolve(new Response(JSON.stringify([{ id: "disp-2", token_fcm: "fcm-tok-2", plataforma: "ios" }]), { status: 200 }));
     }
-    if (url.includes("/rpc/notificacao_expirada")) {
-      return Promise.resolve(new Response("false", { status: 200 }));
-    }
-    // Simula falha da RPC privada (404/500), ativando o fallback
-    if (url.includes("/rpc/obter_conteudo_push_lembrete")) {
-      return Promise.resolve(new Response(JSON.stringify({ error: "not_found" }), { status: 404 }));
-    }
-    if (url.includes("/rpc/gravar_aceite_push")) {
-      return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    }
     if (url.includes("/messages:send")) {
       fcmEnviado = JSON.parse(init?.body as string);
       return Promise.resolve(new Response(JSON.stringify({ name: "msg-456" }), { status: 200 }));
@@ -924,6 +1006,10 @@ Deno.test("Lembretes 24h e 3h: envio com fallback para contratante usa textos da
     serviceAccount: sa,
     fetchFn: mockFetch,
     fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient: criarMockSqlClient({
+      notificacaoExpirada: false,
+      obterConteudoPushLembrete: () => Promise.resolve(null),
+    }),
   });
 
   assertEquals(res.status, 200);
@@ -981,10 +1067,6 @@ function mockCicloDoToken(
       ]);
     }
 
-    if (url.includes("/rest/v1/rpc/notificacao_expirada")) {
-      return Promise.resolve(new Response("false", { status: 200 }));
-    }
-
     const disp = url.match(/\/rest\/v1\/dispositivo\?usuario_id=eq\.([^&]+)/);
     if (disp) {
       return json(
@@ -1000,10 +1082,6 @@ function mockCicloDoToken(
       return json({ name: "projects/frila-test-project/messages/msg_ciclo" });
     }
 
-    if (url.includes("/rest/v1/rpc/gravar_aceite_push") || url.includes("/rest/v1/rpc/gravar_falha_push")) {
-      return Promise.resolve(new Response("null", { status: 200 }));
-    }
-
     return Promise.reject(new Error(`URL não tratada: ${url}`));
   };
 }
@@ -1011,6 +1089,7 @@ function mockCicloDoToken(
 async function enviarNotificacao(
   notificacaoId: string,
   fetchFn: typeof fetch,
+  sqlClient?: SqlClient,
 ): Promise<{ status: string; detalhe?: string }> {
   const sa = await gerarContaDeServicoTeste();
   const req = new Request("http://localhost/functions/v1/enviar-push", {
@@ -1022,6 +1101,7 @@ async function enviarNotificacao(
     serviceAccount: sa,
     fetchFn,
     fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient: sqlClient ?? criarMockSqlClient(),
   });
   assertEquals(res.status, 200);
   return (await res.json()).relatorio[0];
@@ -1061,4 +1141,262 @@ Deno.test("Ciclo do token: depois de sair da conta, nenhuma notificação sai pa
   assertEquals(relatorio.status, "falhou");
   assertEquals(relatorio.detalhe, "sem_dispositivo");
   assertEquals(enviados, [], "Aparelho que saiu da conta não recebe push");
+});
+
+// ── Alerta de vaga vazia na janela crítica (cartão vUR0Ltkb) ──────────────────
+//
+// Texto da planilha de notificações, push 06, Op. A aprovada em 28/09: a função e o
+// horário são lidos no banco na hora do envio. Sem as duas variáveis, sai a Op. B da
+// mesma planilha — nunca um texto inventado aqui.
+
+Deno.test("vaga_vazia: Op. A com função e horário interpolados", () => {
+  const { title, body } = titulosECorposPorTipo("vaga_vazia", {}, {
+    funcao: "Garçom",
+    horario: "18:00",
+  });
+  assertEquals(title, "Vaga ainda em aberto");
+  assertEquals(body, "A posição de Garçom das 18:00 ainda não foi preenchida.");
+  assert(title.length <= 32, "título cabe na tela bloqueada do iPhone SE");
+  assert(body.length <= 85, "corpo cabe na tela bloqueada do iPhone SE");
+});
+
+Deno.test("vaga_vazia: sem as variáveis, cai na Op. B da planilha", () => {
+  const { title, body } = titulosECorposPorTipo("vaga_vazia", {});
+  assertEquals(title, "Vaga ainda em aberto");
+  assertEquals(body, "Sua vaga ainda possui posição em aberto próxima ao horário.");
+});
+
+Deno.test("formatarHorario: horário de Brasília, 24 h", () => {
+  assertEquals(formatarHorario("2026-10-03T21:00:00+00:00"), "18:00");
+  assertEquals(formatarHorario("2026-10-03T22:30:00Z"), "19:30");
+  assertEquals(formatarHorario("não é data"), undefined);
+});
+
+Deno.test("vaga_vazia: a enviar-push lê função e horário da posição e manda a Op. A", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const POSICAO = "c3400000-0000-4000-8000-000000000041";
+  const VAGA = "c3400000-0000-4000-8000-000000000031";
+  const enviado: { mensagem?: { notification: { title: string; body: string }; data: Record<string, string> } } = {};
+  let consultaPosicao = "";
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+
+    if (url === "http://mock-oauth/token") {
+      return Promise.resolve(new Response(
+        JSON.stringify({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 }),
+        { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(new Response(JSON.stringify([{
+        id: "c3400000-0000-4000-8000-0000000000a1",
+        usuario_id: "c3400000-0000-4000-8000-000000000001",
+        tipo: "vaga_vazia",
+        referencia_id: POSICAO,
+        payload: { tipo: "vaga_vazia", vaga_id: VAGA, posicao_id: POSICAO },
+        tentativas: 0,
+        estado_entrega: "pendente",
+        proxima_tentativa_em: null,
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/rpc/notificacao_expirada")) {
+      return Promise.resolve(new Response("false", { status: 200 }));
+    }
+    if (url.includes("/rest/v1/posicao?")) {
+      consultaPosicao = url;
+      return Promise.resolve(new Response(JSON.stringify([{
+        inicio_em: "2026-10-03T21:00:00+00:00",
+        vaga: { funcao: { nome: "Garçom" } },
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(new Response(
+        JSON.stringify([{ id: "disp-1", token_fcm: "fcm_token_casa", plataforma: "ios" }]),
+        { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/messages:send")) {
+      enviado.mensagem = JSON.parse(init?.body as string).message;
+      return Promise.resolve(new Response(
+        JSON.stringify({ name: "projects/frila-test-project/messages/msg_vv" }),
+        { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+
+  const res = await processarEnvioPush(
+    new Request("http://localhost/functions/v1/enviar-push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+      body: JSON.stringify({ notificacao_id: "c3400000-0000-4000-8000-0000000000a1" }),
+    }),
+    { serviceAccount: sa, fetchFn: mockFetch, fcmApiUrl: "http://mock-fcm/messages:send", sqlClient: criarMockSqlClient() },
+  );
+
+  assertEquals(res.status, 200);
+  assertMatch(consultaPosicao, new RegExp(`id=eq\\.${POSICAO}`));
+  assert(enviado.mensagem !== undefined, "o FCM foi chamado");
+  assertEquals(enviado.mensagem!.notification.title, "Vaga ainda em aberto");
+  assertEquals(enviado.mensagem!.notification.body,
+    "A posição de Garçom das 18:00 ainda não foi preenchida.");
+  // O destino do toque: Minhas vagas com a vaga em alerta. Só ids (RN15).
+  assertEquals(enviado.mensagem!.data, { tipo: "vaga_vazia", vaga_id: VAGA, posicao_id: POSICAO });
+});
+
+Deno.test("vaga_vazia: se a leitura da posição falha, o push sai com a Op. B", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const enviado: { mensagem?: { notification: { title: string; body: string }; data: Record<string, string> } } = {};
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    if (url === "http://mock-oauth/token") {
+      return Promise.resolve(new Response(
+        JSON.stringify({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 }),
+        { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(new Response(JSON.stringify([{
+        id: "c3400000-0000-4000-8000-0000000000a2",
+        usuario_id: "c3400000-0000-4000-8000-000000000001",
+        tipo: "vaga_vazia",
+        referencia_id: "c3400000-0000-4000-8000-000000000041",
+        payload: { vaga_id: "c3400000-0000-4000-8000-000000000031",
+                   posicao_id: "c3400000-0000-4000-8000-000000000041" },
+        tentativas: 0, estado_entrega: "pendente", proxima_tentativa_em: null,
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/posicao?")) {
+      return Promise.resolve(new Response("erro", { status: 500 }));
+    }
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(new Response(
+        JSON.stringify([{ id: "disp-1", token_fcm: "fcm_token_casa", plataforma: "ios" }]),
+        { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/messages:send")) {
+      enviado.mensagem = JSON.parse(init?.body as string).message;
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+
+  const res = await processarEnvioPush(
+    new Request("http://localhost/functions/v1/enviar-push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+      body: JSON.stringify({ notificacao_id: "c3400000-0000-4000-8000-0000000000a2" }),
+    }),
+    { serviceAccount: sa, fetchFn: mockFetch, fcmApiUrl: "http://mock-fcm/messages:send", sqlClient: criarMockSqlClient() },
+  );
+
+  assertEquals(res.status, 200);
+  assertEquals(enviado.mensagem!.notification.body,
+    "Sua vaga ainda possui posição em aberto próxima ao horário.");
+});
+
+// ── Testes de SqlClient e garantia contra RPCs via PostgREST (IoQPWtWs) ───────
+
+Deno.test("SqlClient: criarSqlClient falha fechado se DATABASE_URL ou SUPABASE_DB_URL não configurados", () => {
+  const dbUrlAntes = Deno.env.get("DATABASE_URL");
+  const supabaseDbUrlAntes = Deno.env.get("SUPABASE_DB_URL");
+  try {
+    Deno.env.delete("DATABASE_URL");
+    Deno.env.delete("SUPABASE_DB_URL");
+    let lancou = false;
+    try {
+      criarSqlClient();
+    } catch (err) {
+      lancou = true;
+      assert(err instanceof Error);
+      assert(err.message.includes("DATABASE_URL ou SUPABASE_DB_URL é obrigatório"));
+    }
+    assert(lancou, "Deveria ter lançado erro de variável ausente");
+  } finally {
+    if (dbUrlAntes) Deno.env.set("DATABASE_URL", dbUrlAntes);
+    if (supabaseDbUrlAntes) Deno.env.set("SUPABASE_DB_URL", supabaseDbUrlAntes);
+  }
+});
+
+Deno.test("SqlClient: criarSqlClient respeita sqlClient injetado via dependências", () => {
+  const mock = criarMockSqlClient();
+  const res = criarSqlClient({ sqlClient: mock });
+  assertEquals(res, mock);
+});
+
+Deno.test("Segurança / PostgREST: nenhuma RPC de privado.* é chamada via PostgREST /rest/v1/rpc/", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const chamadasPostgrestRpc: string[] = [];
+  const sqlClient = criarMockSqlClient();
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
+    const url = input.toString();
+
+    if (url.includes("/rest/v1/rpc/")) {
+      chamadasPostgrestRpc.push(url);
+      return Promise.resolve(new Response(JSON.stringify({ message: "Not Found" }), { status: 404 }));
+    }
+
+    if (url === "http://mock-oauth/token") {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "n5000000-0000-4000-8000-000000000005",
+              usuario_id: "u5000000-0000-4000-8000-000000000005",
+              tipo: "vaga",
+              referencia_id: "v5000000-0000-4000-8000-000000000005",
+              payload: {},
+              tentativas: 0,
+              estado_entrega: "pendente",
+              proxima_tentativa_em: null,
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            { id: "d5", token_fcm: "fcm_token_5", plataforma: "android" },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/messages:send")) {
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }
+
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ notificacao_id: "n5000000-0000-4000-8000-000000000005" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    sqlClient,
+  });
+
+  assertEquals(res.status, 200);
+  assertEquals(chamadasPostgrestRpc.length, 0, "Nenhuma RPC deve ser invocada via PostgREST /rest/v1/rpc/");
 });

@@ -79,7 +79,7 @@ mais `tests/carga/gerar_df.sql`.
 | **#27** `s0/despachar-porta` | `ZqmkOaHn` | Cauê | conflito com o `main` |
 
 **O aviso da colisão funcionou:** o #31 trazia `20260925230000_configuracao_do_app.sql`, que
-colidia com a migração do #36. Hoje ele traz `20260927020000_configuracao_do_app.sql`, e não
+colidia com a migração do #36. Hoje ele traz `20260928193700_configuracao_do_app.sql` (renomeada em 28/09 para vir depois da última do `main`), e não
 há versão repetida no `main`.
 
 Mergeados em 25/09: **#23** (contas de demonstração), **#24** (`avaliar` e `perfil_publico`),
@@ -200,7 +200,14 @@ turno        candidatar · meus_turnos · contato_do_turno · cancelar_posicao
 presença     fazer_checkin · fazer_checkout · confirmar_checkin_manual
 reputação    avaliar · perfil_publico
 push         registrar_dispositivo · remover_dispositivo
+app          configuracao_do_app   (sem sessão: a única que o anon executa)
 ```
+
+**`configuracao_do_app` é a exceção à regra de que `anon` não lê nada** (cartão #201): o
+app abaixo da versão mínima precisa descobrir isso antes de conseguir entrar. Lê
+`privado.configuracao_app`, que o PostgREST não expõe. Subir a versão mínima é migração
+nova, pelo roteiro em [`supabase/operacao/subir-versao-minima.md`](../supabase/operacao/subir-versao-minima.md).
+A Modelagem no vault ainda não registra a exceção.
 
 **O despacho deixou de ser promessa.** `pg_cron` e `pg_net` **entraram** — a frase "continuam
 fora", que este arquivo repetiu por dias, está morta. Três jobs ativos, medidos em 28/09:
@@ -327,7 +334,7 @@ resultado foi X"* tem que sair diferente de zero.
 > medido; nenhuma linha foi remedida depois. Antes de citar qualquer uma como fato atual,
 > meça.
 
-Quatro colunas do esquema não estão na Modelagem de Banco. Todas nasceram de uma RPC, e
+Cinco colunas do esquema não estão na Modelagem de Banco. Todas nasceram de uma RPC, e
 quem precisa reconciliar é o documento:
 
 | Coluna | Por quê |
@@ -336,6 +343,7 @@ quem precisa reconciliar é o documento:
 | `usuario.demonstracao` | conta de revisão da App Store; as duas populações dividem o banco sem se enxergar |
 | `turno.checkin_recebido_em` | `checkin_em` é a hora do **toque**; sem as duas, registro offline vira indistinguível |
 | `turno.checkout_recebido_em` | o mesmo, do outro lado |
+| `posicao.reaberta_por_atraso_de` | `reabrir_por_atraso` (e8XpOZJN, 28/09): a posição nova sabe de qual falta nasceu; é ela que aceita candidato depois do início, até 1 h antes do fim (8zLfn0mt item 5) |
 
 E mais estas:
 
