@@ -88,7 +88,13 @@ fi
 
 echo
 echo "O espelho divergiu do contrato em FrilaApp/frila-docs:"
-diff -u "$espelho" "$tmp" | head -60
+# `|| true` obrigatório: `diff` sai **1** justamente quando há diferença, que é o único caso
+# em que esta linha roda, e sob `set -e` com `pipefail` isso mata o script aqui — antes de
+# imprimir como consertar e antes do `exit 1` lá embaixo. Medido na CI do PR #56, em 29/09:
+# o job saiu **2** com o diff cortado no meio, e 2 neste repositório significa "não mediu".
+# Mediu, e divergiu. É o mesmo laço de `pipefail` que o `contrato-acompanha-o-codigo.sh`
+# documenta na linha 116, por outro caminho.
+diff -u "$espelho" "$tmp" | head -60 || true
 echo
 echo "Se a mudança é intencional, traga o arquivo e regrave a soma:"
 echo "  gh api repos/FrilaApp/frila-docs/contents/api/openapi.yaml \\"
