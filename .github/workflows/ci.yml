@@ -79,6 +79,11 @@ jobs:
       - name: Corrida na candidatura
         run: ./scripts/corrida-candidatar.sh
 
+      # As outras corridas do ciclo (RNF14), 50 rodadas cada: reabrir_por_atraso ×
+      # fazer_checkin, cancelar_vaga × candidatar e dois executores do despacho × teto.
+      - name: Corridas do ciclo
+        run: ./scripts/corrida-ciclo.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
