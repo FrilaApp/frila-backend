@@ -382,9 +382,22 @@ recusa "RN18: valor zero" 422 campo_invalido \
   "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"valor_centavos":0')" \
   publicar_vaga
 
-recusa "v1.0: modo seleção não existe" 422 campo_invalido \
-  "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"modo":"selecao"')" \
+# Modo seleção (contrato 0.2.24): a vaga que começa em 3 dias entra; a que começa em
+# 20 h nasceria fechada, porque o modo fecha sozinho 24 h antes (RN24).
+PERTO_INI=$(python3 -c "
+import datetime as d; print((d.datetime.now(d.timezone.utc)+d.timedelta(hours=20)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+PERTO_FIM=$(python3 -c "
+import datetime as d; print((d.datetime.now(d.timezone.utc)+d.timedelta(hours=26)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+recusa "RN24: seleção com menos de 24 h" 422 selecao_sem_antecedencia \
+  "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ",\"modo\":\"selecao\",\"inicio_em\":\"$PERTO_INI\",\"fim_em\":\"$PERTO_FIM\"")" \
   publicar_vaga
+
+selecao=$(curl -s -X POST "$URL/rest/v1/rpc/publicar_vaga" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"modo":"selecao"')")
+VAGA_SELECAO=$(printf '%s' "$selecao" | python3 -c "import json,sys; print(json.load(sys.stdin).get('vaga_id',''))" 2>/dev/null || true)
+[ -n "$VAGA_SELECAO" ] || falhou "publicar_vaga em modo seleção com 3 dias de antecedência: $selecao"
+ok "RN24: seleção com mais de 24 h → publicada"
 
 recusa "diretriz 1.2: termo bloqueado em observações" 422 campo_invalido \
   "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"observacoes":"Nada de caralho aqui"')" \
