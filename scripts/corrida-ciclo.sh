@@ -34,23 +34,25 @@
 #      (40P01), e a vaga termina cancelada sem posição viva.
 #   6. a mesma corrida com a janela alargada (janela) — duas conexões de serviço seguram
 #      a posição confirmada de outro profissional e o turno do desistente, para pôr cada
-#      lado exatamente no ponto em que o impasse acontece: o gatilho da vaga esperando a
-#      posição que o desistente segura, e o desistente esperando a vaga para reabrir. A
-#      janela natural é de microssegundos; aqui ela dura um segundo, em toda rodada.
+#      lado no ponto em que o impasse acontecia na ordem antiga. Nenhum 40P01 e nenhuma
+#      posição viva em vaga cancelada.
+#   7. quem segura a posição desfaz (rollback) — a desistência leva statement_timeout e
+#      desfaz no meio do cancelamento da vaga (revisão do #63). Nenhuma posição viva em
+#      vaga cancelada.
 #
 # Os de candidatura (vinte para duas posições, profissional em dobro) seguem em
 # `corrida-candidatar.sh`.
 #
 # Uso:  ./scripts/corrida-ciclo.sh
 #       RODADAS=10 ./scripts/corrida-ciclo.sh
-#       CENARIOS="checkin cancelar teto posicao impasse janela" ./scripts/corrida-ciclo.sh
+#       CENARIOS="checkin cancelar teto posicao impasse janela rollback" ./scripts/corrida-ciclo.sh
 #       MANTER=1 ./scripts/corrida-ciclo.sh     # não limpa: o placar fica em corrida_ciclo
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 RODADAS=${RODADAS:-50}
-CENARIOS=${CENARIOS:-checkin cancelar teto posicao impasse janela}
+CENARIOS=${CENARIOS:-checkin cancelar teto posicao impasse janela rollback}
 
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -148,7 +150,14 @@ begin
     execute 'reset role';
     execute 'reset request.jwt.claims';
     insert into corrida_ciclo.placar values (p_cenario, p_rodada, p_lado, 'ok', r);
-  exception when others then
+  exception when query_canceled then
+    -- \`others\` não pega o cancelamento (statement_timeout, cenário 7): ele tem de ser
+    -- nomeado. A subtransação desfaz o que o lado fez, como o rollback do app.
+    execute 'reset role';
+    execute 'reset request.jwt.claims';
+    insert into corrida_ciclo.placar values (p_cenario, p_rodada, p_lado,
+      'sqlstate:' || sqlstate, jsonb_build_object('mensagem', sqlerrm));
+  when others then
     execute 'reset role';
     execute 'reset request.jwt.claims';
     insert into corrida_ciclo.placar values (p_cenario, p_rodada, p_lado,
@@ -195,7 +204,8 @@ begin
   select id into v_funcao from public.funcao where nome = 'garçom';
 
   -- Um profissional por rodada no check-in, dois por rodada no cancelamento da vaga,
-  -- um por rodada na desistência, um no impasse e dois na janela alargada.
+  -- um por rodada na desistência, um no impasse, dois na janela alargada e dois no
+  -- rollback.
   for r in select 'atrasado' as papel, n from generate_series(1, $RODADAS) n
            union all
            select 'candidato', n from generate_series(1, 2 * $RODADAS) n
@@ -205,6 +215,8 @@ begin
            select 'impasse', n from generate_series(1, $RODADAS) n
            union all
            select 'janela', n from generate_series(1, 2 * $RODADAS) n
+           union all
+           select 'rollback', n from generate_series(1, 2 * $RODADAS) n
   loop
     v_seq := v_seq + 1;
     v_conta := gen_random_uuid();
@@ -246,21 +258,26 @@ tempos() { # rodada lado(1|2|3)
 }
 
 # Um lado da corrida numa conexão própria, em segundo plano. Os tempos saem de
-# `tempos`, a não ser que o cenário os dê ("espera_antes segura_depois").
-lado() { # cenario rodada lado conta sql [tempos]
+# `tempos`, a não ser que o cenário os dê ("espera_antes segura_depois"). O sétimo
+# argumento é o statement_timeout da chamada, em ms (0 = sem limite).
+lado() { # cenario rodada lado conta sql [tempos] [timeout_ms]
   local ant dep conta
   read -r ant dep < <([ -n "${6:-}" ] && echo "$6" || tempos "$2" "$3")
   conta=$([ -n "$4" ] && echo "'$4'::uuid" || echo "null")
   psql -tA >/dev/null 2>"$TMP/$1-$2-$3.err" <<SQL &
 set application_name = 'corrida_ciclo_$1_$3';
+set statement_timeout = ${7:-0};
 -- O despacho pós-commit (\`privado.disparar_despacho\`) exige o segredo do agendador. A
 -- CI grava um efêmero no banco; fora dela, depois de um \`db reset\`, não há nenhum, e a
 -- sessão da corrida usa um valor de teste, como o pgTAP faz com \`set local\`.
 select set_config('frila.agendador_secret', 'segredo-da-corrida', false)
  where nullif(current_setting('frila.agendador_secret', true), '') is null;
 begin;
+set local statement_timeout = 0;
 select pg_sleep($ant);
+set local statement_timeout = ${7:-0};
 select corrida_ciclo.agir('$1', $2, '$3', $conta, \$sql\$$5\$sql\$);
+set local statement_timeout = 0;
 select pg_sleep($dep);
 commit;
 SQL
@@ -712,34 +729,37 @@ SQL
 # ── 6. a mesma corrida com a janela alargada (janela) ─────────────────────────
 #
 # A janela do cenário 5 é de microssegundos, e o sorteio quase nunca cai nela. Aqui
-# duas conexões de serviço seguram linhas para pôr cada lado no ponto exato, e
-# o impasse, se o caminho o permite, acontece em toda rodada. A vaga tem duas posições:
-# Q, confirmada por outro profissional, e P, aberta.
+# duas conexões de serviço seguram linhas para pôr cada lado no ponto exato. A vaga
+# tem duas posições: Q, confirmada por outro profissional, e P, aberta.
 #
 #   t     lado
 #   0     trava 1 segura Q (até 1,0 s)
 #   0,2   cancelar_vaga: o laço das confirmadas lê Q (P ainda aberta) e espera Q
-#   0,4   candidatar: confirma P, a vaga fica preenchida, commit
-#   0,6   trava 2 segura o turno de P (até 1,3 s)
-#   0,8   cancelar_posicao de P: trava P, cancela, e espera o turno
-#   1,0   trava 1 solta Q: cancelar_vaga cancela Q, o update das abertas não vê P, o
-#         update da vaga trava V e o gatilho pede P
-#   1,3   trava 2 solta o turno: a desistência reabre e pede V
+#   0,4   candidatar P
+#   0,6   trava 2 segura o turno de P, se ele já existir (até 1,3 s)
+#   0,8   cancelar_posicao de P
+#   1,0   trava 1 solta Q
+#
+# Na ordem antiga (posição → vaga, com o gatilho como exceção), a candidatura confirma
+# P no meio do cancelamento, a desistência segura P e espera o turno, o gatilho segura
+# a vaga e espera P, a desistência pede a vaga: impasse em toda rodada. Na ordem vaga →
+# posição (CPD2c74A), o laço da casa trava a vaga antes de Q, e a candidatura espera a
+# casa: a corrida vira fila, e a candidatura lê a vaga cancelada.
 #
 # As travas seguram as linhas como qualquer transação de escrita seguraria — um
 # cancelamento lento de Q, um fechamento no turno de P. O que elas mudam é só a
 # duração da janela.
-cenario_janela() {
-  echo
-  echo "▸ Cenário 6: o impasse com a janela alargada por travas ($RODADAS rodadas)"
 
-  psql >/dev/null <<SQL || { falhou "não consegui montar as vagas da janela"; return; }
-create table corrida_ciclo.janela (n int, vaga uuid, p uuid, q uuid, conta uuid, outra uuid);
+# O palco dos cenários 6 e 7: uma vaga por rodada, com Q confirmada (e o turno dela)
+# e P aberta.
+montar_janela() { # tabela papel
+  psql >/dev/null <<SQL
+create table corrida_ciclo.$1 (n int, vaga uuid, p uuid, q uuid, conta uuid, outra uuid);
 
-insert into corrida_ciclo.janela
+insert into corrida_ciclo.$1
 select r.n, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
-       (select conta from corrida_ciclo.contas where papel = 'janela' and n = 2 * r.n - 1),
-       (select conta from corrida_ciclo.contas where papel = 'janela' and n = 2 * r.n)
+       (select conta from corrida_ciclo.contas where papel = '$2' and n = 2 * r.n - 1),
+       (select conta from corrida_ciclo.contas where papel = '$2' and n = 2 * r.n)
   from generate_series(1, $RODADAS) r(n);
 
 insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
@@ -750,22 +770,69 @@ select j.vaga, e.id, (select id from public.funcao where nome = 'garçom'),
        now() + interval '12 hours', now() + interval '18 hours',
        'corrida-ciclo-$MARCA', 'POINT(-47.8860 -15.7910)'::extensions.geography,
        18000, 2, true, true, false, 'Seu Zé', 'urgencia', gen_random_uuid(), '$DONA'
-  from corrida_ciclo.janela j, public.estabelecimento e
+  from corrida_ciclo.$1 j, public.estabelecimento e
  where e.endereco = 'corrida-ciclo-$MARCA';
 
 insert into public.posicao (id, vaga_id, inicio_em, fim_em)
 select j.p, v.id, v.inicio_em, v.fim_em
-  from public.vaga v join corrida_ciclo.janela j on j.vaga = v.id;
+  from public.vaga v join corrida_ciclo.$1 j on j.vaga = v.id;
 
 insert into public.posicao (id, vaga_id, inicio_em, fim_em, estado, profissional_id, confirmado_em)
 select j.q, v.id, v.inicio_em, v.fim_em, 'confirmada', pr.id, now() - interval '1 day'
   from public.vaga v
-  join corrida_ciclo.janela j on j.vaga = v.id
+  join corrida_ciclo.$1 j on j.vaga = v.id
   join public.profissional pr on pr.usuario_id = j.outra;
 
 insert into public.turno (posicao_id, valor_acordado_centavos)
-select j.q, 18000 from corrida_ciclo.janela j;
+select j.q, 18000 from corrida_ciclo.$1 j;
 SQL
+}
+
+# Por rodada: o código de cada lado (casa, candidatura, desistência), a vaga, as
+# posições vivas nela, os cancelamentos de P e de Q, e os erros das travas.
+placar_janela() { # tabela cenario lado_casa lado_cand lado_desist
+  psql -tA -F' ' <<SQL
+select j.n,
+       coalesce((select code from corrida_ciclo.placar p
+                  where p.cenario = '$2' and p.rodada = j.n and p.lado = '$3'), '-'),
+       coalesce((select code from corrida_ciclo.placar p
+                  where p.cenario = '$2' and p.rodada = j.n and p.lado = '$4'), '-'),
+       coalesce((select code from corrida_ciclo.placar p
+                  where p.cenario = '$2' and p.rodada = j.n and p.lado = '$5'), '-'),
+       v.estado,
+       (select count(*) from public.posicao o
+         where o.vaga_id = j.vaga and o.estado in ('aberta', 'confirmada')),
+       (select count(*) from public.ocorrencia oc
+         where oc.posicao_id = j.p and oc.tipo = 'cancelamento'),
+       (select count(*) from public.ocorrencia oc
+         where oc.posicao_id = j.q and oc.tipo = 'cancelamento'),
+       coalesce((select string_agg(p.lado || ':' || p.code, ',') from corrida_ciclo.placar p
+                  where p.cenario = '$2' and p.rodada = j.n
+                    and p.lado not in ('$3', '$4', '$5') and p.code <> 'ok'), '-')
+  from corrida_ciclo.$1 j
+  join public.vaga v on v.id = j.vaga
+ order by j.n;
+SQL
+}
+
+# A regra dos cenários 6 e 7: a casa cancela, nenhum lado em impasse, nenhuma posição
+# viva na vaga cancelada, Q com um cancelamento e P com no máximo um, cada lado com um
+# código que casa com a ordem em que chegou. O 57014 é o statement_timeout do cenário 7.
+fora_da_regra_janela() { # arquivo
+  awk '
+    $2 == "ok" &&
+    ($3 == "-" || $3 == "ok" || $3 == "vaga_encerrada" || $3 == "posicao_ja_preenchida") &&
+    ($4 == "ok" || $4 == "posicao_nao_cancelavel" || $4 == "nao_encontrado" ||
+     $4 == "sqlstate:57014") &&
+    $5 == "cancelada" && $6 == 0 && $7 <= 1 && $8 == 1 && $9 == "-" { next }
+    { print }' "$1"
+}
+
+cenario_janela() {
+  echo
+  echo "▸ Cenário 6: o impasse com a janela alargada por travas ($RODADAS rodadas)"
+
+  montar_janela janela janela || { falhou "não consegui montar as vagas da janela"; return; }
 
   psql -tA -F' ' -c "select n, vaga, p, q, conta from corrida_ciclo.janela order by n" \
     >"$TMP/janela"
@@ -778,45 +845,76 @@ SQL
     wait
   done <"$TMP/janela"
 
-  psql -tA -F' ' >"$TMP/janela.res" <<'SQL'
-select j.n,
-       coalesce((select code from corrida_ciclo.placar p
-                  where p.cenario = 'janela' and p.rodada = j.n and p.lado = '2'), 'nada'),
-       coalesce((select code from corrida_ciclo.placar p
-                  where p.cenario = 'janela' and p.rodada = j.n and p.lado = '3'), 'nada'),
-       coalesce((select code from corrida_ciclo.placar p
-                  where p.cenario = 'janela' and p.rodada = j.n and p.lado = '5'), 'nada'),
-       v.estado,
-       (select count(*) from public.posicao o
-         where o.vaga_id = j.vaga and o.estado in ('aberta', 'confirmada')),
-       (select count(*) from public.ocorrencia oc
-         where oc.posicao_id = j.p and oc.tipo = 'cancelamento'),
-       (select count(*) from public.ocorrencia oc
-         where oc.posicao_id = j.q and oc.tipo = 'cancelamento'),
-       coalesce((select string_agg(p.lado || ':' || p.code, ',') from corrida_ciclo.placar p
-                  where p.cenario = 'janela' and p.rodada = j.n and p.lado in ('1', '4')
-                    and p.code <> 'ok'), '-')
-  from corrida_ciclo.janela j
-  join public.vaga v on v.id = j.vaga
- order by j.n;
-SQL
+  placar_janela janela janela 2 3 5 >"$TMP/janela.res"
 
-  # O desfecho certo é um só: a desistência chegou primeiro a P, então ela é do
-  # profissional (ok, com falta), a casa cancela a vaga e Q, e P não reabre na vaga
-  # cancelada. Nenhum lado em impasse.
-  local ruins impasses abertas
-  ruins=$(awk '
-    $2 == "ok" && $3 == "ok" && $4 == "ok" && $5 == "cancelada" && $6 == 0 &&
-    $7 == 1 && $8 == 1 && $9 == "-" { next }
-    { print }' "$TMP/janela.res")
+  local ruins impasses abertas fila
+  ruins=$(fora_da_regra_janela "$TMP/janela.res")
   impasses=$(grep -c 'sqlstate:40P01' "$TMP/janela.res" || true)
-  # A janela só abre se a candidatura confirmou P antes da desistência.
+  # A janela abre quando a candidatura confirma P no meio do cancelamento; ela vira
+  # fila quando a candidatura espera a casa e lê a vaga cancelada.
   abertas=$(awk '$3 == "ok"' "$TMP/janela.res" | grep -c . || true)
+  fila=$(awk '$3 == "vaga_encerrada"' "$TMP/janela.res" | grep -c . || true)
 
   if [ -z "$ruins" ]; then
-    ok "$RODADAS rodadas, $abertas com a janela aberta: nenhum impasse, a desistência fica com o profissional e nada reabre na vaga cancelada"
+    ok "$RODADAS rodadas: nenhum impasse, nenhuma posição viva na vaga cancelada ($fila com a candidatura na fila atrás da casa, $abertas com a janela aberta)"
   else
     falhou "rodadas fora da regra: $impasses com impasse 40P01, $abertas com a janela aberta (rodada, cancelar_vaga, candidatar, cancelar_posicao, vaga, posições vivas, cancelamentos de P, de Q, travas):"
+    printf '%s\n' "$ruins" | sed 's/^/      /' >&2
+  fi
+}
+
+# ── 7. quem segura a posição desfaz (rollback) ────────────────────────────────
+#
+# O cenário da revisão do #63. A versão com `skip locked` do gatilho pulava a posição
+# que outra transação segurava; se essa transação desfizesse depois, a posição voltava
+# a `confirmada` numa vaga que já tinha comitado `cancelada`. Aqui a desistência leva
+# statement_timeout de 1,5 s e fica presa no turno de P por 2 s: ela sempre desfaz.
+#
+#   rodada ímpar — a janela do cenário 6, com a trava do turno segurando até 2,6 s:
+#     0     trava 1 segura Q (até 1,0 s)
+#     0,2   cancelar_vaga
+#     0,4   candidatar P
+#     0,6   trava 2 segura o turno de P (até 2,6 s)
+#     0,8   cancelar_posicao de P, statement_timeout 1,5 s → desfaz em 2,3 s
+#   rodada par — a desistência chega antes da casa, segura a vaga e Q, e desfaz:
+#     0     trava 2 segura o turno de Q (até 2,0 s)
+#     0,1   cancelar_posicao de Q pelo outro profissional, statement_timeout 1,5 s
+#     0,3   cancelar_vaga: espera a desistência, e depois dela cancela Q
+#
+# Em nenhuma das duas sobra posição viva na vaga cancelada.
+cenario_rollback() {
+  echo
+  echo "▸ Cenário 7: quem segura a posição desfaz no meio do cancelamento ($RODADAS rodadas)"
+
+  montar_janela rollback rollback || { falhou "não consegui montar as vagas do rollback"; return; }
+
+  psql -tA -F' ' -c "select n, vaga, p, q, conta, outra from corrida_ciclo.rollback order by n" \
+    >"$TMP/rollback"
+  while read -r n vaga p q conta outra; do
+    if [ $((n % 2)) -eq 1 ]; then
+      lado rollback "$n" 1 ""       "select to_jsonb(count(*)) from (select 1 from public.posicao where id = '$q' for update) x" "0 1.0"
+      lado rollback "$n" 2 "$DONA"  "select public.cancelar_vaga('$vaga', 'a casa fechou mais cedo')" "0.2 0"
+      lado rollback "$n" 3 "$conta" "select public.candidatar('$vaga')" "0.4 0"
+      lado rollback "$n" 4 ""       "select to_jsonb(count(*)) from (select 1 from public.turno where posicao_id = '$p' for update) x" "0.6 2.0"
+      lado rollback "$n" 5 "$conta" "select public.cancelar_posicao('$p', 'imprevisto de família')" "0.8 0" 1500
+    else
+      lado rollback "$n" 4 ""       "select to_jsonb(count(*)) from (select 1 from public.turno where posicao_id = '$q' for update) x" "0 2.0"
+      lado rollback "$n" 5 "$outra" "select public.cancelar_posicao('$q', 'imprevisto de família')" "0.1 0" 1500
+      lado rollback "$n" 2 "$DONA"  "select public.cancelar_vaga('$vaga', 'a casa fechou mais cedo')" "0.3 0"
+    fi
+    wait
+  done <"$TMP/rollback"
+
+  placar_janela rollback rollback 2 3 5 >"$TMP/rollback.res"
+
+  local ruins desfeitas
+  ruins=$(fora_da_regra_janela "$TMP/rollback.res")
+  desfeitas=$(grep -c 'sqlstate:57014' "$TMP/rollback.res" || true)
+
+  if [ -z "$ruins" ]; then
+    ok "$RODADAS rodadas, $desfeitas desistências desfeitas por timeout: nenhuma posição viva na vaga cancelada, nenhum impasse"
+  else
+    falhou "rodadas fora da regra, $desfeitas desistências desfeitas (rodada, cancelar_vaga, candidatar, cancelar_posicao, vaga, posições vivas, cancelamentos de P, de Q, travas):"
     printf '%s\n' "$ruins" | sed 's/^/      /' >&2
   fi
 }
