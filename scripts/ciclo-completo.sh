@@ -399,6 +399,16 @@ VAGA_SELECAO=$(printf '%s' "$selecao" | python3 -c "import json,sys; print(json.
 [ -n "$VAGA_SELECAO" ] || falhou "publicar_vaga em modo seleção com 3 dias de antecedência: $selecao"
 ok "RN24: seleção com mais de 24 h → publicada"
 
+# Cancelada na hora: a vaga de seleção é não urgente e, despachada, gastaria o teto da RN23
+# dos profissionais do seed, que o pgTAP da mutação espera livres (260, 360). O despacho
+# pula vaga que não está publicada.
+cancelada=$(curl -s -X POST "$URL/rest/v1/rpc/cancelar_vaga" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"vaga_id\":\"$VAGA_SELECAO\",\"motivo\":\"vaga de seleção do ciclo\"}" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin).get('estado',''))" 2>/dev/null || true)
+[ "$cancelada" = "cancelada" ] || falhou "cancelar_vaga da vaga de seleção devolveu '$cancelada'"
+ok "a vaga de seleção cancelada sai do despacho"
+
 recusa "diretriz 1.2: termo bloqueado em observações" 422 campo_invalido \
   "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"observacoes":"Nada de caralho aqui"')" \
   publicar_vaga
