@@ -385,8 +385,18 @@ select is(
 
 -- ── 8. Consulta / Métrica RNF02 (99% em até 60 s nos últimos 7 dias) ──────────
 
--- Limpa notificações para testar o cálculo da taxa de forma determinística
-delete from public.notificacao;
+-- Tira as notificações alheias da janela de 7 dias, para o cálculo da taxa ficar
+-- determinístico. Antes isto era `delete from public.notificacao`, e funcionava sobre o
+-- banco recém-semeado. Na segunda execução da suíte na CI — que vem depois dos scripts
+-- HTTP, que gravam sem rollback — existe `public.despacho` apontando para notificação, e
+-- o delete morre com `despacho_notificacao_id_fkey`, derrubando o arquivo inteiro com
+-- `Bad plan: você planejou 43 testes mas rodou 41`.
+--
+-- `privado.taxa_aceite_notificacoes_7d` filtra por `enviada_em >= agora() - 7 days`, então
+-- empurrar as alheias para trás tem exatamente o mesmo efeito no cálculo, sem tocar em
+-- chave estrangeira. As quatro linhas que o teste insere logo abaixo passam a ser as
+-- únicas dentro da janela.
+update public.notificacao set enviada_em = privado.agora() - interval '30 days';
 
 -- 1. Enfileirada há 2 horas, despachada há 1 minuto, aceita 2 segundos depois -> dentro dos 60 s (RNF02 cumprido)
 insert into public.notificacao (usuario_id, tipo, referencia_id, enviada_em, aceita_em, estado_entrega)
