@@ -30,8 +30,8 @@
 -- #63, cenário 7). Com a ordem, todo mundo espera, e quem espera relê o que o outro
 -- deixou, tenha ele comitado ou desfeito.
 --
---   · `candidatar` trava a vaga no começo, por `privado.travar_candidatura`, a primeira
---     trava que ela pede. A candidatura que chega durante um `cancelar_vaga` espera o
+--   · `candidatar` trava a vaga no começo (`for update`, o mesmo modo da trava do fim
+--     dela), por `privado.travar_candidatura`, a primeira trava que ela pede. A candidatura que chega durante um `cancelar_vaga` espera o
 --     commit da casa e lê a vaga cancelada (`vaga_encerrada`), em vez de confirmar uma
 --     posição no meio do cancelamento. As candidaturas da mesma vaga já se
 --     enfileiravam na trava da vaga do fim da função; agora se enfileiram no começo.
@@ -67,10 +67,15 @@ language plpgsql
 set search_path = ''
 as $$
 begin
-  -- A vaga antes de qualquer posição (CPD2c74A). `no key update`, e não `update`: não
-  -- espera quem só insere uma linha que aponta para a vaga (a chave estrangeira segura
-  -- `key share`). A trava de `update` do fim de `candidatar` continua lá.
-  perform 1 from public.vaga g where g.id = vaga for no key update;
+  -- A vaga antes de qualquer posição (CPD2c74A), e já em `update`, o modo da trava do
+  -- fim de `candidatar`. Começar em `no key update` e subir no fim abria um impasse
+  -- (revisão do #63, rodada 2, cenário 8): a subida para `update` espera o `key share`
+  -- de quem inseriu uma posição na vaga — `reabrir_por_atraso` cria a reaberta —, e
+  -- esse, no gatilho da rodada de despacho, espera a vaga que a candidatura segura. Em
+  -- `update` desde o começo, quem insere espera a candidatura antes de pedir a vaga. O
+  -- custo, esperar o `key share` de quem insere despacho ou posição na vaga, a trava do
+  -- fim já tinha.
+  perform 1 from public.vaga g where g.id = vaga for update;
 
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtext(vaga::text), pg_catalog.hashtext(prof::text));
