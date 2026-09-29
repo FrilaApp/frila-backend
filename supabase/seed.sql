@@ -179,9 +179,9 @@ select p.id, f.id
    and f.nome in ('garçom','bartender')
 on conflict do nothing;
 
-insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto)
+insert into public.estabelecimento (id, nome, documento, tipo, endereco, regiao_administrativa, ponto)
 values ('de000000-0000-4000-8000-000000000010','Bar da Revisão','19131243000197',
-        'food_service','CLS 405, Asa Sul, Brasília',
+        'food_service','CLS 405, Asa Sul, Brasília','Plano Piloto',
         'POINT(-47.8880 -15.8020)'::extensions.geography)
 on conflict (id) do nothing;
 
@@ -192,14 +192,14 @@ on conflict do nothing;
 
 -- Uma vaga aberta, para a lista não nascer vazia (diretriz 4.2), e uma vaga já preenchida
 -- que vira o turno confirmado — é nele que o revisor vê o contato liberado e o check-in.
-insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, regiao_administrativa, ponto,
                          valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
                          exige_material_proprio, responsavel_local, modo, estado,
                          chave_cliente, publicado_por)
 select v.id, 'de000000-0000-4000-8000-000000000010',
        (select id from public.funcao where nome = 'garçom'),
        privado.agora() + v.daqui, privado.agora() + v.daqui + interval '6 h',
-       'CLS 405, Asa Sul', 'POINT(-47.8880 -15.8020)'::extensions.geography,
+       'CLS 405, Asa Sul', 'Plano Piloto', 'POINT(-47.8880 -15.8020)'::extensions.geography,
        18000, 1, true, true, false, 'Gerente da Revisão', 'urgencia', v.estado,
        v.id, 'de000000-0000-4000-8000-000000000001'
   from (values

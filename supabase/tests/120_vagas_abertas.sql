@@ -212,7 +212,7 @@ select is(
   (select array_agg(k order by k) from minhas, jsonb_object_keys(minhas.item) k
     where minhas.item->>'id' = (select perto from vagas)::text),
   array['distancia_km','estabelecimento','fim_em','funcao','id','inclusos','inicio_em',
-        'local','modo','posicoes_abertas','valor_centavos'],
+        'local','modo','posicoes_abertas','regiao_administrativa','valor_centavos'],
   'cada item traz exatamente os campos do schema VagaNaLista do contrato');
 
 select is(
@@ -384,7 +384,7 @@ select is(
   (select array_agg(k order by k) from det, jsonb_object_keys((select j from det)) k),
   array['distancia_km','estabelecimento','estado','fim_em','funcao','id','inclusos',
         'inicio_em','local','modo','observacoes','participa_rateio','ponto','posicoes',
-        'posicoes_abertas','publicado_em','responsavel_local','traje','valor_centavos'],
+        'posicoes_abertas','publicado_em','regiao_administrativa','responsavel_local','traje','valor_centavos'],
   'o detalhe traz exatamente os campos do schema Vaga do contrato');
 
 -- RN10. O telefone da outra parte sai por `contato_do_turno`, depois da confirmação e
