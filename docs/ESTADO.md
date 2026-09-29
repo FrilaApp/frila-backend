@@ -123,6 +123,39 @@ conferir `supabase_migrations.schema_migrations` do projeto.
 
 As credenciais estão no `.env` local (fora do git).
 
+**Desde 29/09 o `frila-dev` manda e-mail por SMTP próprio**, e o código de entrada voltou a
+ser código. O envio embutido do Supabase entregava cerca de 2 por hora e só para endereços
+do time, o que travava a validação de entrada do cartão `9FRaLndF` e travaria o TestFlight
+de 20/10.
+
+| | Antes | Agora |
+|---|---|---|
+| Envio | embutido do Supabase | `smtp.gmail.com:465`, conta `frilaverificacao@gmail.com`, remetente "Frila" |
+| Limite | ~2 por hora, só para o time | ~500 por dia, para qualquer endereço |
+| Conteúdo | link (`{{ .ConfirmationURL }}`) | código de seis dígitos (`{{ .Token }}`) |
+| Validade | 1 hora | 15 minutos |
+
+**O que custou a descobrir:** no plano gratuito, o Supabase **recusa** alterar o modelo de
+e-mail enquanto não houver SMTP próprio — *"Email template modification is not available for
+free tier projects using the default email provider"*. Não era configuração esquecida: sem
+SMTP era impossível mandar o código em vez do link, e foi isso que levou o iOS a ganhar
+entrada por link mágico. A ordem importa: **SMTP primeiro, modelo depois.**
+
+Gmail foi escolhido no cartão `heg4ujOr` porque o time ainda não tem domínio. Um provedor
+transacional (Resend, Postmark, Brevo, SES) mandaria com remetente `@gmail.com`, domínio que
+o time não controla: SPF e DKIM não alinham e o código tende ao spam. Com o SMTP do Gmail,
+quem assina é o Google. Quando o domínio existir (`FI406hMv`), a migração é trocar os campos
+de SMTP: nada de app, contrato ou banco muda.
+
+Medido em 29/09 às 17:56 (BRT): código enviado a um Gmail real, chegou na caixa de entrada,
+com o código no assunto. A senha de app não está neste repositório nem em nenhum outro.
+
+O `frila-prod` continua **sem SMTP**: ele entra pelo cartão do ambiente de produção.
+
+**A Management API responde**, ao contrário do que a pendência 1 diz. O token do `.env` é
+que está vencido; um token pessoal de conta, criado no painel, funciona e foi o que aplicou
+esta configuração.
+
 ## O quadro
 
 A lista Revisão foi varrida em 25/09 e ficou com nove cartões. **Em 28/09 ela tem quinze**,
