@@ -223,7 +223,7 @@ insert into public.despacho (vaga_id, profissional_id)
 select vaga, heitor_prof from ids;
 insert into public.despacho (vaga_id, profissional_id)
 select vaga, ana_prof from ids
-on conflict (vaga_id, profissional_id) do nothing;
+on conflict (vaga_id, profissional_id, rodada) do nothing;
 
 select isnt(
   privado.liberar_teto_do_profissional((select heitor_prof from ids)),
