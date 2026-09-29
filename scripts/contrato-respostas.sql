@@ -116,6 +116,20 @@ select pg_temp.guarda('painelEstabelecimento', pg_temp.como('cc000000-0000-4000-
   $$ select public.painel_estabelecimento(%L::uuid, '2027-01-01T00:00:00Z'::timestamptz, '2027-12-31T00:00:00Z'::timestamptz) $$,
   (select casa_id from ids))));
 
+insert into public.equipe_confianca (estabelecimento_id, profissional_id)
+select (select casa_id from ids), p.id
+  from public.profissional p
+ where p.usuario_id = 'cc000000-0000-4000-8000-000000000002';
+
+select pg_temp.guarda('criteriosDeNotificacao', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.criterios_de_notificacao() $$));
+
+delete from public.equipe_confianca
+ where profissional_id in (select id from public.profissional where usuario_id = 'cc000000-0000-4000-8000-000000000002');
+
+select pg_temp.guarda('pedirRevisaoDespacho', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.pedir_revisao_despacho('Relato de teste para revisao do despacho no contrato.') $$));
+
 -- ── A vaga, e o ciclo ─────────────────────────────────────────────────────────
 create temp table vaga1 as
   select pg_temp.como('cc000000-0000-4000-8000-000000000001', format(

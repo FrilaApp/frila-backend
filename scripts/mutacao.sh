@@ -29,14 +29,44 @@ filtro="${1:-}"
 
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
 
+# Nomes dos arquivos de teste que falharam, extraídos de uma saída de `supabase test db`
+# lida da entrada padrão, um por linha.
+#
+# A saída entra por stdin, e não rodando a suíte aqui dentro, de propósito: quem precisa do
+# nome já tem a saída da rodada que reprovou, e rodar de novo para descobrir o nome dá a
+# resposta de **outra** rodada. Neste repositório isso não é hipótese — há teste que passa
+# em banco limpo e cai na segunda passada, depois que os scripts de corrida e de
+# demonstração deixam dado atrás.
+nomes_falhados() { sed -n 's|.*/supabase/tests/\([0-9a-z_]*\)\.sql.*Failed.*|\1|p;
+                           s|^/.*tests/\([0-9a-z_]*\)\.sql .*Dubious.*|\1|p' | sort -u; }
+
 # Nomes dos arquivos de teste que falharam nesta rodada, um por linha.
-falhas() { supabase test db 2>&1 | sed -n 's|.*/supabase/tests/\([0-9a-z_]*\)\.sql.*Failed.*|\1|p;
-                                           s|^/.*tests/\([0-9a-z_]*\)\.sql .*Dubious.*|\1|p' | sort -u; }
+falhas() { supabase test db 2>&1 | nomes_falhados; }
 
 # ── Defesa 1: a linha de base ──────────────────────────────────────────────────
+#
+# A saída é guardada, e não descartada em `/dev/null`. Descartá-la custou caro: em 29/09 a
+# suíte ficou vermelha em três branches ao mesmo tempo e este portão dizia apenas "SUÍTE JÁ
+# VERMELHA", sem o nome do teste. O passo `pgTAP` do mesmo job passava, então nem o log da
+# CI tinha o vermelho em outro lugar — descobrir qual teste era exigiu banco na mão. Um
+# portão que sabe que está vermelho e joga fora a única informação que resolve é o mesmo
+# pecado que ele existe para pegar.
 printf '▸ Linha de base... '
-if ! supabase test db >/dev/null 2>&1; then
+if ! base=$(supabase test db 2>&1); then
   echo "SUÍTE JÁ VERMELHA"
+  echo
+  vermelhos=$(printf '%s\n' "$base" | nomes_falhados)
+  if [ -n "$vermelhos" ]; then
+    echo "Vermelho em:"
+    printf '%s\n' "$vermelhos" | sed 's/^/    /'
+  else
+    # Sem nome extraído, a suíte provavelmente morreu antes de rodar teste algum — banco
+    # fora do ar, migração que não aplica. A cauda crua diz isso; "SUÍTE JÁ VERMELHA"
+    # sozinho, não.
+    echo "Nenhum arquivo de teste foi nomeado na saída: a suíte pode ter morrido antes de"
+    echo "rodar. As últimas 20 linhas:"
+    printf '%s\n' "$base" | tail -20 | sed 's/^/    /'
+  fi
   echo
   echo "Mutação não diz nada com a suíte quebrada: toda regra pareceria coberta."
   echo "Rode 'supabase test db' e conserte antes."
