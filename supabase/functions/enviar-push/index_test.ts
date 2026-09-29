@@ -15,6 +15,8 @@ import {
   filtrarDataPayloadFcm,
   calcularProximaTentativa,
   formatarHorario,
+  buscarVariaveisDoTexto,
+  capitalizar,
   criarSqlClient,
   SqlClient,
   GravarFalhaPushParams,
@@ -1231,3 +1233,185 @@ Deno.test("Segurança / PostgREST: nenhuma RPC de privado.* é chamada via Postg
   assertEquals(res.status, 200);
   assertEquals(chamadasPostgrestRpc.length, 0, "Nenhuma RPC deve ser invocada via PostgREST /rest/v1/rpc/");
 });
+
+// ── Região Administrativa e Interpolação nos Pushes (cartão x0jkygj0) ─────────
+//
+// Pushes 01, 02 e 04 interpolam {funcao} e {bairro_ou_regiao} (Opção A aprovada).
+// Pushes 09 e 11 interpolam local como {estabelecimento} ({regiao}) (decisão VyY2SGsX).
+// Garantia de privacidade RN10 e RN15: sem telefone nem logradouro com número.
+
+Deno.test("x0jkygj0: capitalizar primeira letra da função", () => {
+  assertEquals(capitalizar("garçom"), "Garçom");
+  assertEquals(capitalizar("auxiliar de cozinha"), "Auxiliar de cozinha");
+  assertEquals(capitalizar(""), "");
+});
+
+Deno.test("x0jkygj0: push 01 (vaga única) interpola função e região (Opção A) e cai na Opção B se ausentes", () => {
+  const comVars = titulosECorposPorTipo("vaga", { vaga_id: "00000000-0000-4000-8000-000000000001" }, {
+    funcao: "garçom",
+    regiao: "Plano Piloto",
+  });
+  assertEquals(comVars, {
+    title: "Nova vaga no Frila",
+    body: "Garçom em Plano Piloto. Toque para ver detalhes.",
+  });
+  assert(comVars.title.length <= 32, "título cabe na tela bloqueada do iPhone SE");
+  assert(comVars.body.length <= 85, "corpo cabe na tela bloqueada do iPhone SE");
+
+  const semVars = titulosECorposPorTipo("vaga", { vaga_id: "00000000-0000-4000-8000-000000000001" });
+  assertEquals(semVars, {
+    title: "Nova vaga no Frila",
+    body: "Nova vaga compatível com seu perfil. Toque para ver detalhes.",
+  });
+});
+
+Deno.test("x0jkygj0: push 02 (vaga urgente) interpola função e região (Opção A) e cai na Opção B se ausentes", () => {
+  const comVars = titulosECorposPorTipo("vaga", { urgente: true }, {
+    funcao: "cozinheiro",
+    regiao: "Taguatinga",
+  });
+  assertEquals(comVars, {
+    title: "Vaga urgente no Frila",
+    body: "Cozinheiro com início próximo em Taguatinga. Confira agora.",
+  });
+  assert(comVars.title.length <= 32, "título cabe na tela bloqueada do iPhone SE");
+  assert(comVars.body.length <= 85, "corpo cabe na tela bloqueada do iPhone SE");
+
+  const semVars = titulosECorposPorTipo("vaga", { urgente: true });
+  assertEquals(semVars, {
+    title: "Vaga urgente no Frila",
+    body: "Vaga com início nas próximas 2 horas. Confira agora.",
+  });
+});
+
+Deno.test("x0jkygj0: push 04 (vaga reaberta) interpola função e região (Opção A) e cai na Opção B se ausentes", () => {
+  const comVars = titulosECorposPorTipo("vaga", { reaberta: true }, {
+    funcao: "bartender",
+    regiao: "Águas Claras",
+  });
+  assertEquals(comVars, {
+    title: "Vaga reaberta",
+    body: "Bartender disponível novamente em Águas Claras.",
+  });
+  assert(comVars.title.length <= 32, "título cabe na tela bloqueada do iPhone SE");
+  assert(comVars.body.length <= 85, "corpo cabe na tela bloqueada do iPhone SE");
+
+  const semVars = titulosECorposPorTipo("vaga", { reaberta: true });
+  assertEquals(semVars, {
+    title: "Vaga reaberta",
+    body: "Uma vaga recente está aberta novamente para candidatura.",
+  });
+});
+
+Deno.test("x0jkygj0: pushes 09 e 11 interpolam local como {estabelecimento} ({regiao})", () => {
+  const p09 = titulosECorposPorTipo("lembrete_24h", {}, {
+    funcao: "garçom",
+    estabelecimento: "Bar Beirute",
+    regiao: "Asa Sul",
+    horario: "19:00",
+  });
+  assertEquals(p09, {
+    title: "Lembrete de turno amanhã",
+    body: "Garçom em Bar Beirute (Asa Sul) amanhã às 19:00.",
+  });
+  assert(p09.title.length <= 32, "título cabe na tela bloqueada do iPhone SE");
+  assert(p09.body.length <= 85, "corpo cabe na tela bloqueada do iPhone SE");
+
+  const p11 = titulosECorposPorTipo("lembrete_3h", {}, {
+    funcao: "garçom",
+    estabelecimento: "Bar Beirute",
+    regiao: "Asa Sul",
+    horario: "19:00",
+  });
+  assertEquals(p11, {
+    title: "Seu turno começa em 3 horas",
+    body: "Garçom em Bar Beirute (Asa Sul) às 19:00. Planeje seu trajeto.",
+  });
+  assert(p11.title.length <= 32, "título cabe na tela bloqueada do iPhone SE");
+  assert(p11.body.length <= 85, "corpo cabe na tela bloqueada do iPhone SE");
+
+  // Fallback quando não há região: usa apenas {estabelecimento}
+  const p09SemRegiao = titulosECorposPorTipo("lembrete_24h", {}, {
+    funcao: "garçom",
+    estabelecimento: "Bar Beirute",
+    horario: "19:00",
+  });
+  assertEquals(p09SemRegiao, {
+    title: "Lembrete de turno amanhã",
+    body: "Garçom em Bar Beirute amanhã às 19:00.",
+  });
+
+  const p11SemRegiao = titulosECorposPorTipo("lembrete_3h", {}, {
+    funcao: "garçom",
+    estabelecimento: "Bar Beirute",
+    horario: "19:00",
+  });
+  assertEquals(p11SemRegiao, {
+    title: "Seu turno começa em 3 horas",
+    body: "Garçom em Bar Beirute às 19:00. Planeje seu trajeto.",
+  });
+});
+
+Deno.test("x0jkygj0: buscarVariaveisDoTexto lê função e região para vaga", async () => {
+  const mockFetch = (caminho: string): Promise<Response> => {
+    if (caminho.startsWith("vaga?id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              regiao_administrativa: "Plano Piloto",
+              funcao: { nome: "garçom" },
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.reject(new Error(`URL não tratada: ${caminho}`));
+  };
+
+  const vars = await buscarVariaveisDoTexto(
+    "vaga",
+    { vaga_id: "00000000-0000-4000-8000-000000000001", urgente: true },
+    mockFetch,
+  );
+  assertEquals(vars.funcao, "garçom");
+  assertEquals(vars.regiao, "Plano Piloto");
+  assertEquals(vars.urgente, true);
+});
+
+Deno.test("x0jkygj0: buscarVariaveisDoTexto lê turno, estabelecimento e região para lembrete", async () => {
+  const mockFetch = (caminho: string): Promise<Response> => {
+    if (caminho.startsWith("turno?id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              posicao: {
+                inicio_em: "2026-10-15T22:00:00Z", // 19:00 em Brasília
+                vaga: {
+                  regiao_administrativa: "Asa Sul",
+                  funcao: { nome: "garçom" },
+                  estabelecimento: { nome: "Bar Beirute" },
+                },
+              },
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.reject(new Error(`URL não tratada: ${caminho}`));
+  };
+
+  const vars = await buscarVariaveisDoTexto(
+    "lembrete_24h",
+    { turno_id: "00000000-0000-4000-8000-000000000002" },
+    mockFetch,
+  );
+  assertEquals(vars.funcao, "garçom");
+  assertEquals(vars.estabelecimento, "Bar Beirute");
+  assertEquals(vars.regiao, "Asa Sul");
+  assertEquals(vars.horario, "19:00");
+});
+

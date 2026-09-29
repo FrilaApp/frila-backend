@@ -147,16 +147,26 @@ export function calcularProximaTentativa(
 
 // Variáveis do texto, lidas no banco na hora do envio (Op. A da planilha de
 // notificações, aprovada em 28/09, e casos de texto variável por ocorrência).
-// Só dado do turno — nome da função do catálogo e horário —, nunca de pessoa, telefone
-// ou endereço (RN10, RN15). Ausentes, o texto cai na Op. B da mesma planilha.
+// Só dado do turno — nome da função do catálogo, estabelecimento, região e horário —, nunca
+// de pessoa física, telefone ou logradouro com número na tela de bloqueio (RN10, RN15).
+// Ausentes, o texto cai na Op. B da mesma planilha.
 export interface VariaveisDoTexto {
   funcao?: string;
   horario?: string;
+  estabelecimento?: string;
+  regiao?: string;
+  urgente?: boolean;
+  reaberta?: boolean;
   // Cancelamento feito por `reabrir_por_atraso` (caso 17 da planilha, cartão e8XpOZJN).
   reaberturaPorAtraso?: boolean;
 }
 
 export type ContextoDoTexto = VariaveisDoTexto;
+
+export function capitalizar(texto?: string): string {
+  if (!texto) return "";
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
 
 // Horário de Brasília em 24 h ("18:00"): o DF não tem horário de verão, e o banco
 // guarda UTC (RN18).
@@ -179,6 +189,36 @@ export async function buscarVariaveisDoTexto(
   consultar: (caminho: string) => Promise<Response>,
 ): Promise<VariaveisDoTexto> {
   try {
+    if (tipo === "vaga") {
+      const vagaId = payload?.vaga_id ?? payload?.referencia_id;
+      if (typeof vagaId !== "string" || !UUID_REGEX.test(vagaId)) return {};
+      const res = await consultar(
+        `vaga?id=eq.${vagaId}&select=regiao_administrativa,funcao(nome)`,
+      );
+      if (!res.ok) return {};
+      const [linha] = await res.json();
+      return {
+        funcao: linha?.funcao?.nome ?? undefined,
+        regiao: linha?.regiao_administrativa ?? undefined,
+        urgente: payload?.urgente === true,
+        reaberta: payload?.reaberta === true,
+      };
+    }
+    if (tipo === "lembrete_24h" || tipo === "lembrete_3h") {
+      const turnoId = payload?.turno_id ?? payload?.referencia_id;
+      if (typeof turnoId !== "string" || !UUID_REGEX.test(turnoId)) return {};
+      const res = await consultar(
+        `turno?id=eq.${turnoId}&select=posicao(inicio_em,vaga(regiao_administrativa,funcao(nome),estabelecimento(nome)))`,
+      );
+      if (!res.ok) return {};
+      const [linha] = await res.json();
+      return {
+        funcao: linha?.posicao?.vaga?.funcao?.nome ?? undefined,
+        estabelecimento: linha?.posicao?.vaga?.estabelecimento?.nome ?? undefined,
+        regiao: linha?.posicao?.vaga?.regiao_administrativa ?? undefined,
+        horario: linha?.posicao?.inicio_em ? formatarHorario(linha.posicao.inicio_em) : undefined,
+      };
+    }
     if (tipo === "vaga_vazia") {
       const posicao = payload?.posicao_id;
       if (typeof posicao !== "string" || !UUID_REGEX.test(posicao)) return {};
@@ -214,15 +254,39 @@ export async function buscarVariaveisDoTexto(
 
 export function titulosECorposPorTipo(
   tipo: string,
-  _payload: Record<string, unknown> = {},
+  payload: Record<string, unknown> = {},
   variaveis: VariaveisDoTexto = {},
 ): { title: string; body: string } {
   switch (tipo) {
-    case "vaga":
+    case "vaga": {
+      const ehReaberta = payload?.reaberta === true || variaveis.reaberta === true;
+      const ehUrgente = payload?.urgente === true || variaveis.urgente === true;
+      const funcao = variaveis.funcao ? capitalizar(variaveis.funcao) : undefined;
+      const regiao = variaveis.regiao;
+
+      if (ehReaberta) {
+        return {
+          title: "Vaga reaberta",
+          body: funcao && regiao
+            ? `${funcao} disponível novamente em ${regiao}.`
+            : "Uma vaga recente está aberta novamente para candidatura.",
+        };
+      }
+      if (ehUrgente) {
+        return {
+          title: "Vaga urgente no Frila",
+          body: funcao && regiao
+            ? `${funcao} com início próximo em ${regiao}. Confira agora.`
+            : "Vaga com início nas próximas 2 horas. Confira agora.",
+        };
+      }
       return {
-        title: "Nova vaga disponível",
-        body: "Há uma nova vaga compatível com seu perfil no Frila.",
+        title: "Nova vaga no Frila",
+        body: funcao && regiao
+          ? `${funcao} em ${regiao}. Toque para ver detalhes.`
+          : "Nova vaga compatível com seu perfil. Toque para ver detalhes.",
       };
+    }
     case "vagas_agrupadas":
       return {
         title: "Vagas disponíveis",
@@ -233,16 +297,42 @@ export function titulosECorposPorTipo(
         title: "Turno confirmado",
         body: "O seu turno foi confirmado. Acesse os detalhes no app.",
       };
-    case "lembrete_24h":
+    case "lembrete_24h": {
+      const funcao = variaveis.funcao ? capitalizar(variaveis.funcao) : undefined;
+      const estab = variaveis.estabelecimento;
+      const horario = variaveis.horario;
+      const regiao = variaveis.regiao;
+
+      if (funcao && estab && horario) {
+        const local = regiao ? `${estab} (${regiao})` : estab;
+        return {
+          title: "Lembrete de turno amanhã",
+          body: `${funcao} em ${local} amanhã às ${horario}.`,
+        };
+      }
       return {
         title: "Lembrete de turno",
         body: "Você tem um turno agendado para amanhã.",
       };
-    case "lembrete_3h":
+    }
+    case "lembrete_3h": {
+      const funcao = variaveis.funcao ? capitalizar(variaveis.funcao) : undefined;
+      const estab = variaveis.estabelecimento;
+      const horario = variaveis.horario;
+      const regiao = variaveis.regiao;
+
+      if (funcao && estab && horario) {
+        const local = regiao ? `${estab} (${regiao})` : estab;
+        return {
+          title: "Seu turno começa em 3 horas",
+          body: `${funcao} em ${local} às ${horario}. Planeje seu trajeto.`,
+        };
+      }
       return {
         title: "Lembrete de turno",
         body: "Seu turno começa em 3 horas. Prepare-se.",
       };
+    }
     // Casos 13 e 16 da planilha de notificações (cartão e8XpOZJN).
     case "inicio_sem_checkin":
       return {
@@ -437,11 +527,12 @@ export async function processarEnvioPush(
     tentativas: number;
     estado_entrega: string;
     proxima_tentativa_em?: string | null;
+    urgente?: boolean;
   }> = [];
 
   if (notificacaoId) {
     const res = await fetchFn(
-      `${supabaseUrl}/rest/v1/notificacao?id=eq.${notificacaoId}&select=id,usuario_id,tipo,referencia_id,payload,tentativas,estado_entrega,proxima_tentativa_em`,
+      `${supabaseUrl}/rest/v1/notificacao?id=eq.${notificacaoId}&select=id,usuario_id,tipo,referencia_id,payload,tentativas,estado_entrega,proxima_tentativa_em,urgente`,
       { headers: dbHeaders },
     );
     if (!res.ok) {
@@ -455,7 +546,7 @@ export async function processarEnvioPush(
     // Processamento da fila de pendentes (não busca notificações cujo backoff ainda não venceu)
     const agoraIso = new Date().toISOString();
     const res = await fetchFn(
-      `${supabaseUrl}/rest/v1/notificacao?estado_entrega=eq.pendente&or=(proxima_tentativa_em.is.null,proxima_tentativa_em.lte.${encodeURIComponent(agoraIso)})&order=enviada_em.asc&limit=${limite}&select=id,usuario_id,tipo,referencia_id,payload,tentativas,estado_entrega,proxima_tentativa_em`,
+      `${supabaseUrl}/rest/v1/notificacao?estado_entrega=eq.pendente&or=(proxima_tentativa_em.is.null,proxima_tentativa_em.lte.${encodeURIComponent(agoraIso)})&order=enviada_em.asc&limit=${limite}&select=id,usuario_id,tipo,referencia_id,payload,tentativas,estado_entrega,proxima_tentativa_em,urgente`,
       { headers: dbHeaders },
     );
     if (!res.ok) {
@@ -545,12 +636,17 @@ export async function processarEnvioPush(
       continue;
     }
 
+    const payloadCompleto = {
+      ...(n.payload ?? {}),
+      urgente: n.urgente || (n.payload?.urgente === true),
+      referencia_id: n.referencia_id,
+    };
     const variaveis = await buscarVariaveisDoTexto(
       n.tipo,
-      n.payload,
+      payloadCompleto,
       (caminho) => fetchFn(`${supabaseUrl}/rest/v1/${caminho}`, { headers: dbHeaders }),
     );
-    const { title, body } = titulosECorposPorTipo(n.tipo, n.payload, variaveis);
+    const { title, body } = titulosECorposPorTipo(n.tipo, payloadCompleto, variaveis);
     const dataStrings = filtrarDataPayloadFcm(n.tipo, n.payload);
 
     let algumAceite = false;

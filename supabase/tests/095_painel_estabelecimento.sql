@@ -284,7 +284,7 @@ select is(
   'cada vaga traz exatamente os campos de VagaNoPainel');
 select is(
   (select (pg_temp.vaga_de(j,'d5000000-0000-4000-8000-000000000001')->'vaga') - 'inicio_em' - 'fim_em' from p),
-  '{"id":"d5000000-0000-4000-8000-000000000001","funcao":"garçom","local":"CLN 201","valor_centavos":12000}'::jsonb,
+  '{"id":"d5000000-0000-4000-8000-000000000001","funcao":"garçom","local":"CLN 201","regiao_administrativa":"Plano Piloto","valor_centavos":12000}'::jsonb,
   'VagaResumo traz a função pelo nome e o valor em centavos inteiros (RN18)');
 select is(
   (select (pg_temp.vaga_de(j,'d5000000-0000-4000-8000-000000000001')->'vaga'->>'inicio_em')::timestamptz from p),

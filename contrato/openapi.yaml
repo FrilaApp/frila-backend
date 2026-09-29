@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.19
+  version: 0.2.20
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -92,6 +92,25 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.20, de 28/09/2026.** Região administrativa estruturada do estabelecimento
+    e do local da vaga para interpolação nos pushes (cartão x0jkygj0, decisões VyY2SGsX e
+    8zLfn0mt). Até aqui, `vaga.local` e `estabelecimento.endereco` eram texto livre com
+    número e logradouro, o que impedia os pushes aprovados pela liderança e produto de exibir
+    `{bairro_ou_regiao}` e `{estabelecimento} ({regiao})` sem expor endereço completo com
+    número na tela de bloqueio (violando a RN10 e a RN15).
+
+    - **`regiao_administrativa` em Estabelecimento e Vaga.** Novo campo textual obrigatório
+      no cadastro do estabelecimento (`NovoEstabelecimento`) e em `Estabelecimento`, e na
+      publicação da vaga (`NovaVaga`), detalhe da vaga (`Vaga`), resumo (`VagaResumo`) e lista
+      (`VagaNaLista`).
+    - **Validação e filtro de texto ofensivo.** `regiao_administrativa` passa pelas validações
+      da diretriz 1.2 aplicadas aos demais campos textuais.
+    - **Interpolação nos pushes.** Pushes de vaga (01, 02 e 04) e lembretes de turno (09 e 11)
+      passam a interpolar a região administrativa estruturada sem exibir telefone nem
+      logradouro com número na tela de bloqueio (RN10 e RN15).
+
+    ---
 
     **Versão 0.2.19, de 28/09/2026.** Posição reaberta por atraso aceita candidatura depois
     do início do turno (decisão 8zLfn0mt, item 5, aprovada e registrada no cartão em
@@ -1019,28 +1038,15 @@ paths:
       description: |
         Cria o estabelecimento com o chamador como administrador. Aceita CNPJ ou CPF, porque serviço
         doméstico também contrata pelo Frila. `tipo` serve para leitura e filtro, nunca para barrar
-        ninguém. Conta de profissional é recusada com `422 perfil_incompativel` (RN25).
+        ninguém. `regiao_administrativa` é a Região Administrativa do DF onde o estabelecimento fica.
+        Conta de profissional é recusada com `422 perfil_incompativel` (RN25).
       x-requisitos: [RF02, RF21, RN25, UC10]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [nome, documento, tipo, endereco, ponto]
-              properties:
-                nome:
-                  type: string
-                documento:
-                  type: string
-                  pattern: '^([0-9]{11}|[0-9]{14})$'
-                  description: CPF (11) ou CNPJ (14), só dígitos.
-                tipo:
-                  $ref: '#/components/schemas/TipoEstabelecimento'
-                endereco:
-                  type: string
-                ponto:
-                  $ref: '#/components/schemas/Coordenada'
+              $ref: '#/components/schemas/NovoEstabelecimento'
       responses:
         '200':
           description: Estabelecimento criado.
@@ -1218,9 +1224,9 @@ paths:
         Recusas: campo obrigatório ausente (`campo_obrigatorio`, com o nome do campo em `details`,
         RN02); valor, número de posições, função ou coordenada que o campo trouxe e a regra não
         aceita (`campo_invalido`, com o campo em `details`); fim antes do início ou turno no passado
-        (`horario_invalido`); texto com termo bloqueado em `local`, `responsavel_local`, `traje` ou
-        `observacoes` (`campo_invalido`, diretriz 1.2). Conta de profissional recebe
-        `perfil_incompativel` (RN25); quem não é membro do estabelecimento recebe `403
+        (`horario_invalido`); texto com termo bloqueado em `local`, `regiao_administrativa`,
+        `responsavel_local`, `traje` ou `observacoes` (`campo_invalido`, diretriz 1.2). Conta de profissional
+        recebe `perfil_incompativel` (RN25); quem não é membro do estabelecimento recebe `403
         sem_permissao`, e é o que responde também quando o estabelecimento não existe; conta
         suspensa recebe `403 sem_permissao` com `details: conta_suspensa` (RN13).
 
@@ -2938,9 +2944,30 @@ components:
           type: integer
           description: Teto de RN23; hoje, 30.
           example: 30
+    NovoEstabelecimento:
+      type: object
+      required: [nome, documento, tipo, endereco, regiao_administrativa, ponto]
+      properties:
+        nome:
+          type: string
+        documento:
+          type: string
+          pattern: '^([0-9]{11}|[0-9]{14})$'
+          description: CPF (11) ou CNPJ (14), só dígitos.
+        tipo:
+          $ref: '#/components/schemas/TipoEstabelecimento'
+        endereco:
+          type: string
+          description: Logradouro, número e complemento.
+        regiao_administrativa:
+          type: string
+          description: "Região Administrativa do Distrito Federal onde o estabelecimento fica (ex.: Plano Piloto, Águas Claras, Taguatinga)."
+          example: Plano Piloto
+        ponto:
+          $ref: '#/components/schemas/Coordenada'
     Estabelecimento:
       type: object
-      required: [id, nome, documento, tipo, endereco, ponto, papel]
+      required: [id, nome, documento, tipo, endereco, regiao_administrativa, ponto, papel]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -2952,6 +2979,10 @@ components:
           $ref: '#/components/schemas/TipoEstabelecimento'
         endereco:
           type: string
+        regiao_administrativa:
+          type: string
+          description: "Região Administrativa do Distrito Federal onde o estabelecimento fica (ex.: Plano Piloto, Águas Claras, Taguatinga)."
+          example: Plano Piloto
         ponto:
           $ref: '#/components/schemas/Coordenada'
         papel:
@@ -3049,6 +3080,7 @@ components:
         - inicio_em
         - fim_em
         - local
+        - regiao_administrativa
         - ponto
         - valor_centavos
         - posicoes
@@ -3071,6 +3103,10 @@ components:
         local:
           type: string
           description: Endereço. Vem preenchido com o do estabelecimento.
+        regiao_administrativa:
+          type: string
+          description: Região Administrativa do Distrito Federal onde o turno será executado. Vem preenchida com a do estabelecimento.
+          example: Plano Piloto
         ponto:
           $ref: '#/components/schemas/Coordenada'
         valor_centavos:
@@ -3127,7 +3163,7 @@ components:
           type: boolean
     VagaNaLista:
       type: object
-      required: [id, funcao, estabelecimento, inicio_em, fim_em, local, distancia_km, valor_centavos, posicoes_abertas, inclusos, modo]
+      required: [id, funcao, estabelecimento, inicio_em, fim_em, local, regiao_administrativa, distancia_km, valor_centavos, posicoes_abertas, inclusos, modo]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -3141,6 +3177,10 @@ components:
           $ref: '#/components/schemas/Instante'
         local:
           type: string
+        regiao_administrativa:
+          type: string
+          description: Região Administrativa do Distrito Federal onde o turno será executado.
+          example: Plano Piloto
         distancia_km:
           type: number
           minimum: 0
@@ -3155,7 +3195,7 @@ components:
           $ref: '#/components/schemas/ModoPreenchimento'
     Vaga:
       type: object
-      required: [id, estabelecimento, funcao, inicio_em, fim_em, local, ponto, valor_centavos, posicoes, posicoes_abertas, inclusos, responsavel_local, modo, estado, publicado_em]
+      required: [id, estabelecimento, funcao, inicio_em, fim_em, local, regiao_administrativa, ponto, valor_centavos, posicoes, posicoes_abertas, inclusos, responsavel_local, modo, estado, publicado_em]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -3169,6 +3209,10 @@ components:
           $ref: '#/components/schemas/Instante'
         local:
           type: string
+        regiao_administrativa:
+          type: string
+          description: Região Administrativa do Distrito Federal onde o turno será executado.
+          example: Plano Piloto
         ponto:
           $ref: '#/components/schemas/Coordenada'
         distancia_km:
@@ -3195,9 +3239,12 @@ components:
           $ref: '#/components/schemas/EstadoVaga'
         publicado_em:
           $ref: '#/components/schemas/Instante'
+    VagaDetalhe:
+      $ref: '#/components/schemas/Vaga'
+      description: Detalhe completo de uma vaga (mesmo schema de Vaga).
     VagaResumo:
       type: object
-      required: [id, funcao, local, inicio_em, fim_em, valor_centavos]
+      required: [id, funcao, local, regiao_administrativa, inicio_em, fim_em, valor_centavos]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -3205,6 +3252,10 @@ components:
           type: string
         local:
           type: string
+        regiao_administrativa:
+          type: string
+          description: Região Administrativa do Distrito Federal onde o turno será executado.
+          example: Plano Piloto
         inicio_em:
           $ref: '#/components/schemas/Instante'
         fim_em:
