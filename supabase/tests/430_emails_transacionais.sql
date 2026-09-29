@@ -18,7 +18,7 @@
 -- (c…01) é o alvo; Zélia (b…01) administra o bar.
 
 begin;
-select plan(57);
+select plan(59);
 
 select set_config('frila.agora', '2026-09-29 11:00:00-03', true);
 
@@ -329,7 +329,30 @@ select is(
   null,
   'ocorrência inexistente devolve null, e o consumidor arquiva o pedido');
 
--- ── 8. A fila ─────────────────────────────────────────────────────────────────
+-- ── 8. A fila, e a denúncia que não pode falhar por causa do e-mail ──────────
+--
+-- O gatilho da fila acorda a Edge Function, e para isso precisa do segredo do agendador.
+-- Quando ele não está configurado — que é o estado normal logo depois de um
+-- `supabase db reset`, inclusive na CI — o gatilho **não** pode abortar a escrita: a
+-- denúncia é exigência da diretriz 1.2 da App Store, escrita para quem acabou de passar
+-- por assédio, e falhar com 500 porque o e-mail não sai seria perder o registro junto
+-- com o aviso. Medido no PR #70: com `raise exception`, este arquivo e o 360 morriam
+-- aqui.
+
+select set_config('frila.agendador_secret', '', true);
+
+select lives_ok(
+  $$ select pgmq.send('email', jsonb_build_object(
+       'tipo', 'denuncia', 'ocorrencia_id', '0c430000-0000-4000-8000-000000000002')) $$,
+  'sem o segredo do agendador, enfileirar um e-mail não aborta a escrita que o pediu');
+
+select is(
+  (select count(*)::int from pgmq.q_email
+    where message->>'ocorrencia_id' = '0c430000-0000-4000-8000-000000000002'),
+  1,
+  'e o pedido fica na fila até o segredo voltar: nada se perde');
+
+select set_config('frila.agendador_secret', 'segredo-de-teste-do-430', true);
 
 select pgmq.send('email', jsonb_build_object(
   'tipo', 'denuncia', 'ocorrencia_id', '0c430000-0000-4000-8000-000000000001'));

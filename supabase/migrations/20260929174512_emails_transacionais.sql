@@ -256,10 +256,22 @@ grant  execute on function privado.concluir_email(bigint) to service_role;
 -- ── 8. Acordar o consumidor ───────────────────────────────────────────────────
 --
 -- Mesmo desenho do despacho (20260926010000): `net.http_post` sai pós-commit, o gatilho
--- na fila acorda a função na hora, e o `pg_cron` de um minuto drena o que ficou. A
--- exigência do segredo aborta em voz alta, como lá: uma configuração ausente que só
--- aparecesse como e-mail que nunca chega é pior do que uma escrita que falha na cara de
--- quem chamou.
+-- na fila acorda a função na hora, e o `pg_cron` de um minuto drena o que ficou.
+--
+-- **Com uma diferença deliberada:** a de lá aborta quando `frila.agendador_secret` não
+-- está configurado, e esta não. Abortar aqui significaria que uma denúncia falha com 500
+-- porque o segredo do agendador sumiu — e a denúncia é exigência da diretriz 1.2 da App
+-- Store, escrita para quem acabou de passar por assédio. O registro tem de entrar mesmo
+-- que o e-mail não saia agora; ele fica na fila, e o job `processar_fila_email` o manda
+-- assim que o segredo voltar.
+--
+-- Medido em 29/09, na CI do PR #70: `supabase db reset` apaga o
+-- `alter database postgres set frila.agendador_secret` que o job tinha acabado de
+-- gravar, e o pgTAP roda **sem** o segredo. Com o `raise exception`, o 360 e o 430
+-- morreram no `pgmq.send` da denúncia. Não é hipótese: é o estado normal da CI.
+--
+-- A ausência não some calada: sai como `warning` no log do Postgres, que não carrega
+-- dado pessoal nenhum (RN15), e o pedido continua na fila — nada se perde.
 create or replace function privado.disparar_email()
 returns bigint
 language plpgsql
@@ -274,13 +286,14 @@ declare
   v_secret text := current_setting('frila.agendador_secret', true);
   v_req_id bigint;
 begin
-  if v_secret is null or v_secret = '' then
-    raise exception 'Configuração frila.agendador_secret ausente no banco de dados';
-  end if;
-
   -- Fila vazia não acorda ninguém: o job de um minuto rodaria um POST por minuto para
   -- sempre, e o provedor de e-mail cobra por chamada em quase todo plano.
   if not exists (select 1 from pgmq.q_email limit 1) then
+    return null;
+  end if;
+
+  if v_secret is null or v_secret = '' then
+    raise warning 'frila.agendador_secret ausente: o pedido de e-mail fica na fila até o segredo voltar';
     return null;
   end if;
 
@@ -306,7 +319,7 @@ begin
 end $$;
 
 comment on function privado.disparar_email() is
-  'Acorda a Edge Function enviar-email por net.http_post quando há pedido na fila (7yq1flLG). Sai pós-commit; falha de transporte deixa o pedido na fila para o pg_cron.';
+  'Acorda a Edge Function enviar-email por net.http_post quando há pedido na fila (7yq1flLG). Sai pós-commit. Nunca aborta a escrita que enfileirou: sem segredo do agendador ou com falha de transporte, o pedido fica na fila para o pg_cron — uma denúncia não pode falhar porque o e-mail não pode sair.';
 
 revoke execute on function privado.disparar_email() from public, anon, authenticated;
 grant  execute on function privado.disparar_email() to service_role;
