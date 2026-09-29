@@ -1192,8 +1192,10 @@ select c.vaga, e.id, (select id from public.funcao where nome = 'garçom'),
        now() + interval '5 days 6 hours' + c.n * interval '8 hours',
        'corrida-ciclo-$MARCA', 'POINT(-47.8860 -15.7910)'::extensions.geography,
        18000, 1, true, true, false, 'Seu Zé', 'selecao', gen_random_uuid(), '$DONA'
-  from corrida_ciclo.escolher c, public.estabelecimento e
- where e.endereco = 'corrida-ciclo-$MARCA';
+  from corrida_ciclo.escolher c,
+       -- A casa da dona, e só ela: o cenário 9 cria outras casas com o mesmo endereço.
+       (select m.estabelecimento_id as id from public.membro_estabelecimento m
+         where m.usuario_id = '$DONA' limit 1) e;
 
 insert into public.posicao (vaga_id, inicio_em, fim_em)
 select v.id, v.inicio_em, v.fim_em
