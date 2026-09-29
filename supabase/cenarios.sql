@@ -247,6 +247,7 @@ on conflict do nothing;
 --   d…05  publicada   Empório · vendedor extra  · sexta seguinte 14:00–20:00 (seleção)
 --   d…06  preenchida  Buffet  · garçom          · sexta 18:00–02:00  ← cruza com a d…01
 --   d…07  encerrada   Bar     · garçom          · uma sexta passada 18:00–02:00
+--   d…08  preenchida  Buffet  · garçom          · em andamento: começou 1 h antes do reset
 
 with _quando as (
   select ((date_trunc('day', now() at time zone 'America/Sao_Paulo')
@@ -331,7 +332,22 @@ select x.id::uuid, x.estab::uuid, f.id, x.inicio, x.fim, x.local, x.ponto::exten
      16000::bigint, 2::smallint, true, false, false, 'Zélia, no caixa',
      'Camisa preta e calça preta', true, null,
      'urgencia', 'encerrada', now() - interval '12 days',
-     '11110000-0000-4000-8000-000000000007')
+     '11110000-0000-4000-8000-000000000007'),
+
+    -- A única vaga que não pende da âncora da sexta, e de propósito: o check-in manual
+    -- esperando a casa confirmar só existe **durante** o turno. No fim, sem o toque da
+    -- casa, `privado.fechar_turnos_passados()` o vira `nao_verificado` (critério 1 da
+    -- decisão 8zLfn0mt), e o pg_cron roda esse fechamento a cada cinco minutos. Um
+    -- pendente num turno do passado seria desfeito pelo agendador minutos depois do
+    -- reset. Este vence 7 h depois do `db reset`; depois disso, outro reset o devolve.
+    ('d0000000-0000-4000-8000-000000000008','c0000000-0000-4000-8000-000000000002','garçom',
+     date_trunc('minute', now()) - interval '1 hour',
+     date_trunc('minute', now()) + interval '7 hours',
+     'Salão de festas, Águas Claras', 'POINT(-48.0286 -15.8345)',
+     18000::bigint, 1::smallint, true, true, false, 'Ricardo, na portaria',
+     'Social completo', true, 'Formatura. Entrada pela lateral.',
+     'urgencia', 'preenchida', now() - interval '3 days',
+     '11110000-0000-4000-8000-000000000008')
   ) as x(id, estab, funcao, inicio, fim, local, ponto, valor, posicoes, refeicao, transporte,
          material, responsavel, traje, rateio, obs, modo, estado, publicado, chave)
   join public.funcao f on f.nome = x.funcao
@@ -373,7 +389,9 @@ select x.id::uuid, x.vaga::uuid, x.estado::public.estado_posicao, x.prof::uuid,
     ('f1000000-0000-4000-8000-000000000601','d0000000-0000-4000-8000-000000000006','confirmada','e0000000-0000-4000-8000-000000000007',  interval '2 days',       false),
     -- d…07: a Ana cumpriu; a segunda posição nunca foi preenchida e fechou com a vaga.
     ('f1000000-0000-4000-8000-000000000701','d0000000-0000-4000-8000-000000000007','cumprida',  'e0000000-0000-4000-8000-000000000001',  interval '14 days',      false),
-    ('f1000000-0000-4000-8000-000000000702','d0000000-0000-4000-8000-000000000007','cancelada',  null,                                   null,                    false)
+    ('f1000000-0000-4000-8000-000000000702','d0000000-0000-4000-8000-000000000007','cancelada',  null,                                   null,                    false),
+    -- d…08: o Heitor no turno que está acontecendo agora.
+    ('f1000000-0000-4000-8000-000000000801','d0000000-0000-4000-8000-000000000008','confirmada','e0000000-0000-4000-8000-000000000008',  interval '2 days',       false)
   ) as x(id, vaga, estado, prof, confirmado_ha, falta)
   join public.vaga v on v.id = x.vaga::uuid
 on conflict (id) do nothing;
@@ -421,10 +439,16 @@ select x.id::uuid, x.posicao::uuid,
     -- Manual confirmado pelo contratante: vale como presença verificada.
     ('f2000000-0000-4000-8000-000000000302','f1000000-0000-4000-8000-000000000302',
      interval '10 minutes','manual',      null, interval '35 minutes', interval '8 hours',           null,'verificado',    14000),
-    -- Manual sem confirmação: o contratante não respondeu. Fica pendente, e não vira
-    -- presença por decurso de prazo — quem avalia precisa de prova, não de silêncio.
+    -- Manual sem confirmação: o contratante não respondeu até o fim do turno. Não vira
+    -- presença por decurso de prazo — quem avalia precisa de prova, não de silêncio —,
+    -- e vira `nao_verificado`, que é o que `privado.fechar_turnos_passados()` faria
+    -- (critério 1 da decisão 8zLfn0mt).
     ('f2000000-0000-4000-8000-000000000303','f1000000-0000-4000-8000-000000000303',
-     interval '25 minutes','manual',      null, null,                interval '8 hours',           null,'pendente',      14000),
+     interval '25 minutes','manual',      null, null,                interval '8 hours',           null,'nao_verificado',14000),
+    -- Manual esperando a casa, no turno que está acontecendo: o único momento em que
+    -- `pendente` com check-in manual é um estado legítimo.
+    ('f2000000-0000-4000-8000-000000000801','f1000000-0000-4000-8000-000000000801',
+     interval '25 minutes','manual',      null, null,                null,                         null,'pendente',      18000),
     -- Sem check-in nenhum: o turno terminou e não há prova de que alguém esteve lá.
     ('f2000000-0000-4000-8000-000000000304','f1000000-0000-4000-8000-000000000304',
      null,                  null,         null, null,                null,                         null,'nao_verificado',14000),
