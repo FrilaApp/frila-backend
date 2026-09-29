@@ -10,9 +10,22 @@
 
 begin;
 
-select plan(41);
+select plan(57);
 
 set local frila.agendador_secret = 'segredo-de-teste';
+
+create function pg_temp.como(conta uuid, sql text) returns jsonb
+language plpgsql as $$
+declare r jsonb;
+begin
+  execute 'set local role authenticated';
+  execute format('set local request.jwt.claims = %L',
+                 json_build_object('sub', conta, 'role', 'authenticated')::text);
+  execute sql into r;
+  reset role;
+  execute 'reset request.jwt.claims';
+  return r;
+end $$;
 
 -- ── 1. Cenário de teste ─────────────────────────────────────────────────────────
 
@@ -69,6 +82,23 @@ values ('d7000000-0000-4000-8000-000000000044',
 
 insert into public.turno (id, posicao_id, valor_acordado_centavos)
 values ('d7000000-0000-4000-8000-000000000055', 'd7000000-0000-4000-8000-000000000044', 15000);
+
+-- Turno de Carlos a menos de 24 h: a desistência dele aqui seria falta (RN12). A
+-- suspensão não é desistência (bloqueio 1 da revisão do #74, decisão de 29/09).
+insert into public.vaga (id, estabelecimento_id, publicado_por, funcao_id, inicio_em, fim_em, local, regiao_administrativa, responsavel_local, valor_centavos, posicoes, modo, estado, ponto, inclui_refeicao, inclui_transporte, exige_material_proprio, chave_cliente)
+select 'd7000000-0000-4000-8000-000000000036'::uuid, 'd7000000-0000-4000-8000-000000000022'::uuid,
+       'd7000000-0000-4000-8000-000000000002'::uuid, f.id, now() + interval '10 hours',
+       now() + interval '16 hours', 'Bar da Operacao', 'Plano Piloto', 'Gerente', 15000, 1,
+       'urgencia', 'preenchida', 'POINT(-47.8850 -15.7950)'::extensions.geography,
+       false, false, false, gen_random_uuid()
+  from public.funcao f where f.nome = 'garçom';
+
+insert into public.posicao (id, vaga_id, estado, inicio_em, fim_em, profissional_id, confirmado_em)
+values ('d7000000-0000-4000-8000-000000000049', 'd7000000-0000-4000-8000-000000000036', 'confirmada',
+        now() + interval '10 hours', now() + interval '16 hours', 'd7000000-0000-4000-8000-000000000011', now());
+
+insert into public.turno (id, posicao_id, valor_acordado_centavos)
+values ('d7000000-0000-4000-8000-000000000058', 'd7000000-0000-4000-8000-000000000049', 15000);
 
 -- Membro da Equipe Frila que age nos scripts (bloqueio 4 da revisão do #74): é ele o
 -- autor das ocorrências operacionais, nunca o alvo.
@@ -205,6 +235,10 @@ select throws_ok(
 
 -- ── 4. Suspender conta e efeitos colaterais ─────────────────────────────────────
 
+create temp table taxa_antes as
+  select p.taxa_comparecimento as taxa from public.profissional p
+   where p.id = 'd7000000-0000-4000-8000-000000000011';
+
 create temp table res_suspensao as
   select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', 'Denúncia grave de assédio confirmada', 'd7000000-0000-4000-8000-000000000003') as r;
 
@@ -228,8 +262,33 @@ select is(
 
 select is(
   ((select r from res_suspensao)->>'turnos_cancelados')::int,
-  1,
-  'relatório indica 1 turno cancelado');
+  2,
+  'relatório indica os 2 turnos cancelados');
+
+select is(
+  (select p.falta from public.posicao p where p.id = 'd7000000-0000-4000-8000-000000000049'),
+  false,
+  'turno a menos de 24 h cancelado pela suspensão não vira falta (RN12)');
+
+select is(
+  (select p.taxa_comparecimento from public.profissional p
+    where p.id = 'd7000000-0000-4000-8000-000000000011'),
+  (select taxa from taxa_antes),
+  'a suspensão não muda a taxa de comparecimento');
+
+select ok(
+  exists (select 1 from public.posicao p
+           where p.vaga_id = 'd7000000-0000-4000-8000-000000000036'
+             and p.estado = 'aberta'),
+  'a posição do suspenso volta para a fila, como na exclusão de conta');
+
+select is(
+  (select count(*)::int from public.ocorrencia o
+    where o.tipo = 'cancelamento'
+      and o.usuario_id = 'd7000000-0000-4000-8000-000000000001'
+      and o.motivo like '%assédio%'),
+  0,
+  'o motivo interno da suspensão não vai para o cancelamento, que o suspenso lê');
 
 select is(
   (select o.autor_id from public.ocorrencia o
@@ -296,7 +355,7 @@ select 'd7000000-0000-4000-8000-000000000066'::uuid,
        'Plano Piloto',
        'Gerente',
        14000,
-       1,
+       2,
        'urgencia',
        'publicada',
        'POINT(-47.8850 -15.7950)'::extensions.geography,
@@ -307,13 +366,66 @@ select 'd7000000-0000-4000-8000-000000000066'::uuid,
   from public.funcao f
  where f.nome = 'garçom';
 
+insert into public.posicao (id, vaga_id, estado, inicio_em, fim_em, profissional_id, confirmado_em)
+values ('d7000000-0000-4000-8000-000000000067', 'd7000000-0000-4000-8000-000000000066', 'confirmada',
+        now() + interval '3 days', now() + interval '3 days 6 hours', 'd7000000-0000-4000-8000-000000000014', now()),
+       ('d7000000-0000-4000-8000-000000000068', 'd7000000-0000-4000-8000-000000000066', 'aberta',
+        now() + interval '3 days', now() + interval '3 days 6 hours', null, null);
+
+insert into public.turno (id, posicao_id, valor_acordado_centavos)
+values ('d7000000-0000-4000-8000-000000000069', 'd7000000-0000-4000-8000-000000000067', 14000);
+
+-- Antes de ocultar, a vaga está na vitrine: o teste abaixo não é vazio.
+select ok(
+  (pg_temp.como('d7000000-0000-4000-8000-000000000005',
+     $$ select public.vagas_abertas(limite => 100) $$)
+   @> '[{"id": "d7000000-0000-4000-8000-000000000066"}]'::jsonb),
+  'antes da moderação a vaga aparece na vitrine');
+
 create temp table res_mod_ocultar as
   select privado.operacao_moderar_conteudo('d7000000-0000-4000-8000-000000000066', 'ocultar', 'Linguagem ofensiva reportada em denúncia', 'd7000000-0000-4000-8000-000000000003') as r;
 
 select is(
   (select g.estado from public.vaga g where g.id = 'd7000000-0000-4000-8000-000000000066'),
-  'cancelada'::public.estado_vaga,
-  'moderação oculta (cancela) vaga denunciada');
+  'publicada'::public.estado_vaga,
+  'ocultar não cancela a vaga (decisão de 29/09, opção A)');
+
+select is(
+  (select p.estado from public.posicao p where p.id = 'd7000000-0000-4000-8000-000000000067'),
+  'confirmada'::public.estado_posicao,
+  'o confirmado da vaga ocultada segue confirmado');
+
+select ok(
+  privado.vaga_oculta('d7000000-0000-4000-8000-000000000066'),
+  'a vaga fica marcada como oculta pela Equipe Frila');
+
+select ok(
+  not (pg_temp.como('d7000000-0000-4000-8000-000000000005',
+         $$ select public.vagas_abertas(limite => 100) $$)
+       @> '[{"id": "d7000000-0000-4000-8000-000000000066"}]'::jsonb),
+  'a vaga ocultada some da vitrine');
+
+select throws_ok(
+  $$ select pg_temp.como('d7000000-0000-4000-8000-000000000005',
+       $q$ select public.detalhe_vaga('d7000000-0000-4000-8000-000000000066') $q$) $$,
+  'PGRST', null,
+  'o detalhe da vaga ocultada responde 404 a quem não está nela');
+
+select throws_ok(
+  $$ select pg_temp.como('d7000000-0000-4000-8000-000000000005',
+       $q$ select public.candidatar('d7000000-0000-4000-8000-000000000066') $q$) $$,
+  'PGRST', null,
+  'ninguém se candidata à vaga ocultada');
+
+select lives_ok(
+  $$ select pg_temp.como('d7000000-0000-4000-8000-000000000004',
+       $q$ select public.detalhe_vaga('d7000000-0000-4000-8000-000000000066') $q$) $$,
+  'o confirmado ainda abre o detalhe da vaga ocultada');
+
+select is(
+  privado.despachar_vaga('d7000000-0000-4000-8000-000000000066'),
+  0,
+  'a vaga ocultada não é despachada');
 
 select is(
   (select count(*)::int from public.ocorrencia o
@@ -341,6 +453,45 @@ select is(
   (select g.estado from public.vaga g where g.id = 'd7000000-0000-4000-8000-000000000066'),
   'publicada'::public.estado_vaga,
   'moderação pode reexibir vaga antes do início');
+
+select ok(
+  not privado.vaga_oculta('d7000000-0000-4000-8000-000000000066')
+  and (pg_temp.como('d7000000-0000-4000-8000-000000000005',
+         $$ select public.vagas_abertas(limite => 100) $$)
+       @> '[{"id": "d7000000-0000-4000-8000-000000000066"}]'::jsonb),
+  'a vaga reexibida volta à vitrine');
+
+-- Reexibir não republica a vaga que a casa cancelou.
+insert into public.vaga (id, estabelecimento_id, publicado_por, funcao_id, inicio_em, fim_em, local, regiao_administrativa, responsavel_local, valor_centavos, posicoes, modo, estado, ponto, inclui_refeicao, inclui_transporte, exige_material_proprio, chave_cliente)
+select v.id, 'd7000000-0000-4000-8000-000000000022'::uuid, 'd7000000-0000-4000-8000-000000000002'::uuid,
+       f.id, now() + interval '6 days', now() + interval '6 days 6 hours', 'Bar da Operacao',
+       'Plano Piloto', 'Gerente', 15000, 1, 'urgencia', v.estado::public.estado_vaga,
+       'POINT(-47.8850 -15.7950)'::extensions.geography, false, false, false, gen_random_uuid()
+  from public.funcao f,
+       (values ('d7000000-0000-4000-8000-000000000037'::uuid, 'cancelada'),
+               ('d7000000-0000-4000-8000-000000000038'::uuid, 'publicada')) as v(id, estado)
+ where f.nome = 'garçom';
+
+select throws_ok(
+  $$ select privado.operacao_moderar_conteudo('d7000000-0000-4000-8000-000000000037', 'reexibir', 'engano', 'd7000000-0000-4000-8000-000000000003') $$,
+  'PGRST', null,
+  'reexibir vaga que a Equipe não ocultou é recusado');
+
+select is(
+  (select g.estado from public.vaga g where g.id = 'd7000000-0000-4000-8000-000000000037'),
+  'cancelada'::public.estado_vaga,
+  'a vaga cancelada pela casa segue cancelada');
+
+-- Ocultada pela Equipe e depois cancelada pela casa: reexibir tira a marca, não
+-- republica.
+select privado.operacao_moderar_conteudo('d7000000-0000-4000-8000-000000000038', 'ocultar', 'texto impróprio', 'd7000000-0000-4000-8000-000000000003');
+update public.vaga set estado = 'cancelada' where id = 'd7000000-0000-4000-8000-000000000038';
+select privado.operacao_moderar_conteudo('d7000000-0000-4000-8000-000000000038', 'reexibir', 'texto corrigido', 'd7000000-0000-4000-8000-000000000003');
+
+select is(
+  (select g.estado from public.vaga g where g.id = 'd7000000-0000-4000-8000-000000000038'),
+  'cancelada'::public.estado_vaga,
+  'reexibir não republica a vaga que a casa cancelou depois de ocultada');
 
 -- ── 7. Suspender contratante com vaga parcialmente preenchida (bloqueio 2) ────────
 
