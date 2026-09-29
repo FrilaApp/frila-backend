@@ -152,8 +152,10 @@ Deno.test("FCM client: obtém access token com JWT assinado e envia mensagem com
 // ── Bloqueio 1: Autenticação estrita do agendador ─────────────────────────────
 
 Deno.test("Bloqueio 1: falha fechado na inicialização sem AGENDADOR_SECRET", async () => {
+  // Caminho absoluto a partir deste arquivo: o teste não pode depender do diretório de onde o deno test roda.
+  const modulo = new URL("./index.ts", import.meta.url).href;
   const cmd = new Deno.Command(Deno.execPath(), {
-    args: ["eval", "await import('./supabase/functions/enviar-push/index.ts');"],
+    args: ["eval", `await import(${JSON.stringify(modulo)});`],
     env: { AGENDADOR_SECRET: "" },
     clearEnv: true,
   });
