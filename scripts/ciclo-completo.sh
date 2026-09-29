@@ -667,6 +667,42 @@ code=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.s
 ok "GET perfil_publico de id inexistente → 404 nao_encontrado"
 
 echo
+echo "▸ O limite de escrita por conta"
+#
+# Por último, porque deixa a conta sem escrever até o minuto virar. O limite mora no
+# `db_pre_request` do PostgREST, e o pgTAP chama a função direto: só aqui se prova que o
+# PostgREST a chama de verdade e que a recusa chega como 429. A conta já escreveu neste
+# minuto nos passos de cima, então a conta exata do teto é do pgTAP; aqui vale que a
+# rajada, de uma escrita idempotente e barata, esbarra no teto antes de passar dele.
+TETO=$(docker exec -i "${DB_CONTAINER:-supabase_db_frila-backend}" \
+  psql -U postgres -d postgres -tAc 'select privado.limite_de_escrita_por_minuto()')
+[ -n "$TETO" ] || falhou "não li o teto de escrita no banco"
+
+aceitas=0; recusa_http=""; recusa_corpo=""
+for _ in $(seq 1 $((TETO + 1))); do
+  tmp=$(mktemp)
+  http=$(curl -s -o "$tmp" -w '%{http_code}' -X POST "$URL/rest/v1/rpc/registrar_dispositivo" \
+    -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -d '{"token_fcm":"ciclo-completo-rajada","plataforma":"ios"}')
+  corpo=$(cat "$tmp"); rm -f "$tmp"
+  if [ "$http" = "200" ]; then aceitas=$((aceitas + 1)); continue; fi
+  recusa_http="$http"; recusa_corpo="$corpo"; break
+done
+
+[ -n "$recusa_http" ] || falhou "$((TETO + 1)) escritas seguidas e nenhuma recusa: o teto de $TETO não segurou"
+[ "$recusa_http" = "429" ] || falhou "a rajada parou em HTTP $recusa_http, esperado 429: $recusa_corpo"
+code=$(printf '%s' "$recusa_corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || true)
+[ "$code" = "limite_excedido" ] || falhou "a recusa veio com code '$code', e o contrato pede limite_excedido"
+[ "$aceitas" -gt 0 ] || falhou "nenhuma escrita passou antes da recusa: o teto está recusando cedo demais"
+ok "rajada de escrita → $aceitas aceitas, depois 429 limite_excedido (teto $TETO por minuto)"
+
+# Leitura não conta: a mesma conta, já no teto, continua lendo. Pelo verbo do contrato,
+# GET — que o PostgREST roda em transação só de leitura. Toda leitura do contrato é GET.
+resp=$(get_rpc minha_conta)
+[ "${resp%% *}" = "200" ] || falhou "GET minha_conta com a conta no teto de escrita devolveu ${resp%% *}"
+ok "no teto de escrita, a leitura por GET segue → 200"
+
+echo
 echo "▸ O que ainda não existe"
 echo "  ⏭  o caminho feliz do check-in e da avaliação por HTTP pede um turno que já"
 echo "     aconteceu, e o relógio do produto só se sobrepõe dentro do pgTAP."
