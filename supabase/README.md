@@ -202,16 +202,43 @@ segundas-feiras.
 | `d…07` | encerrada | Bar | garçom | sexta passada 18:00–02:00 | O histórico da Ana e do bar: turno cumprido e avaliado dos dois lados |
 | `d…08` | preenchida | Buffet | garçom | **em andamento**: 1 h antes do reset até 7 h depois | O check-in manual esperando a casa. Única vaga fora da âncora da sexta |
 
-A `d…08` pende de `now()`, e não da sexta, porque o check-in manual `pendente` só existe
-durante o turno: no fim, sem confirmação, o fechamento agendado no pg_cron
-(`fechar_turnos_e_vagas`, a cada cinco minutos) o vira `nao_verificado`. Sete horas
-depois do `db reset` o turno termina e o `090_cenarios` fica vermelho no teste do
-pendente; outro `db reset` devolve o cenário.
+A `d…08` pende do instante do reset, e não da sexta, porque o check-in manual
+`pendente` só existe durante o turno: no fim, sem confirmação, o fechamento agendado no
+pg_cron (`fechar_turnos_e_vagas`, a cada cinco minutos) o vira `nao_verificado`. Sete
+horas depois do `db reset` o turno termina e o cenário muda de verdade no banco — quem
+quiser mostrar a tela do pendente roda outro `db reset`. O `090_cenarios` não depende
+disso: ele aceita o pendente enquanto o turno dura e o `nao_verificado` depois do fim, e
+recusa qualquer outro desfecho.
 
-As duas vagas do passado descontam **14** dias da âncora, não 7 — a âncora já está no
-futuro, e `- 7 dias` cairia no futuro em metade das execuções. O trigger de RN07
-recusaria as avaliações com `avaliacao_indisponivel / antes_do_fim`, que foi como isso
-apareceu na primeira vez.
+As duas vagas do passado descontam **21** dias da âncora — a âncora está entre 7 e 13
+dias no futuro, e só 21 garante o passado em qualquer dia e hora do reset. O trigger de
+RN07 recusaria as avaliações com `avaliacao_indisponivel / antes_do_fim`, que foi como
+isso apareceu na primeira vez.
+
+### Quanto tempo o cenário vale
+
+Todo tempo de `cenarios.sql` sai de um instante só, `frila.cenarios_agora`, que por
+padrão é o `now()` do `db reset`. A suíte roda depois, e o pg_cron trabalha nesse
+meio-tempo; por isso ela é medida com o relógio andado:
+
+```bash
+./scripts/relogio-deslocado.sh                    # reset há 8 h, há 3 dias e num sábado 23:30
+./scripts/relogio-deslocado.sh '6 days 20 hours'  # qualquer intervalo, ou um instante
+```
+
+O script refaz o cenário como se o reset tivesse rodado no passado, roda cada job do
+pg_cron uma vez, roda `supabase test db` e, no fim, devolve o banco a um reset comum.
+Medido em 29/09: verde com 8 h, 3 dias, sábado e 6 dias e 20 h.
+
+**O prazo é de 7 dias.** A âncora cai entre 7 e 13 dias depois do reset; passado isso a
+vaga de referência vira passado, o agendador a encerra, e `090`, `260` e `360` ficam
+vermelhos (medido com 14 dias). Não é bomba escondida, é validade: rode `db reset`.
+
+O que o script **não** alcança: o `now()` dos próprios testes, que é sempre o de agora,
+e as vagas de demonstração do `seed.sql`, que pendem de `privado.agora()`. Teste que
+cria os próprios dados não escreve data de calendário que possa passar: ou conta a data
+a partir de `now()`, ou congela o relógio do produto (`frila.agora`, dentro da
+transação) antes de chamar a regra.
 
 ---
 
