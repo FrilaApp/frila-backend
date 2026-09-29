@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.20
+  version: 0.2.21
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -92,6 +92,22 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.21, de 29/09/2026.** Respostas de erro e catálogo de validação em
+    `/rpc/denunciar` e `/rpc/bloquear` (cartão JWJOPAOL). `/rpc/denunciar` passa a documentar
+    explicitamente a resposta `422` (`RegraRecusou`), e ambas as operações documentam as recusas
+    com códigos padronizados coerentes com seus schemas de entrada:
+
+    - **`campo_obrigatorio`:** Ausência de campos obrigatórios (`details: alvo_tipo`, `alvo_id`,
+      `motivo`, `relato` ou `chave` em `/rpc/denunciar`; `details: alvo_tipo` ou `alvo_id` em
+      `/rpc/bloquear`, RN02).
+    - **`campo_invalido`:** Campo enviado com valor recusado pela regra de negócio (`details:
+      alvo_tipo` fora do enum `TipoDeAlvo`, `alvo_id` não UUID ou auto-bloqueio, `motivo` fora
+      do enum `MotivoDenuncia`, `relato` com menos de 10 caracteres ou `chave` não UUID).
+    - **Mapeamento de 422 em `/rpc/denunciar`:** Adicionado `$ref: '#/components/responses/RegraRecusou'`
+      em `responses`, alinhando a operação a `/rpc/bloquear` e às demais RPCs de escrita do contrato.
+
+    ---
 
     **Versão 0.2.20, de 28/09/2026.** Região administrativa estruturada do estabelecimento
     e do local da vaga para interpolação nos pushes (cartão x0jkygj0, decisões VyY2SGsX e
@@ -2073,6 +2089,11 @@ paths:
         Denúncia grave confirmada (assédio, fraude ou documento falso) leva à suspensão, com motivo
         registrado e direito de contestar (RN13). Em risco imediato, o app mostra os atalhos para o 190
         e o 180 sem esperar a resposta. Exigência da diretriz 1.2 da App Store.
+
+        Recusas: campo obrigatório ausente (`campo_obrigatorio`, com o nome do campo em `details`:
+        `alvo_tipo`, `alvo_id`, `motivo`, `relato` ou `chave`, RN02); valor recusado pela regra
+        (`campo_invalido`, com o campo em `details`: `alvo_tipo` fora do enum, `alvo_id` não UUID,
+        `motivo` fora do enum `MotivoDenuncia`, `relato` com menos de 10 caracteres ou `chave` não UUID).
       x-requisitos: [RF26, RN13, RN15, UC17]
       requestBody:
         required: true
@@ -2111,6 +2132,8 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/bloquear:
     post:
@@ -2121,6 +2144,10 @@ paths:
         Imediato e automático, sem depender da Equipe Frila. Vale nos dois sentidos: as partes não
         voltam a se cruzar em notificação, lista ou candidatura. Quando uma delas é membro de
         estabelecimento, vale para as vagas do estabelecimento inteiro. Idempotente.
+
+        Recusas: campo obrigatório ausente (`campo_obrigatorio`, com o nome do campo em `details`:
+        `alvo_tipo` ou `alvo_id`, RN02); valor recusado pela regra (`campo_invalido`, com o campo em
+        `details`: `alvo_tipo` fora do enum, `alvo_id` não UUID ou tentativa de bloquear a si mesmo).
       x-requisitos: [RF26, UC17]
       requestBody:
         required: true
@@ -2645,6 +2672,12 @@ components:
                 code: campo_obrigatorio
                 message: campo_obrigatorio
                 details: responsavel_local
+                hint: null
+            campo_invalido:
+              value:
+                code: campo_invalido
+                message: campo_invalido
+                details: relato
                 hint: null
             selecao_sem_antecedencia:
               value:

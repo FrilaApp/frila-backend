@@ -19,7 +19,7 @@
 -- (a…06 / e…06) já estava bloqueado pela Zélia.
 
 begin;
-select plan(62);
+select plan(66);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -477,6 +477,34 @@ select throws_ok(
            (select bar from ids))),
   'PGRST', pg_temp.erro('campo_obrigatorio', 'relato'),
   'relato ausente é 422 campo_obrigatorio');
+
+select throws_ok(
+  format($$ select pg_temp.como(%L, %L) $$, (select ana from ids),
+    format($x$ select public.denunciar(null, %L, 'assedio', 'Relato longo o bastante',
+                 gen_random_uuid()) $x$, (select bar from ids))),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'alvo_tipo'),
+  'alvo_tipo ausente é 422 campo_obrigatorio');
+
+select throws_ok(
+  format($$ select pg_temp.como(%L, %L) $$, (select ana from ids),
+    $x$ select public.denunciar('estabelecimento', null, 'assedio', 'Relato longo o bastante',
+                 gen_random_uuid()) $x$),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'alvo_id'),
+  'alvo_id ausente é 422 campo_obrigatorio');
+
+select throws_ok(
+  format($$ select pg_temp.como(%L, %L) $$, (select ana from ids),
+    format($x$ select public.denunciar('vaga', %L, 'assedio', 'Relato longo o bastante',
+                 gen_random_uuid()) $x$, (select bar from ids))),
+  'PGRST', pg_temp.erro('campo_invalido', 'alvo_tipo'),
+  'alvo_tipo fora de TipoDeAlvo em denunciar é 422 campo_invalido');
+
+select throws_ok(
+  format($$ select pg_temp.como(%L, %L) $$, (select ana from ids),
+    format($x$ select public.denunciar('estabelecimento', %L, null, 'Relato longo o bastante',
+                 gen_random_uuid()) $x$, (select bar from ids))),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'motivo'),
+  'motivo ausente é 422 campo_obrigatorio');
 
 select throws_ok(
   format($$ select pg_temp.como(%L, %L) $$, (select ana from ids),
