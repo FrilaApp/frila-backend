@@ -42,20 +42,23 @@
 #   8. candidatar × reabrir_por_atraso, turno começado (atraso) — a candidatura aceita a
 #      posição reaberta por atraso enquanto a casa declara outra falta na mesma vaga
 #      (revisão do #63, rodada 2). Nenhum 40P01, e as duas passam.
+#   9. excluir_conta (serviço) × candidatar (excluir) — a casa (único membro) é excluída
+#      via serviço (sem JWT) enquanto o candidato aceita a posição (CPD2c74A). Toda vaga
+#      termina cancelada, nenhuma posição viva sobra, e o profissional não leva falta.
 #
 # Os de candidatura (vinte para duas posições, profissional em dobro) seguem em
 # `corrida-candidatar.sh`.
 #
 # Uso:  ./scripts/corrida-ciclo.sh
 #       RODADAS=10 ./scripts/corrida-ciclo.sh
-#       CENARIOS="checkin cancelar teto posicao impasse janela rollback atraso" ./scripts/corrida-ciclo.sh
+#       CENARIOS="checkin cancelar teto posicao impasse janela rollback atraso excluir" ./scripts/corrida-ciclo.sh
 #       MANTER=1 ./scripts/corrida-ciclo.sh     # não limpa: o placar fica em corrida_ciclo
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 RODADAS=${RODADAS:-50}
-CENARIOS=${CENARIOS:-checkin cancelar teto posicao impasse janela rollback atraso}
+CENARIOS=${CENARIOS:-checkin cancelar teto posicao impasse janela rollback atraso excluir}
 
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -222,6 +225,8 @@ begin
            select 'rollback', n from generate_series(1, 2 * $RODADAS) n
            union all
            select 'reaberta', n from generate_series(1, 2 * $RODADAS) n
+           union all
+           select 'excluir_cand', n from generate_series(1, $RODADAS) n
   loop
     v_seq := v_seq + 1;
     v_conta := gen_random_uuid();
@@ -1036,6 +1041,114 @@ SQL
     ok "$RODADAS rodadas: nenhum impasse; a candidatura confirma e a falta reabre na rodada seguinte"
   else
     falhou "rodadas fora da regra, $impasses com impasse 40P01 (rodada, trava, candidatar, reabrir_por_atraso, vaga, rodada, P2, P1, reabertas de P1):"
+    printf '%s\n' "$ruins" | sed 's/^/      /' >&2
+  fi
+}
+
+# ── 9. excluir_conta (serviço) × candidatar ────────────────────────────────────
+cenario_excluir() {
+  echo
+  echo "▸ Cenário 9: excluir_conta (serviço) × candidatar ($RODADAS rodadas)"
+
+  psql >/dev/null <<SQL || { falhou "não consegui montar o cenário de exclusão"; return; }
+create table corrida_ciclo.excluir (n int, vaga uuid, dona uuid, c1 uuid);
+
+do \$palco_excluir\$
+declare
+  r record;
+  v_dona uuid;
+  v_estab uuid;
+  v_vaga uuid;
+  v_funcao uuid;
+begin
+  select id into v_funcao from public.funcao where nome = 'garçom';
+
+  for r in select n, conta as c1
+             from corrida_ciclo.contas
+            where papel = 'excluir_cand'
+            order by n
+  loop
+    v_dona := gen_random_uuid();
+    v_vaga := gen_random_uuid();
+
+    insert into auth.users (instance_id, id, aud, role, email, email_confirmed_at,
+                            raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+                            is_sso_user, is_anonymous)
+    values ('00000000-0000-0000-0000-000000000000', v_dona, 'authenticated', 'authenticated',
+            'corrida-ciclo-$MARCA-excluir-' || r.n || '@frila.test', now(), '{"provider":"email"}', '{}',
+            now(), now(), false, false);
+
+    insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
+    values (v_dona, 'contratante', 'Dona Excluir ' || r.n,
+            '+55617' || lpad(r.n::text, 8, '0'), 'corrida-ciclo-$MARCA-excluir-' || r.n || '@frila.test',
+            '1980-01-01', '2026-09-22', now());
+
+    insert into public.estabelecimento (nome, documento, tipo, endereco, ponto)
+    values ('Casa Excluir ' || r.n, lpad((floor(random() * 1e13))::bigint::text, 14, '7'),
+            'food_service', 'corrida-ciclo-$MARCA',
+            'POINT(-47.8860 -15.7910)'::extensions.geography)
+    returning id into v_estab;
+
+    insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
+    values (v_dona, v_estab, 'administrador');
+
+    insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+                             valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+                             exige_material_proprio, responsavel_local, modo, estado,
+                             chave_cliente, publicado_por)
+    values (v_vaga, v_estab, v_funcao,
+            now() + interval '3 days', now() + interval '3 days 6 hours',
+            'corrida-ciclo-$MARCA', 'POINT(-47.8860 -15.7910)'::extensions.geography,
+            18000, 1, true, true, false, 'Seu Zé', 'urgencia', 'publicada',
+            gen_random_uuid(), v_dona);
+
+    insert into public.posicao (vaga_id, inicio_em, fim_em)
+    values (v_vaga, now() + interval '3 days', now() + interval '3 days 6 hours');
+
+    insert into corrida_ciclo.excluir values (r.n, v_vaga, v_dona, r.c1);
+  end loop;
+end
+\$palco_excluir\$;
+SQL
+
+  psql -tA -F' ' -c "select n, vaga, dona, c1 from corrida_ciclo.excluir order by n" >"$TMP/excluir"
+  local ms
+  ms() { printf '0.%03d 0' "$(( RANDOM % 30 ))"; }
+  while read -r n vaga dona c1; do
+    lado excluir "$n" 1 ""   "select privado.excluir_conta('$dona')" "$(ms)"
+    lado excluir "$n" 2 "$c1" "select public.candidatar('$vaga')"    "$(ms)"
+    wait
+  done <"$TMP/excluir"
+
+  psql -tA -F' ' >"$TMP/excluir.res" <<'SQL'
+select e.n,
+       coalesce((select code from corrida_ciclo.placar p
+                  where p.cenario = 'excluir' and p.rodada = e.n and p.lado = '1'), 'nada'),
+       coalesce((select code from corrida_ciclo.placar p
+                  where p.cenario = 'excluir' and p.rodada = e.n and p.lado = '2'), 'nada'),
+       v.estado,
+       (select count(*) from public.posicao o where o.vaga_id = e.vaga and o.estado in ('aberta', 'confirmada')),
+       (select count(*) from public.posicao o where o.vaga_id = e.vaga and o.falta = true),
+       (select u.estado::text from public.usuario u where u.id = e.dona)
+  from corrida_ciclo.excluir e
+  join public.vaga v on v.id = e.vaga
+ order by e.n;
+SQL
+
+  local ruins confirmou impasses
+  ruins=$(awk '
+    # Desfecho 1: exclusão passa, recolhe a confirmação se houve (ou candidatura falha/aborta), vaga cancelada sem posição viva e sem falta
+    ($2 == "ok" && ($3 == "ok" || $3 == "vaga_encerrada" || $3 == "posicao_ja_preenchida" || $3 == "sqlstate:40P01") && $4 == "cancelada" && $5 == 0 && $6 == 0 && $7 == "anonimizada") { next }
+    # Desfecho 2: limite conhecido de 40P01 (CPD2c74A) — rollback consistente da exclusão, vaga preenchida pelo candidato
+    ($2 == "sqlstate:40P01" && $3 == "ok" && $4 == "preenchida" && $5 == 1 && $6 == 0 && $7 == "ativa") { next }
+    { print }' "$TMP/excluir.res")
+  confirmou=$(awk '$2 == "ok" && $3 == "ok"' "$TMP/excluir.res" | grep -c . || true)
+  impasses=$(grep -c 'sqlstate:40P01' "$TMP/excluir.res" || true)
+
+  if [ -z "$ruins" ]; then
+    ok "$RODADAS rodadas: toda vaga cancelada por excluir_conta terminou sem posição viva e sem falta ($confirmou confirmações no meio recolhidas, $impasses rollbacks por 40P01 residual CPD2c74A)"
+  else
+    falhou "rodadas fora da regra (rodada, excluir_conta, candidatar, estado vaga, posições vivas, faltas, conta dona):"
     printf '%s\n' "$ruins" | sed 's/^/      /' >&2
   fi
 }
