@@ -37,6 +37,7 @@ export interface SqlClient {
   gravarFalhaPush: (params: GravarFalhaPushParams) => Promise<void>;
   gravarAceitePush: (params: GravarAceitePushParams) => Promise<void>;
   removerTokenFcm: (token: string) => Promise<number>;
+  contextoDoPush?: (notificacaoId: string) => Promise<Record<string, unknown>>;
   obterConteudoPushLembrete?: (
     turnoId: string,
     usuarioId: string,
@@ -164,9 +165,12 @@ export interface VariaveisDoTexto {
   reaberta?: boolean;
   // Cancelamento feito por `reabrir_por_atraso` (caso 17 da planilha, cartão e8XpOZJN).
   reaberturaPorAtraso?: boolean;
+  // RN23: quantidade de vagas agrupadas
+  quantidade?: number;
 }
 
 export type ContextoDoTexto = VariaveisDoTexto;
+export type ContextoDoPush = VariaveisDoTexto;
 
 export function capitalizar(texto?: string): string {
   if (!texto) return "";
@@ -257,6 +261,10 @@ export async function buscarVariaveisDoTexto(
   return {};
 }
 
+// Os textos de vaga (casos 01 a 04) são os da planilha de notificações do design
+// (proposta de textos aprovada em 28/09). Os de vaga única usam a Opção B: a Opção A
+// interpola `{bairro_ou_regiao}`, e o banco ainda não tem a região — o endereço tem
+// número e não pode ir para a tela bloqueada. A região é cartão próprio.
 export function titulosECorposPorTipo(
   tipo: string,
   payload: Record<string, unknown> = {},
@@ -298,11 +306,19 @@ export function titulosECorposPorTipo(
           : "Nova vaga compatível com seu perfil. Toque para ver detalhes.",
       };
     }
-    case "vagas_agrupadas":
+    case "vagas_agrupadas": {
+      const q = variaveis.quantidade;
+      if (typeof q === "number" && Number.isInteger(q) && q >= 2) {
+        return {
+          title: "Vagas disponíveis",
+          body: `${q} vagas novas perto de você. Toque para conferir.`,
+        };
+      }
       return {
         title: "Vagas disponíveis",
-        body: "Novas vagas compatíveis com seu perfil no Frila.",
+        body: "Novas vagas compatíveis perto de você. Toque para conferir.",
       };
+    }
     case "confirmacao":
       return {
         title: "Turno confirmado",
@@ -478,6 +494,17 @@ export function criarSqlClient(deps?: Dependencias): SqlClient {
           select privado.remover_token_fcm(${token}::text) as removidos
         `;
         return Number(res[0]?.removidos ?? 0);
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+    async contextoDoPush(notificacaoId: string): Promise<Record<string, unknown>> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        const res = await sql`
+          select privado.contexto_do_push(${notificacaoId}::uuid) as contexto
+        `;
+        return (res[0]?.contexto ?? {}) as Record<string, unknown>;
       } finally {
         await sql.end({ timeout: 2 });
       }
@@ -689,6 +716,25 @@ export async function processarEnvioPush(
       payloadCompleto,
       (caminho) => fetchFn(`${supabaseUrl}/rest/v1/${caminho}`, { headers: dbHeaders }),
     );
+    if (n.urgente === true) {
+      variaveis.urgente = true;
+    }
+
+    if (n.tipo === "vagas_agrupadas") {
+      // A contagem da agrupada (RN23). Sem ela, o texto cai na Opção B da planilha, que
+      // não tem número: melhor um push sem contagem do que push nenhum.
+      try {
+        if (sqlClient.contextoDoPush) {
+          const ctx = await sqlClient.contextoDoPush(n.id);
+          if (ctx && typeof ctx.quantidade === "number") {
+            variaveis.quantidade = ctx.quantidade;
+          }
+        }
+      } catch (_e) {
+        // segue sem contagem
+      }
+    }
+
     let { title, body } = titulosECorposPorTipo(n.tipo, payloadCompleto, variaveis);
 
     if (n.tipo === "lembrete_24h" || n.tipo === "lembrete_3h") {
