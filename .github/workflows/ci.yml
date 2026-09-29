@@ -1,8 +1,12 @@
 name: CI
 
 on:
+  # `develop` é a base de todo PR desde 28/09, e o merge nela precisa passar pelos mesmos
+  # portões que o merge na `main`: um PR verde isolado não prova que dois PRs verdes,
+  # juntos, continuam verdes. O `pull_request` segue sem filtro de branch, então PR contra
+  # qualquer base roda a CI inteira.
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
 
 concurrency:
