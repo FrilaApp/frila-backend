@@ -113,6 +113,23 @@ caso "arquivo sem _ no nome reprova" 1 \
 caso "o arquivo que a CLI ignoraria é nomeado" 1 "20260927010000.sql" \
   20260927010000.sql 20260927010000_b.sql
 
+# ── A versão com zero à esquerda ───────────────────────────────────────────────
+#
+# `$((v + 1))` lê a versão como número, e número que começa com `0` o bash lê em base 8:
+# `020260927010000` tem dígitos 8 e 9, que não existem em octal, e a expansão falha com
+# *"value too great for base"*. O erro aborta o corpo do `while` **sem** disparar o
+# `set -e`, a execução retoma depois do `done` e pula o `exit 1` do bloco de colisão — o
+# portão imprime a colisão e sai **0** dizendo que as versões são distintas. Medido em
+# bash 3.2.57 e 5.2.21.
+#
+# A frase conferida é a do rodapé, e não a do cabeçalho, de propósito: o cabeçalho a
+# versão com o furo **imprime**, e um caso que o afirmasse seguiria verde sobre o portão
+# quebrado, pego só pelo código de saída. O rodapé é a última linha antes do `exit 1`, e
+# é exatamente o que o furo pula.
+caso "colisão em versão com zero à esquerda reprova" 1 \
+  "A versão é chave primária em supabase_migrations.schema_migrations" \
+  020260927010000_a.sql 020260927010000_b.sql
+
 echo
 if [ "$falhas" -ne 0 ]; then
   echo "$falhas de $casos casos falharam."

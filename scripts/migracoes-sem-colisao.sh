@@ -87,10 +87,17 @@ if [ -n "$repetidas" ]; then
     # A saída sugerida é por versão, e não uma linha genérica no fim: quem lê o vermelho
     # está com pressa, e uma sugestão com `<versao>` no lugar do número obriga a voltar
     # à lista de cima para completá-la.
+    #
+    # `10#` não é enfeite. Sem ele o bash lê a versão em base 8 quando ela começa com `0`,
+    # e `020260927010000` tem dígitos 8 e 9, que não existem em octal: a expansão falha
+    # com "value too great for base", o erro aborta o corpo deste `while` **sem** disparar
+    # o `set -e`, a execução retoma depois do `done` e pula o `exit 1` de baixo. O portão
+    # imprimia a colisão e saía **0** dizendo que as versões eram distintas — o silêncio
+    # exato que ele existe para impedir. Medido em bash 3.2.57 e 5.2.21.
     echo "    → renomeia quem ainda não entrou no main, porque migração já aplicada é"
     echo "      imutável. Um segundo de diferença basta:"
     echo "        git mv supabase/migrations/${v}_<nome>.sql \\"
-    echo "               supabase/migrations/$((v + 1))_<nome>.sql"
+    echo "               supabase/migrations/$((10#$v + 1))_<nome>.sql"
     echo
   done <<< "$repetidas"
   echo "A versão é chave primária em supabase_migrations.schema_migrations: o db reset"
