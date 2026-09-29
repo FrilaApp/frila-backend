@@ -334,7 +334,7 @@ resultado foi X"* tem que sair diferente de zero.
 > medido; nenhuma linha foi remedida depois. Antes de citar qualquer uma como fato atual,
 > meça.
 
-Quatro colunas do esquema não estão na Modelagem de Banco. Todas nasceram de uma RPC, e
+Cinco colunas do esquema não estão na Modelagem de Banco. Todas nasceram de uma RPC, e
 quem precisa reconciliar é o documento:
 
 | Coluna | Por quê |
@@ -343,6 +343,7 @@ quem precisa reconciliar é o documento:
 | `usuario.demonstracao` | conta de revisão da App Store; as duas populações dividem o banco sem se enxergar |
 | `turno.checkin_recebido_em` | `checkin_em` é a hora do **toque**; sem as duas, registro offline vira indistinguível |
 | `turno.checkout_recebido_em` | o mesmo, do outro lado |
+| `posicao.reaberta_por_atraso_de` | `reabrir_por_atraso` (e8XpOZJN, 28/09): a posição nova sabe de qual falta nasceu; é ela que aceita candidato depois do início, até 1 h antes do fim (8zLfn0mt item 5) |
 
 E mais estas:
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.18
+  version: 0.2.19
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -67,7 +67,7 @@ info:
     | 403 | `contato_expirado` | Contato pedido depois de 7 dias do fim do turno (RN10) |
     | 404 | `nao_encontrado` | O recurso não existe ou não é visível para quem pede (inclui bloqueio, RF26) |
     | 409 | `posicao_ja_preenchida` | Alguém chegou antes (RN19). **Funcionamento normal no modo urgência** |
-    | 409 | `vaga_encerrada` | A vaga fechou, foi cancelada ou já começou |
+    | 409 | `vaga_encerrada` | A vaga fechou, foi cancelada ou já começou. Posição reaberta por atraso: a partir de `fim_em - 1 h` |
     | 409 | `checkin_pendente` | Check-out ou confirmação de um turno que ainda não teve check-in. O código diz qual é o passo que falta |
     | 409 | `checkin_ja_confirmado` | Confirmação de um check-in geolocalizado, que já nasceu verificado |
     | 409 | `posicao_nao_cancelavel` | A posição não está confirmada: aberta não tem o que cancelar, cumprida ou já cancelada não volta atrás |
@@ -92,6 +92,49 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.19, de 28/09/2026.** Posição reaberta por atraso aceita candidatura depois
+    do início do turno (decisão 8zLfn0mt, item 5, aprovada e registrada no cartão em
+    28/09/2026). Até aqui, vaga cujo início já passou recusava `candidatar` com
+    `409 vaga_encerrada`, e a reabertura de `reabrir_por_atraso` nascia sem ter quem a pegasse.
+    Nenhuma assinatura, campo ou código de erro é novo, mas mudam regras de leitura, e uma delas
+    vale para **toda** vaga:
+
+    - **O prazo é o fim previsto menos 1 h.** A posição aberta por `reabrir_por_atraso` aceita
+      candidatura enquanto o relógio do servidor estiver antes de `fim_em - 1 h`. Depois disso,
+      `409 vaga_encerrada`, como qualquer vaga encerrada. A hora que falta até o fim dá ao
+      substituto da região tempo de chegar e ainda cobrir o resto do serviço.
+    - **A exceção é da posição, não da vaga.** `candidatar` recebe a vaga e o servidor escolhe
+      a posição. Antes do início, vale qualquer posição `aberta`, como sempre. Depois do início,
+      o servidor só escolhe posição criada por `reabrir_por_atraso`, e só até `fim_em - 1 h`.
+      Posição original que ficou `aberta` sem ninguém não é oferecida depois do início, mesmo
+      numa vaga que tem, ao lado dela, uma posição reaberta por atraso. Vaga que já começou e
+      não tem posição reaberta por atraso `aberta` dentro do prazo responde
+      `409 vaga_encerrada`; perder a corrida pela posição reaberta é `409 posicao_ja_preenchida`,
+      como antes do início.
+    - **`posicoes_abertas` conta o que se pode pegar.** Na lista e no detalhe, depois do
+      início, o campo conta só as posições reabertas por atraso ainda dentro do prazo. Fora do
+      prazo, ou sem reabertura, é `0`. Antes do início, nada muda.
+    - **Regra nova para toda vaga: `vagas_abertas` esconde vaga que já começou.** Até a 0.2.18
+      o contrato não dizia nada, e a vaga `publicada` continuava na lista até o fim, porque ela
+      só passa a `encerrada` depois de `fim_em`. A partir da 0.2.19, vaga cujo início já passou
+      sai da lista, salvo a que tem posição reaberta por atraso dentro do prazo. Ela sai no
+      mesmo instante em que `candidatar` passa a recusar.
+    - **`detalhe_vaga` continua respondendo fora do prazo.** Responde `200` com a vaga e o
+      `estado` real (o início não muda o estado da vaga: a `publicada` segue `publicada` até
+      o fim) e `posicoes_abertas = 0`. Não vira `404`,
+      para que o toque numa notificação antiga abra a vaga em vez de cair em erro. A tela
+      mostra o botão de candidatura só com `estado = publicada` e `posicoes_abertas > 0`, e
+      nunca decide pelo relógio do aparelho. O `404` continua só para bloqueio (RF26) e conta
+      de demonstração.
+    - **O valor não muda.** O valor anunciado é o do turno inteiro (RN01), mesmo para quem
+      chega com o turno em andamento. A tela de reabertura deve dizer isso ao contratante.
+    - **Modo seleção.** Na v1.0 toda vaga é de urgência (`modo = selecao` é recusado), e a
+      posição reaberta por atraso confirma o primeiro elegível na hora. Como a vaga em seleção
+      fecha 24 h antes do início (RN24), a reabertura por atraso não cabe nela; a regra para a
+      v1.1 fica para quando o modo seleção entrar.
+
+    ---
 
     **Versão 0.2.18, de 26/09/2026.** Exclusão de conta e proteção de escrita para contas
     encerradas (RF25, RN15). A exclusão de conta agora conta com a Edge Function
@@ -1315,6 +1358,11 @@ paths:
         15 km vale só para a notificação (B07). Vagas de estabelecimentos com bloqueio entre as partes
         não aparecem (RF26). A ordem não pode ser comprada (RN06).
 
+        Vaga cujo início já passou não aparece (regra da 0.2.19, vale para toda vaga), com uma
+        exceção: a que tem posição reaberta por atraso (`reabrir_por_atraso`) `aberta` continua na
+        lista até `fim_em - 1 h` (decisão 8zLfn0mt, item 5) — o mesmo prazo em que `candidatar` a
+        aceita. Depois do início, `posicoes_abertas` conta só essas posições reabertas.
+
         É a tela de quem procura turno: conta de contratante recebe `422 perfil_incompativel`.
         `limite` fora de 1..100 e `deslocamento` negativo são `422 campo_invalido` com o nome do
         parâmetro em `details`. Sem coordenada e sem ponto base no perfil, `422 campo_obrigatorio`
@@ -1390,6 +1438,13 @@ paths:
         Conta de contratante recebe `422 perfil_incompativel`. Vaga que o profissional não deveria
         alcançar — bloqueio entre as partes (RF26) ou conta de demonstração — responde
         `404 nao_encontrado`, e não `403`: o 403 confirmaria que ela existe.
+
+        **Depois do início**, o detalhe continua respondendo `200`, com o `estado` real (o início
+        não muda o estado da vaga: a `publicada` segue `publicada` até o fim). `posicoes_abertas` conta só as posições reabertas por atraso
+        (`reabrir_por_atraso`) ainda antes de `fim_em - 1 h` (decisão 8zLfn0mt, item 5); fora
+        desse prazo, ou sem reabertura, é `0`. Não há `404` por horário: o toque numa notificação
+        antiga abre a vaga. A tela mostra o botão de candidatura só com `estado = publicada` e
+        `posicoes_abertas > 0`, nunca pelo relógio do aparelho.
       x-requisitos: [RF04, RF16, RN02, UC03]
       parameters:
         - name: vaga_id
@@ -1434,6 +1489,13 @@ paths:
         fechou porque encheu. `vaga_encerrada` fica para a vaga cancelada, encerrada ou cujo início
         já passou. Vaga escondida por bloqueio ou por demonstração responde `404 nao_encontrado`,
         igual a `detalhe_vaga`.
+
+        **Exceção: posição reaberta por atraso** (`reabrir_por_atraso`) aceita candidatura após o
+        início, até `fim_em - 1 h` (decisão 8zLfn0mt, item 5). A exceção é da posição: depois do
+        início, o servidor só escolhe posição criada por `reabrir_por_atraso`, nunca uma posição
+        original que ficou `aberta` sem ninguém. Vaga começada sem posição reaberta `aberta`
+        dentro do prazo responde `409 vaga_encerrada`; perder a corrida pela posição reaberta é
+        `409 posicao_ja_preenchida`. O valor continua o anunciado para o turno inteiro (RN01).
       x-requisitos: [RF08, RF09, RF10, RF11, RN03, RN10, RN19, RN21, RN24, UC03, UC04]
       requestBody:
         required: true
