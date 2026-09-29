@@ -198,6 +198,16 @@ select pg_temp.guarda('cancelarVaga', pg_temp.como('cc000000-0000-4000-8000-0000
   $$ select public.cancelar_vaga(%L::uuid, 'evento adiado') $$,
   ((select r from vaga2)->>'vaga_id')::uuid)));
 
+-- ── A configuração do app, sem sessão ─────────────────────────────────────────
+--
+-- É a única RPC que o app chama antes de entrar, então colhe como `anon`, e não pelo
+-- `pg_temp.como`, que monta sessão. O `anon` não escreve em `colhido`: a resposta passa
+-- por uma variável do psql e é guardada depois de voltar ao papel de antes.
+set local role anon;
+select public.configuracao_do_app('ios')::text as configuracao \gset
+reset role;
+select pg_temp.guarda('configuracaoDoApp', :'configuracao'::jsonb);
+
 -- ── As recusas, no envelope do contrato ───────────────────────────────────────
 --
 -- Uma por código de erro que as RPCs da v1.0 levantam. O validador confere cada uma
@@ -237,6 +247,29 @@ select pg_temp.guarda('erro:horario_invalido',
 select pg_temp.guarda('erro:avaliacao_indisponivel',
   pg_temp.recusa('cc000000-0000-4000-8000-000000000001', format(
     $$ select public.avaliar(%L::uuid, true) $$, ((select r from cand2)->>'turno_id')::uuid)));
+
+-- ── Reabrir por atraso ────────────────────────────────────────────────────────
+--
+-- Por último, porque anda o relógio para fevereiro: as recusas acima dependem do relógio
+-- de janeiro. Um turno confirmado sem check-in, a recusa antes dos 15 minutos e a
+-- reabertura depois deles.
+create temp table vaga3 as
+  select pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.republicar_vaga(%L::uuid, '2027-02-01 21:00:00+00'::timestamptz,
+         '2027-02-02 03:00:00+00'::timestamptz, %L::uuid) $$,
+    ((select r from vaga1)->>'vaga_id')::uuid, gen_random_uuid())) as r;
+create temp table cand3 as
+  select pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.candidatar(%L::uuid) $$, ((select r from vaga3)->>'vaga_id')::uuid)) as r;
+
+set local frila.agora = '2027-02-01 21:05:00+00';
+select pg_temp.guarda('erro:reabertura_antes_da_tolerancia',
+  pg_temp.recusa('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.reabrir_por_atraso(%L::uuid) $$, ((select r from cand3)->>'posicao_id')::uuid)));
+
+set local frila.agora = '2027-02-01 21:20:00+00';
+select pg_temp.guarda('reabrirPorAtraso', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.reabrir_por_atraso(%L::uuid) $$, ((select r from cand3)->>'posicao_id')::uuid)));
 
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o
