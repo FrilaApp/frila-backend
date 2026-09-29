@@ -15,9 +15,9 @@
 --   gatilho: espera P
 --                                                     update de V: espera V → 40P01
 --
--- Todos os caminhos travam a posição antes da vaga; o gatilho do #60 era o único que
--- esperava uma posição segurando a vaga. Agora ele pula a posição que outra transação
--- segura (`skip locked`), e quem a segura confere a vaga, travada, antes de reabrir.
+-- A correção é a ordem das travas: em turno futuro, todo caminho trava a vaga antes da
+-- posição (`candidatar` por `travar_candidatura`, `cancelar_uma_posicao`), e o gatilho,
+-- que já segura a vaga, trava as posições por id e espera.
 --
 -- O pgTAP roda numa sessão só e não abre a segunda transação. O que ele faz é pôr cada
 -- lado no estado em que fica depois da espera: a desistência encontra a vaga já
@@ -28,7 +28,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(11);
+select plan(12);
 
 create function pg_temp.conta(id uuid, email text, perfil public.perfil_conta, fone text)
 returns void
@@ -54,6 +54,18 @@ begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', conta, 'role', 'authenticated')::text, true);
   r := privado.cancelar_uma_posicao(posicao, conta, 'imprevisto de família', true);
+  perform set_config('request.jwt.claims', '', true);
+  return r;
+end $$;
+
+-- O laço das confirmadas de `cancelar_vaga`: a casa cancela sem reabrir.
+create function pg_temp.como_casa(conta uuid, posicao uuid) returns jsonb
+language plpgsql as $$
+declare r jsonb;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', conta, 'role', 'authenticated')::text, true);
+  r := privado.cancelar_uma_posicao(posicao, conta, 'a casa fechou', false);
   perform set_config('request.jwt.claims', '', true);
   return r;
 end $$;
@@ -165,18 +177,70 @@ select is((select count(*)::int from public.ocorrencia
 
 -- ── A ordem das travas ──────────────────────────────────────────────────────
 --
--- O que o pgTAP não alcança numa sessão só, ele confere no texto: o gatilho não espera
--- posição travada, e a reabertura trava a vaga antes de criar a posição nova.
+-- Numa sessão só não se vê quem espera quem, mas se vê o que cada caminho trava. O
+-- `pgrowlocks` lê as travas de linha da própria transação: `candidatar` e a desistência
+-- de turno futuro seguram a vaga (e o fazem antes da posição, no código); a de turno já
+-- começado não, porque `reabrir_por_atraso` trava a posição primeiro.
 
-select ok(
-  pg_get_functiondef('privado.vaga_cancelada_recolhe_confirmadas()'::regprocedure)
-    ~* 'for\s+no\s+key\s+update\s+skip\s+locked',
-  'o gatilho da vaga cancelada pula a posição que outra transação segura (skip locked)');
+create extension if not exists pgrowlocks with schema extensions;
 
-select ok(
-  pg_get_functiondef('privado.cancelar_uma_posicao(uuid, uuid, text, boolean)'::regprocedure)
-    ~* 'from\s+public\.vaga\s+g\s+where\s+g\.id\s*=\s*v_pos\.vaga_id\s+for\s+no\s+key\s+update',
-  'a reabertura trava a vaga antes de criar a posição nova');
+-- A inserção de uma posição já segura `key share` na vaga (a chave estrangeira); o que
+-- importa aqui é a trava de escrita, a que o gatilho e as outras escritas disputam.
+create function pg_temp.vaga_travada(p_vaga uuid) returns text
+language sql as $$
+  select case when exists (
+    select 1
+      from extensions.pgrowlocks('public.vaga') r, unnest(r.modes) m
+     where r.locked_row = (select g.ctid from public.vaga g where g.id = p_vaga)
+       and r.locker::text = (pg_current_xact_id()::text::bigint % 4294967296)::text
+       and m in ('For No Key Update', 'For Update', 'No Key Update', 'Update'))
+    then 'travada' else 'livre' end
+$$;
+
+-- a3: vaga publicada para a candidatura. a4 e a5: preenchidas, com a posição
+-- confirmada de e1 em turno futuro (a4) e já começado (a5).
+insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+                         valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+                         exige_material_proprio, responsavel_local, modo, estado,
+                         chave_cliente, publicado_por)
+select x.id, 'c5e00000-0000-4000-8000-0000000000c1',
+       (select id from public.funcao where nome = 'garçom'),
+       now() + x.desloca, now() + x.desloca + interval '6 hours',
+       'SCLN 307', 'POINT(-47.8860 -15.7910)'::extensions.geography,
+       18000, 1, true, true, false, 'Seu Zé', 'urgencia', x.estado::public.estado_vaga,
+       gen_random_uuid(), 'c5e00000-0000-4000-8000-0000000000d1'
+  from (values ('c5e00000-0000-4000-8000-0000000000a3'::uuid, 'publicada',  interval '2 days'),
+               ('c5e00000-0000-4000-8000-0000000000a4'::uuid, 'preenchida', interval '3 days'),
+               ('c5e00000-0000-4000-8000-0000000000a5'::uuid, 'preenchida', interval '-1 hour')
+       ) x(id, estado, desloca);
+
+insert into public.posicao (id, vaga_id, inicio_em, fim_em, estado, profissional_id, confirmado_em)
+select x.pos, v.id, v.inicio_em, v.fim_em, 'confirmada',
+       'c5e00000-0000-4000-8000-0000000000f1', now() - interval '1 day'
+  from (values ('c5e00000-0000-4000-8000-0000000000b4'::uuid, 'c5e00000-0000-4000-8000-0000000000a4'::uuid),
+               ('c5e00000-0000-4000-8000-0000000000b5'::uuid, 'c5e00000-0000-4000-8000-0000000000a5'::uuid)
+       ) x(pos, vaga)
+  join public.vaga v on v.id = x.vaga;
+
+select privado.travar_candidatura('c5e00000-0000-4000-8000-0000000000a3',
+                                  'c5e00000-0000-4000-8000-0000000000f1');
+
+select is(pg_temp.vaga_travada('c5e00000-0000-4000-8000-0000000000a3'), 'travada',
+  'candidatar trava a vaga na primeira trava que pede (travar_candidatura)');
+
+-- A casa cancela a posição de a4 sem reabrir, como o laço de cancelar_vaga: nada muda
+-- na vaga, e mesmo assim ela fica travada.
+select pg_temp.como_casa('c5e00000-0000-4000-8000-0000000000d1',
+                         'c5e00000-0000-4000-8000-0000000000b4');
+
+select is(pg_temp.vaga_travada('c5e00000-0000-4000-8000-0000000000a4'), 'travada',
+  'o cancelamento de turno futuro trava a vaga, mesmo sem reabrir');
+
+select pg_temp.como_casa('c5e00000-0000-4000-8000-0000000000d1',
+                         'c5e00000-0000-4000-8000-0000000000b5');
+
+select is(pg_temp.vaga_travada('c5e00000-0000-4000-8000-0000000000a5'), 'livre',
+  'o de turno já começado não trava a vaga: a ordem ali é a de reabrir_por_atraso');
 
 select * from finish();
 rollback;
