@@ -8,7 +8,8 @@
 -- Requisitos: RF18, RN05, RN16, RN23, UC11, UC02. Cartão: jl6nbekI.
 --
 -- Decisões de desenho:
---   1. Apenas membros do estabelecimento podem consultar ou alterar a equipe (RF21, UC11).
+--   1. Membros do estabelecimento podem consultar a equipe; incluir ou remover exige
+--      ser administrador do estabelecimento (RF21, UC11, contrato meus_estabelecimentos).
 --   2. Inclusão exige que o profissional tenha cumprido ao menos um turno com presença
 --      verificada (t.verificacao = 'verificado') no estabelecimento. Caso contrário,
 --      recusa com 403 sem_permissao (detalhe: 'sem_turno_cumprido').
@@ -88,8 +89,8 @@ begin
     perform public.erro(403, 'sem_permissao', 'conta_suspensa');
   end if;
 
-  -- RF21: apenas membro do estabelecimento
-  if not privado.eh_membro(incluir_na_equipe.estabelecimento_id) then
+  -- RF21: apenas administrador do estabelecimento pode alterar a equipe (operador não mexe na equipe)
+  if not privado.eh_administrador(incluir_na_equipe.estabelecimento_id) then
     perform public.erro(403, 'sem_permissao');
   end if;
 
@@ -168,7 +169,8 @@ begin
     perform public.erro(403, 'sem_permissao', 'conta_suspensa');
   end if;
 
-  if not privado.eh_membro(remover_da_equipe.estabelecimento_id) then
+  -- RF21: apenas administrador do estabelecimento pode alterar a equipe (operador não mexe na equipe)
+  if not privado.eh_administrador(remover_da_equipe.estabelecimento_id) then
     perform public.erro(403, 'sem_permissao');
   end if;
 

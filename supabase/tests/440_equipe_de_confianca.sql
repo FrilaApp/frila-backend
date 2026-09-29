@@ -14,7 +14,7 @@
 --      além dos 15 km a partir da próxima vaga.
 
 begin;
-select plan(29);
+select plan(32);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb
 language plpgsql as $$
@@ -62,6 +62,7 @@ select ok(not has_function_privilege('anon', 'public.remover_da_equipe(uuid, uui
 --   e90004: Ana (profissional garçom, ponto base a ~30 km do Bar do Zé)
 --   e90005: Beto (profissional garçom, ponto base a ~30 km do Bar do Zé, sem turno cumprido)
 --   e90006: Caio (profissional anonimizado)
+--   e90007: Otávio (contratante ativo, operador do Bar do Zé)
 
 insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado, anonimizado_em) values
   ('e9000000-0000-4000-8000-000000000001', 'contratante', 'Zé', '+5561999990001', 'ze@e9.test', '1980-01-01', '2026-09-22', now(), 'ativa', null),
@@ -69,7 +70,8 @@ insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termo
   ('e9000000-0000-4000-8000-000000000003', 'contratante', 'Hugo', '+5561999990003', 'hugo@e9.test', '1985-01-01', '2026-09-22', now(), 'suspensa', null),
   ('e9000000-0000-4000-8000-000000000004', 'profissional', 'Ana', '+5561999990004', 'ana@e9.test', '1995-01-01', '2026-09-22', now(), 'ativa', null),
   ('e9000000-0000-4000-8000-000000000005', 'profissional', 'Beto', '+5561999990005', 'beto@e9.test', '1996-01-01', '2026-09-22', now(), 'ativa', null),
-  ('e9000000-0000-4000-8000-000000000006', 'profissional', 'Conta encerrada', null, null, '1997-01-01', '2026-09-22', now(), 'anonimizada', now());
+  ('e9000000-0000-4000-8000-000000000006', 'profissional', 'Conta encerrada', null, null, '1997-01-01', '2026-09-22', now(), 'anonimizada', now()),
+  ('e9000000-0000-4000-8000-000000000007', 'contratante', 'Otávio', '+5561999990007', 'otavio@e9.test', '1988-01-01', '2026-09-22', now(), 'ativa', null);
 
 -- Bar do Zé: Plano Piloto (-47.8822, -15.7942)
 -- Ponto a ~30 km: (-48.1500, -15.8500)
@@ -82,7 +84,8 @@ insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto) 
 insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel) values
   ('e9000000-0000-4000-8000-000000000001', 'e9000000-0000-4000-8000-000000000010', 'administrador'),
   ('e9000000-0000-4000-8000-000000000002', 'e9000000-0000-4000-8000-000000000020', 'administrador'),
-  ('e9000000-0000-4000-8000-000000000003', 'e9000000-0000-4000-8000-000000000010', 'operador');
+  ('e9000000-0000-4000-8000-000000000003', 'e9000000-0000-4000-8000-000000000010', 'administrador'),
+  ('e9000000-0000-4000-8000-000000000007', 'e9000000-0000-4000-8000-000000000010', 'operador');
 
 -- Profissionais: ponto base a 30 km
 insert into public.profissional (id, usuario_id, ponto_base) values
@@ -156,6 +159,19 @@ select throws_ok(
   'PGRST', pg_temp.erro('sem_permissao'),
   'membro de outra casa não altera equipe do Bar do Zé (403)');
 
+-- Operador não mexe na equipe: 403 sem_permissao (RF21, contrato meus_estabelecimentos)
+select throws_ok(
+  $$ select pg_temp.como('e9000000-0000-4000-8000-000000000007',
+     'select public.incluir_na_equipe(''e9000000-0000-4000-8000-000000000010'', ''e9000000-0000-4000-8000-000000000014'')') $$,
+  'PGRST', pg_temp.erro('sem_permissao'),
+  'operador recebe 403 sem_permissao ao incluir na equipe');
+
+select throws_ok(
+  $$ select pg_temp.como('e9000000-0000-4000-8000-000000000007',
+     'select public.remover_da_equipe(''e9000000-0000-4000-8000-000000000010'', ''e9000000-0000-4000-8000-000000000014'')') $$,
+  'PGRST', pg_temp.erro('sem_permissao'),
+  'operador recebe 403 sem_permissao ao remover da equipe');
+
 -- Conta suspensa: 403 conta_suspensa
 select throws_ok(
   $$ select pg_temp.como('e9000000-0000-4000-8000-000000000003',
@@ -225,6 +241,12 @@ select is(
      'select public.equipe_de_confianca(''e9000000-0000-4000-8000-000000000010'')')->0->>'nome'),
   'Ana',
   'equipe_de_confianca lista o PerfilPublico da Ana');
+
+select is(
+  (pg_temp.como('e9000000-0000-4000-8000-000000000007',
+     'select public.equipe_de_confianca(''e9000000-0000-4000-8000-000000000010'')')->0->>'nome'),
+  'Ana',
+  'operador consegue listar a equipe de confiança do seu estabelecimento');
 
 select is(
   pg_temp.como('e9000000-0000-4000-8000-000000000002',
