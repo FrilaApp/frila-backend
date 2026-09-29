@@ -53,9 +53,13 @@ select columns_are('public', 'turno', array[
   'verificacao','valor_acordado_centavos'
 ], 'turno tem exatamente as colunas da Modelagem, mais a hora em que o servidor recebeu');
 
+-- `reaberta_por_atraso_de` não está na Modelagem: veio de `reabrir_por_atraso` (cartão
+-- e8XpOZJN), que precisa saber qual posição aceita candidato depois do início e qual
+-- posição nova já nasceu de uma falta. Divergência registrada em docs/ESTADO.md.
 select columns_are('public', 'posicao', array[
-  'id','vaga_id','estado','profissional_id','confirmado_em','falta','inicio_em','fim_em'
-], 'posicao tem exatamente as colunas da Modelagem');
+  'id','vaga_id','estado','profissional_id','confirmado_em','falta','inicio_em','fim_em',
+  'reaberta_por_atraso_de'
+], 'posicao tem exatamente as colunas da Modelagem, mais a marca da reabertura por atraso');
 
 -- `termos_versao` e `termos_aceite_em` não estão na Modelagem: vieram do cartão da
 -- entrada por código, que manda gravar o aceite. Guardar "aceitou" como booleano não

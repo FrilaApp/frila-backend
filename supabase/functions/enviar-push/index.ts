@@ -121,13 +121,17 @@ export function calcularProximaTentativa(
 }
 
 // Variáveis do texto, lidas no banco na hora do envio (Op. A da planilha de
-// notificações, aprovada em 28/09). Só dado do turno — nome da função do catálogo e
-// horário —, nunca de pessoa, telefone ou endereço (RN10, RN15). Ausentes, o texto cai na
-// Op. B da mesma planilha.
+// notificações, aprovada em 28/09, e casos de texto variável por ocorrência).
+// Só dado do turno — nome da função do catálogo e horário —, nunca de pessoa, telefone
+// ou endereço (RN10, RN15). Ausentes, o texto cai na Op. B da mesma planilha.
 export interface VariaveisDoTexto {
   funcao?: string;
   horario?: string;
+  // Cancelamento feito por `reabrir_por_atraso` (caso 17 da planilha, cartão e8XpOZJN).
+  reaberturaPorAtraso?: boolean;
 }
+
+export type ContextoDoTexto = VariaveisDoTexto;
 
 // Horário de Brasília em 24 h ("18:00"): o DF não tem horário de verão, e o banco
 // guarda UTC (RN18).
@@ -143,7 +147,7 @@ export function formatarHorario(iso: string): string | undefined {
 }
 
 // Lê as variáveis de que o texto do tipo precisa. Falha de leitura não segura o push:
-// devolve vazio, e o texto sai pela Op. B.
+// devolve vazio, e o texto sai pelo fallback genérico / Op. B.
 export async function buscarVariaveisDoTexto(
   tipo: string,
   payload: Record<string, unknown> | null | undefined,
@@ -161,6 +165,20 @@ export async function buscarVariaveisDoTexto(
       return {
         funcao: linha?.vaga?.funcao?.nome ?? undefined,
         horario: linha?.inicio_em ? formatarHorario(linha.inicio_em) : undefined,
+      };
+    }
+    if (tipo === "cancelamento") {
+      const posicaoId = payload?.posicao_id;
+      if (typeof posicaoId !== "string" || !UUID_REGEX.test(posicaoId)) return {};
+      // O motivo é estável (`reabertura_por_atraso`) e fica no banco; o texto muda, o
+      // payload não. Falha de leitura cai no texto genérico em vez de segurar o push.
+      const ocoRes = await consultar(
+        `ocorrencia?posicao_id=eq.${posicaoId}&tipo=eq.cancelamento&motivo=eq.reabertura_por_atraso&select=id&limit=1`,
+      );
+      if (!ocoRes.ok) return {};
+      const linhas = await ocoRes.json();
+      return {
+        reaberturaPorAtraso: Array.isArray(linhas) && linhas.length > 0,
       };
     }
   } catch {
@@ -200,15 +218,16 @@ export function titulosECorposPorTipo(
         title: "Lembrete de turno",
         body: "Seu turno começa em 3 horas. Prepare-se.",
       };
+    // Casos 13 e 16 da planilha de notificações (cartão e8XpOZJN).
     case "inicio_sem_checkin":
       return {
-        title: "Hora de iniciar o turno",
-        body: "O horário do turno começou. Não se esqueça de registrar o check-in.",
+        title: "Horário de início do turno",
+        body: "O horário de início chegou. Faça seu check-in ao chegar ao local.",
       };
     case "atraso_15min":
       return {
-        title: "Alerta de atraso",
-        body: "Check-in ainda não registrado 15 minutos após o início do turno.",
+        title: "Check-in pendente há 15 min",
+        body: "O profissional ainda não registrou presença. Você pode aguardar ou reabrir a vaga.",
       };
     case "fim_sem_checkout":
       return {
@@ -234,6 +253,13 @@ export function titulosECorposPorTipo(
         body: "Check-in manual registrado, aguardando confirmação do contratante.",
       };
     case "cancelamento":
+      // Caso 17 da planilha: a casa reabriu a vaga por falta de check-in.
+      if (variaveis.reaberturaPorAtraso) {
+        return {
+          title: "Turno cancelado por atraso",
+          body: "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.",
+        };
+      }
       return {
         title: "Aviso de cancelamento",
         body: "Houve um cancelamento relacionado ao seu turno ou vaga.",
@@ -434,7 +460,6 @@ export async function processarEnvioPush(
       continue;
     }
 
-    // 3. Monta o payload do FCM aplicando whitelist estrita (RN15)
     const variaveis = await buscarVariaveisDoTexto(
       n.tipo,
       n.payload,
