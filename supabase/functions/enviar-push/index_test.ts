@@ -1584,3 +1584,89 @@ Deno.test("x0jkygj0: buscarVariaveisDoTexto lê turno, estabelecimento e região
   assertEquals(vars.horario, "19:00");
 });
 
+Deno.test("x0jkygj0: processarEnvioPush envia lembrete com {estabelecimento} ({regiao}) sem ser sobrescrito", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const notificacaoLembrete = {
+    id: "e0000000-0000-4000-8000-000000000099",
+    usuario_id: "a3000000-0000-4000-8000-000000000001",
+    tipo: "lembrete_24h",
+    referencia_id: "f4000000-0000-4000-8000-000000000001",
+    payload: { turno_id: "f4000000-0000-4000-8000-000000000001" },
+    tentativas: 0,
+    estado_entrega: "pendente",
+  };
+
+  // deno-lint-ignore no-explicit-any
+  let fcmEnviado: any = null;
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+
+    if (url === "http://mock-oauth/token") {
+      return Promise.resolve(new Response(JSON.stringify({ access_token: "token-123" }), { status: 200 }));
+    }
+    if (url.includes("/rest/v1/notificacao")) {
+      return Promise.resolve(new Response(JSON.stringify([notificacaoLembrete]), { status: 200 }));
+    }
+    if (url.includes("/rest/v1/dispositivo")) {
+      return Promise.resolve(new Response(JSON.stringify([{ id: "disp-1", token_fcm: "fcm-tok-1", plataforma: "ios" }]), { status: 200 }));
+    }
+    if (url.includes("/rest/v1/turno?id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              posicao: {
+                inicio_em: "2026-10-15T22:00:00Z", // 19:00 em Brasília
+                vaga: {
+                  regiao_administrativa: "Asa Sul",
+                  funcao: { nome: "garçom" },
+                  estabelecimento: { nome: "Bar Beirute" },
+                },
+              },
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    if (url.includes("/messages:send")) {
+      fcmEnviado = JSON.parse(init?.body as string);
+      return Promise.resolve(new Response(JSON.stringify({ name: "msg-123" }), { status: 200 }));
+    }
+
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: {
+      "x-agendador-secret": SEGREDO_TESTE,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({}),
+  });
+
+  const res = await processarEnvioPush(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient: criarMockSqlClient({
+      notificacaoExpirada: false,
+      obterConteudoPushLembrete: () => Promise.resolve({
+        title: "Lembrete desatualizado",
+        body: "Garçom em Bar Beirute amanhã às 19:00.", // sem região
+      }),
+    }),
+  });
+
+  assertEquals(res.status, 200);
+  if (!fcmEnviado) {
+    throw new Error("fcmEnviado não deveria ser nulo");
+  }
+  assertEquals(fcmEnviado.message.notification.title, "Lembrete de turno amanhã");
+  assertEquals(fcmEnviado.message.notification.body, "Garçom em Bar Beirute (Asa Sul) amanhã às 19:00.");
+});
+
+

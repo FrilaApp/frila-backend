@@ -809,3 +809,81 @@ comment on function privado.turno_em_json(uuid, uuid) is
 
 revoke execute on function privado.turno_em_json(uuid, uuid) from public, anon, authenticated;
 grant  execute on function privado.turno_em_json(uuid, uuid) to service_role;
+
+-- ── 10. privado.obter_conteudo_push_lembrete ──────────────────────────────────
+-- x0jkygj0: pushes 09 e 11 interpolam local como {estabelecimento} ({regiao}).
+create or replace function privado.obter_conteudo_push_lembrete(
+  p_turno_id   uuid,
+  p_usuario_id uuid,
+  p_tipo       text
+)
+returns jsonb
+language plpgsql
+security definer
+stable
+set search_path = ''
+as $$
+declare
+  v_turno     record;
+  v_eh_prof   boolean;
+  v_funcao    text;
+  v_estab     text;
+  v_local     text;
+  v_horario   text;
+  v_title     text;
+  v_body      text;
+begin
+  select t.id,
+         p.inicio_em,
+         p.profissional_id,
+         v.estabelecimento_id,
+         v.regiao_administrativa,
+         f.nome as funcao_nome,
+         e.nome as estab_nome
+    into v_turno
+    from public.turno t
+    join public.posicao p on p.id = t.posicao_id
+    join public.vaga v on v.id = p.vaga_id
+    join public.funcao f on f.id = v.funcao_id
+    join public.estabelecimento e on e.id = v.estabelecimento_id
+   where t.id = p_turno_id;
+
+  if not found then
+    return null;
+  end if;
+
+  v_eh_prof := (privado.usuario_do_profissional(v_turno.profissional_id) = p_usuario_id);
+  v_funcao  := concat(upper(substring(v_turno.funcao_nome from 1 for 1)), substring(v_turno.funcao_nome from 2));
+  v_estab   := v_turno.estab_nome;
+  v_local   := case when v_turno.regiao_administrativa is not null and btrim(v_turno.regiao_administrativa) <> ''
+                    then format('%s (%s)', v_estab, v_turno.regiao_administrativa)
+                    else v_estab end;
+  v_horario := to_char(v_turno.inicio_em at time zone 'America/Sao_Paulo', 'HH24:MI');
+
+  if v_eh_prof then
+    if p_tipo = 'lembrete_24h' then
+      v_title := 'Lembrete de turno amanhã';
+      v_body  := format('%s em %s amanhã às %s.', v_funcao, v_local, v_horario);
+    elsif p_tipo = 'lembrete_3h' then
+      v_title := 'Seu turno começa em 3 horas';
+      v_body  := format('%s em %s às %s. Planeje seu trajeto.', v_funcao, v_local, v_horario);
+    end if;
+  else
+    if p_tipo = 'lembrete_24h' then
+      v_title := 'Turno agendado para amanhã';
+      v_body  := format('Turno de %s confirmado para amanhã às %s.', v_turno.funcao_nome, v_horario);
+    elsif p_tipo = 'lembrete_3h' then
+      v_title := 'Turno em 3 horas';
+      v_body  := format('Turno de %s começa às %s. O profissional foi lembrado.', v_turno.funcao_nome, v_horario);
+    end if;
+  end if;
+
+  return jsonb_build_object('title', v_title, 'body', v_body);
+end $$;
+
+comment on function privado.obter_conteudo_push_lembrete(uuid, uuid, text) is
+  'Monta título e corpo dos lembretes de 24h e 3h segundo a Opção A homologada (proposta-textos.md). Local utiliza {estabelecimento} ({regiao}) per x0jkygj0 e RN10.';
+
+revoke execute on function privado.obter_conteudo_push_lembrete(uuid, uuid, text) from public, anon, authenticated;
+grant execute on function privado.obter_conteudo_push_lembrete(uuid, uuid, text) to service_role;
+

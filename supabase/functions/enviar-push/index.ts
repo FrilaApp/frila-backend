@@ -693,7 +693,7 @@ export async function processarEnvioPush(
 
     if (n.tipo === "lembrete_24h" || n.tipo === "lembrete_3h") {
       try {
-        if (sqlClient.obterConteudoPushLembrete) {
+        if (sqlClient.obterConteudoPushLembrete && (!variaveis.funcao || !variaveis.estabelecimento)) {
           const dados = await sqlClient.obterConteudoPushLembrete(
             n.referencia_id,
             n.usuario_id,
