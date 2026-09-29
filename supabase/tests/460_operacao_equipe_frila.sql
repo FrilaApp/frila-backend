@@ -10,7 +10,7 @@
 
 begin;
 
-select plan(36);
+select plan(41);
 
 set local frila.agendador_secret = 'segredo-de-teste';
 
@@ -130,57 +130,83 @@ values ('d7000000-0000-4000-8000-000000000081', 'd7000000-0000-4000-8000-0000000
 -- ── 2. Segurança e permissões de acesso ─────────────────────────────────────────
 
 select ok(
-  not has_function_privilege('anon', 'privado.operacao_suspender_conta(uuid, text)', 'execute'),
+  not has_function_privilege('anon', 'privado.operacao_suspender_conta(uuid, text, uuid)', 'execute'),
   'anon não executa privado.operacao_suspender_conta');
 
 select ok(
-  not has_function_privilege('anon', 'privado.operacao_reativar_conta(uuid, text)', 'execute'),
+  not has_function_privilege('anon', 'privado.operacao_reativar_conta(uuid, text, uuid)', 'execute'),
   'anon não executa privado.operacao_reativar_conta');
 
 select ok(
-  not has_function_privilege('anon', 'privado.operacao_moderar_conteudo(uuid, text, text)', 'execute'),
+  not has_function_privilege('anon', 'privado.operacao_moderar_conteudo(uuid, text, text, uuid)', 'execute'),
   'anon não executa privado.operacao_moderar_conteudo');
 
 select ok(
-  not has_function_privilege('authenticated', 'privado.operacao_suspender_conta(uuid, text)', 'execute'),
+  not has_function_privilege('authenticated', 'privado.operacao_suspender_conta(uuid, text, uuid)', 'execute'),
   'authenticated não executa privado.operacao_suspender_conta');
 
 select ok(
-  not has_function_privilege('authenticated', 'privado.operacao_reativar_conta(uuid, text)', 'execute'),
+  not has_function_privilege('authenticated', 'privado.operacao_reativar_conta(uuid, text, uuid)', 'execute'),
   'authenticated não executa privado.operacao_reativar_conta');
 
 select ok(
-  not has_function_privilege('authenticated', 'privado.operacao_moderar_conteudo(uuid, text, text)', 'execute'),
+  not has_function_privilege('authenticated', 'privado.operacao_moderar_conteudo(uuid, text, text, uuid)', 'execute'),
   'authenticated não executa privado.operacao_moderar_conteudo');
 
 -- ── 3. Validações e Recusas (service_role) ──────────────────────────────────────
 
 -- Motivo obrigatório
 select throws_ok(
-  $$ select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', null) $$,
+  $$ select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', null, 'd7000000-0000-4000-8000-000000000003') $$,
   'PGRST', null,
   'suspender com motivo nulo é recusado com erro');
 
 select throws_ok(
-  $$ select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', '   ') $$,
+  $$ select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', '   ', 'd7000000-0000-4000-8000-000000000003') $$,
   'PGRST', null,
   'suspender com motivo em branco é recusado com erro');
 
 -- Usuário inexistente
 select throws_ok(
-  $$ select privado.operacao_suspender_conta('00000000-0000-0000-0000-000000000000', 'motivo') $$,
+  $$ select privado.operacao_suspender_conta('00000000-0000-0000-0000-000000000000', 'motivo', 'd7000000-0000-4000-8000-000000000003') $$,
   'PGRST', null,
   'suspender usuário inexistente devolve 404');
 
 select throws_ok(
-  $$ select privado.operacao_reativar_conta('00000000-0000-0000-0000-000000000000', 'justificativa') $$,
+  $$ select privado.operacao_reativar_conta('00000000-0000-0000-0000-000000000000', 'justificativa', 'd7000000-0000-4000-8000-000000000003') $$,
   'PGRST', null,
   'reativar usuário inexistente devolve 404');
+
+-- Operador obrigatório, ativo e diferente do alvo (bloqueio 4)
+select throws_ok(
+  $$ select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', 'motivo', null) $$,
+  'PGRST', null,
+  'suspender sem operador é recusado');
+
+select throws_ok(
+  $$ select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', 'motivo', 'd7000000-0000-4000-8000-000000000001') $$,
+  'PGRST', null,
+  'o alvo não assina a própria suspensão');
+
+select throws_ok(
+  $$ select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', 'motivo', '00000000-0000-0000-0000-000000000000') $$,
+  'PGRST', null,
+  'operador sem conta é recusado');
+
+select throws_ok(
+  $$ select privado.operacao_reativar_conta('d7000000-0000-4000-8000-000000000001', 'justificativa', null) $$,
+  'PGRST', null,
+  'reativar sem operador é recusado');
+
+select throws_ok(
+  $$ select privado.operacao_moderar_conteudo('d7000000-0000-4000-8000-000000000033', 'ocultar', 'motivo', 'd7000000-0000-4000-8000-000000000002') $$,
+  'PGRST', null,
+  'quem publicou a vaga não assina a moderação dela');
 
 -- ── 4. Suspender conta e efeitos colaterais ─────────────────────────────────────
 
 create temp table res_suspensao as
-  select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', 'Denúncia grave de assédio confirmada') as r;
+  select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', 'Denúncia grave de assédio confirmada', 'd7000000-0000-4000-8000-000000000003') as r;
 
 select is(
   (select u.estado from public.usuario u where u.id = 'd7000000-0000-4000-8000-000000000001'),
@@ -214,7 +240,7 @@ select is(
 
 -- Idempotência de suspensão
 create temp table res_suspensao_2 as
-  select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', 'Outra tentativa de suspender') as r;
+  select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000001', 'Outra tentativa de suspender', 'd7000000-0000-4000-8000-000000000003') as r;
 
 select is(
   ((select r from res_suspensao_2)->>'ja_estava_suspensa')::boolean,
@@ -224,7 +250,7 @@ select is(
 -- ── 5. Reativar conta ──────────────────────────────────────────────────────────
 
 create temp table res_reativacao as
-  select privado.operacao_reativar_conta('d7000000-0000-4000-8000-000000000001', 'Contestação acolhida por documento comprobatório') as r;
+  select privado.operacao_reativar_conta('d7000000-0000-4000-8000-000000000001', 'Contestação acolhida por documento comprobatório', 'd7000000-0000-4000-8000-000000000003') as r;
 
 select is(
   (select u.estado from public.usuario u where u.id = 'd7000000-0000-4000-8000-000000000001'),
@@ -249,7 +275,7 @@ select is(
 
 -- Idempotência de reativação
 create temp table res_reativacao_2 as
-  select privado.operacao_reativar_conta('d7000000-0000-4000-8000-000000000001', 'Tentativa extra de reativar') as r;
+  select privado.operacao_reativar_conta('d7000000-0000-4000-8000-000000000001', 'Tentativa extra de reativar', 'd7000000-0000-4000-8000-000000000003') as r;
 
 select is(
   ((select r from res_reativacao_2)->>'ja_estava_ativa')::boolean,
@@ -282,7 +308,7 @@ select 'd7000000-0000-4000-8000-000000000066'::uuid,
  where f.nome = 'garçom';
 
 create temp table res_mod_ocultar as
-  select privado.operacao_moderar_conteudo('d7000000-0000-4000-8000-000000000066', 'ocultar', 'Linguagem ofensiva reportada em denúncia') as r;
+  select privado.operacao_moderar_conteudo('d7000000-0000-4000-8000-000000000066', 'ocultar', 'Linguagem ofensiva reportada em denúncia', 'd7000000-0000-4000-8000-000000000003') as r;
 
 select is(
   (select g.estado from public.vaga g where g.id = 'd7000000-0000-4000-8000-000000000066'),
@@ -309,7 +335,7 @@ select isnt(
 
 -- Reexibir vaga
 create temp table res_mod_reexibir as
-  select privado.operacao_moderar_conteudo('d7000000-0000-4000-8000-000000000066', 'reexibir', 'Denúncia improcedente após verificação') as r;
+  select privado.operacao_moderar_conteudo('d7000000-0000-4000-8000-000000000066', 'reexibir', 'Denúncia improcedente após verificação', 'd7000000-0000-4000-8000-000000000003') as r;
 
 select is(
   (select g.estado from public.vaga g where g.id = 'd7000000-0000-4000-8000-000000000066'),
@@ -319,7 +345,7 @@ select is(
 -- ── 7. Suspender contratante com vaga parcialmente preenchida (bloqueio 2) ────────
 
 create temp table res_suspensao_casa as
-  select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000006', 'Fraude confirmada na publicação') as r;
+  select privado.operacao_suspender_conta('d7000000-0000-4000-8000-000000000006', 'Fraude confirmada na publicação', 'd7000000-0000-4000-8000-000000000003') as r;
 
 select is(
   (select g.estado from public.vaga g where g.id = 'd7000000-0000-4000-8000-000000000034'),
