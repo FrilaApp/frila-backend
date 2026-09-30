@@ -45,20 +45,25 @@
 #   9. excluir_conta (serviço) × candidatar (excluir) — a casa (único membro) é excluída
 #      via serviço (sem JWT) enquanto o candidato aceita a posição (CPD2c74A). Toda vaga
 #      termina cancelada, nenhuma posição viva sobra, e o profissional não leva falta.
+#  10. escolher_candidato × escolher_candidato (escolher, cartão d3A1WjG3) — duas escolhas
+#      simultâneas, de dois candidatos pendentes, para a última posição de uma vaga de
+#      seleção. Só uma confirma; a outra recebe 409 posicao_ja_preenchida (RN19). A vaga
+#      termina preenchida, com uma posição confirmada, uma candidatura aceita e a outra
+#      recusada.
 #
 # Os de candidatura (vinte para duas posições, profissional em dobro) seguem em
 # `corrida-candidatar.sh`.
 #
 # Uso:  ./scripts/corrida-ciclo.sh
 #       RODADAS=10 ./scripts/corrida-ciclo.sh
-#       CENARIOS="checkin cancelar teto posicao impasse janela rollback atraso excluir" ./scripts/corrida-ciclo.sh
+#       CENARIOS="checkin cancelar teto posicao impasse janela rollback atraso excluir escolher" ./scripts/corrida-ciclo.sh
 #       MANTER=1 ./scripts/corrida-ciclo.sh     # não limpa: o placar fica em corrida_ciclo
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 RODADAS=${RODADAS:-50}
-CENARIOS=${CENARIOS:-checkin cancelar teto posicao impasse janela rollback atraso excluir}
+CENARIOS=${CENARIOS:-checkin cancelar teto posicao impasse janela rollback atraso excluir escolher}
 
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -116,6 +121,9 @@ delete from public.membro_estabelecimento
 delete from public.estabelecimento where endereco = 'corrida-ciclo-$MARCA';
 delete from public.profissional_funcao where profissional_id in (select id from public.profissional where usuario_id in (select id from contas));
 delete from public.profissional where usuario_id in (select id from contas);
+-- O pedido de exclusão não tem FK para usuario de propósito (ele sobrevive à conta), então
+-- não sai por cascata: a limpeza tem de nomeá-lo.
+delete from public.pedido_de_exclusao where usuario_id in (select id from contas);
 delete from public.usuario  where id in (select id from contas);
 delete from auth.users      where id in (select id from contas) or email like 'corrida-ciclo-$MARCA-%';
 set session_replication_role = 'origin';
@@ -234,6 +242,8 @@ begin
            select 'reaberta', n from generate_series(1, 2 * $RODADAS) n
            union all
            select 'excluir_cand', n from generate_series(1, $RODADAS) n
+           union all
+           select 'escolha', n from generate_series(1, 2 * $RODADAS) n
   loop
     v_seq := v_seq + 1;
     v_conta := gen_random_uuid();
@@ -1121,6 +1131,16 @@ SQL
   psql -tA -F' ' -c "select n, vaga, dona, c1 from corrida_ciclo.excluir order by n" >"$TMP/excluir"
   local ms
   ms() { printf '0.%03d 0' "$(( RANDOM % 30 ))"; }
+  # O pedido de exclusão é registrado antes da corrida, em transação própria, exatamente como
+  # a Edge Function faz (cartão SHUDSozj). É o que se quer medir aqui: quando a exclusão bate
+  # em 40P01 e volta atrás, esta linha tem de continuar de pé.
+  # `</dev/null` obrigatório: `psql` aqui é `docker exec -i`, que lê a entrada padrão — e
+  # dentro de um `while read` a entrada padrão é o próprio arquivo. Sem isso, a primeira
+  # iteração engole as outras 49 linhas e só um pedido é registrado.
+  while read -r n vaga dona c1; do
+    psql -q -c "select privado.registrar_pedido_de_exclusao('$dona')" >/dev/null </dev/null
+  done <"$TMP/excluir"
+
   while read -r n vaga dona c1; do
     lado excluir "$n" 1 ""   "select privado.excluir_conta('$dona')" "$(ms)"
     lado excluir "$n" 2 "$c1" "select public.candidatar('$vaga')"    "$(ms)"
@@ -1136,7 +1156,9 @@ select e.n,
        v.estado,
        (select count(*) from public.posicao o where o.vaga_id = e.vaga and o.estado in ('aberta', 'confirmada')),
        (select count(*) from public.posicao o where o.vaga_id = e.vaga and o.falta = true),
-       (select u.estado::text from public.usuario u where u.id = e.dona)
+       (select u.estado::text from public.usuario u where u.id = e.dona),
+       coalesce((select p.estado from public.pedido_de_exclusao p
+                  where p.usuario_id = e.dona), 'sem_pedido')
   from corrida_ciclo.excluir e
   join public.vaga v on v.id = e.vaga
  order by e.n;
@@ -1144,18 +1166,103 @@ SQL
 
   local ruins confirmou impasses
   ruins=$(awk '
-    # Desfecho 1: exclusão passa, recolhe a confirmação se houve (ou candidatura falha/aborta), vaga cancelada sem posição viva e sem falta
-    ($2 == "ok" && ($3 == "ok" || $3 == "vaga_encerrada" || $3 == "posicao_ja_preenchida" || $3 == "sqlstate:40P01") && $4 == "cancelada" && $5 == 0 && $6 == 0 && $7 == "anonimizada") { next }
-    # Desfecho 2: limite conhecido de 40P01 (CPD2c74A) — rollback consistente da exclusão, vaga preenchida pelo candidato
-    ($2 == "sqlstate:40P01" && $3 == "ok" && $4 == "preenchida" && $5 == 1 && $6 == 0 && $7 == "ativa") { next }
+    # $8 é o estado do pedido de exclusão (SHUDSozj). Ele entra nos dois desfechos, e é a
+    # diferença que este cartão trouxe: antes, o caminho do 40P01 não deixava rastro algum.
+    # Desfecho 1: exclusão passa, recolhe a confirmação se houve (ou candidatura falha/aborta), vaga cancelada sem posição viva e sem falta, pedido concluído
+    ($2 == "ok" && ($3 == "ok" || $3 == "vaga_encerrada" || $3 == "posicao_ja_preenchida" || $3 == "sqlstate:40P01") && $4 == "cancelada" && $5 == 0 && $6 == 0 && $7 == "anonimizada" && $8 == "concluido") { next }
+    # Desfecho 2: limite conhecido de 40P01 (CPD2c74A) — rollback consistente da exclusão, vaga
+    # preenchida pelo candidato, conta ainda ativa. O pedido continua PENDENTE, e é isso que
+    # torna o caso recuperável em vez de silencioso: a linha sobreviveu ao rollback.
+    ($2 == "sqlstate:40P01" && $3 == "ok" && $4 == "preenchida" && $5 == 1 && $6 == 0 && $7 == "ativa" && $8 == "pendente") { next }
     { print }' "$TMP/excluir.res")
   confirmou=$(awk '$2 == "ok" && $3 == "ok"' "$TMP/excluir.res" | grep -c . || true)
   impasses=$(grep -c 'sqlstate:40P01' "$TMP/excluir.res" || true)
 
   if [ -z "$ruins" ]; then
-    ok "$RODADAS rodadas: toda vaga cancelada por excluir_conta terminou sem posição viva e sem falta ($confirmou confirmações no meio recolhidas, $impasses rollbacks por 40P01 residual CPD2c74A)"
+    ok "$RODADAS rodadas: toda vaga cancelada por excluir_conta terminou sem posição viva e sem falta, e todo pedido deixou rastro ($confirmou confirmações no meio recolhidas, $impasses rollbacks por 40P01 residual CPD2c74A, com o pedido pendente e recuperável)"
   else
-    falhou "rodadas fora da regra (rodada, excluir_conta, candidatar, estado vaga, posições vivas, faltas, conta dona):"
+    falhou "rodadas fora da regra (rodada, excluir_conta, candidatar, estado vaga, posições vivas, faltas, conta dona, pedido de exclusão):"
+    printf '%s\n' "$ruins" | sed 's/^/      /' >&2
+  fi
+}
+
+# ── 10. escolher_candidato × escolher_candidato (modo seleção) ────────────────
+cenario_escolher() {
+  echo
+  echo "▸ Cenário 10: duas escolhas simultâneas para a última posição, modo seleção ($RODADAS rodadas)"
+
+  psql >/dev/null <<SQL || { falhou "não consegui montar as vagas de seleção"; return; }
+create table corrida_ciclo.escolher (n int, vaga uuid, c1 uuid, c2 uuid, k1 uuid, k2 uuid);
+
+insert into corrida_ciclo.escolher (n, vaga, c1, c2, k1, k2)
+select r.n,
+       gen_random_uuid(),
+       (select conta from corrida_ciclo.contas where papel = 'escolha' and n = 2 * r.n - 1),
+       (select conta from corrida_ciclo.contas where papel = 'escolha' and n = 2 * r.n),
+       gen_random_uuid(), gen_random_uuid()
+  from generate_series(1, $RODADAS) r(n);
+
+insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+                         valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+                         exige_material_proprio, responsavel_local, modo, chave_cliente,
+                         publicado_por)
+select c.vaga, e.id, (select id from public.funcao where nome = 'garçom'),
+       now() + interval '5 days' + c.n * interval '8 hours',
+       now() + interval '5 days 6 hours' + c.n * interval '8 hours',
+       'corrida-ciclo-$MARCA', 'POINT(-47.8860 -15.7910)'::extensions.geography,
+       18000, 1, true, true, false, 'Seu Zé', 'selecao', gen_random_uuid(), '$DONA'
+  from corrida_ciclo.escolher c,
+       -- A casa da dona, e só ela: o cenário 9 cria outras casas com o mesmo endereço.
+       (select m.estabelecimento_id as id from public.membro_estabelecimento m
+         where m.usuario_id = '$DONA' limit 1) e;
+
+insert into public.posicao (vaga_id, inicio_em, fim_em)
+select v.id, v.inicio_em, v.fim_em
+  from public.vaga v join corrida_ciclo.escolher c on c.vaga = v.id;
+
+-- Os dois candidatos já pendentes, presos à única posição, como candidatar os deixa.
+insert into public.candidatura (id, posicao_id, profissional_id, estado)
+select k.id, p.id, pr.id, 'pendente'
+  from corrida_ciclo.escolher c
+  join public.posicao p on p.vaga_id = c.vaga
+  cross join lateral (values (c.k1, c.c1), (c.k2, c.c2)) as k(id, conta)
+  join public.profissional pr on pr.usuario_id = k.conta;
+SQL
+
+  psql -tA -F' ' -c "select n, k1, k2 from corrida_ciclo.escolher order by n" >"$TMP/escolher"
+  while read -r n k1 k2; do
+    lado escolher "$n" 1 "$DONA" "select public.escolher_candidato('$k1')"
+    lado escolher "$n" 2 "$DONA" "select public.escolher_candidato('$k2')"
+    wait
+  done <"$TMP/escolher"
+
+  psql -tA -F' ' >"$TMP/escolher.res" <<'SQL'
+select c.n,
+       (select count(*) from corrida_ciclo.placar p
+         where p.cenario = 'escolher' and p.rodada = c.n and p.code = 'ok'),
+       (select count(*) from corrida_ciclo.placar p
+         where p.cenario = 'escolher' and p.rodada = c.n and p.code = 'posicao_ja_preenchida'),
+       coalesce((select string_agg(distinct p.code, ',') from corrida_ciclo.placar p
+                  where p.cenario = 'escolher' and p.rodada = c.n
+                    and p.code not in ('ok', 'posicao_ja_preenchida')), '-'),
+       v.estado,
+       (select count(*) from public.posicao o where o.vaga_id = c.vaga and o.estado = 'confirmada'),
+       (select count(*) from public.turno t join public.posicao o on o.id = t.posicao_id
+         where o.vaga_id = c.vaga),
+       (select string_agg(k.estado::text, ',' order by k.estado::text)
+          from public.candidatura k where k.id in (c.k1, c.k2))
+  from corrida_ciclo.escolher c
+  join public.vaga v on v.id = c.vaga
+ order by c.n;
+SQL
+
+  local ruins
+  ruins=$(awk '!($2 == 1 && $3 == 1 && $4 == "-" && $5 == "preenchida" && $6 == 1 && $7 == 1 && $8 == "aceita,recusada")' "$TMP/escolher.res")
+
+  if [ -z "$ruins" ] && [ "$(grep -c . "$TMP/escolher.res")" -eq "$RODADAS" ]; then
+    ok "$RODADAS rodadas: uma escolha confirmou, a outra recebeu posicao_ja_preenchida; vaga preenchida com um turno só (RN19)"
+  else
+    falhou "rodadas fora da regra (rodada, ok, posicao_ja_preenchida, outros códigos, vaga, confirmadas, turnos, candidaturas):"
     printf '%s\n' "$ruins" | sed 's/^/      /' >&2
   fi
 }

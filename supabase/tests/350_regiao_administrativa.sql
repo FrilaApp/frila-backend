@@ -114,8 +114,8 @@ select throws_ok(
                $$ select public.publicar_vaga(
                     estabelecimento_id     => '%s'::uuid,
                     funcao_id              => '%s'::uuid,
-                    inicio_em              => privado.agora() + interval '4 hours',
-                    fim_em                 => privado.agora() + interval '8 hours',
+                    inicio_em              => now() + interval '4 hours',
+                    fim_em                 => now() + interval '8 hours',
                     local                  => 'CLN 201',
                     ponto                  => '{"latitude":-15.7942,"longitude":-47.8822}'::jsonb,
                     valor_centavos         => 18000,
@@ -138,8 +138,8 @@ select throws_ok(
                $$ select public.publicar_vaga(
                     estabelecimento_id     => '%s'::uuid,
                     funcao_id              => '%s'::uuid,
-                    inicio_em              => privado.agora() + interval '4 hours',
-                    fim_em                 => privado.agora() + interval '8 hours',
+                    inicio_em              => now() + interval '4 hours',
+                    fim_em                 => now() + interval '8 hours',
                     local                  => 'CLN 201',
                     ponto                  => '{"latitude":-15.7942,"longitude":-47.8822}'::jsonb,
                     valor_centavos         => 18000,
@@ -162,8 +162,8 @@ create temp table t_vaga1 as
     format($x$ select public.publicar_vaga(
                  estabelecimento_id     => '%s'::uuid,
                  funcao_id              => '%s'::uuid,
-                 inicio_em              => privado.agora() + interval '4 hours',
-                 fim_em                 => privado.agora() + interval '8 hours',
+                 inicio_em              => now() + interval '4 hours',
+                 fim_em                 => now() + interval '8 hours',
                  local                  => 'QND 25, Comercial Norte',
                  ponto                  => '{"latitude":-15.8300,"longitude":-48.0500}'::jsonb,
                  valor_centavos         => 20000,
@@ -196,8 +196,8 @@ create temp table t_vaga2 as
     format($x$ select public.publicar_vaga(
                  estabelecimento_id     => '%s'::uuid,
                  funcao_id              => '%s'::uuid,
-                 inicio_em              => privado.agora() + interval '5 hours',
-                 fim_em                 => privado.agora() + interval '9 hours',
+                 inicio_em              => now() + interval '5 hours',
+                 fim_em                 => now() + interval '9 hours',
                  local                  => 'CLN 201 Bloco B',
                  ponto                  => '{"latitude":-15.7942,"longitude":-47.8822}'::jsonb,
                  valor_centavos         => 18000,
@@ -221,8 +221,8 @@ create temp table t_repub as
   select (pg_temp.como('d1000000-0000-4000-8000-000000000001',
     format($x$ select public.republicar_vaga(
                  vaga_id   => '%s'::uuid,
-                 inicio_em => privado.agora() + interval '24 hours',
-                 fim_em    => privado.agora() + interval '28 hours',
+                 inicio_em => now() + interval '24 hours',
+                 fim_em    => now() + interval '28 hours',
                  chave     => gen_random_uuid()) $x$,
            (select (r->>'vaga_id')::uuid from t_vaga1)))) as r;
 
@@ -258,8 +258,8 @@ create temp table t_painel as
   select pg_temp.como('d1000000-0000-4000-8000-000000000001',
     format($x$ select public.painel_estabelecimento(
                  estabelecimento_id => '%s'::uuid,
-                 de                 => privado.agora() - interval '1 hour',
-                 ate                => privado.agora() + interval '48 hours') $x$,
+                 de                 => now() - interval '1 hour',
+                 ate                => now() + interval '48 hours') $x$,
            (select estab_id from vars))) as r;
 
 select is(

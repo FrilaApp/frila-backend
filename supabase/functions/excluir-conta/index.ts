@@ -15,6 +15,11 @@ export interface Erro {
 }
 
 export interface SqlClient {
+  // Registra o pedido de exclusão numa transação própria, antes de `query`. É chamada
+  // separada de propósito: `privado.excluir_conta` roda inteira numa transação, e quando ela
+  // volta atrás leva junto tudo que escreveu. Registrar dentro dela não deixaria rastro
+  // nenhum (cartão SHUDSozj, RF25).
+  registrarPedido: (userId: string) => Promise<void>;
   query: (userId: string) => Promise<{ dados: Record<string, unknown> }>;
 }
 
@@ -72,6 +77,19 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
   }
   const dbUrl = obterVariavel("SUPABASE_DB_URL", deps?.dbUrl);
   return {
+    // Conexão própria, e portanto transação própria: é isso que faz o registro sobreviver ao
+    // rollback da exclusão. Se as duas chamadas dividissem a transação, o rastro voltaria
+    // atrás com ela e nada teria mudado.
+    async registrarPedido(id: string) {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        await sql`
+          select privado.registrar_pedido_de_exclusao(${id}::uuid)
+        `;
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
     async query(id: string) {
       const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
       try {
@@ -131,7 +149,19 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   }
   const userId = usuario.id;
 
-  // 2. Executa privado.excluir_conta(userId) no banco através do cliente unificado
+  // 2. Registra o pedido antes de tentar a exclusão, em transação própria.
+  //
+  // Falha fechado: sem conseguir registrar, a exclusão não é tentada. Excluir sem rastro é
+  // exatamente o defeito que o cartão SHUDSozj conserta, e trocá-lo por "excluiu e ninguém
+  // soube" seria manter o problema com outra aparência. O titular pode repetir a chamada; o
+  // registro é idempotente por conta.
+  try {
+    await sqlClient.registrarPedido(userId);
+  } catch {
+    return resposta(500, { code: "erro_interno", message: "erro_interno", details: null });
+  }
+
+  // 3. Executa privado.excluir_conta(userId) no banco através do cliente unificado
   let dadosExclusao: Record<string, unknown>;
   try {
     const res = await sqlClient.query(userId);
@@ -140,7 +170,7 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
     return tratarErroBanco(err);
   }
 
-  // 3. Remove credencial do auth.users via Admin API usando service_role
+  // 4. Remove credencial do auth.users via Admin API usando service_role
   const deleteRes = await fetchFn(`${origem}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
     method: "DELETE",
     headers: {

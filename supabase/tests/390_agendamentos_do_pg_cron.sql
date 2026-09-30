@@ -93,10 +93,13 @@ select set_eq(
     'alertar_atrasos',
     'fechar_turnos_e_vagas',
     'reconciliar_reputacao_diaria',
+    'fechar_selecoes',
+    -- Drena a fila `email` e acorda a Edge Function `enviar-email` (cartão 7yq1flLG).
+    'processar_fila_email',
     -- Avisa os dois lados quando o fim passa sem check-out (cartão qcVimM84).
     'alertar_fim_sem_checkout'
   ],
-  'Os jobs agendados são exatamente os dez conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os doze conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;
