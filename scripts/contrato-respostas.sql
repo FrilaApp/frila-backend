@@ -198,6 +198,16 @@ select pg_temp.guarda('retirarCandidatura', pg_temp.como('cc000000-0000-4000-800
 select pg_temp.guarda('escolherCandidato', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.escolher_candidato(%L::uuid) $$, ((select r from cand_sel)->>'candidatura_id')::uuid)));
 
+-- ── Estou a caminho, de 3 h antes até 15 min depois do início (0.2.25) ────────
+set local frila.agora = '2027-01-18 17:59:59+00';
+select pg_temp.guarda('erro:a_caminho_fora_da_janela',
+  pg_temp.recusa('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.avisar_a_caminho(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
+
+set local frila.agora = '2027-01-18 20:30:00+00';
+select pg_temp.guarda('avisarACaminho', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
+  $$ select public.avisar_a_caminho(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
+
 -- ── A presença, com o relógio no turno ────────────────────────────────────────
 set local frila.agora = '2027-01-18 21:05:00+00';
 
