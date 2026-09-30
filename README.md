@@ -94,6 +94,53 @@ Configure `frila.agendador_secret` no banco e o mesmo valor como
 motor de despacho. Sem os dois valores, `publicar_vaga` falha ao enfileirar o
 despacho.
 
+### Janela de migração (RNF12)
+
+Migração em `frila-prod` **nunca** de quinta a domingo entre 16h e 2h, horário de
+Brasília (19h às 5h UTC). É o pico do food service, e um turno que não abre porque o
+banco está em manutenção é um turno perdido para as duas partes.
+
+| Dia | Pode migrar |
+|---|---|
+| Segunda | A partir das 2h (o pico de domingo termina às 2h de segunda) |
+| Terça e quarta | O dia inteiro |
+| Quinta | Até 15h59 |
+| Sexta, sábado e domingo | Das 2h às 15h59 |
+
+Mudança destrutiva segue em duas fases (adiciona e escreve nos dois, depois remove), e
+cada fase respeita a janela. No `frila-dev` a janela não vale, mas avise no grupo antes
+de aplicar em dia de TestFlight.
+
+### Limite de escrita por conta
+
+Cada conta autenticada faz no máximo **60 escritas por minuto**; a seguinte recebe
+`429 limite_excedido` até o minuto virar. A conferência roda antes de cada requisição,
+pela opção `pgrst.db_pre_request` do papel `authenticator`
+(`requisicao.conferir_limite()`), e conta só o que não é GET: toda leitura do contrato é
+GET. Anônimo e `service_role` não contam. O teto muda por migração nova em
+`privado.limite_de_escrita_por_minuto()`.
+
+Num projeto remoto, confira depois de aplicar a migração `20260929220000`:
+
+```sql
+select setconfig from pg_db_role_setting s join pg_roles r on r.oid = s.setrole
+ where r.rolname = 'authenticator';   -- traz pgrst.db_pre_request=requisicao.conferir_limite
+```
+
+### Painel de métricas do piloto e contas da equipe
+
+As views de métricas do funil do piloto residem no schema `metrica` (`metrica.funil_geral`, `metrica.funil_por_estabelecimento`, `metrica.funil_por_dia`), com acesso restrito a `service_role`. Podem ser consultadas diretamente pelo terminal:
+
+```bash
+./scripts/funil.sh
+```
+
+As contas de demonstração (`usuario.demonstracao = true`) e as contas da Equipe Frila são automaticamente excluídas de todas as etapas do funil. Para marcar uma conta como da equipe, insira o `usuario_id` na tabela privada `privado.conta_equipe` por inserção manual via `service_role`:
+
+```sql
+insert into privado.conta_equipe (usuario_id) values ('<uuid-do-usuario>');
+```
+
 ### Limites do plano gratuito do Supabase
 
 Os dois projetos remotos rodam no plano gratuito, e o plano cobra o preço assim:
