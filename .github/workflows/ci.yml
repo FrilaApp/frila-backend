@@ -251,6 +251,35 @@ jobs:
           P95_MAX_VAGAS: 600
         run: ./scripts/planos-com-carga.sh --plano
 
+  # As Edge Functions tinham testes que nunca rodaram: até 29/09, `grep -rin deno
+  # .github/` devolvia zero linhas. Os treze portões cobriam migração, pgTAP, HTTP, corrida,
+  # contrato, lint e relógio — e nenhum tocava no TypeScript, que é onde mora o envio de
+  # push, a exclusão de conta e a limpeza de contas órfãs.
+  #
+  # O que ficava sem rede: entre os 42 testes do `enviar-push` está
+  # `filtrarDataPayloadFcm só permite chaves autorizadas`, que é a garantia de RN15 e RN10
+  # de o payload não levar telefone, e-mail nem relato. O `mutacao.sh` não alcança — ele
+  # derruba restrição e política no Postgres, e esse filtro é uma lista em TypeScript.
+  #
+  # Job próprio porque não precisa de Postgres: roda em segundos, e não deve esperar os três
+  # minutos de `docker pull` do job do banco para dizer que o TypeScript quebrou.
+  deno:
+    name: Testes das Edge Functions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # `--no-check` de propósito: as funções importam do `esm.sh` e de `deno.land/std` sem
+      # mapa de importação, e a checagem de tipos puxaria a rede inteira para dizer o que o
+      # teste já diz. O que este portão mede é comportamento, não tipo.
+      - name: deno test
+        working-directory: supabase/functions
+        run: deno test --allow-all --no-check
+
   contrato:
     name: Contrato em dia com o Frila
     runs-on: ubuntu-latest
