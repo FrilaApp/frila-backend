@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.25
+  version: 0.2.26
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -94,6 +94,14 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.26, de 30/09/2026.** Alinhamento de contrato em `/rpc/registrar_dispositivo` (autorizado em 30/09/2026).
+    Declara formalmente a resposta `422 RegraRecusou` (`campo_obrigatorio`, `campo_invalido`), já emitida
+    pela implementação ao validar `token_fcm` e `plataforma`.
+
+    - **`/rpc/registrar_dispositivo`**: adicionada a resposta `422: $ref: '#/components/responses/RegraRecusou'`.
+
+    ---
 
     **Versão 0.2.25, de 29/09/2026.** Contrato para a ação "Estou a caminho" (cartão h53CJVP7,
     US14 cenário 1, RF12). Não altera presença nem taxa de comparecimento: é um sinal operacional
@@ -2423,6 +2431,8 @@ paths:
                 $ref: '#/components/schemas/Dispositivo'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/remover_dispositivo:
     post:
