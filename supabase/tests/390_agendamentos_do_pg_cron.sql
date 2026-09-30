@@ -92,9 +92,10 @@ select set_eq(
     'liberar_teto',
     'alertar_atrasos',
     'fechar_turnos_e_vagas',
-    'reconciliar_reputacao_diaria'
+    'reconciliar_reputacao_diaria',
+    'fechar_selecoes'
   ],
-  'Os jobs agendados são exatamente os nove conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os dez conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;

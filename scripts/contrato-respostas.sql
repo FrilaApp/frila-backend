@@ -170,6 +170,44 @@ select pg_temp.guarda('meusTurnos', pg_temp.como('cc000000-0000-4000-8000-000000
 select pg_temp.guarda('contatoDoTurno', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
   $$ select public.contato_do_turno(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
 
+-- ── O modo seleção (contrato 0.2.24) ──────────────────────────────────────────
+--
+-- Uma vaga de seleção a onze dias, entre os turnos das outras duas: os dois profissionais
+-- se candidatam, o Pê Dois retira e a casa escolhe o Pê.
+create temp table vaga_sel as
+  select pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.publicar_vaga(%L::uuid, %L::uuid,
+         '2027-01-22 21:00:00+00'::timestamptz, '2027-01-23 03:00:00+00'::timestamptz,
+         'CLN 108','{"latitude":-15.7905,"longitude":-47.8855}'::jsonb,
+         16000::bigint, 1, true, false, false, 'Gerente', 'selecao'::public.modo_preenchimento,
+         %L::uuid) $$,
+    (select casa_id from ids), (select id from f), gen_random_uuid())) as r;
+create temp table cand_sel as
+  select pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.candidatar(%L::uuid) $$, ((select r from vaga_sel)->>'vaga_id')::uuid)) as r;
+create temp table cand_sel2 as
+  select pg_temp.como('cc000000-0000-4000-8000-000000000003', format(
+    $$ select public.candidatar(%L::uuid) $$, ((select r from vaga_sel)->>'vaga_id')::uuid)) as r;
+
+select pg_temp.guarda('candidatosDaVaga', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.candidatos_da_vaga(%L::uuid) $$, ((select r from vaga_sel)->>'vaga_id')::uuid)));
+select pg_temp.guarda('minhasCandidaturas', pg_temp.como('cc000000-0000-4000-8000-000000000003',
+  $$ select public.minhas_candidaturas() $$));
+select pg_temp.guarda('retirarCandidatura', pg_temp.como('cc000000-0000-4000-8000-000000000003', format(
+  $$ select public.retirar_candidatura(%L::uuid) $$, ((select r from cand_sel2)->>'candidatura_id')::uuid)));
+select pg_temp.guarda('escolherCandidato', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.escolher_candidato(%L::uuid) $$, ((select r from cand_sel)->>'candidatura_id')::uuid)));
+
+-- ── Estou a caminho, de 3 h antes até 15 min depois do início (0.2.25) ────────
+set local frila.agora = '2027-01-18 17:59:59+00';
+select pg_temp.guarda('erro:a_caminho_fora_da_janela',
+  pg_temp.recusa('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.avisar_a_caminho(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
+
+set local frila.agora = '2027-01-18 20:30:00+00';
+select pg_temp.guarda('avisarACaminho', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
+  $$ select public.avisar_a_caminho(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
+
 -- ── A presença, com o relógio no turno ────────────────────────────────────────
 set local frila.agora = '2027-01-18 21:05:00+00';
 
