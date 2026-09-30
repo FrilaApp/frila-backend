@@ -432,6 +432,14 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
+# Portabilidade da LGPD (cartão nUpPFCpM): devolve o JSON dos dados do titular no corpo.
+# verify_jwt fica ligado — quem chama é a pessoa, com a sessão dela, e a identidade ainda
+# é reconferida em auth/v1/user dentro da função. É Edge Function, e não RPC, porque o
+# contrato a declara em /functions/v1 e o corpo não passa pelo PostgREST.
+[functions.exportar-meus-dados]
+enabled = true
+verify_jwt = true
+
 
 [analytics]
 enabled = true
