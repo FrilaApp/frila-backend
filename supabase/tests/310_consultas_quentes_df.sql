@@ -43,11 +43,21 @@ select ok(
   'RNF11: índice vaga_data_publicada possui comentário documentando a finalidade'
 );
 
--- ── 2. Ausência de varredura sequencial nos caminhos quentes com volume controlado ─
--- Geramos 500 vagas fictícias distribuídas em dias diferentes dentro da transação.
--- Isso fornece volume controlado ao planejador sem poluir o banco (rollback ao final).
--- enable_seqscan = off assegura que o teste afere a usabilidade técnica do índice
--- sem quebrar sob oscilações de estatísticas de autoanalyze da CI.
+-- ── 2. Usabilidade técnica dos índices do caminho quente ────────────────────────
+-- LEIA ANTES DE CONFIAR NESTA SEÇÃO. Com `enable_seqscan = off` e 500 vagas fictícias,
+-- o que se afere aqui é se o índice **pode** ser usado — não se o planejador o escolhe
+-- com o volume da praça-piloto. As duas coisas não são a mesma, e a diferença já custou
+-- uma regressão: em 28/09, com o índice `disponibilidade_dia_horario` removido,
+-- `privado.elegiveis` varria `public.disponibilidade` inteira (185.732 linhas
+-- descartadas) e esta seção continuava verde, porque desligar o Seq Scan esconde
+-- exatamente a escolha que estava errada.
+--
+-- Quem mede a ESCOLHA do planejador é `./scripts/planos-com-carga.sh`, que gera a massa
+-- do DF de verdade e mede sem desligar nada. Plano depende de estatística, estatística
+-- depende de volume, e volume não cabe nesta suíte.
+--
+-- Esta seção continua valendo pelo que ela é: se o índice deixar de existir ou perder a
+-- forma, ela fica vermelha em dois segundos, sem precisar de 350 mil linhas.
 
 insert into public.vaga
 select

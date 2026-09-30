@@ -207,6 +207,50 @@ jobs:
 
       - run: ./scripts/migracoes-sem-colisao.sh
 
+  # O plano de consulta é a única coisa neste repositório que não pode ser medida na
+  # suíte: plano depende de estatística, estatística depende de volume, e a suíte roda
+  # sobre 12 profissionais. Por isso um job próprio, e não um passo do job do banco.
+  #
+  # Dois motivos para ficar separado. O primeiro é tempo: a carga são 350 mil linhas, e o
+  # job do banco já roda a suíte duas vezes. O segundo é contaminação — o job do banco
+  # grava de verdade em `ciclo-completo.sh` e `corrida-*.sh`, e a carga se recusa a rodar
+  # sobre base povoada (sai 2, "não medi"). Um passo no fim daquele job nunca mediria nada.
+  #
+  # O portão desfaz a carga com `rollback`, então não precisa de `db reset` depois e não
+  # apaga o `frila.agendador_secret`.
+  planos:
+    name: Plano do caminho quente com o volume do DF
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Autenticar no ghcr.io, para o pull não cair na cota anônima
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Só Postgres e PostgREST: o portão não faz HTTP nem Auth.
+      - name: Subir o ambiente
+        run: supabase start --exclude studio,realtime,storage-api,imgproxy,logflare,vector
+
+      # Os tetos são folgados de propósito. O runner do Actions é mais lento e mais
+      # variável que a máquina, e um portão que fica amarelo por hardware é um portão que
+      # o time aprende a reexecutar sem ler. O que reprova de verdade aqui é o Seq Scan,
+      # que é determinístico; o tempo é rede de proteção contra regressão grosseira.
+      # Medido na máquina em 29/09: p95 de 17,8 a 39,4 ms com a reescrita, 182,7 ms com a
+      # regressão de 26/09 reproduzida (MUTAR=cte).
+      - name: Nenhuma varredura sequencial no caminho quente
+        env:
+          P95_MAX_ELEGIVEIS: 400
+          P95_MAX_VAGAS: 600
+        run: ./scripts/planos-com-carga.sh --plano
+
   contrato:
     name: Contrato em dia com o Frila
     runs-on: ubuntu-latest
