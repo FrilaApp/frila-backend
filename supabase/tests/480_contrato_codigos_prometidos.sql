@@ -1,6 +1,6 @@
 -- Os códigos de erro que o contrato promete e que nenhum teste provava.
 --
--- Auditoria contrato × implementação (29/09). Cada recusa abaixo é prometida pelo
+-- Auditoria contrato × implementação (30/09, contrato 0.2.25). Cada recusa abaixo é prometida pelo
 -- `contrato/openapi.yaml` — no catálogo de erros da descrição da API ou na descrição da
 -- própria operação — e o código já a levantava, mas nenhum pgTAP, nenhum passo HTTP do
 -- `ciclo-completo.sh` e nenhuma colheita do `contrato-responde.sh` chegava até ela. Uma
