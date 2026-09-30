@@ -94,9 +94,10 @@ select set_eq(
     'fechar_turnos_e_vagas',
     'reconciliar_reputacao_diaria',
     -- Avisa os dois lados quando o fim passa sem check-out (cartão qcVimM84).
-    'alertar_fim_sem_checkout'
+    'alertar_fim_sem_checkout',
+    'fechar_selecoes'
   ],
-  'Os jobs agendados são exatamente os dez conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os onze conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;
