@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.23
+  version: 0.2.25
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -87,12 +87,60 @@ info:
     | 422 | `inelegivel` | `details`: `turno_sobreposto` (RN21), `perfil_suspenso` (RN13) ou `funcao_incompativel` (RN05) |
     | 422 | `avaliacao_indisponivel` | `details`: `antes_do_fim` ou `sem_presenca_verificada` (RN07) |
     | 422 | `fora_da_janela` | Check-in ou check-out fora da janela que a regra permite para o turno (RN22) |
+    | 422 | `a_caminho_fora_da_janela` | Chamada de `avisar_a_caminho` fora da janela permitida (de 3 h antes até 15 min depois do início do turno) (US14, RF12) |
     | 422 | `registro_no_futuro` | Instante de check-in ou check-out adiante do relógio do servidor. O relógio que vale é o do servidor, nunca o do aparelho |
     | 422 | `reabertura_antes_da_tolerancia` | Reabrir por atraso antes dos 15 minutos (D06) |
     | 422 | `sem_suspensao_ativa` | Contestação sem suspensão em vigor (RF24) |
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.25, de 29/09/2026.** Contrato para a ação "Estou a caminho" (cartão h53CJVP7,
+    US14 cenário 1, RF12). Não altera presença nem taxa de comparecimento: é um sinal operacional
+    para a casa acompanhar no salão. Decisão de produto registrada no cartão 8zLfn0mt (item 7,
+    28/09/2026): a funcionalidade fica para a v1.1.
+
+    - **`/rpc/avisar_a_caminho(turno_id)`**: chamada POST restrita ao profissional confirmado no
+      turno (`403 sem_permissao` para terceiros). Permitida exclusivamente na janela entre 3 horas
+      antes do início previsto e 15 minutos após o início do turno; fora dessa janela, responde
+      `422 a_caminho_fora_da_janela` (código novo no catálogo). Operação idempotente: chamar uma
+      segunda vez não altera o instante já gravado e devolve o mesmo registro (`ResultadoACaminho`).
+    - **`turno.a_caminho_em` exposto em `PosicaoNoPainel`**: a leitura `/rpc/painel_estabelecimento`
+      passa a incluir o instante `a_caminho_em` em cada posição do painel (nulo enquanto o
+      profissional não tiver acionado o aviso ou se a posição não tiver turno confirmado).
+    - **`Turno.a_caminho_em`**: o schema `Turno` também passa a expor o campo `a_caminho_em`
+      (nulo se ainda não avisou), consumido pela tela Meu turno do app iOS.
+
+    ---
+
+    **Versão 0.2.24, de 29/09/2026.** Modo seleção liberado (cartão d3A1WjG3, US12, RF09, RN24,
+    UC04). O contrato já declarava `escolher_candidato`, `candidatos_da_vaga`,
+    `retirar_candidatura` e `minhas_candidaturas`, mas `publicar_vaga` recusava `modo = selecao`.
+    Nenhuma assinatura, schema ou código de erro novo: muda o comportamento de `publicar_vaga` e
+    de `candidatar`, e entram dois tipos de aviso.
+
+    - **`publicar_vaga` aceita `modo = selecao`** quando o início está a mais de 24 horas. Com 24
+      horas ou menos, `422 selecao_sem_antecedencia` (RN24), no lugar do `campo_invalido` com
+      `details: modo` da v1.0.
+    - **`candidatar` numa vaga de seleção** devolve `estado: pendente`, com `posicao_id`,
+      `turno_id` e `contato` nulos: a posição só é decidida na escolha. Reenviar devolve a mesma
+      candidatura; a retirada volta a `pendente` se o profissional se candidatar de novo. A partir
+      de 24 horas antes do início a vaga de seleção não aceita candidatura (`409 vaga_encerrada`).
+    - **`escolher_candidato`** é do membro do estabelecimento (`403 sem_permissao` para os demais).
+      O escolhido recebe o aviso `confirmacao`. Quando a escolha ocupa a última posição, as
+      candidaturas ainda pendentes passam a `recusada` e cada profissional recebe
+      `candidatura_recusada`. Escolher de novo uma candidatura já escolhida responde `409
+      candidatura_indisponivel`; escolher depois do fechamento das 24 horas, `409 vaga_encerrada`.
+    - **Fechamento automático (RN24).** A 24 horas do início, o agendador fecha a vaga de seleção:
+      as posições ainda abertas passam a `cancelada`, as candidaturas pendentes a `expirada`, e
+      cada candidato pendente e cada membro do estabelecimento recebem `selecao_encerrada`. A vaga
+      vai a `encerrada` quando ninguém foi escolhido, ou a `preenchida` quando alguma posição foi.
+    - **Dois tipos de aviso novos:** `candidatura_recusada` e `selecao_encerrada`. O payload é o de
+      sempre (RN15): `tipo` e `vaga_id`, nada mais. Os textos do push são do design; até eles
+      chegarem, sai o texto genérico.
+    - A 0.2.23 (vaga ocultada pela moderação) vem antes desta.
+
+    ---
 
     **Versão 0.2.23, de 29/09/2026.** Vaga ocultada pela moderação da Equipe Frila (cartão
     Oxh0AWE7, diretriz 1.2 da App Store). Ocultar é moderação **reversível** e **não cancela** a
@@ -655,7 +703,7 @@ tags:
   - name: Candidatura e confirmação
     description: Candidatura sem formulário e confirmação sem duplicidade (RF08, RF09, RF10, RN19, RN24).
   - name: Turno
-    description: Contato, check-in, check-out, cancelamento e reabertura (RF11, RF13, RF14, RN10, RN22).
+    description: Contato, aviso a caminho, check-in, check-out, cancelamento e reabertura (RF11, RF12, RF13, RF14, RN10, RN22).
   - name: Avaliação e reputação
     description: Avaliação binária e perfil público com denominador (RF15, RF16, RN07, RN08).
   - name: Painel do gestor
@@ -1291,9 +1339,11 @@ paths:
         sem_permissao`, e é o que responde também quando o estabelecimento não existe; conta
         suspensa recebe `403 sem_permissao` com `details: conta_suspensa` (RN13).
 
-        **Na v1.0, `modo = selecao` é recusado** com `campo_invalido` e `details: modo` — o escopo
-        do MVP tem só urgência. `selecao_sem_antecedencia` é a regra das 24 horas (RN24) e volta na
-        v1.1, quando houver modo seleção para recusar.
+        **Modo seleção (RN24), desde a 0.2.24:** `modo = selecao` é aceito quando o início está a
+        mais de 24 horas; com 24 horas ou menos, `422 selecao_sem_antecedencia`. A vaga nova é
+        notificada igual nos dois modos; no seleção, os candidatos ficam pendentes até a escolha
+        (`escolher_candidato`). Até a 0.2.23 o modo seleção era recusado com `campo_invalido` e
+        `details: modo`.
 
         `chave` torna o reenvio seguro: a mesma chave devolve a mesma vaga, com as mesmas posições,
         e não enfileira o despacho de novo.
@@ -1551,8 +1601,11 @@ paths:
         - **Modo urgência:** o primeiro elegível que aceita é confirmado na hora, por escrita
           condicional no banco (RN19). A resposta já traz o turno e o contato da outra parte (RN10).
           O profissional e cada membro do estabelecimento recebem o aviso `confirmacao` (RF10).
-        - **Modo seleção:** a candidatura fica pendente até o contratante escolher. Ela vale até a vaga
-          fechar, e a vaga fecha sozinha 24 horas antes do início se ninguém for escolhido (RN24).
+        - **Modo seleção:** a candidatura fica pendente até o contratante escolher, com `posicao_id`,
+          `turno_id` e `contato` nulos — a posição só é decidida na escolha. Ela vale até a vaga
+          fechar, e a vaga fecha sozinha 24 horas antes do início se ninguém for escolhido (RN24); a
+          partir daí a candidatura recebe `409 vaga_encerrada`. Reenviar devolve a mesma candidatura
+          pendente, e a retirada volta a `pendente` quando o profissional se candidata de novo.
 
         As três respostas são normais: `200` (entrou), `409 posicao_ja_preenchida` (alguém chegou
         antes — a tela diz "que pena, foi rápido", não "algo deu errado") e `422 inelegivel`
@@ -1623,7 +1676,7 @@ paths:
       tags: [Candidatura e confirmação]
       operationId: retirarCandidatura
       summary: Retirar a candidatura antes de ser escolhido
-      description: Sem penalidade (RN24). Candidatura já escolhida não se retira; vira cancelamento (`cancelar_posicao`).
+      description: Sem penalidade (RN24). Candidatura já escolhida não se retira; vira cancelamento (`cancelar_posicao`). Retirar de novo devolve a mesma candidatura retirada; recusada ou expirada responde `409 candidatura_indisponivel`.
       x-requisitos: [RN16, RN24, UC04]
       requestBody:
         required: true
@@ -1720,6 +1773,12 @@ paths:
         foi confirmado em outro turno que se cruza com este (RN21); `422 vaga_oculta` se a vaga foi
         ocultada pela moderação da Equipe Frila — a candidatura segue pendente, e a escolha volta a
         valer se a Equipe reexibir a vaga (0.2.23).
+
+        Só membro do estabelecimento escolhe (`403 sem_permissao`). Candidatura já escolhida responde
+        `409 candidatura_indisponivel`; vaga fechada pelas 24 horas (RN24), cancelada ou encerrada,
+        `409 vaga_encerrada`. O escolhido recebe o aviso `confirmacao`; quando a escolha ocupa a
+        última posição, as candidaturas ainda pendentes passam a `recusada`, com o aviso
+        `candidatura_recusada`.
       x-requisitos: [RF09, RF10, RF11, RN10, RN19, RN21, UC04]
       requestBody:
         required: true
@@ -1827,6 +1886,48 @@ paths:
           $ref: '#/components/responses/SemPermissao'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
+
+  /rpc/avisar_a_caminho:
+    post:
+      tags: [Turno]
+      operationId: avisarACaminho
+      summary: Profissional avisa que está a caminho do turno
+      description: |
+        Ação "Estou a caminho" disparada pela notificação de 3 horas antes do início ou pelo botão
+        correspondente na tela Meu turno (US14, RF12). Não altera presença, taxa de comparecimento
+        nem substitui o check-in: é um sinal operacional visível pelo contratante no acompanhamento
+        do turno (`painel_estabelecimento`).
+
+        Só o profissional confirmado no turno pode chamar (`403 sem_permissao`). A janela permitida
+        vai de 3 horas antes do início previsto até 15 minutos depois do início; fora dessa janela,
+        a chamada é recusada com `422 a_caminho_fora_da_janela`.
+
+        Idempotente: chamar uma segunda vez não altera o instante já gravado e devolve o mesmo
+        registro com o `a_caminho_em` original.
+      x-requisitos: [RF12, US14]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [turno_id]
+              properties:
+                turno_id:
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Aviso registrado com sucesso ou retorno do registro já gravado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoACaminho'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/fazer_checkin:
     post:
@@ -2112,6 +2213,9 @@ paths:
         alertas que o agendador já disparou por notificação: vaga ainda vazia dentro da janela crítica
         (padrão de 3 horas antes do início, ajustável na publicação) e atraso de 15 minutos sem
         check-in. Não existe operador do Frila olhando esta tela (D01).
+
+        Cada posição no painel expõe `a_caminho_em` (US14, 0.2.25), permitindo acompanhar se o
+        profissional confirmado já sinalizou deslocamento.
       x-requisitos: [RF20, RF13, UC07]
       parameters:
         - $ref: '#/components/parameters/EstabelecimentoId'
@@ -2756,6 +2860,12 @@ components:
               value:
                 code: vaga_oculta
                 message: vaga_oculta
+                details: null
+                hint: null
+            a_caminho_fora_da_janela:
+              value:
+                code: a_caminho_fora_da_janela
+                message: a_caminho_fora_da_janela
                 details: null
                 hint: null
     LimiteExcedido:
@@ -3481,9 +3591,18 @@ components:
             - type: integer
               minimum: 0
             - type: 'null'
+    ResultadoACaminho:
+      type: object
+      required: [turno_id, a_caminho_em]
+      description: Confirmação do registro de aviso "a caminho" pelo profissional do turno (US14).
+      properties:
+        turno_id:
+          $ref: '#/components/schemas/Uuid'
+        a_caminho_em:
+          $ref: '#/components/schemas/Instante'
     Turno:
       type: object
-      required: [id, posicao_id, vaga, contraparte, contato_visivel_ate, checkin_em, checkin_tipo, checkin_distancia_m, checkin_confirmado_em, checkout_em, checkout_distancia_m, verificacao, valor_acordado_centavos, pode_avaliar]
+      required: [id, posicao_id, vaga, contraparte, contato_visivel_ate, a_caminho_em, checkin_em, checkin_tipo, checkin_distancia_m, checkin_confirmado_em, checkout_em, checkout_distancia_m, verificacao, valor_acordado_centavos, pode_avaliar]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -3501,6 +3620,11 @@ components:
             tem como prever. É o mesmo instante que `Contato.visivel_ate` carrega; aparece aqui
             para que a tela do turno não precise pedir o contato só para descobrir se pode.
           $ref: '#/components/schemas/Instante'
+        a_caminho_em:
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
+          description: Instante em que o profissional avisou que está a caminho do turno (US14). Nulo se ainda não avisou.
         checkin_em:
           oneOf:
             - $ref: '#/components/schemas/Instante'
@@ -3600,7 +3724,7 @@ components:
             $ref: '#/components/schemas/PosicaoNoPainel'
     PosicaoNoPainel:
       type: object
-      required: [id, estado, profissional, turno_id, verificacao, em_atraso]
+      required: [id, estado, profissional, turno_id, verificacao, em_atraso, a_caminho_em]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -3621,6 +3745,13 @@ components:
         em_atraso:
           type: boolean
           description: Passou 15 minutos do início sem check-in (D06); o contratante pode esperar ou reabrir.
+        a_caminho_em:
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
+          description: |
+            Instante em que o profissional avisou estar a caminho do turno (US14). Nulo se ainda não
+            avisou ou se a posição ainda não tem turno confirmado.
 
     # ── Confiança e direitos
 

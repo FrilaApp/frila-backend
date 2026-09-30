@@ -421,7 +421,7 @@ resultado foi X"* tem que sair diferente de zero.
 > verdade quando foi medido e não foi remedido. Antes de citar qualquer linha como fato
 > atual, meça.
 
-Oito colunas do esquema não estão na Modelagem de Banco. Todas nasceram de uma RPC, e
+Nove colunas do esquema não estão na Modelagem de Banco. Todas nasceram de uma RPC, e
 quem precisa reconciliar é o documento:
 
 | Coluna | Por quê |
@@ -434,6 +434,7 @@ quem precisa reconciliar é o documento:
 | `vaga.rodada_despacho` | rodada de despacho (9DbPXis7, 29/09): 1 na publicação, mais um a cada `reabrir_por_atraso`; a vaga reaberta volta a chegar a quem já a tinha recebido (8zLfn0mt item 2) |
 | `despacho.rodada` | o mesmo cartão: a unicidade do despacho passou de `(vaga_id, profissional_id)` para `(vaga_id, profissional_id, rodada)` |
 | `notificacao.rodada` | o mesmo cartão: a marca de envio de `vaga` é por rodada, senão o push da rodada nova seria engolido pelo da primeira |
+| `turno.a_caminho_em` | "estou a caminho" (h53CJVP7, 30/09, contrato 0.2.25): instante do aviso do profissional, visto pela casa no painel; não é presença, não entra na taxa e não guarda localização |
 
 E mais estas:
 
