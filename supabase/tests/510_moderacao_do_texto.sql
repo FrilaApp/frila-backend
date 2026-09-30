@@ -19,7 +19,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(32);
+select plan(36);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -53,12 +53,12 @@ $$;
 
 -- d1 publica; op1 é o membro da Equipe Frila que assina a moderação; e1 é profissional.
 select pg_temp.autenticar('12a00000-0000-4000-8000-0000000000d1','d1@moderacao.test');
-select pg_temp.autenticar('12a00000-0000-4000-8000-0000000000op','op@moderacao.test');
+select pg_temp.autenticar('12a00000-0000-4000-8000-00000000000f','op@moderacao.test');
 select pg_temp.autenticar('12a00000-0000-4000-8000-0000000000e1','e1@moderacao.test');
 
 select pg_temp.como('12a00000-0000-4000-8000-0000000000d1',
   $$ select public.criar_conta('contratante','Casa da Moderação','+5561966660001','1980-01-01','2026-09-22') $$);
-select pg_temp.como('12a00000-0000-4000-8000-0000000000op',
+select pg_temp.como('12a00000-0000-4000-8000-00000000000f',
   $$ select public.criar_conta('contratante','Operador Frila','+5561966660002','1980-01-01','2026-09-22') $$);
 select pg_temp.como('12a00000-0000-4000-8000-0000000000e1',
   $$ select public.criar_conta('profissional','Quem Trabalha','+5561966660011','1995-01-01','2026-09-22') $$);
@@ -77,7 +77,7 @@ begin
   return pg_temp.como('12a00000-0000-4000-8000-0000000000d1', format(
     $sql$ select public.publicar_vaga(%L, %L, %L, %L, 'CLN 410',
          '{"latitude":-15.7910,"longitude":-47.8860}'::jsonb,
-         18000, 1, true, true, false, %L, 'aberta', %L, %L, true, %L) $sql$,
+         18000, 1, true, true, false, %L, 'urgencia', %L, %L, true, %L) $sql$,
     (select id from casa), (select garcom from fn),
     privado.agora() + interval '3 days',
     privado.agora() + interval '3 days 6 hours',
@@ -139,7 +139,7 @@ select is(
 select throws_ok(
   format($$ select privado.operacao_moderar_texto(%L, 'ocultar', 'teste',
               '12a00000-0000-4000-8000-0000000000d1') $$, (select id from v)),
-  '22023', null,
+  'PGRST', pg_temp.erro('campo_invalido', 'operador_id'),
   'quem publicou a vaga não assina a moderação dela');
 
 -- Antes: o texto está lá.
@@ -150,7 +150,7 @@ select is(
 
 create temp table m as
   select privado.operacao_moderar_texto((select id from v), 'ocultar',
-           'Observações com ofensa, denunciadas', '12a00000-0000-4000-8000-0000000000op') as j;
+           'Observações com ofensa, denunciadas', '12a00000-0000-4000-8000-00000000000f') as j;
 
 select is((select (j->>'texto_oculto')::boolean from m), true,
   'a moderação responde que o texto está oculto');
@@ -208,7 +208,7 @@ select is(
 
 select is(
   (select autor_id from public.ocorrencia where id = (select (j->>'ocorrencia_id')::uuid from m)),
-  '12a00000-0000-4000-8000-0000000000op'::uuid,
+  '12a00000-0000-4000-8000-00000000000f'::uuid,
   'assinada pelo operador da Equipe Frila, e não por quem publicou');
 
 select is(
@@ -225,7 +225,7 @@ select isnt(
 
 select is(
   (privado.operacao_moderar_texto((select id from v), 'ocultar', 'de novo',
-     '12a00000-0000-4000-8000-0000000000op')->>'ja_estava_oculto')::boolean,
+     '12a00000-0000-4000-8000-00000000000f')->>'ja_estava_oculto')::boolean,
   true,
   'reenviar ocultar devolve o que já foi feito');
 
@@ -237,7 +237,7 @@ select is(
 
 select lives_ok(
   format($$ select privado.operacao_moderar_texto(%L, 'reexibir', 'Analisado, texto liberado',
-              '12a00000-0000-4000-8000-0000000000op') $$, (select id from v)),
+              '12a00000-0000-4000-8000-00000000000f') $$, (select id from v)),
   'a Equipe reexibe o texto');
 
 select is(
@@ -255,14 +255,14 @@ select is(
 
 select throws_ok(
   format($$ select privado.operacao_moderar_texto(%L, 'reexibir', 'de novo',
-              '12a00000-0000-4000-8000-0000000000op') $$, (select id from v)),
-  '22023', null,
+              '12a00000-0000-4000-8000-00000000000f') $$, (select id from v)),
+  'PGRST', pg_temp.erro('campo_invalido', 'texto_nao_ocultado'),
   'reexibir texto que não foi ocultado é recusado');
 
 select throws_ok(
   format($$ select privado.operacao_moderar_texto(%L, 'apagar', 'motivo',
-              '12a00000-0000-4000-8000-0000000000op') $$, (select id from v)),
-  '22023', null,
+              '12a00000-0000-4000-8000-00000000000f') $$, (select id from v)),
+  'PGRST', pg_temp.erro('campo_invalido', 'acao'),
   'a ação é fechada em duas palavras: não há "apagar"');
 
 -- ── 5. O prazo de 24 h da diretriz 1.2 ───────────────────────────────────────
