@@ -392,7 +392,7 @@ select is(
 -- O check-in que chega depois da decisão não ressuscita a posição cancelada.
 select throws_ok(
   format($$ select pg_temp.como('e8a00000-0000-4000-8000-0000000000e1',
-       $x$ select public.fazer_checkin(%L, 50, %L) $x$) $$,
+       $x$ select public.fazer_checkin(%L, 5000, %L) $x$) $$,
          (select turno_falta from p), privado.agora()),
   'PGRST',
   '{"code" : "vaga_encerrada", "message" : "vaga_encerrada", "details" : "posicao_cancelada", "hint" : null}',

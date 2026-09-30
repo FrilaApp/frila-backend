@@ -49,3 +49,5 @@ grant execute on all functions in schema privado to service_role;
 -- para o que `postgres` criar no schema, que é quem aplica as migrações.
 alter default privileges for role postgres in schema privado
   revoke execute on functions from public;
+alter default privileges for role postgres
+  revoke execute on functions from public;

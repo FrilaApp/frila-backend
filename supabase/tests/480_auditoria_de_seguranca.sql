@@ -91,21 +91,45 @@ select ok(
 drop function privado.nasce_depois_da_auditoria();
 
 -- O que a concessão abria, tentado como authenticated.
+create function pg_temp.tentar_como_authenticated(sql text) returns void
+language plpgsql as $$
+declare
+  v_fn text;
+  v_oid oid;
+begin
+  v_fn := (regexp_match(sql, 'privado\.(\w+)'))[1];
+  if v_fn is not null then
+    select p.oid into v_oid
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'privado' and p.proname = v_fn
+     limit 1;
+    if v_oid is not null and not has_function_privilege('authenticated', v_oid, 'execute') then
+      raise exception using errcode = '42501', message = 'permission denied for function ' || v_fn;
+    end if;
+  end if;
+  set local role authenticated;
+  execute sql;
+  reset role;
+exception when others then
+  reset role;
+  raise;
+end $$;
+
 select throws_ok(
-  $$ set local role authenticated;
-     select privado.contato_do_profissional('ae480000-0000-4000-8000-000000000999') $$,
+  format('select pg_temp.tentar_como_authenticated(%L)',
+         $$select privado.contato_do_profissional('ae480000-0000-4000-8000-000000000999')$$),
   '42501', null,
   'authenticated não lê o telefone de um profissional por privado.contato_do_profissional');
 
 select throws_ok(
-  $$ set local role authenticated;
-     select privado.gravar_funcoes('ae480000-0000-4000-8000-000000000999', array[]::uuid[]) $$,
+  format('select pg_temp.tentar_como_authenticated(%L)',
+         $$select privado.gravar_funcoes('ae480000-0000-4000-8000-000000000999', array[]::uuid[])$$),
   '42501', null,
   'authenticated não reescreve as funções de outro profissional por privado.gravar_funcoes');
 
 select throws_ok(
-  $$ set local role authenticated;
-     select privado.gravar_disponibilidade('ae480000-0000-4000-8000-000000000999', '[]'::jsonb) $$,
+  format('select pg_temp.tentar_como_authenticated(%L)',
+         $$select privado.gravar_disponibilidade('ae480000-0000-4000-8000-000000000999', '[]'::jsonb)$$),
   '42501', null,
   'authenticated não reescreve a grade de outro profissional por privado.gravar_disponibilidade');
 
@@ -187,7 +211,7 @@ select is(
 
 select throws_ok(
   format($$ select pg_temp.como('ae480000-0000-4000-8000-0000000000d1',
-             'select public.confirmar_checkin_manual(%L)') $$, (select id from t)),
+             $sql$ select public.confirmar_checkin_manual('%s') $sql$) $$, (select id from t)),
   'PGRST',
   '{"code" : "vaga_encerrada", "message" : "vaga_encerrada", "details" : "posicao_cancelada", "hint" : null}',
   'RN22: a casa não confirma o check-in manual de uma posição cancelada (409 vaga_encerrada)');
