@@ -60,6 +60,8 @@ supabase start -x vector,logflare
 | `supabase migration new <nome>` | Cria uma migração datada |
 | `supabase test db` | Roda o pgTAP de `supabase/tests/` |
 | `supabase db push` | Aplica as migrações no projeto remoto |
+| `./scripts/desvio.sh <ref>` | Compara o projeto remoto com o que as migrações constroem |
+| `./scripts/teste-entrega.sh` | Autoteste da janela de manutenção e do desvio |
 | `./scripts/ciclo-completo.sh` | Smoke test: `criar_conta` → `publicar_vaga` → `candidatar` → check-in → `avaliar` |
 | `./scripts/bancada-sync.sh` | Leva o trabalho do dia para o vault da Bancada |
 
@@ -93,6 +95,37 @@ Configure `frila.agendador_secret` no banco e o mesmo valor como
 `AGENDADOR_SECRET` na Edge Function `despachar` **antes** de aplicar a migração do
 motor de despacho. Sem os dois valores, `publicar_vaga` falha ao enfileirar o
 despacho.
+
+### Entrega contínua (#207)
+
+Ninguém aplica migração nem publica Edge Function à mão. O workflow `Entrega`
+(`.github/workflows/entrega.yml`) faz isso:
+
+| Quando | O que acontece |
+|---|---|
+| Merge na `develop` que muda `supabase/` | Migrações e semente no `frila-dev` (`scripts/aplicar-remoto.sh`), `supabase functions deploy` e a comparação de desvio |
+| Todo dia às 8h | Só a comparação de desvio no `frila-dev` |
+| Tag `backend-v*` num commit da `develop` | Pede aprovação no Environment `frila-prod`, confere a janela abaixo e faz o mesmo no `frila-prod` |
+
+Para publicar em produção: `git tag backend-v0.3.0 origin/develop && git push origin
+backend-v0.3.0`, e um revisor aprova em *Actions*. Dentro da janela proibida o job recusa;
+rode de novo depois das 2h.
+
+**Desvio.** `scripts/desvio.sh <project_ref>` compara o remoto com o banco que as
+migrações constroem do zero: tabelas, colunas, restrições, índices, funções (corpo em md5),
+quem pode executar cada uma, privilégios, políticas de RLS, gatilhos, visões e os jobs do
+pg_cron. O que foi mudado pelo painel aparece como `+` (só no remoto) ou `-` (só no
+repositório) e falha o workflow. Não usa `supabase db diff --linked` porque ele pede a
+senha do banco. Para rodar na máquina: `supabase db start` e depois o script, com o token
+no `.env`.
+
+**O que continua manual**, uma vez por projeto: o `frila.agendador_secret` no banco e os
+segredos das Edge Functions (`supabase secrets set`). O `aplicar-remoto.sh` recusa seguir
+sem o segredo do agendador, porque sem ele `publicar_vaga` falha.
+
+**Configuração no GitHub:** Environments `frila-dev` e `frila-prod`, cada um com o secret
+`SUPABASE_ACCESS_TOKEN`; o `frila-prod` com revisores obrigatórios. O repositório é
+público: nenhum segredo vai para o workflow.
 
 ### Janela de migração (RNF12)
 

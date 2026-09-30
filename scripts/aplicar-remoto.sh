@@ -12,13 +12,17 @@
 #       ./scripts/aplicar-remoto.sh <project_ref> --seco     mostra o que faria
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-set -a; source .env; set +a
+# Na máquina o token vem do `.env`; no workflow `Entrega` ele chega pelo ambiente, e o
+# `.env` não existe.
+if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ] && [ -f .env ]; then
+  set -a; source .env; set +a
+fi
 
 REF="${1:?uso: aplicar-remoto.sh <project_ref> [--seco]}"
 SECO="${2:-}"
 API="https://api.supabase.com/v1/projects/$REF/database/query"
 
-: "${SUPABASE_ACCESS_TOKEN:?falta SUPABASE_ACCESS_TOKEN no .env}"
+: "${SUPABASE_ACCESS_TOKEN:?falta SUPABASE_ACCESS_TOKEN no ambiente ou no .env}"
 
 # Executa SQL e devolve a resposta crua. Aborta no primeiro erro da API.
 rodar() {
@@ -110,6 +114,21 @@ else
   echo "  Limpe com: delete from privado.ambiente;"
   exit 1
 fi
+
+# O motor de despacho lê `frila.agendador_secret` a cada vaga publicada, e sem ele
+# `publicar_vaga` falha. A migração aplica sem o segredo, então o ambiente parece em dia e
+# não publica vaga nenhuma. A conferência devolve só se o segredo existe, nunca o valor.
+echo "▸ O segredo do agendador está no banco"
+if rodar "select count(*) as n from pg_db_role_setting s
+            cross join unnest(s.setconfig) c
+           where c like 'frila.agendador_secret=_%'" | grep -q '"n":0'; then
+  echo "  ✗ frila.agendador_secret não está configurado neste banco"
+  echo
+  echo "  Configure o mesmo valor no banco e em AGENDADOR_SECRET das Edge Functions,"
+  echo "  como em 'Antes de aplicar no frila-dev ou em produção', no README."
+  exit 1
+fi
+echo "  ✓"
 
 echo
 echo "▸ Conferindo"
