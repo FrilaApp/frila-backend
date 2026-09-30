@@ -220,7 +220,8 @@ insert into fora values
   ('despacho',             'MeusDados não declara as ofertas recebidas'),
   ('equipe_confianca',     'MeusDados não declara a equipe de confiança'),
   ('evento',               'agenda da casa, e não do titular'),
-  ('entrada_demonstracao', 'conta de revisão da App Store: não há titular de dado pessoal aqui');
+  ('entrada_demonstracao', 'conta de revisão da App Store: não há titular de dado pessoal aqui'),
+  ('pedido_de_exclusao',   'MeusDados não declara o pedido de exclusão do próprio titular — o schema do contrato 0.2.26 tem nove campos e nenhum para ele (SHUDSozj)');
 
 create temp table nao_pessoais (t text, motivo text);
 insert into nao_pessoais values
