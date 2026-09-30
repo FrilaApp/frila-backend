@@ -13,6 +13,8 @@ function mockDeps(opcoes: {
   dbRetorno?: Record<string, unknown>;
   adminOk?: boolean;
   onAdminDelete?: () => void;
+  ordem?: string[];
+  erroAoRegistrar?: { code: string; message: string };
 }): HandlerDeps {
   const authOk = opcoes.authOk ?? true;
   const adminOk = opcoes.adminOk ?? true;
@@ -43,7 +45,17 @@ function mockDeps(opcoes: {
   };
 
   const sqlClient = {
+    // `ordem` registra a sequência das chamadas ao banco. O cartão SHUDSozj é sobre ordem:
+    // registrar o pedido **depois** de tentar a exclusão não deixa rastro de nada.
+    registrarPedido: (_userId: string) => {
+      opcoes.ordem?.push("registrar");
+      if (opcoes.erroAoRegistrar) {
+        return Promise.reject(opcoes.erroAoRegistrar);
+      }
+      return Promise.resolve();
+    },
     query: (_userId: string) => {
+      opcoes.ordem?.push("excluir");
       if (opcoes.dbErro) {
         return Promise.reject(opcoes.dbErro);
       }
@@ -347,4 +359,56 @@ Deno.test("mapeamento de erros do banco: tratarErroBanco lida com PGRST e erros 
   assertEquals(resp500.status, 500);
   const corpo500 = await resp500.json();
   assertEquals(corpo500.code, "erro_interno");
+});
+
+// ── SHUDSozj: o pedido de exclusão deixa rastro ───────────────────────────────
+//
+// O rastro só existe se o registro vier antes. `privado.excluir_conta` roda numa transação
+// só; quando ela volta atrás — 40P01, medido em 6 de 50 rodadas do cenário 9 do
+// corrida-ciclo.sh —, tudo que ela escreveu volta junto. Registrar depois, ou registrar
+// dentro, não resolve: o pedido tem de estar comitado antes de a exclusão ser tentada.
+
+Deno.test("SHUDSozj: o pedido é registrado antes de a exclusão ser tentada", async () => {
+  const ordem: string[] = [];
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: { Authorization: "Bearer token-valido", "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    mockDeps({ ordem }),
+  );
+  assertEquals(resposta.status, 202);
+  assertEquals(ordem, ["registrar", "excluir"]);
+});
+
+Deno.test("SHUDSozj: exclusão que volta atrás não desfaz o registro do pedido", async () => {
+  const ordem: string[] = [];
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: { Authorization: "Bearer token-valido", "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    mockDeps({ ordem, dbErro: { code: "40P01", message: "deadlock detected" } }),
+  );
+  // O titular recebe erro, como antes. A diferença é que o pedido já ficou registrado.
+  assertEquals(resposta.status >= 400, true);
+  assertEquals(ordem, ["registrar", "excluir"]);
+});
+
+Deno.test("SHUDSozj: sem conseguir registrar o pedido, a exclusão não é tentada", async () => {
+  const ordem: string[] = [];
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: { Authorization: "Bearer token-valido", "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    mockDeps({ ordem, erroAoRegistrar: { code: "53300", message: "too many connections" } }),
+  );
+  // Falha fechado de propósito: excluir sem rastro é o defeito que este cartão conserta.
+  assertEquals(resposta.status, 500);
+  assertEquals((await resposta.json()).code, "erro_interno");
+  assertEquals(ordem, ["registrar"]);
 });
