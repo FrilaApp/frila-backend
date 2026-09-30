@@ -48,11 +48,13 @@ select columns_are('public', 'vaga', array[
 -- o registro de presença. `checkin_em` é a hora do toque e `checkin_recebido_em` a hora
 -- em que o servidor recebeu — sem as duas, um turno registrado às 18:00 e sincronizado
 -- às 23:00 seria indistinguível de um registrado às 23:00. Divergência em ESTADO.md.
+-- `a_caminho_em` também não: é o aviso "estou a caminho" (US14, contrato 0.2.25), um
+-- instante e nunca uma localização.
 select columns_are('public', 'turno', array[
   'id','posicao_id','checkin_em','checkin_tipo','checkin_distancia_m','checkin_confirmado_em',
   'checkin_recebido_em','checkout_em','checkout_distancia_m','checkout_recebido_em',
-  'verificacao','valor_acordado_centavos'
-], 'turno tem exatamente as colunas da Modelagem, mais a hora em que o servidor recebeu');
+  'verificacao','valor_acordado_centavos','a_caminho_em'
+], 'turno tem exatamente as colunas da Modelagem, mais a hora em que o servidor recebeu e o aviso a caminho');
 
 -- `reaberta_por_atraso_de` não está na Modelagem: veio de `reabrir_por_atraso` (cartão
 -- e8XpOZJN), que precisa saber qual posição aceita candidato depois do início e qual
