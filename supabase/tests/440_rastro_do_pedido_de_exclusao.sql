@@ -24,7 +24,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(21);
+select plan(25);
 
 create function pg_temp.conta(id uuid, email text, perfil public.perfil_conta, fone text)
 returns void
@@ -85,6 +85,32 @@ select is(has_function_privilege('anon',
 select is(has_function_privilege('service_role',
             'privado.registrar_pedido_de_exclusao(uuid)', 'execute'), true,
           'o caminho de serviço registra o pedido');
+
+-- ── As restrições de integridade (CHECK) ──────────────────────────────────────
+
+select throws_ok(
+  $$ insert into public.pedido_de_exclusao (usuario_id, estado)
+     values ('c6000000-0000-4000-8000-0000000000e1', 'invalido') $$,
+  '23514', null,
+  'pedido_de_exclusao_estado_conhecido: estado fora de pendente/concluido é recusado');
+
+select throws_ok(
+  $$ insert into public.pedido_de_exclusao (usuario_id, estado, concluido_em)
+     values ('c6000000-0000-4000-8000-0000000000e2', 'concluido', null) $$,
+  '23514', null,
+  'pedido_de_exclusao_conclusao_coerente: concluido sem data de conclusão é recusado');
+
+select throws_ok(
+  $$ insert into public.pedido_de_exclusao (usuario_id, estado, concluido_em)
+     values ('c6000000-0000-4000-8000-0000000000e3', 'pendente', now()) $$,
+  '23514', null,
+  'pedido_de_exclusao_conclusao_coerente: pendente com data de conclusão é recusado');
+
+select throws_ok(
+  $$ insert into public.pedido_de_exclusao (usuario_id, tentativas)
+     values ('c6000000-0000-4000-8000-0000000000e4', 0) $$,
+  '23514', null,
+  'pedido_de_exclusao_tentativas_positivas: tentativas menor que 1 é recusado');
 
 -- ── O registro, e a idempotência ──────────────────────────────────────────────
 
