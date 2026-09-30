@@ -293,7 +293,7 @@ select is(
 select is(
   (select array_agg(k order by k) from p,
           jsonb_object_keys(pg_temp.posicao_de(j,'d6000000-0000-4000-8000-0000000003a0')) k),
-  array['em_atraso','estado','id','profissional','turno_id','verificacao'],
+  array['a_caminho_em','em_atraso','estado','id','profissional','turno_id','verificacao'],
   'cada posição traz exatamente os campos de PosicaoNoPainel');
 
 -- O painel é do estabelecimento, e mesmo assim não repete o documento nem expõe o
