@@ -423,6 +423,13 @@ verify_jwt = true
 enabled = true
 verify_jwt = false
 
+# Exportação de turnos em CSV ou PDF (cartão pd7zOS5P · US20, RF22, RN17, UC13).
+# verify_jwt fica ligado: a identidade vem do token Bearer e é reconferida em
+# auth/v1/user dentro da função.
+[functions.exportar-turnos]
+enabled = true
+verify_jwt = true
+
 # E-mails transacionais e a caixa da Equipe Frila (cartão 7yq1flLG).
 # Consome a fila `email` do pgmq: protocolo de denúncia e de contestação, e o alerta do
 # monitoramento. Acordada pelo gatilho da própria fila e pelo job `processar_fila_email`.
