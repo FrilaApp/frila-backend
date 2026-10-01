@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.27
+  version: 0.2.28
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -95,6 +95,22 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.28, de 01/10/2026.** O bloqueio passa a esconder também o perfil público (cartão
+    1aGJPQK2, US26, RF26, UC17), conforme a decisão de produto de 30/09/2026 registrada na 0.2.27.
+    Nenhuma operação, campo ou código de erro novo: o `404 NaoEncontrado` já era declarado em
+    `/rpc/perfil_publico`; o que muda é **quando** ele vem.
+
+    - **`/rpc/perfil_publico`**: devolve `404 nao_encontrado` quando há bloqueio entre quem chama e o
+      perfil consultado, **nos dois sentidos** (quem bloqueou não vê quem foi bloqueado, e quem foi
+      bloqueado não vê quem bloqueou). Vale também quando a outra parte é membro do estabelecimento
+      consultado, como já vale para vagas e candidaturas. A resposta é a mesma de um id que não
+      existe: o cliente não distingue bloqueio de perfil inexistente, e a tela mostra "perfil
+      indisponível" sem dizer que houve bloqueio (RF26).
+    - **Fecha a divergência aberta** na 0.2.12 e adiada na 0.2.27. O espelho `contrato/openapi.yaml`
+      do backend e o app seguem em PRs próprios.
+
+    ---
 
     **Versão 0.2.27, de 30/09/2026.** Só texto: nenhuma operação, campo, código de erro ou status
     muda. Alinha a descrição ao que o backend faz e registra duas decisões de produto de 30/09,
@@ -2214,9 +2230,10 @@ paths:
         Conta anonimizada (RF25) devolve `nome: "Conta encerrada"`. O turno e a avaliação sobrevivem à
         exclusão porque pertencem também à contraparte; o nome, não.
 
-        Bloqueio (RF26): hoje o perfil continua visível entre partes bloqueadas. A decisão de produto
-        de 30/09 é escondê-lo; a mudança de comportamento entra numa versão futura deste contrato,
-        junto com o backend e o app.
+        Bloqueio (RF26, 0.2.28): entre partes bloqueadas, nos dois sentidos, o perfil responde
+        `404 nao_encontrado`, igual a um id que não existe. Vale também quando a outra parte é
+        membro do estabelecimento consultado. O cliente mostra "perfil indisponível" e não revela
+        que houve bloqueio.
       x-requisitos: [RF16, RN08]
       parameters:
         - name: id
