@@ -29,6 +29,7 @@ DB_ENSAIO="${DB_ENSAIO:-frila_ensaio_restauracao}"
 APENAS_DUMP=0
 APENAS_RESTAURAR=0
 SEM_PGTAP=0
+COMPARAR_ORIGEM=0
 MANTER_BANCO=0
 DIR_DUMP=""
 ARQ_SCHEMA=""
@@ -40,6 +41,7 @@ while [ $# -gt 0 ]; do
     --apenas-dump)      APENAS_DUMP=1; shift ;;
     --apenas-restaurar) APENAS_RESTAURAR=1; shift ;;
     --sem-pgtap)        SEM_PGTAP=1; shift ;;
+    --comparar-origem)  COMPARAR_ORIGEM=1; shift ;;
     --manter-banco)     MANTER_BANCO=1; shift ;;
     --dir-dump)         DIR_DUMP="${2:?uso: --dir-dump <caminho>}"; shift 2 ;;
     --dump-schema)      ARQ_SCHEMA="${2:?uso: --dump-schema <caminho>}"; shift 2 ;;
@@ -51,6 +53,7 @@ while [ $# -gt 0 ]; do
       echo "  --apenas-dump       Gera os arquivos de dump e encerra"
       echo "  --apenas-restaurar  Restaura a partir dos dumps informados"
       echo "  --sem-pgtap         Pula a execução da suíte pgTAP"
+      echo "  --comparar-origem   Com --apenas-restaurar, compara a contagem com a origem também"
       echo "  --manter-banco      Não exclui o banco $DB_ENSAIO ao final"
       echo "  --dir-dump <dir>    Diretório de saída/leitura dos dumps"
       echo "  --dump-schema <arq> Caminho do arquivo de schema"
@@ -220,13 +223,16 @@ CREATE EXTENSION IF NOT EXISTS "pgmq" CASCADE;
 CREATE EXTENSION IF NOT EXISTS pgtap SCHEMA extensions;
 EOF
 
-# Aplica schema do auth e schema das tabelas do Frila
-docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_ENSAIO" -v ON_ERROR_STOP=0 < "$ARQ_AUTH_SCHEMA" >/dev/null 2>&1
-docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_ENSAIO" -v ON_ERROR_STOP=0 < "$ARQ_SCHEMA" >/dev/null 2>&1
-
-# Aplica dados do auth e dados das tabelas do Frila
-docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_ENSAIO" -v ON_ERROR_STOP=0 < "$ARQ_AUTH_DADOS" >/dev/null 2>&1
-docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_ENSAIO" -v ON_ERROR_STOP=0 < "$ARQ_DADOS" >/dev/null 2>&1
+# Aplica schema e dados. Erros de restauração não derrubam o psql (extensões e papéis do
+# Supabase geram avisos esperados), mas vão para um log e a conferência abaixo compara a
+# contagem de linhas com a origem: restauração que perde dado não passa calada.
+LOG_REST="$DIR_DUMP/restauracao.log"
+: > "$LOG_REST"
+for arq in "$ARQ_AUTH_SCHEMA" "$ARQ_SCHEMA" "$ARQ_AUTH_DADOS" "$ARQ_DADOS"; do
+  docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_ENSAIO" -v ON_ERROR_STOP=0 < "$arq" \
+    >/dev/null 2>>"$LOG_REST" || true
+done
+ERROS_REST=$(grep -c "ERROR:" "$LOG_REST" || true)
 
 T1=$(date +%s)
 T_REST_DURACAO=$((T1 - T0))
@@ -248,7 +254,7 @@ echo ""
 printf "    %-42s %s\n" "TABELA" "LINHAS"
 printf "    %-42s %s\n" "------------------------------------------" "------"
 
-CONTAGEM_SAIDA=$(docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_ENSAIO" -tA << 'EOF'
+read -r -d '' SQL_CONTAGEM <<'SQLEND' || true
 CREATE OR REPLACE FUNCTION pg_temp.contar_tabelas()
 RETURNS TABLE (tabela text, linhas bigint) LANGUAGE plpgsql AS $$
 DECLARE
@@ -268,9 +274,14 @@ BEGIN
     RETURN NEXT;
   END LOOP;
 END $$;
-SELECT tabela || '|' || linhas FROM pg_temp.contar_tabelas();
-EOF
-)
+SELECT tabela || '|' || linhas FROM pg_temp.contar_tabelas() ORDER BY 1;
+SQLEND
+contar() {  # contar <banco>: linhas "schema.tabela|n", sem as mensagens do DDL
+  printf '%s\n' "$SQL_CONTAGEM" | docker exec -i "$DB_CONTAINER" psql -U postgres -d "$1" -tA \
+    | grep '|' || true
+}
+
+CONTAGEM_SAIDA=$(contar "$DB_ENSAIO")
 
 TOTAL_LINHAS=0
 while IFS='|' read -r tab cnt; do
@@ -283,6 +294,17 @@ done <<< "$CONTAGEM_SAIDA"
 
 printf "    %-42s %s\n" "------------------------------------------" "------"
 printf "    %-42s %d\n" "TOTAL DE LINHAS RESTAURADAS" "$TOTAL_LINHAS"
+
+if [ "$APENAS_RESTAURAR" -eq 0 ] || [ "$COMPARAR_ORIGEM" -eq 1 ]; then
+  CONTAGEM_ORIGEM=$(contar "$DB_ORIGEM")
+  if [ "$CONTAGEM_ORIGEM" != "$CONTAGEM_SAIDA" ]; then
+    echo "ERRO: a contagem de linhas restaurada diverge da origem ('$DB_ORIGEM')." >&2
+    diff <(printf '%s\n' "$CONTAGEM_ORIGEM") <(printf '%s\n' "$CONTAGEM_SAIDA") | sed 's/^/    /' >&2 || true
+    echo "    Erros do psql na restauração: $ERROS_REST (veja $LOG_REST)" >&2
+    exit 1
+  fi
+  echo "    ✓ Contagem por tabela idêntica à origem (erros de psql na restauração: $ERROS_REST)"
+fi
 
 if [ "$TABELAS_REST" -lt 20 ]; then
   echo "ERRO: Quantidade de tabelas restauradas ($TABELAS_REST) abaixo do esperado!" >&2
@@ -320,6 +342,10 @@ EOF
   T_PGTAP_DURACAO=$((T1 - T0))
 
   echo "$TEST_RESULT" | sed 's/^/    /'
+  if printf '%s\n' "$TEST_RESULT" | grep -Eq '^not ok|Looks like you failed'; then
+    echo "ERRO: asserção pgTAP falhou no banco restaurado." >&2
+    exit 1
+  fi
 
   if [ -f "supabase/tests/000_estrutura.sql" ]; then
     echo "    Executando 000_estrutura.sql no banco restaurado..."

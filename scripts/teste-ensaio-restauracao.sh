@@ -78,5 +78,20 @@ if docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -tAc "SELECT 1 FR
 fi
 echo "OK (banco temporário limpo)"
 
+# 6. Restauração que perde dado tem de reprovar (a contagem diverge da origem)
+echo -n "  6. Conferindo que restauração com dados perdidos reprova... "
+: > "$TMP_DUMP/dados.sql"
+if "$SCRIPT" --apenas-restaurar --comparar-origem --sem-pgtap --dir-dump "$TMP_DUMP" \
+     --dump-schema "$TMP_DUMP/schema.sql" --dump-dados "$TMP_DUMP/dados.sql" >/dev/null 2>"$TMP_DUMP/erro.txt"; then
+  echo "FALHOU: restauração sem dados passou como se estivesse íntegra." >&2
+  exit 1
+fi
+grep -q "diverge da origem" "$TMP_DUMP/erro.txt" || {
+  echo "FALHOU: a reprovação não foi pela divergência de contagem." >&2
+  cat "$TMP_DUMP/erro.txt" >&2
+  exit 1
+}
+echo "OK (divergência de contagem reprovada)"
+
 echo ""
-echo "Todos os 5 casos do autoteste do ensaio de restauração passaram com sucesso!"
+echo "Todos os 6 casos do autoteste do ensaio de restauração passaram com sucesso!"
