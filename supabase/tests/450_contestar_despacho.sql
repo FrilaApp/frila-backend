@@ -14,6 +14,9 @@
 --      e devolve Protocolo com prazo de resposta em até 5 dias úteis (privado.prazo_de_resposta).
 
 begin;
+insert into privado.ambiente (id, eh_teste) values (true, true)
+on conflict (id) do update set eh_teste = true;
+set local frila.agora = '2026-10-01 12:00:00-03';
 select plan(26);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb
@@ -218,7 +221,7 @@ select ok(
 
 select is(
   ((select p from res_rev)->>'prazo_resposta_ate'),
-  to_char(privado.prazo_de_resposta(now()), 'YYYY-MM-DD'),
+  to_char(privado.prazo_de_resposta(privado.agora()), 'YYYY-MM-DD'),
   'prazo_resposta_ate é calculado com 5 dias úteis');
 
 -- Verifica persistência na tabela ocorrencia
