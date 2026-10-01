@@ -16,7 +16,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(38);
+select plan(48);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -61,12 +61,14 @@ $$;
 create temp table ids as select
   'c4800000-0000-4000-8000-0000000000d1'::uuid as dona,
   'c4800000-0000-4000-8000-0000000000d2'::uuid as suspenso,
+  'c4800000-0000-4000-8000-0000000000d3'::uuid as outro_dono,
   'c4800000-0000-4000-8000-0000000000e1'::uuid as ana,
   'c4800000-0000-4000-8000-0000000000e2'::uuid as sem_perfil,
   'c4800000-0000-4000-8000-0000000000f1'::uuid as sem_conta;
 
 select pg_temp.autenticar((select dona from ids),       'dona@c48.test');
 select pg_temp.autenticar((select suspenso from ids),   'suspenso@c48.test');
+select pg_temp.autenticar((select outro_dono from ids), 'outro@c48.test');
 select pg_temp.autenticar((select ana from ids),        'ana@c48.test');
 select pg_temp.autenticar((select sem_perfil from ids), 'sem-perfil@c48.test');
 select pg_temp.autenticar((select sem_conta from ids),  'sem-conta@c48.test');
@@ -75,6 +77,8 @@ select pg_temp.como((select dona from ids),
   $$ select public.criar_conta('contratante','Dona da Auditoria','+5561948000001','1980-01-01','2026-09-22') $$);
 select pg_temp.como((select suspenso from ids),
   $$ select public.criar_conta('contratante','Conta Suspensa','+5561948000002','1980-01-01','2026-09-22') $$);
+select pg_temp.como((select outro_dono from ids),
+  $$ select public.criar_conta('contratante','Outro Dono','+5561948000003','1980-01-01','2026-09-22') $$);
 select pg_temp.como((select ana from ids),
   $$ select public.criar_conta('profissional','Ana da Auditoria','+5561948000011','1995-01-01','2026-09-22') $$);
 select pg_temp.como((select sem_perfil from ids),
@@ -162,6 +166,21 @@ select throws_ok(
   format($$ select public.fazer_checkout(%L, 50, now()) $$, (select turno from t)),
   'PGRST', pg_temp.erro('nao_autenticado'),
   'fazer_checkout sem token é 401 nao_autenticado');
+
+select throws_ok(
+  format($$ select public.candidatos_da_vaga(%L) $$, (select da_ana from v)),
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'candidatos_da_vaga sem token é 401 nao_autenticado');
+
+select throws_ok(
+  $$ select public.minhas_candidaturas() $$,
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'minhas_candidaturas sem token é 401 nao_autenticado');
+
+select throws_ok(
+  format($$ select public.reabrir_por_atraso(%L) $$, (select aberta from t)),
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'reabrir_por_atraso sem token é 401 nao_autenticado');
 
 -- ── Cadastro e perfil ─────────────────────────────────────────────────────────
 select throws_ok(
@@ -258,6 +277,18 @@ select throws_ok(
   'PGRST', pg_temp.erro('posicao_nao_cancelavel'),
   'reabrir_por_atraso de posição aberta é 409 posicao_nao_cancelavel');
 
+select throws_ok(
+  pg_temp.por((select dona from ids),
+    $$ select public.reabrir_por_atraso(null) $$),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'posicao_id'),
+  'reabrir_por_atraso sem posicao_id é 422 campo_obrigatorio, details posicao_id');
+
+select throws_ok(
+  pg_temp.por((select outro_dono from ids),
+    format($$ select public.reabrir_por_atraso(%L) $$, (select aberta from t))),
+  'PGRST', pg_temp.erro('sem_permissao'),
+  'reabrir_por_atraso por outro dono (não membro) é 403 sem_permissao');
+
 select lives_ok(
   pg_temp.por((select ana from ids),
     format($$ select public.cancelar_posicao(%L, 'não vou poder') $$, (select desistida from t))),
@@ -290,6 +321,18 @@ select throws_ok(
 
 select throws_ok(
   pg_temp.por((select ana from ids),
+    $$ select public.fazer_checkout(null, 50, '2027-03-03 20:30:00+00') $$),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'turno_id'),
+  'fazer_checkout sem turno_id é 422 campo_obrigatorio, details turno_id');
+
+select throws_ok(
+  pg_temp.por((select ana from ids),
+    format($$ select public.fazer_checkout(%L, 50, now()) $$, (select turno from t))),
+  'PGRST', pg_temp.erro('checkin_pendente'),
+  'fazer_checkout antes do check-in é 409 checkin_pendente');
+
+select throws_ok(
+  pg_temp.por((select ana from ids),
     format($$ select public.fazer_checkin(%L, 50, null) $$, (select turno from t))),
   'PGRST', pg_temp.erro('campo_obrigatorio', 'registrado_em'),
   'fazer_checkin sem registrado_em é 422 campo_obrigatorio, details registrado_em');
@@ -307,6 +350,24 @@ select lives_ok(
   pg_temp.por((select ana from ids),
     format($$ select public.fazer_checkin(%L, 50, '2027-03-03 20:30:00+00') $$, (select turno from t))),
   'a Ana faz o check-in a 50 m, dentro da janela');
+
+select throws_ok(
+  pg_temp.por((select ana from ids),
+    format($$ select public.fazer_checkout(%L, 50, null) $$, (select turno from t))),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'registrado_em'),
+  'fazer_checkout sem registrado_em é 422 campo_obrigatorio, details registrado_em');
+
+select throws_ok(
+  pg_temp.por((select ana from ids),
+    format($$ select public.fazer_checkout(%L, -1, '2027-03-03 20:30:00+00') $$, (select turno from t))),
+  'PGRST', pg_temp.erro('campo_invalido', 'distancia_m'),
+  'fazer_checkout com distância negativa é 422 campo_invalido, details distancia_m');
+
+select throws_ok(
+  pg_temp.por((select dona from ids),
+    format($$ select public.reabrir_por_atraso((select posicao_id from public.turno where id = %L)) $$, (select turno from t))),
+  'PGRST', pg_temp.erro('posicao_nao_cancelavel', 'checkin_registrado'),
+  'reabrir_por_atraso com check-in registrado é 409 posicao_nao_cancelavel, details checkin_registrado');
 
 -- Uma hora depois do fim previsto: o check-out já não cabe na janela (RN22).
 select set_config('frila.agora', '2027-03-04 04:00:00+00', true);
