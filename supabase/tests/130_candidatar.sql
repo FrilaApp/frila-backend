@@ -15,7 +15,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(29);
+select plan(30);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -257,6 +257,19 @@ select is(
    where p.vaga_id = (select uma from vagas)),
   1,
   'e não cria uma segunda candidatura');
+
+select throws_ok(
+  format($$ insert into public.candidatura (posicao_id, profissional_id)
+            values ((select c.posicao_id from public.candidatura c
+                      join public.posicao p on p.id = c.posicao_id
+                     where p.vaga_id = %L limit 1),
+                    (select c.profissional_id from public.candidatura c
+                      join public.posicao p on p.id = c.posicao_id
+                     where p.vaga_id = %L limit 1)) $$,
+         (select uma from vagas), (select uma from vagas)),
+  '23505',
+  null,
+  'candidatura_posicao_id_profissional_id_key: duplicar (posicao_id, profissional_id) viola unicidade');
 
 -- ── Quem chega depois ─────────────────────────────────────────────────────────
 select throws_ok(

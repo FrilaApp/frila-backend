@@ -10,7 +10,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(52);
+select plan(53);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -246,6 +246,16 @@ select is(pg_temp.liberar('2026-10-05 12:31:00+00'), 0,
   'rodar o agendador de novo não gera segunda notificação (idempotente)');
 select is((select count(*) from pg_temp.minhas()), 2::bigint,
   'continuam duas notificações');
+
+select throws_ok(
+  format($$ insert into public.notificacao (tipo, referencia_id, usuario_id, profissional_id, rodada, payload)
+            values ('vaga'::public.tipo_notificacao,
+                    'c3300000-0000-4000-8000-00000000a001'::uuid,
+                    %L::uuid, %L::uuid, 1, '{"tipo":"vaga"}'::jsonb) $$,
+         (select usr from eu), (select prof from eu)),
+  '23505',
+  null,
+  'notificacao_marca_de_envio: duplicar (tipo, referencia_id, usuario_id, rodada) viola unicidade');
 
 -- O despacho que esperou ganhou a notificação uma vez; depois disso, não muda (RNF13).
 select throws_ok(
