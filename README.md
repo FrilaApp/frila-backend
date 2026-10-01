@@ -167,9 +167,8 @@ local (`public`, `privado`, `metrica`, `requisicao` e `auth`), empacota e cifra 
 **compara a contagem de linhas por tabela com a origem**, roda o pgTAP de estrutura e RLS no
 banco restaurado e imprime o tempo de cada etapa (é o número que vai para o cartão).
 `./scripts/teste-ensaio-restauracao.sh` é o autoteste (7 casos, incluindo os que provam que
-restauração com dado perdido e estrutura quebrada reprovam). O workflow agendado que roda o autoteste às 04h de
-Brasília, sem segredo e sem guardar artefato (o repositório é público), entra num PR à
-parte: o token usado pelos agentes não tem o escopo `workflow`.
+restauração com dado perdido e estrutura quebrada reprovam). O workflow `.github/workflows/ensaio-backup.yml` roda o autoteste às 04h de Brasília e sob
+demanda, sem segredo e sem guardar artefato (o repositório é público).
 
 **Ainda não existe** o backup do `frila-prod`: faltam o projeto de produção, a chave de
 cifra (fora do repositório), o storage externo e a retenção de 14 dias. Quando existirem,
