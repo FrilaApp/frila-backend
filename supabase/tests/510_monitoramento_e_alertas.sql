@@ -11,7 +11,7 @@
 
 begin;
 
-select plan(30);
+select plan(34);
 
 -- ── 1. Estrutura e segurança das tabelas ─────────────────────────────────────
 
@@ -134,19 +134,48 @@ select throws_ok(
   'RN15: Rejeita detalhe contendo credencial token'
 );
 
--- Validações de obrigatoriedade
+-- Validações de obrigatoriedade da função
 select throws_ok(
   $$ select privado.registrar_falha_execucao('', 'codigo') $$,
   '22023',
   null,
-  'Origem vazia é rejeitada'
+  'Origem vazia é rejeitada pela função'
 );
 
 select throws_ok(
   $$ select privado.registrar_falha_execucao('origem', 'Codigo Com Espaco') $$,
   '22023',
   null,
-  'Código fora do padrão snake_case é rejeitado'
+  'Código fora do padrão snake_case é rejeitado pela função'
+);
+
+-- Cobertura de mutação: inserção direta violando CHECK constraints da tabela
+select throws_ok(
+  $$ insert into privado.falha_execucao (origem, codigo) values ('', 'codigo_valido') $$,
+  '23514',
+  null,
+  'CHECK origem_valida: rejeita origem em branco na tabela falha_execucao'
+);
+
+select throws_ok(
+  $$ insert into privado.falha_execucao (origem, codigo) values (repeat('a', 61), 'codigo_valido') $$,
+  '23514',
+  null,
+  'CHECK origem_valida: rejeita origem com mais de 60 caracteres na tabela falha_execucao'
+);
+
+select throws_ok(
+  $$ insert into privado.falha_execucao (origem, codigo) values ('origem', 'Codigo Invalido!') $$,
+  '23514',
+  null,
+  'CHECK codigo_valido: rejeita codigo fora do padrao snake_case na tabela falha_execucao'
+);
+
+select throws_ok(
+  $$ insert into privado.alerta_emitido (codigo) values ('Codigo Invalido!') $$,
+  '23514',
+  null,
+  'CHECK codigo_alerta_valido: rejeita codigo fora do padrao snake_case na tabela alerta_emitido'
 );
 
 -- ── 3. Emissão de alertas e rate limit (1/hora por tipo) ──────────────────────
