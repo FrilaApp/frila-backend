@@ -16,7 +16,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(51);
+select plan(72);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -184,6 +184,31 @@ select throws_ok(
   'PGRST', pg_temp.erro('nao_autenticado'),
   'reabrir_por_atraso sem token é 401 nao_autenticado');
 
+select throws_ok(
+  $$ select public.situacao_da_conta() $$,
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'situacao_da_conta sem token é 401 nao_autenticado');
+
+select throws_ok(
+  $$ select public.contestar_suspensao('relato de teste') $$,
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'contestar_suspensao sem token é 401 nao_autenticado');
+
+select throws_ok(
+  $$ select public.registrar_evento('app_aberto') $$,
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'registrar_evento sem token é 401 nao_autenticado');
+
+select throws_ok(
+  format($$ select public.avisar_a_caminho(%L) $$, (select turno from t)),
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'avisar_a_caminho sem token é 401 nao_autenticado');
+
+select throws_ok(
+  format($$ select public.cancelar_vaga(%L, 'motivo qualquer') $$, (select vazia from v)),
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'cancelar_vaga sem token é 401 nao_autenticado');
+
 -- ── Cadastro e perfil ─────────────────────────────────────────────────────────
 select throws_ok(
   pg_temp.por((select sem_conta from ids),
@@ -281,6 +306,18 @@ select throws_ok(
 
 select throws_ok(
   pg_temp.por((select dona from ids),
+    $$ select public.cancelar_posicao(null, 'mudou o evento') $$),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'posicao_id'),
+  'cancelar_posicao sem posicao_id é 422 campo_obrigatorio, details posicao_id');
+
+select throws_ok(
+  pg_temp.por((select dona from ids),
+    format($$ select public.cancelar_posicao(%L, null) $$, (select aberta from t))),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'motivo'),
+  'cancelar_posicao sem motivo é 422 campo_obrigatorio, details motivo');
+
+select throws_ok(
+  pg_temp.por((select dona from ids),
     format($$ select public.reabrir_por_atraso(%L) $$, (select aberta from t))),
   'PGRST', pg_temp.erro('posicao_nao_cancelavel'),
   'reabrir_por_atraso de posição aberta é 409 posicao_nao_cancelavel');
@@ -308,6 +345,48 @@ select throws_ok(
   'PGRST', pg_temp.erro('posicao_nao_cancelavel'),
   'cancelar_posicao de posição já cancelada é 409 posicao_nao_cancelavel — não volta atrás');
 
+select throws_ok(
+  pg_temp.por((select suspenso from ids),
+    format($$ select public.cancelar_posicao(%L, 'não vou poder') $$, (select aberta from t))),
+  'PGRST', pg_temp.erro('sem_permissao', 'conta_suspensa'),
+  'cancelar_posicao por conta suspensa é 403 sem_permissao, details conta_suspensa (RN13)');
+
+-- ── Cancelar vaga ─────────────────────────────────────────────────────────────
+select throws_ok(
+  pg_temp.por((select ana from ids),
+    format($$ select public.cancelar_vaga(%L, 'motivo valido') $$, (select vazia from v))),
+  'PGRST', pg_temp.erro('perfil_incompativel'),
+  'cancelar_vaga por profissional é 422 perfil_incompativel');
+
+select throws_ok(
+  pg_temp.por((select dona from ids),
+    $$ select public.cancelar_vaga(null, 'motivo valido') $$),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'vaga_id'),
+  'cancelar_vaga sem vaga_id é 422 campo_obrigatorio, details vaga_id');
+
+select throws_ok(
+  pg_temp.por((select dona from ids),
+    format($$ select public.cancelar_vaga(%L, null) $$, (select vazia from v))),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'motivo'),
+  'cancelar_vaga sem motivo é 422 campo_obrigatorio, details motivo');
+
+select throws_ok(
+  pg_temp.por((select outro_dono from ids),
+    format($$ select public.cancelar_vaga(%L, 'motivo valido') $$, (select vazia from v))),
+  'PGRST', pg_temp.erro('nao_encontrado'),
+  'cancelar_vaga por contratante não membro é 404 nao_encontrado');
+
+select lives_ok(
+  pg_temp.por((select dona from ids),
+    format($$ select public.cancelar_vaga(%L, 'cancelando a vaga') $$, (select vazia from v))),
+  'dona cancela a vaga vazia');
+
+select throws_ok(
+  pg_temp.por((select dona from ids),
+    format($$ select public.cancelar_vaga(%L, 'tentando de novo') $$, (select vazia from v))),
+  'PGRST', pg_temp.erro('vaga_encerrada'),
+  'cancelar_vaga de vaga já cancelada é 409 vaga_encerrada');
+
 -- Cancela a 4ª vaga e prova que tentar de novo é 409 vaga_encerrada
 select pg_temp.como((select dona from ids),
   format($$ select public.cancelar_vaga(%L, 'fechou o evento') $$, (select cancelavel from v)));
@@ -316,14 +395,7 @@ select throws_ok(
   pg_temp.por((select dona from ids),
     format($$ select public.cancelar_vaga(%L, 'fechou de novo') $$, (select cancelavel from v))),
   'PGRST', pg_temp.erro('vaga_encerrada'),
-  'cancelar_vaga de vaga já cancelada é 409 vaga_encerrada');
-
-select throws_ok(
-  pg_temp.por((select suspenso from ids),
-    format($$ select public.cancelar_posicao(%L, 'não vou poder') $$, (select aberta from t))),
-  'PGRST', pg_temp.erro('sem_permissao', 'conta_suspensa'),
-  'cancelar_posicao por conta suspensa é 403 sem_permissao, details conta_suspensa (RN13)');
-
+  'cancelar_vaga de vaga cancelavel já cancelada é 409 vaga_encerrada');
 -- ── Presença ──────────────────────────────────────────────────────────────────
 select throws_ok(
   pg_temp.por((select dona from ids),
@@ -415,6 +487,57 @@ select throws_ok(
            (select id from casa))),
   'PGRST', pg_temp.erro('sem_permissao', 'conta_suspensa'),
   'remover_da_equipe por conta suspensa é 403 sem_permissao, details conta_suspensa (RN13)');
+
+-- ── Avisar a caminho ─────────────────────────────────────────────────────────
+select throws_ok(
+  pg_temp.por((select ana from ids),
+    $$ select public.avisar_a_caminho(null) $$),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'turno_id'),
+  'avisar_a_caminho sem turno_id é 422 campo_obrigatorio, details turno_id');
+
+select throws_ok(
+  pg_temp.por((select dona from ids),
+    format($$ select public.avisar_a_caminho(%L) $$, (select turno from t))),
+  'PGRST', pg_temp.erro('perfil_incompativel'),
+  'avisar_a_caminho por contratante é 422 perfil_incompativel');
+
+select throws_ok(
+  pg_temp.por((select ana from ids),
+    $$ select public.avisar_a_caminho('c4800000-0000-4000-8000-00000000dead'::uuid) $$),
+  'PGRST', pg_temp.erro('sem_permissao'),
+  'avisar_a_caminho com turno inexistente é 403 sem_permissao');
+
+-- ── Telemetria ───────────────────────────────────────────────────────────────
+select throws_ok(
+  pg_temp.por((select ana from ids),
+    $$ select public.registrar_evento(null) $$),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'evento'),
+  'registrar_evento sem evento é 422 campo_obrigatorio, details evento');
+
+select throws_ok(
+  pg_temp.por((select ana from ids),
+    $$ select public.registrar_evento('evento_inexistente') $$),
+  'PGRST', pg_temp.erro('campo_invalido', 'evento'),
+  'registrar_evento com evento desconhecido é 422 campo_invalido, details evento');
+
+-- ── Suspensão e contestação ─────────────────────────────────────────────────
+select throws_ok(
+  pg_temp.por((select ana from ids),
+    $$ select public.contestar_suspensao('relato de justificativa longo o bastante') $$),
+  'PGRST', pg_temp.erro('sem_suspensao_ativa'),
+  'contestar_suspensao por conta que não está suspensa é 422 sem_suspensao_ativa');
+
+select throws_ok(
+  pg_temp.por((select suspenso from ids),
+    $$ select public.contestar_suspensao(null) $$),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'relato'),
+  'contestar_suspensao sem relato é 422 campo_obrigatorio, details relato');
+
+select throws_ok(
+  pg_temp.por((select suspenso from ids),
+    $$ select public.contestar_suspensao('curto') $$),
+  'PGRST', pg_temp.erro('campo_invalido', 'relato'),
+  'contestar_suspensao com relato menor que 10 caracteres é 422 campo_invalido, details relato');
 
 select * from finish();
 rollback;
