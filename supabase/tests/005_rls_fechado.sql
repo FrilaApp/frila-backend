@@ -31,8 +31,8 @@ select is(
   (select count(*)::int from pg_class c
      join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = 'public' and c.relkind = 'r' and c.relrowsecurity),
-  21,
-  'as 19 tabelas do produto, o registro da demonstração e o pedido de exclusão têm Row Level Security ligado');
+  22,
+  'as 19 tabelas do produto, o registro da demonstração, o pedido de exclusão e os eventos do app têm Row Level Security ligado');
 
 select is(
   (select count(*)::int from pg_class c
