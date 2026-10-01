@@ -1,4 +1,4 @@
-# Estado do backend — 29/09/2026
+# Estado do backend — 01/10/2026
 
 Onde o trabalho parou e o que a próxima sessão precisa saber. As regras duráveis estão
 no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
@@ -7,41 +7,97 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-**O trabalho agora vive na `develop`, e a `main` está congelada desde 28/09 às 19h13.**
-Em pouco mais de sete horas, de 28/09 às 19h14 a 29/09 às 02h37 (horário de Brasília), a
-`develop` recebeu onze PRs por cima do `main` — quase todo o Sprint 2 de turno e despacho:
-atraso e reabertura, lembretes, vaga vazia, teto da RN23, região administrativa, denunciar
-e bloquear, e a rodada de despacho.
+**A `develop` é o tronco e está 203 commits à frente do `main`, que não se move desde
+28/09.** O `main` continua inteiramente contido na `develop` (`git log
+origin/develop..origin/main` sai vazio) e parado em `c190836`. Em três dias a `develop`
+passou de 47 para **81 migrações** e de 29 para **71 arquivos de pgTAP**.
 
-**55 migrações** na `develop` (47 no `main`) e o contrato em **0.2.20**, espelho em dia com o
-original. A **0.2.21** (frila-docs #26) está aprovada na revisão e espera merge.
+Os números abaixo são de execução, não de estimativa. Todos saem da última execução verde
+da `develop` na CI, **run 36853028970** (sha `1e72896`, 01/10 às 11h04Z):
 
-> ## 🚦 A regra nova: PR e merge só na `develop`
+| | |
+|---|---|
+| Migrações na `develop` | **81** |
+| pgTAP | **70 arquivos, 2082 asserções**, verde |
+| Testes em Deno das Edge Functions | **136**, verde |
+| Edge Functions | **9** |
+| Scripts em `scripts/` | **30** |
+| Contrato espelhado | **0.2.27** |
+
+> ## 🔴 A `develop` está VERMELHA agora, e o motivo é de uma linha
 >
-> Desde o `898fa8a` (28/09, 19h13, `docs(pipeline)`), o [`CLAUDE.md`](../CLAUDE.md) manda:
-> branch nasce de `origin/develop`, PR abre com `--base develop`, merge entra só na
-> `develop`. **A `main` é para release estável de produção** e ninguém mergeia nela.
+> Medido em 01/10: o run `36865976706` (sha `b96a7ed`) reprova no job **"Contrato em dia
+> com o Frila"**, passo *"O espelho não divergiu do original"*. Os outros jobs passam.
 >
-> Conferido em 29/09: a `main` para em `c190836` (#48) e está **inteira contida** na
-> `develop` — `git log origin/develop..origin/main` sai vazio. Nada entrou na `main` depois
-> da regra.
+> A causa não é código: **o `frila-docs` foi para 0.2.28 e o espelho ficou em 0.2.27.** A
+> 0.2.28 é a decisão de 30/09 do cartão `1aGJPQK2` — o bloqueio passa a esconder também o
+> perfil público, nos dois sentidos, e ela fecha a divergência que a 0.2.12 abriu e a
+> 0.2.27 adiou.
 >
-> **Três PRs ainda apontam para a `main`, e nenhum deve entrar lá como está:**
+> O conserto é o que o próprio portão imprime:
 >
-> | PR | De quem | Estado em 29/09 |
-> |---|---|---|
-> | **#56** `ao/blendops-2-autoteste-colisao` | Matheus | aberto 29/09 às 04:35Z contra a `main`, **depois** da regra; sem conflito, última CI `failure` (04:39Z). Precisa trocar a base para `develop` |
-> | **#35** `ao/frila-8` | Cauê | **conflito**; parado desde 25/09 |
-> | **#27** `s0/despachar-porta` | Cauê | **conflito**; parado desde 25/09 |
+> ```
+> gh api repos/FrilaApp/frila-docs/contents/api/openapi.yaml \
+>   -H 'Accept: application/vnd.github.raw' > contrato/openapi.yaml
+> shasum -a 256 contrato/openapi.yaml | awk '{print $1}' > contrato/openapi.yaml.sha256
+> ```
 >
-> Os dois do Cauê precisam ser rebaseados sobre a `develop` e retargetados — decisão dele.
+> **Mas trazer o espelho sozinho deixa a CI pior, não melhor:** a 0.2.28 passa a prometer
+> `404` em `perfil_publico` entre partes bloqueadas, e `public.perfil_publico` ainda não
+> filtra bloqueio nenhum — a última definição dela é de `20260925030000`, e o único 404
+> que ela tem é o de não-encontrado. Espelho novo com função velha é promessa no contrato
+> sem código atrás.
 >
-> **A CI não roda em push na `develop`.** O `ci.yml` dispara em `push: [main]` e em
-> `pull_request`. Todo merge na `develop` foi medido no PR, e ninguém mede a `develop`
-> depois de dois PRs se cruzarem. Conferido em 29/09: `gh run list --branch develop` vem
-> vazio.
+> O espelho e a implementação são a mesma metade do mesmo cartão (`1aGJPQK2`, critério 2),
+> e ele está **atribuído ao Cauê** no quadro — conferido por `idMembers`, não pelo campo
+> de texto "Responsável sugerido", que diz "a definir". É dele, e a ordem é dele.
+
+**Três portões nasceram em 30/09 e 01/10, e os três pegam coisa que antes passava calada:**
+o plano do caminho quente com o volume do DF, os testes em Deno das Edge Functions, e o
+corpo das Edge Functions contra o contrato. Estão descritos em *Os portões*.
 
 ## Onde cada coisa parou
+
+### O que entrou em 30/09 e 01/10: vinte e dois PRs
+
+Contados, não lembrados: `gh pr list --state merged` filtrado por `mergedAt >= 2026-09-30`
+devolve **22**. Em três grupos, porque eles contam três histórias diferentes.
+
+**Produto e backend do Sprint 2 e 3** — #70 (fila `email` com consumidor), #77 (exportar
+meus dados), #79 (aviso de fim sem check-out), #80 (rastro do pedido de exclusão), #82
+(modo seleção), #83 (exportar turnos em CSV e PDF), #84 (views do funil e `funil.sh`), #85
+(`avisar_a_caminho`), #91 (moderação do texto denunciado), #93 (telemetria,
+`registrar_evento`), #94 (monitoramento e alertas), #95 (suspensão, `situacao_da_conta` e
+`contestar_suspensao`).
+
+**Portões e cobertura** — #67 (plano do caminho quente com carga), #78 (Deno na CI), #86
+(privilégios em `privado` e confirmação em posição cancelada), #87 (auditoria dos códigos
+prometidos pelo contrato), #90 (classifica `pedido_de_exclusao` no catálogo), #96, #97 e
+#98 (caminhos de recusa das RPCs).
+
+**Espelho do contrato** — #88 (0.2.26) e #92 (0.2.27).
+
+### A fila de PRs aberta em 01/10, e o que cada um espera
+
+| PR | Estado | O que falta, e de quem é |
+|---|---|---|
+| **#101** | aberto | Conserta a inversão de ordem de travas do `40P01` (cartão `CPD2c74A`): **19 de 20 impasses antes, 0 de 50 depois**. Medido pelo blendops-5. Espera revisão |
+| **#100** | aberto | O portão do corpo das Edge Functions contra o contrato (cartão `oCv0WPNY`). CI verde nos seis jobs, run `36862558241`. Espera revisão |
+| **#99** | **draft** | `privado.meus_dados` com as sete coleções. **Em draft de propósito:** depende do `frila-docs` #32 (0.2.29) entrar primeiro. Sem isso a exportação devolve 16 campos com o contrato declarando 9 |
+| **#89** | aberto | Entrega contínua: `develop` no `frila-dev`, tag no `frila-prod`. Depende de credencial de conta |
+| **#81** | aberto | Registra o SMTP próprio do `frila-dev`. **Já aponta para `develop`** — abriu contra o `main` e foi retargetado |
+
+> **A ordem entre o #99 e o `frila-docs` #32 não é preferência, é correção.** Se o #99
+> entrar primeiro, a `exportar-meus-dados` devolve sete campos que o contrato não declara,
+> e o iOS gera o modelo com nove. Até 01/10 **nenhum portão pegava isso** — o
+> `contrato-acompanha-o-codigo.sh` só dispara em função de `public`, e `privado.meus_dados`
+> não é. O #100 fecha essa janela, e já foi medido contra este caso exato: reprova nomeando
+> os sete campos um por um.
+>
+> O risco apareceu na prática em 01/10, e não em teoria: a suíte no banco local do
+> blendops-5 reprovou em *"o corpo tem exatamente as nove chaves de MeusDados"* porque a
+> migração do #99 estava aplicada ali.
+
 
 ### O que entrou desde 28/09
 
@@ -108,7 +164,31 @@ em 29/09: `alertar_atrasos`, `alertar_vagas_vazias`, `enviar_lembretes_turno`,
 `liberar_teto`, `limpar_dispositivos_inativos`, `reprocessar_despacho` e
 `retencao_e_limpeza_diaria`.
 
-### Cartões bloqueados, e por quê
+### Cartões bloqueados, e por quê — revisto em 01/10
+
+**Três saíram da lista desde 29/09, e é importante que a tabela abaixo pare de dizer que
+eles estão travados:**
+
+- **`7yq1flLG` E-mails transacionais** — o backend está feito e mergeado (#70): a fila
+  `email` tem consumidor, o job `processar_fila_email` roda, e os modelos saem de um
+  arquivo só. O que falta **não é código**: `SMTP_HOST` e `EMAIL_EQUIPE` estão vazios, os
+  segredos nunca entraram por `supabase secrets set`, e **não existe caixa `equipe@`** —
+  o time não tem domínio (ver #81). Sem provedor a função responde `500
+  provedor_de_email_nao_configurado` e **não arquiva a fila**, de propósito: configurado o
+  SMTP, o pendente sai. Por isso o critério 3 do `JWJOPAOL` foi **reaberto** em 01/10
+  depois de ter sido fechado — o código estava lá, a credencial não.
+- **`qcVimM84` Aviso de hora excedida** — entregue e mergeado (#79). O tipo
+  `fim_sem_checkout` existia em quatro lugares e **ninguém o produzia**; agora
+  `privado.alertar_fim_sem_checkout` roda a cada cinco minutos. O que falta é a tela, que
+  é iOS.
+- **`nUpPFCpM` Exportar meus dados** — entregue e mergeado (#77). Falta o item em Meu
+  perfil, que é iOS.
+
+**E um nasceu:** `oCv0WPNY`, o portão do corpo das Edge Functions, criado em 01/10 a partir
+de uma lacuna que apareceu duas vezes no mesmo dia. Está em Revisão com o PR #100 verde.
+
+O resto da tabela de 29/09 segue valendo:
+
 
 | Cartão | O que trava |
 |---|---|
@@ -333,6 +413,37 @@ por uma função `…_em_json` separada.
 gatilho de RN07 usava `now()` direto e foi corrigido. Nenhuma RPC nova deve usar `now()`.
 
 ## Os portões
+
+### Três portões nasceram em 30/09 e 01/10
+
+**Plano do caminho quente com o volume do DF** (`scripts/planos-com-carga.sh`, PR #67,
+cartão `IYAb8v1i`). Job próprio na CI, fora do job do banco — a carga se recusa a rodar
+sobre base povoada, então um passo no fim daquele job nunca mediria nada. Gera 30 mil
+contratantes, 100 mil profissionais, 20 mil vagas e as ~200 mil janelas de
+disponibilidade, e reprova em `Seq Scan` acima de mil linhas no caminho quente. Medido no
+run `36853028970`: *"nenhuma varredura sequencial acima de 1000 linhas"*, `elegiveis` com
+p95 de 27,1 ms (teto 400) e `vagas_abertas` com p95 de 28,6 ms (teto 600). Desfaz a carga
+com `rollback`, então não apaga o `frila.agendador_secret`.
+
+**Testes em Deno das Edge Functions** (PR #78, cartão `6mkytkpb`). Job próprio, com
+`denoland/setup-deno@v2`. Até 29/09 `grep -rin deno .github/` devolvia zero linhas: os
+testes existiam e **nunca tinham rodado**. São **136** hoje, e o número andou 64 → 105 →
+136 em três dias porque `enviar-email`, `exportar-meus-dados`, `exportar-turnos` e `saude`
+entraram no meio.
+
+**O corpo das Edge Functions contra o contrato** (`scripts/contrato-responde.sh` estendido
++ `scripts/teste-contrato-responde.sh`, PR #100, cartão `oCv0WPNY`). Três portões
+defendiam o contrato e nenhum olhava o corpo de uma Edge Function: o `contrato-em-dia.sh`
+compara espelho com original, o `contrato-acompanha-o-codigo.sh` só dispara em função de
+`public`, e o `contrato-responde.sh` só varria `/rpc/`. Agora varre todos os caminhos e
+qualquer **2xx** em vez de só o 200 — a `excluirConta` responde 202, e exigir 200 deixaria
+de fora justamente a operação que anonimiza conta. **47 operações indexadas**, contra 42.
+
+O que ele não alcança sai nomeado, com o motivo, em **seção separada** de "ainda sem
+implementação": `Sessao` é emitida pelo Supabase Auth, e `exportarTurnos` devolve
+`text/csv` e `application/pdf`. A separação é deliberada — sem ela, a lista de
+sem-cobertura encolhe sozinha com o tempo e o portão passa a parecer completo.
+
 
 > **A bateria inteira não foi remedida em 29/09.** Cada PR da `develop` passou nos quatro jobs
 > da CI no próprio PR, mas a CI não roda em push na `develop` (ver o topo), e ninguém mediu a
