@@ -17,7 +17,7 @@
 -- avaliações; Zélia (b…01) administra o Bar do Cerrado (c…01).
 
 begin;
-select plan(32);
+select plan(48);
 
 select set_config('frila.agora', '2026-09-29 11:00:00-03', true);
 
@@ -84,8 +84,8 @@ create temp table d as select privado.meus_dados((select ana from ids)) as j;
 
 select is(
   (select string_agg(k, ',' order by k) from jsonb_object_keys((select j from d)) k),
-  'avaliacoes_dadas,avaliacoes_recebidas,conta,disponibilidade,dispositivos,estabelecimentos,gerado_em,perfil_profissional,turnos',
-  'o corpo tem exatamente as nove chaves de MeusDados, e nenhuma a mais');
+  'avaliacoes_dadas,avaliacoes_recebidas,bloqueios,candidaturas,conta,despachos,disponibilidade,dispositivos,equipe_confianca,estabelecimentos,gerado_em,notificacoes,ocorrencias,pedido_de_exclusao,perfil_profissional,turnos',
+  'o corpo tem exatamente as dezesseis chaves de MeusDados, e nenhuma a mais');
 
 select is(
   (select string_agg(k, ',' order by k) from jsonb_object_keys((select j->'conta' from d)) k),
@@ -209,19 +209,19 @@ insert into cobertas values
   ('turno',                  'turnos'),
   ('posicao',                'turnos, dentro de cada turno'),
   ('vaga',                   'turnos, em turno.vaga'),
-  ('avaliacao',              'avaliacoes_dadas e avaliacoes_recebidas');
+  ('avaliacao',              'avaliacoes_dadas e avaliacoes_recebidas'),
+  ('candidatura',            'candidaturas'),
+  ('ocorrencia',             'ocorrencias, com papel e sem resultado'),
+  ('bloqueio',               'bloqueios, só os que o titular criou (RF26)'),
+  ('notificacao',            'notificacoes, sem tentativas nem erro do provedor'),
+  ('despacho',               'despachos'),
+  ('equipe_confianca',       'equipe_confianca, só o lado do profissional'),
+  ('pedido_de_exclusao',     'pedido_de_exclusao, ou null');
 
 create temp table fora (t text, motivo text);
 insert into fora values
-  ('candidatura',          'MeusDados não declara candidaturas — divergência registrada no cartão nUpPFCpM'),
-  ('ocorrencia',           'MeusDados não declara denúncias e contestações abertas pelo titular'),
-  ('bloqueio',             'MeusDados não declara quem o titular bloqueou'),
-  ('notificacao',          'MeusDados não declara o histórico de avisos'),
-  ('despacho',             'MeusDados não declara as ofertas recebidas'),
-  ('equipe_confianca',     'MeusDados não declara a equipe de confiança'),
   ('evento',               'agenda da casa, e não do titular'),
   ('entrada_demonstracao', 'conta de revisão da App Store: não há titular de dado pessoal aqui'),
-  ('pedido_de_exclusao',   'MeusDados não declara o pedido de exclusão do próprio titular — o schema do contrato 0.2.26 tem nove campos e nenhum para ele (SHUDSozj)'),
   ('evento_app',           'MeusDados não declara eventos de telemetria do app (cartão 3zsjXW60)');
 
 create temp table nao_pessoais (t text, motivo text);
@@ -247,13 +247,99 @@ select is(
   null,
   'e nenhuma das três listas cita tabela que não existe mais');
 
--- A divergência que este cartão não resolve, escrita para não sumir: são seis tabelas
--- com dado do titular que o contrato não declara. Mudar isso é mudar o contrato primeiro.
+-- Aqui havia uma asserção que fixava a divergência: seis tabelas com dado do titular que
+-- o contrato não declarava. O cartão IrtkCWDz a resolveu, as sete entraram em `cobertas`, e
+-- a asserção foi removida em vez de relaxada — uma asserção que afirma uma falta é para
+-- morrer quando a falta acaba. O que sobra no lugar é a garantia inversa: nenhuma tabela
+-- com dado do titular pode voltar a aparecer em `fora` sem alguém reescrever este bloco.
 select is(
-  (select string_agg(t, ',' order by t) from fora
-    where t in ('candidatura','ocorrencia','bloqueio','notificacao','despacho','equipe_confianca')),
-  'bloqueio,candidatura,despacho,equipe_confianca,notificacao,ocorrencia',
-  'seis tabelas com dado do titular ficam de fora porque MeusDados não as declara');
+  (select string_agg(t, ',' order by t) from fora),
+  'entrada_demonstracao,evento,evento_app',
+  'só três tabelas ficam de fora, e nenhuma delas guarda dado do titular');
+
+-- ── 5b. As sete coleções do contrato 0.2.27 ──────────────────────────────────
+-- Uma asserção por campo, e cada uma também cobra o que o campo NÃO leva. Sem a segunda
+-- metade, uma revisão futura "completaria" o JSON com `resultado`, com os bloqueios
+-- recebidos ou com o token do aparelho, e nenhum teste reclamaria.
+
+select ok((select j ? 'candidaturas' from d),
+  'candidaturas está no corpo');
+select ok((select jsonb_typeof(j->'candidaturas') = 'array' from d),
+  'candidaturas é array, inclusive quando vazio');
+
+select ok((select j ? 'ocorrencias' from d),
+  'ocorrencias está no corpo');
+-- `resultado` é a decisão interna do suporte, e não dado do titular. Em nenhuma ocorrência.
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'ocorrencias') o where o.value ? 'resultado')
+     from d),
+  'RN07: nenhuma ocorrência leva resultado');
+-- Toda ocorrência diz de que lado o titular está.
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'ocorrencias') o
+      where (o.value->>'papel') is distinct from 'autor'
+        and (o.value->>'papel') is distinct from 'alvo')
+     from d),
+  'toda ocorrência traz papel, e ele é autor ou alvo');
+
+select ok((select j ? 'bloqueios' from d),
+  'bloqueios está no corpo');
+-- RF26: o bloqueio é invisível para o bloqueado. Nenhum bloqueio em que o titular seja o
+-- bloqueado pode aparecer, em nenhuma profundidade do corpo.
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'bloqueios') b
+      where (b.value->>'bloqueado_id')::uuid = (select ana from ids))
+     from d),
+  'RF26: nenhum bloqueio feito contra o titular aparece em bloqueios');
+select ok(
+  (select (j #>> '{}') not like '%' || (
+     select b.autor_id::text from public.bloqueio b
+      where b.bloqueado_id = (select ana from ids) limit 1) || '%'
+     from d)
+  or (select not exists (select 1 from public.bloqueio b
+                          where b.bloqueado_id = (select ana from ids))),
+  'RF26: quem bloqueou o titular não aparece em nenhuma profundidade do corpo');
+
+select ok((select j ? 'notificacoes' from d),
+  'notificacoes está no corpo');
+-- RN15: o diário de bordo do provedor de push não é dado do titular.
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'notificacoes') n
+      where n.value ? 'tentativas' or n.value ? 'motivo_falha'
+         or n.value ? 'proxima_tentativa_em' or n.value ? 'esperou_teto')
+     from d),
+  'RN15: nenhuma notificação leva tentativas, motivo_falha, proxima_tentativa_em nem esperou_teto');
+
+select ok((select j ? 'despachos' from d),
+  'despachos está no corpo');
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'despachos') ds where ds.value ? 'notificacao_id')
+     from d),
+  'despachos não leva notificacao_id, que é ligação interna');
+
+select ok((select j ? 'equipe_confianca' from d),
+  'equipe_confianca está no corpo');
+
+select ok((select j ? 'pedido_de_exclusao' from d),
+  'pedido_de_exclusao está no corpo');
+-- `null` quando não há pedido, e não objeto vazio nem ausência da chave.
+select ok(
+  (select jsonb_typeof(j->'pedido_de_exclusao') in ('null','object') from d),
+  'pedido_de_exclusao é objeto ou null, nunca ausente');
+
+-- ── 5c. O lado do profissional na equipe de confiança ────────────────────────
+-- A equipe das casas que o titular administra é dado dos profissionais dela. Com a Zélia,
+-- que é contratante e administra o bar, a coleção tem de sair vazia.
+create temp table zec as select privado.meus_dados((select zelia from ids)) as j;
+select is(
+  (select jsonb_array_length(j->'equipe_confianca') from zec),
+  0,
+  'a equipe das casas que o titular administra não entra em equipe_confianca');
 
 -- ── 6. A conta de contratante, e a que não existe ────────────────────────────
 
