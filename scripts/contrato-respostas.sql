@@ -57,6 +57,7 @@ language sql as $$ insert into colhido (op, corpo) values (op, corpo) $$;
 -- ── O cenário ──────────────────────────────────────────────────────────────────
 insert into privado.ambiente (id, eh_teste) values (true, true);
 set local frila.agora = '2027-01-11 09:00:00+00';
+set local frila.agendador_secret = 'segredo-de-teste';
 
 insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
 select '00000000-0000-0000-0000-000000000000', c.id, 'authenticated','authenticated', c.email,
@@ -64,7 +65,8 @@ select '00000000-0000-0000-0000-000000000000', c.id, 'authenticated','authentica
   from (values
     ('cc000000-0000-4000-8000-000000000001'::uuid,'contrato-casa@t.test'),
     ('cc000000-0000-4000-8000-000000000002'::uuid,'contrato-prof@t.test'),
-    ('cc000000-0000-4000-8000-000000000003'::uuid,'contrato-prof2@t.test')
+    ('cc000000-0000-4000-8000-000000000003'::uuid,'contrato-prof2@t.test'),
+    ('cc000000-0000-4000-8000-000000000004'::uuid,'contrato-suspenso@t.test')
   ) as c(id, email);
 
 select pg_temp.guarda('criarConta', pg_temp.como('cc000000-0000-4000-8000-000000000001',
@@ -73,9 +75,13 @@ select pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.criar_conta('profissional','Pê do Contrato','+5561944440002','1995-05-05','2026-09-22') $$);
 select pg_temp.como('cc000000-0000-4000-8000-000000000003',
   $$ select public.criar_conta('profissional','Pê Dois','+5561944440003','1994-05-05','2026-09-22') $$);
+select pg_temp.como('cc000000-0000-4000-8000-000000000004',
+  $$ select public.criar_conta('profissional','Pê Suspenso','+5561944440004','1993-05-05','2026-09-22') $$);
 
 select pg_temp.guarda('minhaConta', pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.minha_conta() $$));
+select pg_temp.guarda('situacaoDaConta', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.situacao_da_conta() $$));
 
 select pg_temp.guarda('registrarDispositivo', pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.registrar_dispositivo('fcm_token_teste_harness_contrato_1234567890', 'ios') $$));
@@ -351,6 +357,27 @@ select pg_temp.guarda('denunciar', pg_temp.como('cc000000-0000-4000-8000-0000000
        'Relato do teste de contrato.', gen_random_uuid()) $$,
   (select p.id from public.profissional p
     where p.usuario_id = 'cc000000-0000-4000-8000-000000000002'))));
+
+-- ── Suspensão e contestação (0.2.27) ─────────────────────────────────────────
+--
+-- Pê Suspenso é suspenso preventivamente pela casa/equipe, contesta a suspensão
+-- com relato detalhado (recebe Protocolo) e confere o erro ao tentar contestar de novo.
+select pg_temp.guarda('erro:sem_suspensao_ativa',
+  pg_temp.recusa('cc000000-0000-4000-8000-000000000002',
+    $$ select public.contestar_suspensao('Tentativa de contestacao por conta que nao esta suspensa.') $$));
+
+select privado.suspender(
+  'cc000000-0000-4000-8000-000000000004'::uuid,
+  'Suspensão para validação contratual',
+  'cc000000-0000-4000-8000-000000000001'::uuid
+);
+
+select pg_temp.guarda('contestarSuspensao', pg_temp.como('cc000000-0000-4000-8000-000000000004',
+  $$ select public.contestar_suspensao('Apresento relato detalhado com mais de dez caracteres para contestar a suspensao.') $$));
+
+select pg_temp.guarda('erro:contestacao_ja_aberta',
+  pg_temp.recusa('cc000000-0000-4000-8000-000000000004',
+    $$ select public.contestar_suspensao('Segunda tentativa de contestacao enquanto a primeira esta aberta.') $$));
 
 -- ── As Edge Functions ─────────────────────────────────────────────────────────
 --
