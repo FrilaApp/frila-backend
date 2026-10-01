@@ -166,8 +166,8 @@ local (`public`, `privado`, `metrica`, `requisicao` e `auth`), empacota e cifra 
 (`openssl`, chave em `BACKUP_ENCRYPTION_KEY` ou efêmera), restaura num banco descartável,
 **compara a contagem de linhas por tabela com a origem**, roda o pgTAP de estrutura e RLS no
 banco restaurado e imprime o tempo de cada etapa (é o número que vai para o cartão).
-`./scripts/teste-ensaio-restauracao.sh` é o autoteste (6 casos, incluindo o que prova que
-restauração com dado perdido reprova). O workflow agendado que roda o autoteste às 04h de
+`./scripts/teste-ensaio-restauracao.sh` é o autoteste (7 casos, incluindo os que provam que
+restauração com dado perdido e estrutura quebrada reprovam). O workflow agendado que roda o autoteste às 04h de
 Brasília, sem segredo e sem guardar artefato (o repositório é público), entra num PR à
 parte: o token usado pelos agentes não tem o escopo `workflow`.
 
