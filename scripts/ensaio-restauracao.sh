@@ -68,6 +68,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+case "$DB_ENSAIO" in
+  frila_ensaio*) ;;
+  *) echo "ERRO: o banco de ensaio precisa começar com 'frila_ensaio' (ele é apagado ao final): $DB_ENSAIO" >&2; exit 2 ;;
+esac
+
 # Garante que o container Postgres local está no ar
 if ! docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_ORIGEM" -tAc "SELECT 1" >/dev/null 2>&1; then
   echo "ERRO: Container Postgres local '$DB_CONTAINER' não está acessível." >&2
@@ -159,10 +164,12 @@ else
   echo "--> [1/5] Utilizando dumps pré-existentes fornecidos por parâmetro..."
   [ -f "${ARQ_SCHEMA:?informe --dump-schema}" ] || { echo "Arquivo de schema não encontrado: $ARQ_SCHEMA" >&2; exit 1; }
   [ -f "${ARQ_DADOS:?informe --dump-dados}" ] || { echo "Arquivo de dados não encontrado: $ARQ_DADOS" >&2; exit 1; }
+  # Restaurar um dump é restaurar o dump: o auth também vem do diretório, e não do banco vivo.
   ARQ_AUTH_SCHEMA="$DIR_DUMP/auth_schema.sql"
   ARQ_AUTH_DADOS="$DIR_DUMP/auth_dados.sql"
-  docker exec -i "$DB_CONTAINER" pg_dump -U postgres -d "$DB_ORIGEM" --schema=auth --schema-only > "$ARQ_AUTH_SCHEMA"
-  docker exec -i "$DB_CONTAINER" pg_dump -U postgres -d "$DB_ORIGEM" --schema=auth --data-only --column-inserts > "$ARQ_AUTH_DADOS"
+  for a in "$ARQ_AUTH_SCHEMA" "$ARQ_AUTH_DADOS"; do
+    [ -f "$a" ] || { echo "Arquivo do auth não encontrado em --dir-dump: $a" >&2; exit 1; }
+  done
 fi
 
 # ------------------------------------------------------------------------------
@@ -349,13 +356,31 @@ EOF
 
   if [ -f "supabase/tests/000_estrutura.sql" ]; then
     echo "    Executando 000_estrutura.sql no banco restaurado..."
-    docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_ENSAIO" -v ON_ERROR_STOP=1 < supabase/tests/000_estrutura.sql >/dev/null
+    SAIDA_TESTE=$(docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_ENSAIO" -v ON_ERROR_STOP=1 < supabase/tests/000_estrutura.sql 2>&1) || {
+      printf '%s\n' "$SAIDA_TESTE" | tail -20 | sed 's/^/    /' >&2
+      echo "ERRO: 000_estrutura.sql abortou no banco restaurado." >&2
+      exit 1
+    }
+    if printf '%s\n' "$SAIDA_TESTE" | grep -Eq '^not ok|Looks like you failed'; then
+      printf '%s\n' "$SAIDA_TESTE" | grep -E '^not ok|Looks like' | sed 's/^/    /' >&2
+      echo "ERRO: asserção pgTAP falhou em 000_estrutura.sql no banco restaurado." >&2
+      exit 1
+    fi
     echo "    ✓ 000_estrutura.sql passou (todas as tabelas e colunas conferidas)"
   fi
 
   if [ -f "supabase/tests/005_rls_fechado.sql" ]; then
     echo "    Executando 005_rls_fechado.sql no banco restaurado..."
-    docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_ENSAIO" -v ON_ERROR_STOP=1 < supabase/tests/005_rls_fechado.sql >/dev/null
+    SAIDA_TESTE=$(docker exec -i "$DB_CONTAINER" psql -U postgres -d "$DB_ENSAIO" -v ON_ERROR_STOP=1 < supabase/tests/005_rls_fechado.sql 2>&1) || {
+      printf '%s\n' "$SAIDA_TESTE" | tail -20 | sed 's/^/    /' >&2
+      echo "ERRO: 005_rls_fechado.sql abortou no banco restaurado." >&2
+      exit 1
+    }
+    if printf '%s\n' "$SAIDA_TESTE" | grep -Eq '^not ok|Looks like you failed'; then
+      printf '%s\n' "$SAIDA_TESTE" | grep -E '^not ok|Looks like' | sed 's/^/    /' >&2
+      echo "ERRO: asserção pgTAP falhou em 005_rls_fechado.sql no banco restaurado." >&2
+      exit 1
+    fi
     echo "    ✓ 005_rls_fechado.sql passou (RLS ativo e seguro em todas as tabelas)"
   fi
 
@@ -372,7 +397,8 @@ echo ""
 echo "================================================================================"
 echo "  RESULTADO DO ENSAIO DE RESTAURAÇÃO (mwdFSEHe)"
 echo "================================================================================"
-echo "  Status da Restauração:     SUCESSO (100% íntegro)"
+echo "  Status da Restauração:     SUCESSO"
+if [ "$SEM_PGTAP" -eq 0 ]; then echo "  Validação pgTAP:           executada e sem falhas"; else echo "  Validação pgTAP:           IGNORADA (--sem-pgtap)"; fi
 echo "  Executor:                  ${USER:-operador}"
 echo "  Tabelas Restauradas:       $TABELAS_REST tabelas"
 echo "  Total de Linhas:           $TOTAL_LINHAS linhas"
@@ -381,6 +407,5 @@ echo "  Tempo de Cifra/Decifra:    ${T_CIFRA_DURACAO}s"
 echo "  Tempo de Restauração:      ${T_REST_DURACAO}s"
 echo "  Tempo de Validação:        ${T_PGTAP_DURACAO}s"
 echo "  Tempo Total de Ensaio:     ${T_TOTAL}s"
-echo "  Retenção dos Backups:      14 dias (conforme política RNF12)"
 echo "================================================================================"
 echo ""
