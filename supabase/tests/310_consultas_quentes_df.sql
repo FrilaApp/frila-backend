@@ -3,7 +3,7 @@
 -- Cartão IYAb8v1i
 
 begin;
-select plan(11);
+select plan(13);
 
 -- Helper para inspecionar planos de consulta sem executar
 create function pg_temp.explicar(p_sql text) returns text
@@ -186,6 +186,21 @@ select ok(
      limit 1
   $$) !~* 'Seq Scan on notificacao',
   'RNF11: consulta do teto de notificações não faz Seq Scan em notificacao'
+);
+
+-- ── 3. Índice cobrindo a FK de despacho para notificacao (despacho_notificacao) ──
+
+select has_index(
+  'public', 'despacho', 'despacho_notificacao', array['notificacao_id'],
+  'RNF11: índice despacho_notificacao existe cobrindo a FK notificacao_id em despacho'
+);
+
+select ok(
+  pg_temp.explicar($$
+    select count(*)::int from public.despacho d
+     where d.notificacao_id = '5520d830-4a17-4300-9117-cb2fedcee638'::uuid
+  $$) ~* 'despacho_notificacao',
+  'RNF11: consulta de despachos por notificacao_id no caminho quente utiliza índice despacho_notificacao'
 );
 
 select * from finish();
