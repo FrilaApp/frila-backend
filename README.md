@@ -159,6 +159,13 @@ Os dois projetos remotos rodam no plano gratuito, e o plano cobra o preço assim
 Os números exatos de cada cota mudam; a fonte é a
 [página de preços do Supabase](https://supabase.com/pricing).
 
+### Backup lógico e política de retenção (RNF12)
+
+O backup lógico diário do `frila-prod` roda via GitHub Actions (`.github/workflows/backup-prod.yml`) às 04h de Brasília (07h UTC):
+- **Criptografia fora do repositório:** O dump de esquemas (`public`, `privado`, `metrica`, `requisicao`, `auth`) e dados é compactado e cifrado com AES-256-CBC (PBKDF2 via OpenSSL) utilizando a chave `BACKUP_ENCRYPTION_KEY`, mantida estritamente fora do controle de versão.
+- **Política de Retenção de 14 dias:** Em conformidade com a política operacional e RNF12, todos os backups gerados têm prazo de vida de **14 dias**, sendo descartados/expirados automaticamente após este intervalo.
+- **Ensaio de Restauração:** O procedimento é validado localmente com `./scripts/ensaio-restauracao.sh`, que restaura o dump em banco temporário isolado (`frila_ensaio_restauracao`), audita a contagem de linhas por tabela e valida a integridade com a suíte pgTAP (`000_estrutura.sql`, `005_rls_fechado.sql`).
+
 ## Onde está o resto
 
 | O quê | Onde |

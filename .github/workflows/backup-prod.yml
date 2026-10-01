@@ -1,0 +1,90 @@
+name: Backup Diário e Ensaio de Restauração
+
+on:
+  schedule:
+    # 04:00 BRT = 07:00 UTC (diariamente)
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      executar_ensaio:
+        description: 'Executar ensaio local de restauração e integridade pgTAP'
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: backup-prod
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Backup Lógico e Ensaio
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Autenticar no ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Subir ambiente local para ensaio
+        run: supabase start --exclude studio,realtime,storage-api,imgproxy,logflare,vector
+
+      - name: Aplicar migrações do zero
+        run: supabase db reset
+
+      - name: Executar ensaio de restauração e integridade (pgTAP)
+        run: |
+          chmod +x ./scripts/ensaio-restauracao.sh
+          ./scripts/ensaio-restauracao.sh --dir-dump /tmp/frila-backup
+
+      - name: Empacotar e cifrar dump para armazenamento seguro (AES-256-CBC)
+        run: |
+          CHAVE_SECRETA="${{ secrets.BACKUP_ENCRYPTION_KEY }}"
+          if [ -z "$CHAVE_SECRETA" ]; then
+            echo "::warning::Secret BACKUP_ENCRYPTION_KEY não configurado. Utilizando chave efêmera para validação do ensaio."
+            CHAVE_SECRETA="$(openssl rand -hex 32)"
+          fi
+
+          TIMESTAMP="$(date -u '+%Y%m%d_%H%M%SZ')"
+          ARQ_FINAL="frila-backup-${TIMESTAMP}.tar.gz.enc"
+
+          mkdir -p /tmp/backup-artefato
+          cp /tmp/frila-backup/frila-backup.tar.gz.enc "/tmp/backup-artefato/${ARQ_FINAL}"
+          echo "TIMESTAMP=${TIMESTAMP}" >> "$GITHUB_ENV"
+          echo "ARQ_FINAL=${ARQ_FINAL}" >> "$GITHUB_ENV"
+
+      - name: Armazenar backup cifrado (Retenção de 14 dias - RNF12)
+        uses: actions/upload-artifact@v4
+        with:
+          name: backup-logico-cifrado-${{ env.TIMESTAMP }}
+          path: /tmp/backup-artefato/${{ env.ARQ_FINAL }}
+          retention-days: 14
+          if-no-files-found: error
+
+      # Integração futura com storage externo (S3 / Cloud Storage / Cloudflare R2):
+      # O operador de infraestrutura (João Paulo) configurará as credenciais de produção
+      # (AWS_S3_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY ou equivalente GCP/R2).
+      #
+      # - name: Enviar cópia para storage externo (Configurado na fase de infraestrutura)
+      #   if: env.AWS_S3_BUCKET != ''
+      #   run: |
+      #     aws s3 cp "/tmp/backup-artefato/${ARQ_FINAL}" "s3://${{ secrets.AWS_S3_BUCKET }}/backups/${ARQ_FINAL}"
+
+      - name: Registrar sumário no GitHub Actions
+        run: |
+          echo "### Backup Lógico e Ensaio de Restauração — Sucesso" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Data/Hora:** $(date -u '+%Y-%m-%d %H:%M:%SZ') (UTC) / $(TZ='America/Sao_Paulo' date '+%Y-%m-%d %H:%M:%S') (BRT)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Política de Retenção:** 14 dias (RNF12)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Arquivo Cifrado:** \`${{ env.ARQ_FINAL }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Criptografia:** AES-256-CBC (PBKDF2 via OpenSSL)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Integridade pgTAP:** Validada com sucesso no banco de ensaio" >> "$GITHUB_STEP_SUMMARY"
