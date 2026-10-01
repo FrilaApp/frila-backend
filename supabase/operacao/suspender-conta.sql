@@ -31,5 +31,5 @@
 \endif
 
 begin;
-select privado.operacao_suspender_conta(:'usuario_id'::uuid, :'motivo', :'operador_id'::uuid);
+select privado.suspender(:'usuario_id'::uuid, :'motivo', :'operador_id'::uuid);
 commit;
