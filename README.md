@@ -174,8 +174,10 @@ Os números exatos de cada cota mudam; a fonte é a
 
 ## Como se trabalha
 
-Um cartão do Trello por vez, do quadro ao merge. O pipeline, os agentes e as regras que
-o código segue estão em [`CLAUDE.md`](CLAUDE.md).
+Um cartão do Trello por vez, do quadro ao merge.
+
+- **Branch base e destino de PR: SEMPRE `develop`**: todo branch parte de `origin/develop` (`git fetch origin develop && git checkout -b sX/<slug> origin/develop`), todo PR deve ser aberto com `--base develop` (`gh pr create --base develop`), e o merge de PR aprovado entra exclusivamente na `develop`. A branch `main` é estritamente reservada para releases estáveis de produção.
+- O pipeline, os agentes e as regras que o código segue estão em [`CLAUDE.md`](CLAUDE.md).
 
 ## Time
 
