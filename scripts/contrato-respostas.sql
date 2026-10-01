@@ -352,6 +352,28 @@ select pg_temp.guarda('denunciar', pg_temp.como('cc000000-0000-4000-8000-0000000
   (select p.id from public.profissional p
     where p.usuario_id = 'cc000000-0000-4000-8000-000000000002'))));
 
+-- ── As Edge Functions ─────────────────────────────────────────────────────────
+--
+-- Cartão `oCv0WPNY`. Até 01/10 este arquivo colhia só as RPCs, e as Edge Functions não
+-- eram medidas por portão nenhum: o `contrato-acompanha-o-codigo.sh` só dispara em função
+-- de `public`, e quem monta a exportação é `privado.meus_dados`.
+--
+-- O corpo que a Edge Function devolve é, sem remodelar, o jsonb que a função de `privado`
+-- montou — as duas fazem `return resposta(200, dados)` com o que veio do banco. Então
+-- colher aqui mede exatamente o que o cliente recebe, pelo mesmo raciocínio que vale para
+-- as RPCs e sem precisar subir `functions serve`.
+--
+-- As que ficam de fora estão nomeadas em `FORA_DO_ALCANCE`, no validador, com o motivo de
+-- cada uma: `Sessao` é emitida pelo Supabase Auth, `exportarTurnos` devolve CSV e PDF.
+
+select pg_temp.guarda('exportarMeusDados',
+  privado.meus_dados('cc000000-0000-4000-8000-000000000002'));
+
+-- Por último, e depois de tudo: ela anonimiza a conta e cancela os turnos futuros dela.
+-- Qualquer colheita posterior veria um cenário diferente do que as outras viram.
+select pg_temp.guarda('excluirConta',
+  privado.excluir_conta('cc000000-0000-4000-8000-000000000003'));
+
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o
 \pset format unaligned

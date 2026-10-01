@@ -36,22 +36,47 @@ def carrega_contrato():
         return yaml.safe_load(f)
 
 
+# Operações que este portão não alcança, e o motivo de cada uma. A lista é declarada à
+# mão de propósito: operação fora do alcance e operação ainda sem implementação saem em
+# seções diferentes da saída, porque são coisas diferentes — uma nunca vai ser coberta
+# por aqui, a outra está esperando alguém escrever.
+#
+# Cartão `oCv0WPNY`. Até 01/10 este portão só varria `/rpc/`, e nenhum dos três portões do
+# contrato olhava o corpo de uma Edge Function: o `contrato-acompanha-o-codigo.sh` só
+# dispara em função de `public`, e a `privado.meus_dados` que monta a exportação não é.
+FORA_DO_ALCANCE = {
+    "confirmarCodigo": "a Sessao é emitida pelo Supabase Auth, e não por código deste repositório",
+    "renovarSessao": "a Sessao é emitida pelo Supabase Auth, e não por código deste repositório",
+    "entrarDemonstracao": "devolve a Sessao do Supabase Auth; a Edge Function só a repassa",
+    "listarFuncoes": "leitura de tabela pelo PostgREST: o corpo é dele, e não de função nossa",
+    "exportarTurnos": "devolve text/csv e application/pdf, e não JSON: não há schema para conferir",
+    "pedirCodigo": "a resposta não tem corpo",
+}
+
+
 def schemas_por_operacao(doc):
-    """operationId -> schema da resposta 200, para cada /rpc/… do contrato."""
+    """operationId -> schema do corpo JSON de sucesso, para cada operação do contrato.
+
+    Varre **todos** os caminhos, e não só `/rpc/`. As Edge Functions vivem em
+    `/functions/v1/` e ficavam de fora: a resposta delas podia ganhar campo, perder campo
+    obrigatório ou trocar nome, e nenhum portão avisava.
+
+    Qualquer 2xx serve, e não só o 200: a `excluirConta` responde **202**, e exigir 200
+    deixaria de fora justamente a operação que mexe em conta.
+    """
     fora = {}
-    for caminho, item in doc.get("paths", {}).items():
-        if not caminho.startswith("/rpc/"):
-            continue
+    for item in doc.get("paths", {}).values():
         for metodo in ("get", "post"):
             op = item.get(metodo)
             if not op:
                 continue
-            ok = op.get("responses", {}).get("200") or op.get("responses", {}).get(200)
-            if not ok:
-                continue
-            corpo = ok.get("content", {}).get("application/json", {})
-            if "schema" in corpo:
-                fora[op["operationId"]] = corpo["schema"]
+            for codigo, resposta in (op.get("responses") or {}).items():
+                if not str(codigo).startswith("2"):
+                    continue
+                corpo = (resposta.get("content") or {}).get("application/json", {})
+                if "schema" in corpo:
+                    fora[op["operationId"]] = corpo["schema"]
+                    break
     return fora
 
 
@@ -151,7 +176,8 @@ def main():
     # Inventário: operação do contrato que ainda não tem implementação. Não é falha — é o
     # que falta do Sprint 2 em diante —, mas é o número que diz o quanto este portão
     # cobre, e ele tem de sair na saída para ninguém achar que cobre tudo.
-    sem_cobertura = sorted(set(por_op) - validadas)
+    sem_cobertura = sorted(set(por_op) - validadas - set(FORA_DO_ALCANCE))
+    fora_do_alcance = sorted(set(por_op) & set(FORA_DO_ALCANCE) - validadas)
 
     print(f"Operações do contrato com resposta 200: {len(por_op)}")
     print(f"Validadas com corpo real:               {len(validadas)}")
@@ -160,6 +186,14 @@ def main():
         print(f"\nAinda sem implementação ({len(sem_cobertura)}), e por isso fora deste portão:")
         for op in sem_cobertura:
             print(f"    {op}")
+
+    # Em seção própria, e nomeando o motivo: operação que este portão nunca vai cobrir não
+    # pode se parecer com operação que alguém ainda vai implementar. Sem isto, a lista de
+    # "sem cobertura" encolhe sozinha com o tempo e passa a parecer que o portão cobre tudo.
+    if fora_do_alcance:
+        print(f"\nFora do alcance deste portão ({len(fora_do_alcance)}), e por quê:")
+        for op in fora_do_alcance:
+            print(f"    {op}: {FORA_DO_ALCANCE[op]}")
 
     if falhas:
         print(f"\n✗ {len(falhas)} divergência(s) entre a resposta e o contrato:\n", file=sys.stderr)
