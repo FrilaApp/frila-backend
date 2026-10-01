@@ -19,7 +19,7 @@
 -- 14. Conta suspensa pode excluir a conta.
 
 begin;
-select plan(40);
+select plan(43);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb
 language plpgsql as $$
@@ -421,6 +421,26 @@ select is(
   (select u.estado from public.usuario u where u.id = 'f7000000-0000-4000-8000-000000000002'),
   'anonimizada'::public.estado_conta,
   'conta suspensa excluida passa ao estado anonimizada'
+);
+
+-- ── Autoria: suspender/reativar não adivinham o operador ───────────────────────
+
+select throws_ok(
+  $$ select privado.suspender('f7000000-0000-4000-8000-000000000003', 'motivo qualquer') $$,
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'operador_id'),
+  'suspender sem operador é recusado (autoria não é adivinhada)'
+);
+
+select throws_ok(
+  $$ select privado.reativar('f7000000-0000-4000-8000-000000000003', 'justificativa qualquer') $$,
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'operador_id'),
+  'reativar sem operador é recusado (autoria não é adivinhada)'
+);
+
+select is(
+  (privado.suspender('f7000000-0000-4000-8000-000000000003', 'motivo qualquer', 'f7000000-0000-4000-8000-000000000001')->>'estado_atual'),
+  'suspensa',
+  'suspender com operador da equipe grava a suspensão'
 );
 
 select * from finish();

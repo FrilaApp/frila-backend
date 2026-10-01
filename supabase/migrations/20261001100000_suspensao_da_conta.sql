@@ -3,10 +3,10 @@
 -- Cartão BsXIZHOw (Épico 7 · US23 · RF24, RN13, UC15):
 -- Suspensão, situacao_da_conta e contestar_suspensao.
 --
--- 1. Ponto único de bloqueio: privado.exigir_conta_ativa(permitir_suspensa)
+-- 1. Ponto único de bloqueio: privado.exigir_conta_ativa()
 --    rejeita contas suspensas com 403 sem_permissao (details: conta_suspensa).
--- 2. Exceção para gerenciamento do aparelho: public.registrar_dispositivo permite
---    contas suspensas (permitir_suspensa => true).
+-- 2. Exceção para contestar, excluir a conta e gerenciar o aparelho, por nome qualificado
+--    da função na pilha de chamada (ou pelo GUC frila.permitir_suspensa).
 -- 3. privado.suspender(conta, motivo, operador_id) e privado.reativar(conta, motivo, operador_id)
 --    com notificações push sem o motivo (RN15) e validação de motivo obrigatório.
 -- 4. public.situacao_da_conta() -> SituacaoDaConta (RF24, RN13).
@@ -44,7 +44,9 @@ begin
     end if;
 
     get diagnostics v_context = pg_context;
-    if v_context ~* '(contestar_suspensao|excluir_conta|registrar_dispositivo|remover_dispositivo|candidatar)' then
+    -- Casa só o nome qualificado de uma função da lista, nunca substring. candidatar fica de fora do 403
+    -- para o contrato vigente (RN13: 422 inelegivel/perfil_suspenso, teste 130) seguir valendo.
+    if v_context ~ 'PL/pgSQL function (public\.(contestar_suspensao|registrar_dispositivo|remover_dispositivo|candidatar)|privado\.excluir_conta)\(' then
       return;
     end if;
 
@@ -53,7 +55,7 @@ begin
 end $$;
 
 comment on function privado.exigir_conta_ativa() is
-  'Ponto único de extensão para impedir escrita com token de conta anonimizada ou inexistente (RF25) e conta suspensa (RF24, RN13). Exceções contratuais: contestar_suspensao, excluir_conta, registrar_dispositivo, remover_dispositivo e candidatar.';
+  'Ponto único de extensão para impedir escrita com token de conta anonimizada ou inexistente (RF25) e conta suspensa (RF24, RN13). Exceções contratuais: contestar_suspensao, excluir_conta, registrar_dispositivo, remover_dispositivo e candidatar (esta devolve 422 inelegivel, não 403).';
 
 revoke execute on function privado.exigir_conta_ativa() from public, anon, authenticated;
 grant  execute on function privado.exigir_conta_ativa() to service_role;
@@ -363,21 +365,9 @@ begin
     v_operador := nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
   end if;
 
+  -- Autoria nunca é adivinhada: sem operador identificado, recusa.
   if v_operador is null then
-    select ce.usuario_id into v_operador
-      from privado.conta_equipe ce
-      join public.usuario u on u.id = ce.usuario_id and u.estado = 'ativa'
-     where ce.usuario_id <> conta
-     limit 1;
-  end if;
-
-  if v_operador is null then
-    select u.id into v_operador
-      from public.usuario u
-     where u.estado = 'ativa'
-       and u.id <> conta
-     order by u.criado_em
-     limit 1;
+    perform public.erro(422, 'campo_obrigatorio', 'operador_id');
   end if;
 
   return privado.operacao_suspender_conta(conta, motivo, v_operador);
@@ -414,21 +404,9 @@ begin
     v_operador := nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
   end if;
 
+  -- Autoria nunca é adivinhada: sem operador identificado, recusa.
   if v_operador is null then
-    select ce.usuario_id into v_operador
-      from privado.conta_equipe ce
-      join public.usuario u on u.id = ce.usuario_id and u.estado = 'ativa'
-     where ce.usuario_id <> conta
-     limit 1;
-  end if;
-
-  if v_operador is null then
-    select u.id into v_operador
-      from public.usuario u
-     where u.estado = 'ativa'
-       and u.id <> conta
-     order by u.criado_em
-     limit 1;
+    perform public.erro(422, 'campo_obrigatorio', 'operador_id');
   end if;
 
   return privado.operacao_reativar_conta(conta, motivo, v_operador);
