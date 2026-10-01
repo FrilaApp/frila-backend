@@ -121,6 +121,9 @@ delete from public.membro_estabelecimento
 delete from public.estabelecimento where endereco = 'corrida-ciclo-$MARCA';
 delete from public.profissional_funcao where profissional_id in (select id from public.profissional where usuario_id in (select id from contas));
 delete from public.profissional where usuario_id in (select id from contas);
+-- O pedido de exclusão não tem FK para usuario de propósito (ele sobrevive à conta), então
+-- não sai por cascata: a limpeza tem de nomeá-lo.
+delete from public.pedido_de_exclusao where usuario_id in (select id from contas);
 delete from public.usuario  where id in (select id from contas);
 delete from auth.users      where id in (select id from contas) or email like 'corrida-ciclo-$MARCA-%';
 set session_replication_role = 'origin';
@@ -1128,6 +1131,16 @@ SQL
   psql -tA -F' ' -c "select n, vaga, dona, c1 from corrida_ciclo.excluir order by n" >"$TMP/excluir"
   local ms
   ms() { printf '0.%03d 0' "$(( RANDOM % 30 ))"; }
+  # O pedido de exclusão é registrado antes da corrida, em transação própria, exatamente como
+  # a Edge Function faz (cartão SHUDSozj). É o que se quer medir aqui: quando a exclusão bate
+  # em 40P01 e volta atrás, esta linha tem de continuar de pé.
+  # `</dev/null` obrigatório: `psql` aqui é `docker exec -i`, que lê a entrada padrão — e
+  # dentro de um `while read` a entrada padrão é o próprio arquivo. Sem isso, a primeira
+  # iteração engole as outras 49 linhas e só um pedido é registrado.
+  while read -r n vaga dona c1; do
+    psql -q -c "select privado.registrar_pedido_de_exclusao('$dona')" >/dev/null </dev/null
+  done <"$TMP/excluir"
+
   while read -r n vaga dona c1; do
     lado excluir "$n" 1 ""   "select privado.excluir_conta('$dona')" "$(ms)"
     lado excluir "$n" 2 "$c1" "select public.candidatar('$vaga')"    "$(ms)"
@@ -1143,7 +1156,9 @@ select e.n,
        v.estado,
        (select count(*) from public.posicao o where o.vaga_id = e.vaga and o.estado in ('aberta', 'confirmada')),
        (select count(*) from public.posicao o where o.vaga_id = e.vaga and o.falta = true),
-       (select u.estado::text from public.usuario u where u.id = e.dona)
+       (select u.estado::text from public.usuario u where u.id = e.dona),
+       coalesce((select p.estado from public.pedido_de_exclusao p
+                  where p.usuario_id = e.dona), 'sem_pedido')
   from corrida_ciclo.excluir e
   join public.vaga v on v.id = e.vaga
  order by e.n;
@@ -1151,18 +1166,22 @@ SQL
 
   local ruins confirmou impasses
   ruins=$(awk '
-    # Desfecho 1: exclusão passa, recolhe a confirmação se houve (ou candidatura falha/aborta), vaga cancelada sem posição viva e sem falta
-    ($2 == "ok" && ($3 == "ok" || $3 == "vaga_encerrada" || $3 == "posicao_ja_preenchida" || $3 == "sqlstate:40P01") && $4 == "cancelada" && $5 == 0 && $6 == 0 && $7 == "anonimizada") { next }
-    # Desfecho 2: limite conhecido de 40P01 (CPD2c74A) — rollback consistente da exclusão, vaga preenchida pelo candidato
-    ($2 == "sqlstate:40P01" && $3 == "ok" && $4 == "preenchida" && $5 == 1 && $6 == 0 && $7 == "ativa") { next }
+    # $8 é o estado do pedido de exclusão (SHUDSozj). Ele entra nos dois desfechos, e é a
+    # diferença que este cartão trouxe: antes, o caminho do 40P01 não deixava rastro algum.
+    # Desfecho 1: exclusão passa, recolhe a confirmação se houve (ou candidatura falha/aborta), vaga cancelada sem posição viva e sem falta, pedido concluído
+    ($2 == "ok" && ($3 == "ok" || $3 == "vaga_encerrada" || $3 == "posicao_ja_preenchida" || $3 == "sqlstate:40P01") && $4 == "cancelada" && $5 == 0 && $6 == 0 && $7 == "anonimizada" && $8 == "concluido") { next }
+    # Desfecho 2: limite conhecido de 40P01 (CPD2c74A) — rollback consistente da exclusão, vaga
+    # preenchida pelo candidato, conta ainda ativa. O pedido continua PENDENTE, e é isso que
+    # torna o caso recuperável em vez de silencioso: a linha sobreviveu ao rollback.
+    ($2 == "sqlstate:40P01" && $3 == "ok" && $4 == "preenchida" && $5 == 1 && $6 == 0 && $7 == "ativa" && $8 == "pendente") { next }
     { print }' "$TMP/excluir.res")
   confirmou=$(awk '$2 == "ok" && $3 == "ok"' "$TMP/excluir.res" | grep -c . || true)
   impasses=$(grep -c 'sqlstate:40P01' "$TMP/excluir.res" || true)
 
   if [ -z "$ruins" ]; then
-    ok "$RODADAS rodadas: toda vaga cancelada por excluir_conta terminou sem posição viva e sem falta ($confirmou confirmações no meio recolhidas, $impasses rollbacks por 40P01 residual CPD2c74A)"
+    ok "$RODADAS rodadas: toda vaga cancelada por excluir_conta terminou sem posição viva e sem falta, e todo pedido deixou rastro ($confirmou confirmações no meio recolhidas, $impasses rollbacks por 40P01 residual CPD2c74A, com o pedido pendente e recuperável)"
   else
-    falhou "rodadas fora da regra (rodada, excluir_conta, candidatar, estado vaga, posições vivas, faltas, conta dona):"
+    falhou "rodadas fora da regra (rodada, excluir_conta, candidatar, estado vaga, posições vivas, faltas, conta dona, pedido de exclusão):"
     printf '%s\n' "$ruins" | sed 's/^/      /' >&2
   fi
 }

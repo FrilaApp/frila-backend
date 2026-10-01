@@ -430,6 +430,15 @@ verify_jwt = false
 enabled = true
 verify_jwt = true
 
+# E-mails transacionais e a caixa da Equipe Frila (cartão 7yq1flLG).
+# Consome a fila `email` do pgmq: protocolo de denúncia e de contestação, e o alerta do
+# monitoramento. Acordada pelo gatilho da própria fila e pelo job `processar_fila_email`.
+# verify_jwt fica desligado porque a proteção é o segredo do agendador, como nas outras
+# duas do agendador: quem chama é o Postgres, que não tem sessão de usuário.
+[functions.enviar-email]
+enabled = true
+verify_jwt = false
+
 # Portabilidade da LGPD (cartão nUpPFCpM): devolve o JSON dos dados do titular no corpo.
 # verify_jwt fica ligado — quem chama é a pessoa, com a sessão dela, e a identidade ainda
 # é reconferida em auth/v1/user dentro da função. É Edge Function, e não RPC, porque o

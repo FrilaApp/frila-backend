@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.25
+  version: 0.2.27
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -15,8 +15,9 @@ info:
       confirmar, check-in, avaliar, denunciar — é uma função no Postgres, chamada em
       `POST /rest/v1/rpc/<nome>` (leituras em `GET`). A regra é escrita uma vez, no banco, e vale igual
       para os três clientes. Os apps não escrevem direto nas tabelas.
-    - **Leitura sob Row Level Security; escrita só por função.** Toda tabela tem política de leitura,
-      e nenhuma tem política de escrita para os clientes. As funções que gravam são `SECURITY DEFINER`:
+    - **Leitura sob Row Level Security; escrita só por função.** Toda tabela do produto tem política
+      de leitura, e nenhuma tem política de escrita para os clientes. As duas tabelas de operação,
+      `entrada_demonstracao` e `pedido_de_exclusao`, não têm política nenhuma: ninguém as lê pela API. As funções que gravam são `SECURITY DEFINER`:
       conferem por dentro quem chama, o perfil (RN25) e o papel, e só então escrevem. O que é da outra
       parte (perfil público, contato) também sai por função, só com as colunas permitidas. As políticas
       estão na Modelagem de Banco de Dados.
@@ -34,7 +35,7 @@ info:
     | Tempo | UTC em ISO-8601: `"inicio_em": "2026-09-19T21:00:00Z"` (RN18). O fuso `America/Sao_Paulo` é da tela |
     | Identificadores | `uuid` |
     | Nomes | `snake_case`, iguais às colunas do banco |
-    | Idempotência | Reenviar a mesma escrita devolve o mesmo resultado. Onde há chave natural (candidatura por vaga e profissional, check-in por turno, avaliação por turno e autor, bloqueio por par), ela basta. `publicar_vaga` e `denunciar`, que não têm chave natural, recebem `chave` (uuid gerado pelo app) |
+    | Idempotência | Reenviar a mesma escrita devolve o mesmo resultado. Onde há chave natural (candidatura por vaga e profissional, check-in por turno, avaliação por turno e lado, bloqueio por par), ela basta. `publicar_vaga` e `denunciar`, que não têm chave natural, recebem `chave` (uuid gerado pelo app) |
     | Versão | Mudança incompatível vira função nova (`publicar_vaga_v2`); a antiga continua no ar enquanto houver app antigo na loja |
 
     ## Erros
@@ -77,7 +78,7 @@ info:
     | 409 | `administrador_unico` | Exclusão de conta de quem é o único administrador (UC16) |
     | 409 | `perfil_ja_existe` | `criar_perfil_profissional` numa conta que já tem perfil. Conflito, e não sobrescrita: sobrescrever apagaria a grade de quem tocasse duas vezes no botão |
     | 409 | `contestacao_ja_aberta` | Já existe contestação em análise para a suspensão em vigor (RF24) |
-    | 422 | `campo_obrigatorio` | Falta campo exigido; `details` diz qual (RN02) |
+    | 422 | `campo_obrigatorio` | Falta campo exigido; `details` diz qual (na vaga, RN02) |
     | 422 | `campo_invalido` | O campo veio, e o valor é recusado pela regra; `details` diz qual campo. Distinto de `campo_obrigatorio`, que é ausência — a tela destaca o mesmo campo, com texto diferente |
     | 422 | `menor_de_idade` | Nascimento com menos de 18 anos (RN20) |
     | 422 | `perfil_incompativel` | A ação é do outro perfil: conta de contratante criando perfil de profissional, ou conta de profissional cadastrando estabelecimento (RN25) |
@@ -94,6 +95,36 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.27, de 30/09/2026.** Só texto: nenhuma operação, campo, código de erro ou status
+    muda. Alinha a descrição ao que o backend faz e registra duas decisões de produto de 30/09,
+    tomadas na revisão dos documentos de engenharia para a entrega parcial de 02/10.
+
+    - **`meus_estabelecimentos`**: o `operador` publica vagas; só a equipe de confiança
+      (`incluir_na_equipe`, `remover_da_equipe`) é do `administrador`. O texto anterior dizia que o
+      operador não cadastrava vaga, o que nem o backend nem os documentos de requisitos fazem.
+    - **Convenções**: a idempotência da avaliação é por turno e **lado** (0.2.12), não por autor; e
+      as tabelas de operação `entrada_demonstracao` e `pedido_de_exclusao` não têm política de
+      leitura.
+    - **`denunciar` e `bloquear`**: as recusas por campo faltando citavam a RN02, que é a regra dos
+      campos da vaga; passam a citar a RF26. `denunciar` registra que fraude e documento falso
+      chegam pelo motivo `outro` (decisão de 30/09), sem mudar o enum `MotivoDenuncia`.
+    - **`perfil_publico`**: a divergência aberta na 0.2.12 foi decidida em 30/09 — o bloqueio vai
+      esconder também o perfil público. O comportamento não muda nesta versão; entra numa próxima,
+      junto com o backend e o app.
+    - **Anonimização**: desde a migração `20260929160000_excluir_conta_autor.sql`, a exclusão grava
+      `nome = 'Conta encerrada'` na própria linha. A frase da 0.2.12 ("a anonimização não apaga o
+      nome da linha — quem mascara é a leitura") ficou velha; o que o cliente vê não muda.
+
+    ---
+
+    **Versão 0.2.26, de 30/09/2026.** Alinhamento de contrato em `/rpc/registrar_dispositivo` (autorizado em 30/09/2026).
+    Declara formalmente a resposta `422 RegraRecusou` (`campo_obrigatorio`, `campo_invalido`), já emitida
+    pela implementação ao validar `token_fcm` e `plataforma`.
+
+    - **`/rpc/registrar_dispositivo`**: adicionada a resposta `422: $ref: '#/components/responses/RegraRecusou'`.
+
+    ---
 
     **Versão 0.2.25, de 29/09/2026.** Contrato para a ação "Estou a caminho" (cartão h53CJVP7,
     US14 cenário 1, RF12). Não altera presença nem taxa de comparecimento: é um sinal operacional
@@ -1177,8 +1208,9 @@ paths:
         chamar qualquer outra coisa. Sem esta operação, o app só descobre o `estabelecimento_id`
         cadastrando um novo, que é o caminho errado para quem já tem.
 
-        Devolve o papel junto: `operador` não cadastra vaga em nome da casa nem mexe na equipe, e a
-        tela precisa esconder o que o servidor vai recusar com `403 sem_permissao` (RF21).
+        Devolve o papel junto: o `operador` publica e acompanha as vagas da casa, mas não inclui nem
+        remove profissionais da equipe de confiança, que é do `administrador` (RF18, RF21). A tela
+        precisa esconder o que o servidor vai recusar com `403 sem_permissao`.
 
         Lista vazia é resposta legítima: conta de contratante recém-criada, antes do primeiro
         cadastro. Conta de **profissional** recebe `422 perfil_incompativel`, e não lista vazia — a
@@ -2181,6 +2213,10 @@ paths:
 
         Conta anonimizada (RF25) devolve `nome: "Conta encerrada"`. O turno e a avaliação sobrevivem à
         exclusão porque pertencem também à contraparte; o nome, não.
+
+        Bloqueio (RF26): hoje o perfil continua visível entre partes bloqueadas. A decisão de produto
+        de 30/09 é escondê-lo; a mudança de comportamento entra numa versão futura deste contrato,
+        junto com o backend e o app.
       x-requisitos: [RF16, RN08]
       parameters:
         - name: id
@@ -2251,11 +2287,12 @@ paths:
       description: |
         Registra a denúncia e a envia à Equipe Frila, que responde por e-mail em até 5 dias úteis.
         Denúncia grave confirmada (assédio, fraude ou documento falso) leva à suspensão, com motivo
-        registrado e direito de contestar (RN13). Em risco imediato, o app mostra os atalhos para o 190
+        registrado e direito de contestar (RN13). Fraude e documento falso chegam pelo motivo `outro`,
+        com o relato, e a Equipe Frila apura (decisão de produto de 30/09). Em risco imediato, o app mostra os atalhos para o 190
         e o 180 sem esperar a resposta. Exigência da diretriz 1.2 da App Store.
 
         Recusas: campo obrigatório ausente (`campo_obrigatorio`, com o nome do campo em `details`:
-        `alvo_tipo`, `alvo_id`, `motivo`, `relato` ou `chave`, RN02); valor recusado pela regra
+        `alvo_tipo`, `alvo_id`, `motivo`, `relato` ou `chave`, RF26); valor recusado pela regra
         (`campo_invalido`, com o campo em `details`: `alvo_tipo` fora do enum, `alvo_id` não UUID,
         `motivo` fora do enum `MotivoDenuncia`, `relato` com menos de 10 caracteres ou `chave` não UUID).
       x-requisitos: [RF26, RN13, RN15, UC17]
@@ -2310,7 +2347,7 @@ paths:
         estabelecimento, vale para as vagas do estabelecimento inteiro. Idempotente.
 
         Recusas: campo obrigatório ausente (`campo_obrigatorio`, com o nome do campo em `details`:
-        `alvo_tipo` ou `alvo_id`, RN02); valor recusado pela regra (`campo_invalido`, com o campo em
+        `alvo_tipo` ou `alvo_id`, RF26); valor recusado pela regra (`campo_invalido`, com o campo em
         `details`: `alvo_tipo` fora do enum, `alvo_id` não UUID ou tentativa de bloquear a si mesmo).
       x-requisitos: [RF26, UC17]
       requestBody:
@@ -2423,6 +2460,8 @@ paths:
                 $ref: '#/components/schemas/Dispositivo'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/remover_dispositivo:
     post:
