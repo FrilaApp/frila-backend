@@ -155,8 +155,8 @@ as $$
                'id',        o.id,
                'tipo',      o.tipo,
                'papel',     case when o.autor_id = p_usuario then 'autor' else 'alvo' end,
-               'turno_id',  o.turno_id,
-               'criada_em', o.criada_em,
+               'criada_em',    o.criada_em,
+               'resolvido_em', o.resolvido_em,
                'motivo',    case
                               when o.autor_id = p_usuario or o.tipo = 'suspensao'
                                 then o.motivo
@@ -170,14 +170,38 @@ as $$
     -- bloqueio é invisível para o bloqueado, e um JSON de portabilidade que o revelasse
     -- desfaria a regra por outro caminho. Por isso `autor_id = p_usuario` e nada de
     -- `bloqueado_id` apontando para ele em nenhuma profundidade.
+    -- E devolve o PAR, nunca o id de conta. O schema `Bloqueio` do contrato diz com estas
+    -- palavras: "Devolve o mesmo par que a chamada recebeu, e não o id de conta da outra
+    -- parte: devolvê-lo abriria um caminho de leitura que RN10 fecha em todos os outros."
+    -- Uma versão anterior desta migração devolvia `bloqueado_id`, e abria esse caminho por
+    -- dentro da exportação — fechado em RF26 de um lado e aberto por aqui do outro.
+    --
+    -- A volta é reconstruída como `public.bloquear` monta a ida: profissional vira
+    -- ('profissional', profissional.id); contratante vira ('estabelecimento', e.id) para
+    -- cada casa de que ele é membro, porque foi a casa que o titular bloqueou e o bloqueio
+    -- gravou uma linha por membro dela.
     'bloqueios', coalesce((
-      select jsonb_agg(jsonb_build_object(
-               'id',           b.id,
-               'bloqueado_id', b.bloqueado_id,
-               'criado_em',    b.criado_em)
-             order by b.criado_em desc)
-        from public.bloqueio b
-       where b.autor_id = p_usuario), '[]'::jsonb),
+      select jsonb_agg(x.o order by x.criado_em desc)
+        from (
+          select distinct jsonb_build_object(
+                   'alvo_tipo', 'profissional',
+                   'alvo_id',   pb.id,
+                   'criado_em', b.criado_em) as o,
+                 b.criado_em
+            from public.bloqueio b
+            join public.profissional pb on pb.usuario_id = b.bloqueado_id
+           where b.autor_id = p_usuario
+          union
+          select distinct jsonb_build_object(
+                   'alvo_tipo', 'estabelecimento',
+                   'alvo_id',   mb.estabelecimento_id,
+                   'criado_em', b.criado_em) as o,
+                 b.criado_em
+            from public.bloqueio b
+            join public.usuario ub on ub.id = b.bloqueado_id and ub.perfil = 'contratante'
+            join public.membro_estabelecimento mb on mb.usuario_id = b.bloqueado_id
+           where b.autor_id = p_usuario
+        ) x), '[]'::jsonb),
 
     -- Sem `tentativas`, `motivo_falha`, `proxima_tentativa_em` nem `esperou_teto`: são o
     -- diário de bordo do provedor de push, não dado do titular (RN15). O `payload` entra

@@ -17,7 +17,7 @@
 -- avaliações; Zélia (b…01) administra o Bar do Cerrado (c…01).
 
 begin;
-select plan(48);
+select plan(50);
 
 select set_config('frila.agora', '2026-09-29 11:00:00-03', true);
 
@@ -290,10 +290,22 @@ select ok((select j ? 'bloqueios' from d),
 -- bloqueado pode aparecer, em nenhuma profundidade do corpo.
 select ok(
   (select not exists (
-     select 1 from jsonb_array_elements(j->'bloqueios') b
-      where (b.value->>'bloqueado_id')::uuid = (select ana from ids))
+     select 1 from jsonb_array_elements(j->'bloqueios') b where b.value ? 'bloqueado_id')
      from d),
-  'RF26: nenhum bloqueio feito contra o titular aparece em bloqueios');
+  'RN10: nenhum bloqueio leva bloqueado_id — o schema Bloqueio devolve o par, nunca o id de conta');
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'bloqueios') b
+      where (b.value->>'alvo_tipo') is distinct from 'profissional'
+        and (b.value->>'alvo_tipo') is distinct from 'estabelecimento')
+     from d),
+  'todo bloqueio traz alvo_tipo, e ele é profissional ou estabelecimento');
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'bloqueios') b
+      where (b.value->>'alvo_id')::uuid in (select u.id from public.usuario u))
+     from d),
+  'RN10: nenhum alvo_id é id de conta — é id de profissional ou de estabelecimento');
 select ok(
   (select (j #>> '{}') not like '%' || (
      select b.autor_id::text from public.bloqueio b
