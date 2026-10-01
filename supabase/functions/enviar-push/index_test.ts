@@ -1842,3 +1842,25 @@ Deno.test("qcVimM84 3: nenhum texto de push fala em hora extra nem sugere cálcu
     );
   }
 });
+
+// Cartão BsXIZHOw: textos de suspensão e reativação sem motivo no push (RN15)
+Deno.test("BsXIZHOw: textos de suspensao e reativacao cabem no iPhone SE e nao trazem o motivo", () => {
+  const susp = titulosECorposPorTipo("suspensao", { motivo: "Fraude grave confirmada" });
+  assertEquals(susp, {
+    title: "Aviso sobre sua conta",
+    body: "Sua conta foi suspensa. Abra o aplicativo para mais detalhes.",
+  });
+  assert(susp.title.length <= 32, "título de suspensao cabe na tela bloqueada do iPhone SE");
+  assert(susp.body.length <= 85, "corpo de suspensao cabe na tela bloqueada do iPhone SE");
+  assert(!susp.body.includes("Fraude"), "o motivo da suspensão não vai no corpo do push");
+
+  const reat = titulosECorposPorTipo("reativacao", { motivo: "Contestação aceita" });
+  assertEquals(reat, {
+    title: "Conta reativada",
+    body: "Sua conta foi reativada e está pronta para uso.",
+  });
+  assert(reat.title.length <= 32, "título de reativacao cabe na tela bloqueada do iPhone SE");
+  assert(reat.body.length <= 85, "corpo de reativacao cabe na tela bloqueada do iPhone SE");
+  assert(!reat.body.includes("Contestação"), "o motivo da reativação não vai no corpo do push");
+});
+

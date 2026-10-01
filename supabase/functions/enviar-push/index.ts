@@ -423,6 +423,16 @@ export function titulosECorposPorTipo(
         title: "Avaliação disponível",
         body: "O turno foi concluído. Avalie a experiência no Frila.",
       };
+    case "suspensao":
+      return {
+        title: "Aviso sobre sua conta",
+        body: "Sua conta foi suspensa. Abra o aplicativo para mais detalhes.",
+      };
+    case "reativacao":
+      return {
+        title: "Conta reativada",
+        body: "Sua conta foi reativada e está pronta para uso.",
+      };
     default:
       return {
         title: "Notificação Frila",
