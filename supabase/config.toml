@@ -447,6 +447,12 @@ verify_jwt = false
 enabled = true
 verify_jwt = true
 
+# Health check operacional e disponibilidade para monitor externo (cartão 5bPJvMIo · RNF12).
+# verify_jwt desligado para permitir probes de monitoramento externo gratuito (sem dados sensíveis).
+[functions.saude]
+enabled = true
+verify_jwt = false
+
 
 [analytics]
 enabled = true
