@@ -12,7 +12,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(42);
+select plan(39);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -46,6 +46,11 @@ create function pg_temp.erro(codigo text, detalhe text default null) returns tex
 language sql as $$
   select format('{"code" : "%s", "message" : "%s", "details" : %s, "hint" : null}',
                 codigo, codigo, coalesce('"' || detalhe || '"', 'null'))
+$$;
+
+create function pg_temp.por(conta uuid, sql text) returns text
+language sql as $$
+  select format('select pg_temp.como(%L, %L)', conta, sql)
 $$;
 
 create temp table ids as select
@@ -129,32 +134,32 @@ select throws_ok(
   'registrar_evento sem token recusa 401 nao_autenticado');
 
 select throws_ok(
-  format($$ select pg_temp.como(%L, $$ select public.registrar_evento(null) $$) $$, (select normal from ids)),
+  pg_temp.por((select normal from ids), $$ select public.registrar_evento(null) $$),
   'PGRST', pg_temp.erro('campo_obrigatorio', 'evento'),
   'registrar_evento com evento nulo recusa 422 campo_obrigatorio (details: evento)');
 
 select throws_ok(
-  format($$ select pg_temp.como(%L, $$ select public.registrar_evento('   ') $$) $$, (select normal from ids)),
+  pg_temp.por((select normal from ids), $$ select public.registrar_evento('   ') $$),
   'PGRST', pg_temp.erro('campo_obrigatorio', 'evento'),
   'registrar_evento com evento em branco recusa 422 campo_obrigatorio (details: evento)');
 
 select throws_ok(
-  format($$ select pg_temp.como(%L, $$ select public.registrar_evento('evento_inexistente') $$) $$, (select normal from ids)),
+  pg_temp.por((select normal from ids), $$ select public.registrar_evento('evento_inexistente') $$),
   'PGRST', pg_temp.erro('campo_invalido', 'evento'),
   'registrar_evento fora do enum recusa 422 campo_invalido (details: evento)');
 
 select throws_ok(
-  format($$ select pg_temp.como(%L, $$ select public.registrar_evento('app_aberto', ocorrido_em => '2027-03-01 13:00:00+00') $$) $$, (select normal from ids)),
+  pg_temp.por((select normal from ids), $$ select public.registrar_evento('app_aberto', ocorrido_em => '2027-03-01 13:00:00+00'::timestamptz) $$),
   'PGRST', pg_temp.erro('registro_no_futuro'),
   'registrar_evento com ocorrido_em no futuro recusa 422 registro_no_futuro');
 
 select throws_ok(
-  format($$ select pg_temp.como(%L, $$ select public.registrar_evento('vaga_vista', vaga_id => '3e000000-0000-4000-8000-000000000099'::uuid) $$) $$, (select normal from ids)),
+  pg_temp.por((select normal from ids), $$ select public.registrar_evento('vaga_vista', vaga_id => '3e000000-0000-4000-8000-000000000099'::uuid) $$),
   'PGRST', pg_temp.erro('campo_invalido', 'vaga_id'),
   'registrar_evento com vaga_id inexistente recusa 422 campo_invalido (details: vaga_id)');
 
 select throws_ok(
-  format($$ select pg_temp.como(%L, $$ select public.registrar_evento('checkin_tentado', turno_id => '3e000000-0000-4000-8000-000000000099'::uuid) $$) $$, (select normal from ids)),
+  pg_temp.por((select normal from ids), $$ select public.registrar_evento('checkin_tentado', turno_id => '3e000000-0000-4000-8000-000000000099'::uuid) $$),
   'PGRST', pg_temp.erro('campo_invalido', 'turno_id'),
   'registrar_evento com turno_id inexistente recusa 422 campo_invalido (details: turno_id)');
 
@@ -187,9 +192,9 @@ select is(
   1,
   'ocorrido_em do cliente preservado com sucesso');
 
--- Prova que todos os 14 eventos do dicionário são aceitos
+-- Prova que todos os outros eventos do dicionário são aceitos
 select lives_ok(
-  format($$ select pg_temp.como(%L, format('select public.registrar_evento(%%L)', evento)) $$, (select normal from ids)),
+  pg_temp.por((select normal from ids), format('select public.registrar_evento(%L)', evento)),
   format('evento %s do dicionário é registrado com sucesso', evento))
 from unnest(array[
   'cadastro_concluido',
