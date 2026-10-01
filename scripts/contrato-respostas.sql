@@ -390,8 +390,11 @@ select pg_temp.guarda('erro:contestacao_ja_aberta',
 -- colher aqui mede exatamente o que o cliente recebe, pelo mesmo raciocínio que vale para
 -- as RPCs e sem precisar subir `functions serve`.
 --
--- As que ficam de fora estão nomeadas em `FORA_DO_ALCANCE`, no validador, com o motivo de
--- cada uma: `Sessao` é emitida pelo Supabase Auth, `exportarTurnos` devolve CSV e PDF.
+-- As que ficam de fora estão em `FORA_DO_ALCANCE`, no `contrato_responde.py`, cada uma com
+-- o motivo. A lista vive **só lá**, e este comentário não a repete de propósito: duas
+-- cópias de uma lista divergem na primeira mudança, e a primeira versão deste comentário
+-- citava dois exemplos dela — o bastante para um leitor concluir que eram a lista inteira.
+-- Aconteceu em 01/10, na revisão deste PR.
 
 select pg_temp.guarda('exportarMeusDados',
   privado.meus_dados('cc000000-0000-4000-8000-000000000002'));
