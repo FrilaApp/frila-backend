@@ -1,10 +1,10 @@
 -- privado.meus_dados devolve as sete coleções que faltavam (RF25, UC16, LGPD art. 18).
--- Cartão IrtkCWDz. Contrato 0.2.27, schema MeusDados.
+-- Cartão IrtkCWDz. Contrato 0.2.29, schema MeusDados.
 --
 -- O que faltava. A versão de `20260929233145_exportar_meus_dados.sql` devolvia conta,
 -- perfil, estabelecimentos, turnos, avaliações e dispositivos, e deixava de fora sete
 -- coleções com dado do titular: candidaturas, ocorrências, bloqueios, notificações,
--- despachos, equipe de confiança e o pedido de exclusão. O contrato 0.2.27 declarou as
+-- despachos, equipe de confiança e o pedido de exclusão. O contrato 0.2.29 declarou as
 -- sete como opcionais justamente porque a função ainda não as devolvia — e o teste 440
 -- fixava a divergência numa asserção que dizia que seis tabelas ficavam de fora.
 --
@@ -125,7 +125,7 @@ as $$
         from public.dispositivo di
        where di.usuario_id = p_usuario), '[]'::jsonb),
 
-    -- ── As sete coleções do contrato 0.2.27 ───────────────────────────────────
+    -- ── As sete coleções do contrato 0.2.29 ───────────────────────────────────
     -- Cada uma leva o que é do titular, e três levam menos que a tabela inteira. O que
     -- cada uma deliberadamente não leva está escrito no comentário dela, porque é a parte
     -- que uma revisão futura vai querer "completar" sem saber que foi decisão.
@@ -260,4 +260,4 @@ as $$
 $$;
 
 comment on function privado.meus_dados(uuid) is
-  'Portabilidade da LGPD art. 18 no schema MeusDados do contrato (nUpPFCpM, IrtkCWDz, RF25, UC16). É stable de propósito: uma função stable não consegue escrever, e é assim que "nada fica guardado no servidor depois da resposta" deixa de ser promessa. Leva as sete coleções do 0.2.27. Sem token de aparelho, sem o autor das avaliações recebidas, sem os bloqueios feitos contra o titular (RF26) e sem resultado de ocorrência (RN07, RN15).';
+  'Portabilidade da LGPD art. 18 no schema MeusDados do contrato (nUpPFCpM, IrtkCWDz, RF25, UC16). É stable de propósito: uma função stable não consegue escrever, e é assim que "nada fica guardado no servidor depois da resposta" deixa de ser promessa. Leva as sete coleções do 0.2.29. Sem token de aparelho, sem o autor das avaliações recebidas, sem os bloqueios feitos contra o titular (RF26) e sem resultado de ocorrência (RN07, RN15).';

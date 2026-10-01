@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.28
+  version: 0.2.29
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -96,7 +96,7 @@ info:
 
     ## Estado
 
-    **Versão 0.2.28, de 01/10/2026.** `MeusDados` passa a declarar as sete coleções que faltavam
+    **Versão 0.2.29, de 01/10/2026.** `MeusDados` passa a declarar as sete coleções que faltavam
     para a exportação cobrir todo dado do titular (cartão nUpPFCpM, RF25, UC16, LGPD art. 18).
     Sete tabelas guardam dado pessoal e não tinham lugar no schema: `candidatura`, `ocorrencia`,
     `bloqueio`, `notificacao`, `despacho`, `equipe_confianca` e `pedido_de_exclusao`.
@@ -137,6 +137,22 @@ info:
       não tem política de leitura: ninguém a lê pela API. A exportação não passa por ali — o corpo
       inteiro é montado por `privado.meus_dados`, função `SECURITY DEFINER` que só a Edge Function
       alcança. Não ter política de leitura não a tira do direito de portabilidade do titular.
+
+    ---
+
+    **Versão 0.2.28, de 01/10/2026.** O bloqueio passa a esconder também o perfil público (cartão
+    1aGJPQK2, US26, RF26, UC17), conforme a decisão de produto de 30/09/2026 registrada na 0.2.27.
+    Nenhuma operação, campo ou código de erro novo: o `404 NaoEncontrado` já era declarado em
+    `/rpc/perfil_publico`; o que muda é **quando** ele vem.
+
+    - **`/rpc/perfil_publico`**: devolve `404 nao_encontrado` quando há bloqueio entre quem chama e o
+      perfil consultado, **nos dois sentidos** (quem bloqueou não vê quem foi bloqueado, e quem foi
+      bloqueado não vê quem bloqueou). Vale também quando a outra parte é membro do estabelecimento
+      consultado, como já vale para vagas e candidaturas. A resposta é a mesma de um id que não
+      existe: o cliente não distingue bloqueio de perfil inexistente, e a tela mostra "perfil
+      indisponível" sem dizer que houve bloqueio (RF26).
+    - **Fecha a divergência aberta** na 0.2.12 e adiada na 0.2.27. O espelho `contrato/openapi.yaml`
+      do backend e o app seguem em PRs próprios.
 
     ---
 
@@ -2258,9 +2274,10 @@ paths:
         Conta anonimizada (RF25) devolve `nome: "Conta encerrada"`. O turno e a avaliação sobrevivem à
         exclusão porque pertencem também à contraparte; o nome, não.
 
-        Bloqueio (RF26): hoje o perfil continua visível entre partes bloqueadas. A decisão de produto
-        de 30/09 é escondê-lo; a mudança de comportamento entra numa versão futura deste contrato,
-        junto com o backend e o app.
+        Bloqueio (RF26, 0.2.28): entre partes bloqueadas, nos dois sentidos, o perfil responde
+        `404 nao_encontrado`, igual a um id que não existe. Vale também quando a outra parte é
+        membro do estabelecimento consultado. O cliente mostra "perfil indisponível" e não revela
+        que houve bloqueio.
       x-requisitos: [RF16, RN08]
       parameters:
         - name: id
@@ -3055,7 +3072,7 @@ components:
     TipoNotificacao:
       description: |
         Os avisos que o sistema endereça a uma conta. Descritos em prosa desde a 0.2.14 (e mais
-        dois na 0.2.24), declarados como enum a partir da 0.2.28 porque `MeusDados.notificacoes`
+        dois na 0.2.24), declarados como enum a partir da 0.2.29 porque `MeusDados.notificacoes`
         os devolve e o cliente precisa gerar o modelo. Só `vaga` e `vagas_agrupadas` contam para o
         teto da RN23.
       type: string
@@ -3956,7 +3973,7 @@ components:
       description: |
         Portabilidade da LGPD: o que o titular forneceu e o que o sistema registrou sobre ele.
 
-        As sete coleções acrescentadas na 0.2.28 — `candidaturas`, `ocorrencias`, `bloqueios`,
+        As sete coleções acrescentadas na 0.2.29 — `candidaturas`, `ocorrencias`, `bloqueios`,
         `notificacoes`, `despachos`, `equipe_confianca` e `pedido_de_exclusao` — são obrigatórias
         como as demais: coleção vazia é `[]`, e `pedido_de_exclusao` é `null` quando não há pedido.
         Nenhuma delas vem ausente.
