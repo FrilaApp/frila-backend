@@ -22,6 +22,12 @@
 #      inteira, que leva minutos. `Ctrl-C`, `SIGTERM` ou timeout de CI nesse intervalo
 #      deixavam o esquema sem o objeto, em silêncio e sem registro de qual era.
 #
+# O placar tem DOIS baldes de cobertura, e isso é deliberado: há alvo cuja única
+# asserção possível é de catálogo, porque nenhum dado o viola. Contá-lo junto com os
+# outros faria o número dizer "comportamento coberto" sobre regra que nenhuma asserção de
+# comportamento vigia — o mesmo pecado, com um total por cima. A lista `estruturais`
+# declara quais são, e cita onde o comportamento de cada regra é testado.
+#
 # E o total de alvos é impresso, por categoria, antes da primeira mutação. Até aqui o
 # número não existia em nenhuma linha da saída: só a soma implícita de
 # cobertas + sem cobertura + não medidas, no fim. Regra nova em categoria que ninguém
@@ -263,7 +269,54 @@ if [ -n "$filtro" ]; then
 fi
 echo
 
+# ── Alvos de cobertura ESTRUTURAL, declarados aqui e em nenhum outro lugar ─────
+#
+# Dois dos alvos não são violáveis por dado nenhum. A asserção que morre quando eles
+# caem é de catálogo — ela afirma que o objeto existe, não que o comportamento dele vale
+# — e somar isso ao mesmo balde das outras faria o placar dizer "comportamento coberto"
+# sobre uma regra que nenhuma asserção de comportamento vigia.
+#
+# Isso seria o pecado que este portão existe para pegar, agora com um número por cima:
+# "regra sem cobertura que se apresenta como coberta". Daí os dois baldes. O alvo CONTA,
+# e continua reprovando o portão se sobreviver; o que muda é que a natureza da cobertura
+# dele fica declarada, com nome e razão, em vez de desaparecer dentro de um total.
+#
+# Entrar nesta lista não é desconto. É a afirmação de que o comportamento está coberto em
+# OUTRO lugar, e esse lugar está citado. Quem acrescentar um nome aqui sem a citação está
+# usando a lista para o oposto do que ela serve.
+estruturais=(
+  # `unique (id, perfil)` sobre tabela cuja chave primária é `id`: duas linhas com o
+  # mesmo `id` não existem, logo não há insert que a viole. Ela existe para ser o alvo
+  # das chaves estrangeiras compostas de RN25, e derrubá-la exige `cascade`, que leva as
+  # duas junto — o vermelho que o portão vê vem delas, por 23503, e não da unicidade.
+  # Comportamento de RN25 coberto em supabase/tests/010_identidade.sql:36 (o trigger de
+  # perfil imutável), :48 e :59 (a chave estrangeira composta, nos dois sentidos) e
+  # supabase/tests/050_restricoes_restantes.sql:43 e :51 (o CHECK de coluna, de
+  # propósito separado da chave estrangeira).
+  usuario_id_perfil
+
+  # `unique (turno_id, autor_id)`: o gatilho `avaliacao_rn07` amarra o autor ao lado — o
+  # profissional do turno só escreve `alvo_tipo = 'estabelecimento'`, um membro da casa
+  # só escreve 'profissional' — e RN25 proíbe a mesma conta ser as duas partes. Logo
+  # (turno, autor) determina o lado, e `um_voto_por_lado` recusa primeiro: toda violação
+  # alcançável de uma passa pela outra. Comportamento coberto em
+  # supabase/tests/030_turno_e_avaliacao.sql:152 e
+  # supabase/tests/180_avaliar_e_perfil_publico.sql:366 (um voto por lado, na tabela),
+  # :271 e :278 (409 `avaliacao_ja_registrada`, pela RPC) e :360 (o gatilho recusando
+  # quem não é parte do turno).
+  avaliacao_turno_id_autor_id_key
+)
+
+e_estrutural() {
+  local n
+  for n in ${estruturais[@]+"${estruturais[@]}"}; do
+    [ "$n" = "$1" ] && return 0
+  done
+  return 1
+}
+
 sobreviventes=()
+estrutura=()
 pulados=()
 mortos=0
 
@@ -341,6 +394,11 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
   if [ -z "$quem" ]; then
     echo "SOBREVIVEU — nenhum teste reclamou"
     sobreviventes+=("$tipo $nome")
+  elif e_estrutural "$nome"; then
+    # Morreu, mas por asserção de catálogo. Balde separado para que a linha por alvo
+    # também seja legível sozinha: quem lê "estrutura ✓" não lê "comportamento coberto".
+    echo "estrutura ✓  ($(echo "$quem" | tr '\n' ' ' | sed 's/ $//'))"
+    estrutura+=("$tipo $nome")
   else
     echo "morreu ✓  ($(echo "$quem" | tr '\n' ' ' | sed 's/ $//'))"
     mortos=$((mortos + 1))
@@ -348,10 +406,44 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
 done
 
 echo
-echo "cobertas: $mortos · sem cobertura: ${#sobreviventes[@]} · não medidas: ${#pulados[@]}" \
+echo "comportamento: $mortos · estrutura: ${#estrutura[@]}" \
+     "· sem cobertura: ${#sobreviventes[@]} · não medidas: ${#pulados[@]}" \
      "· de ${#alvos[@]} alvos"
 
 falta=0
+
+if [ "${#estrutura[@]}" -gt 0 ]; then
+  echo
+  echo "Cobertura ESTRUTURAL — o que morre é asserção de catálogo, não de comportamento."
+  echo "Não leia estes como comportamento coberto. A razão de cada um, e onde o"
+  echo "comportamento da regra é testado, está na lista 'estruturais' deste arquivo:"
+  printf '  %s\n' "${estrutura[@]}"
+fi
+
+# A declaração não pode envelhecer em silêncio. Nome declarado que não casa com alvo
+# nenhum é objeto renomeado ou objeto que saiu do esquema, e nos dois casos a lista
+# passou a mentir — exatamente o modo de falha de 23/09, de novo. Conferido contra a
+# lista inteira de alvos, e não contra o subconjunto filtrado, para que rodar com filtro
+# não esconda o envelhecimento.
+declarados_sem_alvo=()
+for n in ${estruturais[@]+"${estruturais[@]}"}; do
+  achou=0
+  for alvo in ${alvos[@]+"${alvos[@]}"}; do
+    case "$alvo" in *"|$n|"*) achou=1; break;; esac
+  done
+  [ "$achou" = 0 ] && declarados_sem_alvo+=("$n")
+done
+
+if [ "${#declarados_sem_alvo[@]}" -gt 0 ]; then
+  echo
+  echo "Declarado como estrutural, mas não existe alvo com esse nome:"
+  printf '  %s\n' "${declarados_sem_alvo[@]}"
+  echo
+  echo "A lista 'estruturais' está desatualizada. Um nome que não casa com nada é um"
+  echo "desconto concedido a um objeto que ninguém varre — conserte a lista ou remova"
+  echo "o nome."
+  falta=1
+fi
 
 if [ "${#sobreviventes[@]}" -gt 0 ]; then
   echo
