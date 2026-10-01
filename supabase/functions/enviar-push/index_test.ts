@@ -1796,3 +1796,49 @@ Deno.test("x0jkygj0: processarEnvioPush envia lembrete com {estabelecimento} ({r
 });
 
 
+
+// ── Fim sem check-out (cartão qcVimM84) ───────────────────────────────────────
+//
+// O tipo já existia no `tipo_notificacao` e o texto já estava aqui; o que faltava era
+// quem cria a notificação, e isso entrou em `privado.alertar_fim_sem_checkout`. Estes
+// dois testes fixam o outro lado do cartão: o texto, e o que ele não pode dizer.
+
+Deno.test("qcVimM84: o texto de fim_sem_checkout pede o check-out, e nada mais", () => {
+  assertEquals(titulosECorposPorTipo("fim_sem_checkout", {}), {
+    title: "Check-out pendente",
+    body: "O horário previsto do turno encerrou. Registre o check-out.",
+  });
+});
+
+Deno.test("qcVimM84 3: nenhum texto de push fala em hora extra nem sugere cálculo", () => {
+  // O critério 3 é sobre tela, e a tela é iOS. O que o backend pode garantir é que ele
+  // nunca manda o número nem a palavra: o app registra, não calcula.
+  const tipos = [
+    "vaga",
+    "vagas_agrupadas",
+    "confirmacao",
+    "lembrete_24h",
+    "lembrete_3h",
+    "inicio_sem_checkin",
+    "atraso_15min",
+    "fim_sem_checkout",
+    "vaga_vazia",
+    "checkin",
+    "checkin_manual_pendente",
+    "cancelamento",
+    "avaliacao_disponivel",
+  ];
+
+  const proibido = /(hora|horas)\s+extra|extra\s*s?\b.*\bhora|adicional noturno/i;
+  for (const tipo of tipos) {
+    const { title, body } = titulosECorposPorTipo(tipo, {});
+    assert(!proibido.test(title), `o título de ${tipo} fala em hora extra`);
+    assert(!proibido.test(body), `o corpo de ${tipo} fala em hora extra`);
+    // Nem número de minutos ou horas: o texto não carrega duração nenhuma.
+    assert(
+      !/\b\d+\s*(min|minutos?|h|horas?)\b/i.test(body) || tipo.startsWith("lembrete") ||
+        tipo === "atraso_15min" || tipo === "lembrete_3h",
+      `o corpo de ${tipo} carrega uma duração`,
+    );
+  }
+});
