@@ -16,7 +16,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(72);
+select plan(74);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -208,6 +208,16 @@ select throws_ok(
   format($$ select public.cancelar_vaga(%L, 'motivo qualquer') $$, (select vazia from v)),
   'PGRST', pg_temp.erro('nao_autenticado'),
   'cancelar_vaga sem token é 401 nao_autenticado');
+
+select throws_ok(
+  format($$ select public.republicar_vaga(%L, '2027-03-20 21:00:00+00'::timestamptz, '2027-03-21 03:00:00+00'::timestamptz, gen_random_uuid()) $$, (select vazia from v)),
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'republicar_vaga sem token é 401 nao_autenticado');
+
+select throws_ok(
+  format($$ select public.contato_do_turno(%L) $$, (select turno from t)),
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'contato_do_turno sem token é 401 nao_autenticado');
 
 -- ── Cadastro e perfil ─────────────────────────────────────────────────────────
 select throws_ok(
