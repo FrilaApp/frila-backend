@@ -50,6 +50,28 @@ begin
   end;
 end $$;
 
+-- Observa o STATUS de uma tentativa, e não o corpo dela: devolve `{"status": n}` com o
+-- código que o envelope de `public.erro` carrega em DETAIL, ou `{"status": 200}` quando a
+-- chamada passou. É o que sustenta a direção contrato-à-frente — a pergunta ali não é "o
+-- corpo casa", é "a recusa que o contrato promete acontece".
+create function pg_temp.observado(conta uuid, sql text) returns jsonb
+language plpgsql as $$
+declare det text;
+begin
+  begin
+    perform pg_temp.como(conta, sql);
+    return jsonb_build_object('status', 200);
+  exception when others then
+    get stacked diagnostics det = pg_exception_detail;
+    reset role;
+    begin execute 'reset request.jwt.claims'; exception when others then null; end;
+    -- Sem DETAIL não é recusa do contrato: é erro de banco, e dizer 500 aqui seria
+    -- inventar um status que ninguém devolveu.
+    return case when det is null or det = '' then jsonb_build_object('status', null)
+                else jsonb_build_object('status', (det::jsonb->>'status')::int) end;
+  end;
+end $$;
+
 create temp table colhido (ordem serial, op text, corpo jsonb);
 create function pg_temp.guarda(op text, corpo jsonb) returns void
 language sql as $$ insert into colhido (op, corpo) values (op, corpo) $$;
@@ -378,6 +400,31 @@ select pg_temp.guarda('contestarSuspensao', pg_temp.como('cc000000-0000-4000-800
 select pg_temp.guarda('erro:contestacao_ja_aberta',
   pg_temp.recusa('cc000000-0000-4000-8000-000000000004',
     $$ select public.contestar_suspensao('Segunda tentativa de contestacao enquanto a primeira esta aberta.') $$));
+
+-- ── A direção contrato-à-frente: a recusa que o contrato promete ─────────────
+--
+-- Cartão `EFveOeIb`. Os outros portões medem o contrato ATRÁS do código — espelho
+-- divergente, PR que mexe em `public` sem mexer no contrato, corpo de sucesso que não
+-- casa. A direção em que o **contrato promete e o código não entrega** não tinha portão:
+-- a 0.2.28 passou a prometer `404` em `perfil_publico` entre partes bloqueadas, a função
+-- não filtra bloqueio, e nada reprovou.
+--
+-- Vem depois do `bloquear` de propósito, e é a única colheita que depende dele. O
+-- comentário acima diz que o bloqueio ficou por último "porque esconderia a casa de quem
+-- bloqueou em tudo o que vem depois" — e era justamente por isso que nenhuma colheita
+-- acontecia com um par bloqueado.
+--
+-- Os dois sentidos, porque é o que o contrato promete: o Pê Dois bloqueou a casa, então
+-- nem ele vê a casa nem a casa vê ele.
+select pg_temp.guarda('promete:perfilPublico:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003', format(
+    $$ select public.perfil_publico(%L::uuid) $$, (select casa_id from ids))));
+
+select pg_temp.guarda('promete:perfilPublico:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.perfil_publico(%L::uuid) $$,
+    (select p.id from public.profissional p
+      where p.usuario_id = 'cc000000-0000-4000-8000-000000000003'))));
 
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o
