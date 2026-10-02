@@ -12,6 +12,7 @@
 // Execução: deno test supabase/functions/exportar-turnos/
 
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
+import { PDFDocument } from "npm:pdf-lib@1.17.1";
 import {
   handler,
   criarSqlClient,
@@ -460,6 +461,11 @@ Deno.test("gerarPdf com grande volume de turnos quebra página e gera múltiplas
   assert(bytes.length > 2000, "o PDF multipágina deve ter tamanho adequado");
   const cabecalho = new TextDecoder().decode(bytes.subarray(0, 5));
   assertEquals(cabecalho, "%PDF-");
+
+  // Afirma o número exato de páginas gerado (55 turnos exigem exatamente 2 páginas)
+  const doc = await PDFDocument.load(bytes);
+  assertEquals(doc.getPageCount(), 2, "o relatório com 55 turnos deve gerar exatamente 2 páginas");
+  assertEquals(doc.getPages().length, 2, "a lista de páginas do documento deve conter 2 páginas");
 });
 
 Deno.test("formatarHoraLocal e formatarDataLocal tratam dados inválidos com segurança", () => {
