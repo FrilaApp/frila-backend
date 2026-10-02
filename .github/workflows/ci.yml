@@ -148,7 +148,13 @@ jobs:
       # Este chama cada RPC da v1.0 com o relógio do produto sob controle e valida a
       # resposta contra o schema declarado, nos dois sentidos: campo que sumiu e campo que
       # o contrato não declara.
-      - name: A resposta de cada RPC casa com o contrato
+      # A direção contrato-à-frente: o contrato promete uma recusa e o código não a
+      # levanta. Os outros três portões de contrato medem a direção oposta. Autoteste
+      # antes, como os outros dois, porque portão com furo aprova calado.
+      - name: O portão da promessa fecha nos casos conhecidos
+        run: ./scripts/teste-contrato-promete.sh
+
+      - name: A resposta de cada RPC casa com o contrato, e toda recusa prometida é alcançável
         run: ./scripts/contrato-responde.sh
 
       - name: Diagnóstico ao falhar

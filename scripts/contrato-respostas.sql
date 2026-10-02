@@ -50,6 +50,28 @@ begin
   end;
 end $$;
 
+-- Observa o STATUS de uma tentativa, e não o corpo dela: devolve `{"status": n}` com o
+-- código que o envelope de `public.erro` carrega em DETAIL, ou `{"status": 200}` quando a
+-- chamada passou. É o que sustenta a direção contrato-à-frente — a pergunta ali não é "o
+-- corpo casa", é "a recusa que o contrato promete acontece".
+create function pg_temp.observado(conta uuid, sql text) returns jsonb
+language plpgsql as $$
+declare det text;
+begin
+  begin
+    perform pg_temp.como(conta, sql);
+    return jsonb_build_object('status', 200);
+  exception when others then
+    get stacked diagnostics det = pg_exception_detail;
+    reset role;
+    begin execute 'reset request.jwt.claims'; exception when others then null; end;
+    -- Sem DETAIL não é recusa do contrato: é erro de banco, e dizer 500 aqui seria
+    -- inventar um status que ninguém devolveu.
+    return case when det is null or det = '' then jsonb_build_object('status', null)
+                else jsonb_build_object('status', (det::jsonb->>'status')::int) end;
+  end;
+end $$;
+
 create temp table colhido (ordem serial, op text, corpo jsonb);
 create function pg_temp.guarda(op text, corpo jsonb) returns void
 language sql as $$ insert into colhido (op, corpo) values (op, corpo) $$;
@@ -57,6 +79,7 @@ language sql as $$ insert into colhido (op, corpo) values (op, corpo) $$;
 -- ── O cenário ──────────────────────────────────────────────────────────────────
 insert into privado.ambiente (id, eh_teste) values (true, true);
 set local frila.agora = '2027-01-11 09:00:00+00';
+set local frila.agendador_secret = 'segredo-de-teste';
 
 insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
 select '00000000-0000-0000-0000-000000000000', c.id, 'authenticated','authenticated', c.email,
@@ -64,7 +87,8 @@ select '00000000-0000-0000-0000-000000000000', c.id, 'authenticated','authentica
   from (values
     ('cc000000-0000-4000-8000-000000000001'::uuid,'contrato-casa@t.test'),
     ('cc000000-0000-4000-8000-000000000002'::uuid,'contrato-prof@t.test'),
-    ('cc000000-0000-4000-8000-000000000003'::uuid,'contrato-prof2@t.test')
+    ('cc000000-0000-4000-8000-000000000003'::uuid,'contrato-prof2@t.test'),
+    ('cc000000-0000-4000-8000-000000000004'::uuid,'contrato-suspenso@t.test')
   ) as c(id, email);
 
 select pg_temp.guarda('criarConta', pg_temp.como('cc000000-0000-4000-8000-000000000001',
@@ -73,9 +97,13 @@ select pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.criar_conta('profissional','Pê do Contrato','+5561944440002','1995-05-05','2026-09-22') $$);
 select pg_temp.como('cc000000-0000-4000-8000-000000000003',
   $$ select public.criar_conta('profissional','Pê Dois','+5561944440003','1994-05-05','2026-09-22') $$);
+select pg_temp.como('cc000000-0000-4000-8000-000000000004',
+  $$ select public.criar_conta('profissional','Pê Suspenso','+5561944440004','1993-05-05','2026-09-22') $$);
 
 select pg_temp.guarda('minhaConta', pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.minha_conta() $$));
+select pg_temp.guarda('situacaoDaConta', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.situacao_da_conta() $$));
 
 select pg_temp.guarda('registrarDispositivo', pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.registrar_dispositivo('fcm_token_teste_harness_contrato_1234567890', 'ios') $$));
@@ -351,6 +379,52 @@ select pg_temp.guarda('denunciar', pg_temp.como('cc000000-0000-4000-8000-0000000
        'Relato do teste de contrato.', gen_random_uuid()) $$,
   (select p.id from public.profissional p
     where p.usuario_id = 'cc000000-0000-4000-8000-000000000002'))));
+
+-- ── Suspensão e contestação (0.2.27) ─────────────────────────────────────────
+--
+-- Pê Suspenso é suspenso preventivamente pela casa/equipe, contesta a suspensão
+-- com relato detalhado (recebe Protocolo) e confere o erro ao tentar contestar de novo.
+select pg_temp.guarda('erro:sem_suspensao_ativa',
+  pg_temp.recusa('cc000000-0000-4000-8000-000000000002',
+    $$ select public.contestar_suspensao('Tentativa de contestacao por conta que nao esta suspensa.') $$));
+
+select privado.suspender(
+  'cc000000-0000-4000-8000-000000000004'::uuid,
+  'Suspensão para validação contratual',
+  'cc000000-0000-4000-8000-000000000001'::uuid
+);
+
+select pg_temp.guarda('contestarSuspensao', pg_temp.como('cc000000-0000-4000-8000-000000000004',
+  $$ select public.contestar_suspensao('Apresento relato detalhado com mais de dez caracteres para contestar a suspensao.') $$));
+
+select pg_temp.guarda('erro:contestacao_ja_aberta',
+  pg_temp.recusa('cc000000-0000-4000-8000-000000000004',
+    $$ select public.contestar_suspensao('Segunda tentativa de contestacao enquanto a primeira esta aberta.') $$));
+
+-- ── A direção contrato-à-frente: a recusa que o contrato promete ─────────────
+--
+-- Cartão `EFveOeIb`. Os outros portões medem o contrato ATRÁS do código — espelho
+-- divergente, PR que mexe em `public` sem mexer no contrato, corpo de sucesso que não
+-- casa. A direção em que o **contrato promete e o código não entrega** não tinha portão:
+-- a 0.2.28 passou a prometer `404` em `perfil_publico` entre partes bloqueadas, a função
+-- não filtra bloqueio, e nada reprovou.
+--
+-- Vem depois do `bloquear` de propósito, e é a única colheita que depende dele. O
+-- comentário acima diz que o bloqueio ficou por último "porque esconderia a casa de quem
+-- bloqueou em tudo o que vem depois" — e era justamente por isso que nenhuma colheita
+-- acontecia com um par bloqueado.
+--
+-- Os dois sentidos, porque é o que o contrato promete: o Pê Dois bloqueou a casa, então
+-- nem ele vê a casa nem a casa vê ele.
+select pg_temp.guarda('promete:perfilPublico:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003', format(
+    $$ select public.perfil_publico(%L::uuid) $$, (select casa_id from ids))));
+
+select pg_temp.guarda('promete:perfilPublico:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.perfil_publico(%L::uuid) $$,
+    (select p.id from public.profissional p
+      where p.usuario_id = 'cc000000-0000-4000-8000-000000000003'))));
 
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o

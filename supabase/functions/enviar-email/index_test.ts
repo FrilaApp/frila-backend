@@ -21,7 +21,7 @@ import {
   SqlClient,
   TETO_DE_LEITURAS,
 } from "./index.ts";
-import { Email, classificarErro, ResultadoEnvio } from "./provedor.ts";
+import { Email, classificarErro, lerConfiguracaoSmtp, ResultadoEnvio } from "./provedor.ts";
 import {
   alertaParaEquipe,
   categoria,
@@ -478,4 +478,92 @@ Deno.test("criarSqlClient exige DATABASE_URL em vez de silenciosamente não grav
     if (url) Deno.env.set("DATABASE_URL", url);
     if (supa) Deno.env.set("SUPABASE_DB_URL", supa);
   }
+});
+
+Deno.test("lerConfiguracaoSmtp retorna null quando host ou remetente estão ausentes", () => {
+  const envOriginal = {
+    host: Deno.env.get("SMTP_HOST"),
+    remetente: Deno.env.get("EMAIL_REMETENTE"),
+    sender: Deno.env.get("SMTP_SENDER"),
+  };
+
+  try {
+    Deno.env.delete("SMTP_HOST");
+    Deno.env.delete("EMAIL_REMETENTE");
+    Deno.env.delete("SMTP_SENDER");
+    assertEquals(lerConfiguracaoSmtp(), null);
+
+    Deno.env.set("SMTP_HOST", "smtp.teste.com");
+    assertEquals(lerConfiguracaoSmtp(), null);
+  } finally {
+    if (envOriginal.host) Deno.env.set("SMTP_HOST", envOriginal.host);
+    else Deno.env.delete("SMTP_HOST");
+    if (envOriginal.remetente) Deno.env.set("EMAIL_REMETENTE", envOriginal.remetente);
+    else Deno.env.delete("EMAIL_REMETENTE");
+    if (envOriginal.sender) Deno.env.set("SMTP_SENDER", envOriginal.sender);
+    else Deno.env.delete("SMTP_SENDER");
+  }
+});
+
+Deno.test("lerConfiguracaoSmtp configura TLS, portas e credenciais corretamente", () => {
+  const envOriginal = {
+    host: Deno.env.get("SMTP_HOST"),
+    remetente: Deno.env.get("EMAIL_REMETENTE"),
+    sender: Deno.env.get("SMTP_SENDER"),
+    port: Deno.env.get("SMTP_PORT"),
+    tls: Deno.env.get("SMTP_TLS"),
+    user: Deno.env.get("SMTP_USER"),
+    pass: Deno.env.get("SMTP_PASS"),
+  };
+
+  try {
+    Deno.env.set("SMTP_HOST", "smtp.frila.test");
+    Deno.env.delete("EMAIL_REMETENTE");
+    Deno.env.set("SMTP_SENDER", "remetente-fallback@frila.test");
+    Deno.env.set("SMTP_USER", "usuario-teste");
+    Deno.env.set("SMTP_PASS", "senha-teste");
+
+    // Porta padrão 587 (sem porta definida)
+    Deno.env.delete("SMTP_PORT");
+    Deno.env.delete("SMTP_TLS");
+    let cfg = lerConfiguracaoSmtp();
+    assertEquals(cfg?.host, "smtp.frila.test");
+    assertEquals(cfg?.remetente, "remetente-fallback@frila.test");
+    assertEquals(cfg?.porta, 587);
+    assertEquals(cfg?.tls, false);
+    assertEquals(cfg?.usuario, "usuario-teste");
+    assertEquals(cfg?.senha, "senha-teste");
+
+    // Porta 465 ativa TLS implícito
+    Deno.env.set("SMTP_PORT", "465");
+    cfg = lerConfiguracaoSmtp();
+    assertEquals(cfg?.porta, 465);
+    assertEquals(cfg?.tls, true);
+
+    // SMTP_TLS=0 desativa TLS mesmo em 465 (ex: Mailpit local)
+    Deno.env.set("SMTP_TLS", "0");
+    cfg = lerConfiguracaoSmtp();
+    assertEquals(cfg?.tls, false);
+  } finally {
+    for (const [k, v] of Object.entries({
+      SMTP_HOST: envOriginal.host,
+      EMAIL_REMETENTE: envOriginal.remetente,
+      SMTP_SENDER: envOriginal.sender,
+      SMTP_PORT: envOriginal.port,
+      SMTP_TLS: envOriginal.tls,
+      SMTP_USER: envOriginal.user,
+      SMTP_PASS: envOriginal.pass,
+    })) {
+      if (v !== undefined) Deno.env.set(k, v);
+      else Deno.env.delete(k);
+    }
+  }
+});
+
+Deno.test("classificarErro classifica timeouts, reset e mensagens de sucesso SMTP", () => {
+  assertEquals(classificarErro(new Error("ETIMEDOUT")).codigo, "falha_de_conexao");
+  assertEquals(classificarErro(new Error("connection reset by peer")).transitorio, true);
+  assertEquals(classificarErro(new Error("connection closed")).transitorio, true);
+  assertEquals(classificarErro(new Error("250 Message accepted")).codigo, "smtp_250");
+  assertEquals(classificarErro(new Error("250 Message accepted")).transitorio, false);
 });

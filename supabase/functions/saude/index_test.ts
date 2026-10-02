@@ -2,8 +2,8 @@
 //
 //   deno test --allow-all supabase/functions/saude/
 
-import { assertEquals } from "jsr:@std/assert@1";
-import { processarSaude, SqlProbe } from "./index.ts";
+import { assertEquals, assertThrows } from "jsr:@std/assert@1";
+import { getDbUrl, processarSaude, SqlProbe } from "./index.ts";
 
 function probeMock(opcoes: {
   ok?: boolean;
@@ -42,6 +42,24 @@ Deno.test("saude: HEAD retorna 200 OK sem corpo quando saudavel", async () => {
   const res = await processarSaude(req, { sqlProbe: probeMock({ ok: true }) });
 
   assertEquals(res.status, 200);
+  const text = await res.text();
+  assertEquals(text, "");
+});
+
+Deno.test("saude: HEAD retorna 503 sem corpo quando ping retorna falso", async () => {
+  const req = new Request("http://localhost/functions/v1/saude", { method: "HEAD" });
+  const res = await processarSaude(req, { sqlProbe: probeMock({ ok: false }) });
+
+  assertEquals(res.status, 503);
+  const text = await res.text();
+  assertEquals(text, "");
+});
+
+Deno.test("saude: HEAD retorna 503 sem corpo quando ping lanca excecao", async () => {
+  const req = new Request("http://localhost/functions/v1/saude", { method: "HEAD" });
+  const res = await processarSaude(req, { sqlProbe: probeMock({ erro: true }) });
+
+  assertEquals(res.status, 503);
   const text = await res.text();
   assertEquals(text, "");
 });
@@ -96,4 +114,33 @@ Deno.test("saude: ping retornando falso devolve 503", async () => {
   assertEquals(json.ok, false);
   assertEquals(json.status, "indisponivel");
   assertEquals((falhaRegistrada as any)?.codigo, "ping_banco_retornou_falso");
+});
+
+Deno.test("kT7NhMGV / B3: getDbUrl exige SUPABASE_DB_URL ou DATABASE_URL e remove fallbacks locais", () => {
+  const dbUrlAntiga = Deno.env.get("SUPABASE_DB_URL");
+  const dUrlAntiga = Deno.env.get("DATABASE_URL");
+
+  try {
+    Deno.env.delete("SUPABASE_DB_URL");
+    Deno.env.delete("DATABASE_URL");
+
+    assertThrows(
+      () => getDbUrl(),
+      Error,
+      "SUPABASE_DB_URL ou DATABASE_URL é obrigatório",
+    );
+
+    Deno.env.set("DATABASE_URL", "postgresql://usuario:senha@host-custom:5432/db");
+    assertEquals(getDbUrl(), "postgresql://usuario:senha@host-custom:5432/db");
+
+    Deno.env.set("SUPABASE_DB_URL", "postgresql://supabase:secret@supabase-host:5432/db");
+    assertEquals(getDbUrl(), "postgresql://supabase:secret@supabase-host:5432/db");
+
+    assertEquals(getDbUrl("postgresql://injetada:senha@injetada-host:5432/db"), "postgresql://injetada:senha@injetada-host:5432/db");
+  } finally {
+    if (dbUrlAntiga !== undefined) Deno.env.set("SUPABASE_DB_URL", dbUrlAntiga);
+    else Deno.env.delete("SUPABASE_DB_URL");
+    if (dUrlAntiga !== undefined) Deno.env.set("DATABASE_URL", dUrlAntiga);
+    else Deno.env.delete("DATABASE_URL");
+  }
 });
