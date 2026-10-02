@@ -132,16 +132,12 @@ as $$
 
     -- Inclusive retiradas, recusadas e expiradas: o histórico de ter se candidatado é
     -- dado do titular, e omitir o que não deu certo seria editar o passado dele.
+    -- Pelo mesmo caminho de `minhas_candidaturas` (`candidatura_em_json`), para o objeto
+    -- ser o `Candidatura` do contrato, com `vaga` como VagaResumo, e não uma segunda
+    -- definição achatada.
     'candidaturas', coalesce((
-      select jsonb_agg(jsonb_build_object(
-               'id',         cd.id,
-               'posicao_id', cd.posicao_id,
-               'vaga_id',    po.vaga_id,
-               'estado',     cd.estado,
-               'criada_em',  cd.criada_em)
-             order by cd.criada_em desc)
+      select jsonb_agg(privado.candidatura_em_json(cd.id) order by cd.criada_em desc, cd.id)
         from public.candidatura cd
-        join public.posicao po on po.id = cd.posicao_id
        where cd.profissional_id in (select p.id from prof p)), '[]'::jsonb),
 
     -- `papel` diz de que lado ele está. `motivo` sai só quando ele é o autor — texto
@@ -239,9 +235,11 @@ as $$
     'equipe_confianca', coalesce((
       select jsonb_agg(jsonb_build_object(
                'estabelecimento_id', ec.estabelecimento_id,
+               'nome',               es.nome,
                'adicionado_em',      ec.adicionado_em)
              order by ec.adicionado_em desc)
         from public.equipe_confianca ec
+        join public.estabelecimento es on es.id = ec.estabelecimento_id
        where ec.profissional_id in (select p.id from prof p)), '[]'::jsonb),
 
     -- `null` quando não há pedido, e não um objeto vazio: o contrato declara
@@ -250,6 +248,7 @@ as $$
       select jsonb_build_object(
                'pedido_em',    pe.pedido_em,
                'estado',       pe.estado,
+               'tentativas',   pe.tentativas,
                'concluido_em', pe.concluido_em)
         from public.pedido_de_exclusao pe
        where pe.usuario_id = p_usuario

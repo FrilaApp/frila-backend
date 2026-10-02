@@ -17,7 +17,7 @@
 -- avaliações; Zélia (b…01) administra o Bar do Cerrado (c…01).
 
 begin;
-select plan(50);
+select plan(53);
 
 select set_config('frila.agora', '2026-09-29 11:00:00-03', true);
 
@@ -267,6 +267,14 @@ select ok((select j ? 'candidaturas' from d),
 select ok((select jsonb_typeof(j->'candidaturas') = 'array' from d),
   'candidaturas é array, inclusive quando vazio');
 
+-- O objeto é o `Candidatura` do contrato: `vaga` é um VagaResumo, e nada de chaves achatadas.
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'candidaturas') c
+      where not (c.value ? 'vaga') or c.value ? 'posicao_id' or c.value ? 'vaga_id')
+     from d),
+  'toda candidatura traz vaga (VagaResumo), sem posicao_id nem vaga_id achatados');
+
 select ok((select j ? 'ocorrencias' from d),
   'ocorrencias está no corpo');
 -- `resultado` é a decisão interna do suporte, e não dado do titular. Em nenhuma ocorrência.
@@ -336,6 +344,12 @@ select ok(
 
 select ok((select j ? 'equipe_confianca' from d),
   'equipe_confianca está no corpo');
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'equipe_confianca') e
+      where not (e.value ? 'nome') or not (e.value ? 'estabelecimento_id') or not (e.value ? 'adicionado_em'))
+     from d),
+  'toda entrada de equipe_confianca traz estabelecimento_id, nome e adicionado_em');
 
 select ok((select j ? 'pedido_de_exclusao' from d),
   'pedido_de_exclusao está no corpo');
@@ -343,6 +357,10 @@ select ok((select j ? 'pedido_de_exclusao' from d),
 select ok(
   (select jsonb_typeof(j->'pedido_de_exclusao') in ('null','object') from d),
   'pedido_de_exclusao é objeto ou null, nunca ausente');
+select ok(
+  (select jsonb_typeof(j->'pedido_de_exclusao') = 'null' or (j->'pedido_de_exclusao') ? 'tentativas'
+     from d),
+  'pedido_de_exclusao, quando existe, traz tentativas');
 
 -- ── 5c. O lado do profissional na equipe de confiança ────────────────────────
 -- A equipe das casas que o titular administra é dado dos profissionais dela. Com a Zélia,
