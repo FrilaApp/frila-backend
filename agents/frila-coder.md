@@ -31,7 +31,7 @@ PR — escopo que cresce no caminho vira cartão novo, não commit extra.
 ## O ciclo
 
 ```bash
-git checkout -b s1/candidatar          # sprint/assunto, minúsculo
+git fetch origin develop && git checkout -b s1/candidatar origin/develop  # base develop
 ```
 
 **O teste primeiro, e ele tem que falhar.** Cada item da checklist de aceite vira ao
@@ -99,7 +99,7 @@ editando a anterior. Mudança destrutiva em duas fases.
 
 ```bash
 git commit -m "Adiciona a RPC candidatar com confirmação sem duplicidade"
-gh pr create --title "…" --body "…"
+gh pr create --base develop --title "…" --body "…"
 ```
 
 - Commit em **português, imperativo, uma linha**. Sem `Co-Authored-By`, sem emoji.

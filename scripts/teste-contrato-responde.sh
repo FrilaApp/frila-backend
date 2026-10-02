@@ -14,12 +14,24 @@ PY=.venv-contrato/bin/python
 
 falhas=0
 
+# Toda colheita de mentira daqui leva também a recusa prometida que o `VIGIADAS` do
+# validador vigia, porque o validador tem **duas** direções e um só código de saída: o
+# corpo de sucesso, que é o que este autoteste mede, e a recusa que o contrato promete,
+# que é do `teste-contrato-promete.sh`.
+#
+# Sem esta linha o validador reprova por promessa não medida, e os nove casos daqui
+# passariam a medir a direção errada: os quatro que esperam 0 sairiam 1, e os cinco que
+# esperam 1 sairiam 1 mesmo sem o defeito de corpo que cada um existe para provar — cinco
+# casos decorativos, verdes com e sem a validação que eles vigiam. Medido em 02/10, ao
+# fundir a `develop`.
+PROMESSA_OK='{"op":"promete:perfilPublico:404","corpo":{"status":404}}'
+
 # Roda o validador com uma colheita de mentira na entrada. Guarda a saída em `saida` e o
 # código em `codigo`, as duas globais de propósito: `codigo=$(julga ...)` abriria subshell
 # e a saída guardada lá dentro se perderia — medido, e o autoteste passava a reprovar
 # todo caso que confere texto.
 julga() {
-  saida=$(printf '%s\n' "$1" | "$PY" scripts/contrato_responde.py 2>&1)
+  saida=$(printf '%s\n%s\n' "$PROMESSA_OK" "$1" | "$PY" scripts/contrato_responde.py 2>&1)
   codigo=$?
 }
 

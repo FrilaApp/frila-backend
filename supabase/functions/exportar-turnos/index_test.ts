@@ -12,6 +12,7 @@
 // Execução: deno test supabase/functions/exportar-turnos/
 
 import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
+import { PDFDocument } from "npm:pdf-lib@1.17.1";
 import {
   handler,
   criarSqlClient,
@@ -20,6 +21,7 @@ import {
   formatarCentavosReais,
   formatarHoraLocal,
   formatarDataLocal,
+  tratarErroBanco,
   TurnoExportacao,
   SqlClient,
 } from "./index.ts";
@@ -434,4 +436,59 @@ Deno.test("criarSqlClient exige SUPABASE_DB_URL no ambiente ou deps", () => {
     assertStringIncludes(err.message, "SUPABASE_DB_URL é obrigatório");
   }
   assert(falhou, "deveria ter falhado com dbUrl vazia");
+});
+
+Deno.test("gerarPdf com grande volume de turnos quebra página e gera múltiplas páginas válidas", async () => {
+  // Gera 55 turnos para forçar y < 60 e exercitar a criação de páginas subsequentes
+  const muitosTurnos: TurnoExportacao[] = [];
+  for (let i = 1; i <= 55; i++) {
+    muitosTurnos.push({
+      turno_id: `f2000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      data: "2026-09-15",
+      funcao: `Função ${i}`,
+      inicio_em: "2026-09-15T18:00:00Z",
+      fim_em: "2026-09-16T02:00:00Z",
+      checkin_em: "2026-09-15T18:05:00Z",
+      checkout_em: "2026-09-16T02:00:00Z",
+      valor_acordado_centavos: 12000,
+      contraparte: `Estabelecimento ${i}`,
+      verificacao: i % 2 === 0 ? "verificado" : "nao_verificado",
+    });
+  }
+
+  const bytes = await gerarPdf(muitosTurnos, "2026-09-01T00:00:00Z", "2026-09-30T23:59:59Z");
+  assert(bytes instanceof Uint8Array);
+  assert(bytes.length > 2000, "o PDF multipágina deve ter tamanho adequado");
+  const cabecalho = new TextDecoder().decode(bytes.subarray(0, 5));
+  assertEquals(cabecalho, "%PDF-");
+
+  // Afirma o número exato de páginas gerado (55 turnos exigem exatamente 2 páginas)
+  const doc = await PDFDocument.load(bytes);
+  assertEquals(doc.getPageCount(), 2, "o relatório com 55 turnos deve gerar exatamente 2 páginas");
+  assertEquals(doc.getPages().length, 2, "a lista de páginas do documento deve conter 2 páginas");
+});
+
+Deno.test("formatarHoraLocal e formatarDataLocal tratam dados inválidos com segurança", () => {
+  assertEquals(formatarHoraLocal("data-invalida-xyz"), "-");
+  assertEquals(formatarDataLocal("data-invalida-xyz"), "data-invalida-xyz");
+});
+
+Deno.test("tratarErroBanco com erro PGRST e mensagem em texto simples devolve 400", async () => {
+  const err = { code: "PGRST", message: "texto_simples_nao_json" };
+  const res = tratarErroBanco(err);
+  assertEquals(res.status, 400);
+  const json = await res.json();
+  assertEquals(json.code, "texto_simples_nao_json");
+});
+
+Deno.test("tratarErroBanco com erro PGRST e detail sem status numérico mantém 400", async () => {
+  const err = {
+    code: "PGRST",
+    message: JSON.stringify({ code: "regra_violada", message: "regra_violada", details: null }),
+    detail: "json_invalido_ou_sem_status",
+  };
+  const res = tratarErroBanco(err);
+  assertEquals(res.status, 400);
+  const json = await res.json();
+  assertEquals(json.code, "regra_violada");
 });

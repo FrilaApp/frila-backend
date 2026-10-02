@@ -21,13 +21,18 @@ export interface DependenciasSaude {
   dbUrl?: string;
 }
 
-function getDbUrl(injetada?: string): string {
-  return (
+export function getDbUrl(injetada?: string): string {
+  const url = (
     injetada ||
     Deno.env.get("SUPABASE_DB_URL") ||
-    Deno.env.get("DATABASE_URL") ||
-    "postgresql://postgres:postgres@supabase_db_frila-backend:5432/postgres"
-  );
+    Deno.env.get("DATABASE_URL")
+  )?.trim();
+  if (!url) {
+    throw new Error(
+      "SUPABASE_DB_URL ou DATABASE_URL é obrigatório e deve estar configurado no ambiente.",
+    );
+  }
+  return url;
 }
 
 export function criarSqlProbe(dbUrl?: string): SqlProbe {
