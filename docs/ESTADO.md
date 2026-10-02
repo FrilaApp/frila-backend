@@ -74,6 +74,58 @@ da CI, e o da tabela, é 78.
 > Antes de subir o espelho, conferir o que as quatro versões prometem e se o código atrás
 > delas existe. Espelho novo com função velha é promessa no contrato sem código atrás, e foi
 > isso que segurou a 0.2.28 por um dia.
+>
+> **O conserto já está no ar, e é o PR #127** — `chore(contrato): espelha contrato 0.2.32 do
+> frila-docs`, cartão `1VYlDEbf`, branch `s3/espelho-contrato-0232`, head `614d9e4`, aberto
+> em 02/10 às 18h07Z contra a `develop`, `mergeable=MERGEABLE`. Medido: ele toca **dois
+> arquivos e nada mais** — `contrato/openapi.yaml` (+426/-11) e `contrato/openapi.yaml.sha256`
+> (+1/-1). Nada em `supabase/`.
+>
+> No run `37045334547` do #127, o job **"Contrato em dia com o Frila" passou** — é a prova de
+> que o espelho 0.2.32 fecha a divergência —, e com ele "O contrato acompanhou o código",
+> "Migrações sem colisão de versão", "Plano do caminho quente com o volume do DF" e "Testes
+> das Edge Functions".
+>
+> O sexto job do #127, "Migrações e pgTAP", reprovou na **primeira** tentativa por motivo de
+> runner e não por diff: o passo *"Subir o ambiente"* não subiu o Postgres —
+> `failed to bind host port for 0.0.0.0:54322:172.18.0.2:5432/tcp: address already in use`,
+> com um `toomanyrequests: Rate exceeded` do daemon no mesmo passo — e os onze passos de
+> teste foram pulados. Na **segunda** tentativa o passo subiu e o job seguiu verde, inclusive
+> o `pgTAP` e o `Corridas do ciclo`.
+>
+> **É o #127 que destrava o `Contrato em dia` de todo mundo**, inclusive de PR que só mexe em
+> documentação. Enquanto ele não entra, nenhum PR baseado na `develop` fica verde nesse job,
+> e o vermelho não é do PR que o recebe.
+
+> ## 🔴 Uma rodada de 50 fora da regra em `Corridas do ciclo`, e não está determinado o que é
+>
+> Medido em 02/10 no run **`37045010032`** (headSha `ee622ad0ad201fcbca1c4b1f0ebd3c20ef8ed51c`,
+> criado às 18h04Z, encerrado às 18h13Z), job "Migrações e pgTAP". **O passo que reprovou não
+> foi o pgTAP** — esse passou. Foi o passo *"Corridas do ciclo"*
+> (`./scripts/corrida-ciclo.sh`), com exit code **1**:
+>
+> ```
+> ▸ Cenário 3: dois despachos e o agendador do teto ao mesmo tempo (50 rodadas)
+>   ✗ rodadas fora da regra:
+> rodada 45: erros=[] fora_de_uma=1 esperando=6/5
+> ```
+>
+> Os outros **nove cenários passaram 50 de 50**. Os onze passos seguintes do job foram
+> **pulados** por causa dele, inclusive o portão da resposta de cada RPC contra o contrato —
+> então um verde que não aparece ali não quer dizer vermelho, quer dizer que não rodou.
+>
+> **MEDIDO que não é regressão do PR que o recebeu, e que o passo já passou duas vezes no
+> mesmo código:** verde na `develop` (`6d96d88`, run `36962663919`, 02/10 às 04h00Z, com
+> *"Corridas do ciclo: ok"*) e verde no run `37045334547` do PR #127, segunda tentativa, por
+> volta das 18h15Z — ali a única diferença de código é o espelho do contrato. Contra uma só
+> reprovação, às 18h04Z. O diff do PR que reprovou é um arquivo `.md`.
+>
+> **Mesmo assim não está determinado se é flake ou bug intermitente real, e as duas passagens
+> não decidem isso.** Uma passagem não prova flake: 1 em 50 vira 1 em 100, e depois 1 em 150,
+> o que continua fraco. Corrida de concorrência é a classe de defeito que **só a CI pega** —
+> a máquina local não reproduz corrida de commit —, e por isso ela não se resolve por rodada
+> verde, e sim por repetição deliberada. O dono é quem toca concorrência, não quem escreve
+> documentação. **É candidato a cartão próprio.**
 
 **Três portões nasceram em 30/09 e 01/10, e os três pegam coisa que antes passava calada:**
 o plano do caminho quente com o volume do DF, os testes em Deno das Edge Functions, e o
