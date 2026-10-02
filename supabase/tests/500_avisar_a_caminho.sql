@@ -266,8 +266,8 @@ select is(pg_temp.posicao_no_painel((select c from t))->'a_caminho_em', 'null'::
 
 select is(
   (select array_agg(k order by k) from jsonb_object_keys(pg_temp.posicao_no_painel((select a from t))) k),
-  array['a_caminho_em','em_atraso','estado','id','profissional','turno_id','verificacao'],
-  'PosicaoNoPainel traz exatamente os campos do contrato 0.2.25');
+  array['a_caminho_em','cancelamento','checkin_confirmado_em','checkin_em','checkin_tipo','em_atraso','estado','id','profissional','turno_id','verificacao'],
+  'PosicaoNoPainel traz exatamente os campos do contrato (0.2.31)');
 
 -- ── Meu turno ─────────────────────────────────────────────────────────────────
 create temp table meus as
