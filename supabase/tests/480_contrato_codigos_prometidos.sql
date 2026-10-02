@@ -16,7 +16,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(72);
+select plan(81);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -209,6 +209,36 @@ select throws_ok(
   'PGRST', pg_temp.erro('nao_autenticado'),
   'cancelar_vaga sem token é 401 nao_autenticado');
 
+select throws_ok(
+  format($$ select public.republicar_vaga(%L, '2027-03-20 21:00:00+00'::timestamptz, '2027-03-21 03:00:00+00'::timestamptz, gen_random_uuid()) $$, (select vazia from v)),
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'republicar_vaga sem token é 401 nao_autenticado');
+
+select throws_ok(
+  format($$ select public.contato_do_turno(%L) $$, (select turno from t)),
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'contato_do_turno sem token é 401 nao_autenticado');
+
+select throws_ok(
+  format($$ select public.fazer_checkin(%L, 50, now()) $$, (select turno from t)),
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'fazer_checkin sem token é 401 nao_autenticado');
+
+select throws_ok(
+  format($$ select public.confirmar_checkin_manual(%L) $$, (select turno from t)),
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'confirmar_checkin_manual sem token é 401 nao_autenticado');
+
+select throws_ok(
+  format($$ select public.cancelar_posicao(%L, 'motivo qualquer') $$, (select aberta from t)),
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'cancelar_posicao sem token é 401 nao_autenticado');
+
+select throws_ok(
+  format($$ select public.avaliar(%L, true) $$, (select turno from t)),
+  'PGRST', pg_temp.erro('nao_autenticado'),
+  'avaliar sem token é 401 nao_autenticado');
+
 -- ── Cadastro e perfil ─────────────────────────────────────────────────────────
 select throws_ok(
   pg_temp.por((select sem_conta from ids),
@@ -334,6 +364,12 @@ select throws_ok(
   'PGRST', pg_temp.erro('sem_permissao'),
   'reabrir_por_atraso por outro dono (não membro) é 403 sem_permissao');
 
+select throws_ok(
+  pg_temp.por((select ana from ids),
+    format($$ select public.reabrir_por_atraso(%L) $$, (select aberta from t))),
+  'PGRST', pg_temp.erro('perfil_incompativel'),
+  'reabrir_por_atraso por profissional é 422 perfil_incompativel');
+
 select lives_ok(
   pg_temp.por((select ana from ids),
     format($$ select public.cancelar_posicao(%L, 'não vou poder') $$, (select desistida from t))),
@@ -429,6 +465,12 @@ select throws_ok(
 
 select throws_ok(
   pg_temp.por((select ana from ids),
+    $$ select public.fazer_checkin(null, 50, '2027-03-03 20:30:00+00') $$),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'turno_id'),
+  'fazer_checkin sem turno_id é 422 campo_obrigatorio, details turno_id');
+
+select throws_ok(
+  pg_temp.por((select ana from ids),
     format($$ select public.fazer_checkin(%L, 50, null) $$, (select turno from t))),
   'PGRST', pg_temp.erro('campo_obrigatorio', 'registrado_em'),
   'fazer_checkin sem registrado_em é 422 campo_obrigatorio, details registrado_em');
@@ -480,6 +522,12 @@ select throws_ok(
     format($$ select public.avaliar(%L, null) $$, (select turno from t))),
   'PGRST', pg_temp.erro('campo_obrigatorio', 'resposta'),
   'avaliar sem resposta é 422 campo_obrigatorio, details resposta');
+
+select throws_ok(
+  pg_temp.por((select ana from ids),
+    $$ select public.avaliar(null, true) $$),
+  'PGRST', pg_temp.erro('campo_obrigatorio', 'turno_id'),
+  'avaliar sem turno_id é 422 campo_obrigatorio, details turno_id');
 
 select throws_ok(
   pg_temp.por((select suspenso from ids),

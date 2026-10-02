@@ -69,9 +69,9 @@ Um cartão por vez, do quadro ao merge, sem pular etapa.
                          Backend cuja dependência já está Concluída
 2. Reivindicar           atribui você mesmo ao cartão · move para "Em andamento"
 3. Codar                 frila-coder: branch, pgTAP vermelho, implementa, verde
-4. Abrir PR              cita o cartão pelo link curto · move para "Revisão"
+4. Abrir PR              cita o cartão pelo link curto · move para "Revisão" (--base develop)
 5. Revisar               frila-reviewer: checklist do cartão + contrato + RLS + CI
-6. Mergear               aprovado → merge → marca a checklist → move para "Concluído"
+6. Mergear               aprovado → merge na develop → marca a checklist → move para "Concluído"
 7. Registrar             no fim do dia, scripts/bancada-sync.sh leva o dia ao vault
 ```
 

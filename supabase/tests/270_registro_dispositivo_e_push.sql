@@ -4,7 +4,7 @@
 -- Prefixo 270: reservado para o ciclo de push e dispositivos.
 
 begin;
-select plan(43);
+select plan(44);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -144,6 +144,13 @@ select is(
     where token_fcm = 'fcm_token_aparelho_user_a_1234567890'),
   1,
   'Idempotência: reenviar mesmo token não cria segunda linha');
+
+select throws_ok(
+  $$ insert into public.dispositivo (usuario_id, token_fcm, plataforma)
+     values ('c7000000-0000-4000-8000-000000000001', 'fcm_token_aparelho_user_a_1234567890', 'ios') $$,
+  '23505',
+  null,
+  'dispositivo_token_fcm_key: duplicar token_fcm viola unicidade');
 
 -- ── 4. Troca de Dono e Múltiplos Dispositivos ──────────────────────────────────
 

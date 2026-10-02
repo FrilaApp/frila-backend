@@ -330,3 +330,104 @@ Deno.test("trava parâmetro horas em no mínimo 24 horas", async () => {
   assertEquals(horasConsultadas, 48);
 });
 
+Deno.test("falha ao consultar contas órfãs no banco responde 500 erro_ao_consultar_contas_orfas", async () => {
+  const deps = mockDeps({ dbErro: true });
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        "x-agendador-secret": MOCK_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 500);
+  const corpo = await resposta.json();
+  assertEquals(corpo.code, "erro_interno");
+  assertEquals(corpo.message, "erro_ao_consultar_contas_orfas");
+});
+
+Deno.test("respeita executar_retencao_banco como false e não executa retenção", async () => {
+  let retencaoChamada = false;
+  const deps = mockDeps({});
+  deps.sqlClient = {
+    contasOrfas: () => Promise.resolve([]),
+    executarRetencao: () => {
+      retencaoChamada = true;
+      return Promise.resolve({});
+    },
+  };
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        "x-agendador-secret": MOCK_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ executar_retencao_banco: false }),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 200);
+  const corpo = await resposta.json();
+  assertEquals(corpo.ok, true);
+  assertEquals(retencaoChamada, false);
+  assertEquals(corpo.retencao_banco, null);
+});
+
+Deno.test("falha na retenção do banco não impede resposta de sucesso das contas órfãs", async () => {
+  const deps = mockDeps({});
+  deps.sqlClient = {
+    contasOrfas: () => Promise.resolve([ORFAO_1]),
+    executarRetencao: () => Promise.reject(new Error("falha_banco_retencao")),
+  };
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        "x-agendador-secret": MOCK_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ executar_retencao_banco: true }),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 200);
+  const corpo = await resposta.json();
+  assertEquals(corpo.ok, true);
+  assertEquals(corpo.contas_orfas_removidas, 1);
+  assertEquals(corpo.retencao_banco, { erro: "falha_ao_executar_retencao" });
+});
+
+Deno.test("lida com exceção de rede no fetch do admin registrando erro status 500", async () => {
+  const deps = mockDeps({});
+  deps.fetchFn = () => Promise.reject(new TypeError("network_failure"));
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        "x-agendador-secret": MOCK_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 200);
+  const corpo = await resposta.json();
+  assertEquals(corpo.ok, true);
+  assertEquals(corpo.contas_orfas_encontradas, 2);
+  assertEquals(corpo.contas_orfas_removidas, 0);
+  assertEquals(corpo.erros_remocao.length, 2);
+  assertEquals(corpo.erros_remocao[0].status, 500);
+});
+
