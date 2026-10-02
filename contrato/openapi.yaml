@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.28
+  version: 0.2.29
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -95,6 +95,29 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.29, de 02/10/2026 (proposta, aguardando decisão).** Uma leitura nova,
+    `/rpc/meu_estabelecimento`, para o contratante que já tem estabelecimento conseguir publicar a
+    segunda vaga. Nenhum campo, schema ou código de erro novo: a resposta é o `Estabelecimento` que
+    `/rpc/cadastrar_estabelecimento` já devolve.
+
+    - **O buraco.** `/rpc/publicar_vaga` exige `local`, `regiao_administrativa` e `ponto`
+      (`NovaVaga`), e os três "vêm preenchidos com os do estabelecimento". Só
+      `/rpc/cadastrar_estabelecimento` devolvia esses dados, uma vez, na hora do cadastro.
+      `/rpc/meus_estabelecimentos` não os traz, de propósito, e o painel traz o local de cada vaga,
+      não o do estabelecimento. Quem abre o app num outro dia não tinha de onde ler o endereço e o
+      ponto da própria casa: o app só conseguia publicar logo depois do cadastro.
+    - **`/rpc/meu_estabelecimento`** (`GET`, `estabelecimento_id`): devolve o `Estabelecimento`
+      completo a quem é **membro** dele, com o `papel` de quem chama. Quem não é membro recebe
+      `403 sem_permissao`, que é também a resposta para um id que não existe, como no painel.
+    - **`/rpc/meus_estabelecimentos`** não muda. A descrição dizia que "quem precisa disso chama o
+      painel"; passa a apontar para a leitura nova.
+    - **A decidir:** o `Estabelecimento` traz o `documento` (CNPJ ou CPF). Nesta proposta ele vai a
+      todo membro, administrador ou operador, como hoje vai a quem cadastrou. A publicação não usa
+      o documento; se ele não deve chegar ao operador, a alternativa é um schema próprio, sem ele.
+    - O espelho `contrato/openapi.yaml` do backend e o app seguem em PRs próprios.
+
+    ---
 
     **Versão 0.2.28, de 01/10/2026.** O bloqueio passa a esconder também o perfil público (cartão
     1aGJPQK2, US26, RF26, UC17), conforme a decisão de produto de 30/09/2026 registrada na 0.2.27.
@@ -1235,7 +1258,8 @@ paths:
         A lista vem **ordenada por nome**, para o seletor do app não trocar de posição entre duas
         aberturas da mesma tela. `reputacao` vem no mesmo formato do `PerfilPublico` de
         estabelecimento, da mesma função. Nenhum dado de cadastro sai aqui (RN10): sem documento,
-        sem endereço, sem coordenada e sem contato — quem precisa disso chama o painel.
+        sem endereço, sem coordenada e sem contato — quem precisa do endereço e do ponto para
+        publicar uma vaga chama `/rpc/meu_estabelecimento` (0.2.29).
       x-requisitos: [RF02, RF21, UC07]
       responses:
         '200':
@@ -1250,6 +1274,39 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '422':
           $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/meu_estabelecimento:
+    get:
+      tags: [Estabelecimento]
+      operationId: meuEstabelecimento
+      summary: O cadastro de um estabelecimento de que a conta é membro
+      description: |
+        O endereço, a Região Administrativa e o ponto do estabelecimento, para o app preencher a
+        publicação de uma vaga (`NovaVaga.local`, `regiao_administrativa` e `ponto` vêm preenchidos
+        com os do estabelecimento). Sem esta operação, só quem acabou de cadastrar tem esses dados,
+        na resposta de `/rpc/cadastrar_estabelecimento`: quem volta ao app noutro dia não consegue
+        publicar a segunda vaga.
+
+        Só para **membro** do estabelecimento, administrador ou operador: os dois publicam vagas
+        (RF21). `papel` é o de quem chama. Quem não é membro recebe `403 sem_permissao`, que é o
+        que responde também quando o estabelecimento não existe, como em `/rpc/painel_estabelecimento`.
+
+        Nenhum dado além do que o `Estabelecimento` já expõe a quem cadastrou: sem contato e sem
+        os outros membros.
+      x-requisitos: [RF02, RF21, RN02]
+      parameters:
+        - $ref: '#/components/parameters/EstabelecimentoId'
+      responses:
+        '200':
+          description: O estabelecimento, com o papel de quem chama.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Estabelecimento'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
 
   /rpc/equipe_de_confianca:
     get:

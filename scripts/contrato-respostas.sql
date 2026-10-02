@@ -143,6 +143,11 @@ select pg_temp.guarda('meusEstabelecimentos', pg_temp.como('cc000000-0000-4000-8
 
 create temp table ids as select ((select r from casa)->>'id')::uuid as casa_id;
 
+-- O cadastro da casa, para quem é membro dela (contrato 0.2.29): é de onde o app tira o
+-- endereço, a região e o ponto para preencher a publicação da vaga.
+select pg_temp.guarda('meuEstabelecimento', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.meu_estabelecimento(%L::uuid) $$, (select casa_id from ids))));
+
 select pg_temp.guarda('painelEstabelecimento', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.painel_estabelecimento(%L::uuid, '2027-01-01T00:00:00Z'::timestamptz, '2027-12-31T00:00:00Z'::timestamptz) $$,
   (select casa_id from ids))));
