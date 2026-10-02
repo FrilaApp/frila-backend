@@ -7,9 +7,9 @@
 -- abria o app noutro dia não tinha de onde ler o endereço e o ponto da própria casa, e o
 -- app só conseguia publicar logo depois do cadastro.
 --
--- A resposta é o `Estabelecimento` do contrato, montado pela mesma
--- `privado.estabelecimento_em_json` de `cadastrar_estabelecimento`: nenhum campo além dos
--- que quem cadastrou já recebia. Só membro lê; quem não é membro recebe `403
+-- A resposta é o `MeuEstabelecimento` do contrato: o `Estabelecimento` montado pela mesma
+-- `privado.estabelecimento_em_json` de `cadastrar_estabelecimento`, menos o `documento`.
+-- CNPJ ou CPF só sai na resposta do cadastro, para quem acabou de informá-lo (RN15). Só membro lê; quem não é membro recebe `403
 -- sem_permissao`, que é também a resposta para um id que não existe, como no painel.
 
 create or replace function public.meu_estabelecimento(estabelecimento_id uuid)
@@ -40,7 +40,7 @@ begin
     from public.estabelecimento e
    where e.id = meu_estabelecimento.estabelecimento_id;
 
-  return privado.estabelecimento_em_json(v_linha, v_papel);
+  return privado.estabelecimento_em_json(v_linha, v_papel) - 'documento';
 end $$;
 
 comment on function public.meu_estabelecimento(uuid) is

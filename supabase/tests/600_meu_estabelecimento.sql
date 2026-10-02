@@ -16,7 +16,7 @@
 -- Prefixo `e6`, que não existe em `cenarios.sql` nem nos outros arquivos de teste.
 
 begin;
-select plan(11);
+select plan(12);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb
 language plpgsql as $$
@@ -102,7 +102,7 @@ select throws_ok(
 
 select is(
   pg_temp.meu('e6000000-0000-4000-8000-000000000001', 'e6000000-0000-4000-8000-000000000010'),
-  '{"id": "e6000000-0000-4000-8000-000000000010", "nome": "Bar da Lia", "documento": "60600600000101",
+  '{"id": "e6000000-0000-4000-8000-000000000010", "nome": "Bar da Lia",
     "tipo": "food_service", "endereco": "CLN 410, Bloco B", "regiao_administrativa": "Plano Piloto",
     "ponto": {"latitude": -15.796, "longitude": -47.884}, "papel": "administrador"}'::jsonb,
   'RN02: a administradora recebe o endereço, a região e o ponto da casa, para preencher a vaga');
@@ -122,8 +122,8 @@ select is(
 select is(
   (select array_agg(k order by k)
      from jsonb_object_keys(pg_temp.meu('e6000000-0000-4000-8000-000000000001', 'e6000000-0000-4000-8000-000000000010')) k),
-  array['documento','endereco','id','nome','papel','ponto','regiao_administrativa','tipo'],
-  'Estabelecimento: os oito campos do contrato, e nada além deles');
+  array['endereco','id','nome','papel','ponto','regiao_administrativa','tipo'],
+  'MeuEstabelecimento: os sete campos do contrato, e nada além deles');
 
 -- RN10: nada de contato de quem é membro. Uma coluna a mais copiada para dentro da
 -- resposta amanhã cai aqui.
@@ -132,6 +132,12 @@ select is(
     ~* '(\+55|e60\.test|telefone|email|membros|usuario_id)',
   false,
   'RN10: a resposta não traz telefone, e-mail nem os outros membros da casa');
+
+-- RN15: o documento (CNPJ ou CPF) só sai no cadastro, nunca nesta leitura.
+select is(
+  pg_temp.meu('e6000000-0000-4000-8000-000000000001', 'e6000000-0000-4000-8000-000000000010') ? 'documento',
+  false,
+  'RN15: a resposta não traz o documento da casa');
 
 -- ── Quem executa ──────────────────────────────────────────────────────────────
 
