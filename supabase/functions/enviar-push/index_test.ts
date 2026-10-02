@@ -1998,6 +1998,7 @@ Deno.test("kT7NhMGV / B3: processarEnvioPush exige SUPABASE_URL e SUPABASE_SERVI
 Deno.test("Contrato 0.2.30 (FmgMnRx4): FCM message.data inclui vinculo_id do aparelho correspondente", async () => {
   const sa = await gerarContaDeServicoTeste();
   const mensagensEnviadas: Array<{ token: string; data?: Record<string, string> }> = [];
+  const urlsDispositivoChamadas: string[] = [];
 
   const mockFetch: typeof fetch = (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
@@ -2033,20 +2034,25 @@ Deno.test("Contrato 0.2.30 (FmgMnRx4): FCM message.data inclui vinculo_id do apa
     }
 
     if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      urlsDispositivoChamadas.push(url);
+      const match = url.match(/[?&]select=([^&]+)/);
+      const campos = match ? match[1].split(",") : [];
+      const pede = (campo: string) => campos.includes(campo);
+
       return Promise.resolve(
         new Response(
           JSON.stringify([
             {
-              id: "disp-1",
-              token_fcm: "fcm_token_iphone_1",
-              plataforma: "ios",
-              vinculo_id: "11111111-1111-4000-8000-000000000001",
+              ...(pede("id") ? { id: "disp-1" } : {}),
+              ...(pede("token_fcm") ? { token_fcm: "fcm_token_iphone_1" } : {}),
+              ...(pede("plataforma") ? { plataforma: "ios" } : {}),
+              ...(pede("vinculo_id") ? { vinculo_id: "11111111-1111-4000-8000-000000000001" } : {}),
             },
             {
-              id: "disp-2",
-              token_fcm: "fcm_token_ipad_2",
-              plataforma: "ios",
-              vinculo_id: "22222222-2222-4000-8000-000000000002",
+              ...(pede("id") ? { id: "disp-2" } : {}),
+              ...(pede("token_fcm") ? { token_fcm: "fcm_token_ipad_2" } : {}),
+              ...(pede("plataforma") ? { plataforma: "ios" } : {}),
+              ...(pede("vinculo_id") ? { vinculo_id: "22222222-2222-4000-8000-000000000002" } : {}),
             },
           ]),
           { status: 200, headers: { "Content-Type": "application/json" } },
@@ -2087,6 +2093,16 @@ Deno.test("Contrato 0.2.30 (FmgMnRx4): FCM message.data inclui vinculo_id do apa
   assertEquals(res.status, 200);
   const jsonCorpo = await res.json();
   assertEquals(jsonCorpo.relatorio[0].status, "enviada");
+
+  assertEquals(urlsDispositivoChamadas.length, 1);
+  const urlDisp = urlsDispositivoChamadas[0];
+  const selectMatch = urlDisp.match(/[?&]select=([^&]+)/);
+  assert(selectMatch !== null, "consulta a /rest/v1/dispositivo deve ter parâmetro select");
+  const camposSelect = selectMatch[1].split(",");
+  assert(
+    camposSelect.includes("vinculo_id"),
+    "consulta a /rest/v1/dispositivo deve exigir vinculo_id no select",
+  );
 
   assertEquals(mensagensEnviadas.length, 2);
   assertEquals(mensagensEnviadas[0].token, "fcm_token_iphone_1");
