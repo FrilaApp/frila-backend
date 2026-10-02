@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.30
+  version: 0.2.31
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -95,6 +95,38 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.31, de 02/10/2026.** Três decisões de produto de 02/10/2026, todas acréscimos em
+    leituras que já existem: o turno diz se foi cancelado, o turno traz a avaliação que este lado
+    já deu, e o painel diz por que a posição foi cancelada e quando foi o check-in. Seis campos
+    opcionais e dois schemas novos
+    (`CancelamentoDaPosicao`, `CausaDoCancelamento`); nenhuma operação, parâmetro, código de erro
+    ou status novo, e nenhum campo existente muda de significado. A 0.2.30 vem antes desta.
+
+    - **`Turno.estado`** (`EstadoPosicao`, opcional): o estado da posição do turno, o mesmo que
+      `PosicaoNoPainel.estado` já traz. `/rpc/meus_turnos` sempre devolveu o turno cancelado, sem
+      nada que o distinguisse do confirmado; agora ele vem com `estado: cancelada`. O turno
+      cancelado **continua na lista**: é histórico (RN12, UC13), e tirá-lo mudaria o que a
+      operação já devolve a quem tem o app instalado.
+    - **`Turno.avaliacao`** (`Avaliacao` ou nulo, opcional): a avaliação que **este lado** do
+      turno já deu, a mesma que `/rpc/avaliar` devolve. O app guardava a resposta só no aparelho e
+      a perdia na saída da conta. Nunca é a avaliação que a outra parte deu sobre quem chama
+      (RN07).
+    - **`PosicaoNoPainel.cancelamento`** (`CancelamentoDaPosicao` ou nulo, opcional): na posição
+      cancelada que chegou a ter profissional, a causa (`CausaDoCancelamento`), se contou como
+      falta, o texto de quem cancelou e o instante (RN12).
+    - **`PosicaoNoPainel.checkin_em`, `checkin_tipo` e `checkin_confirmado_em`** (opcionais, nulos
+      sem check-in): a hora e o tipo do check-in e a hora da confirmação manual, com os mesmos
+      nomes e o mesmo significado que têm em `Turno`.
+    - **Opcionais de propósito.** O servidor a partir desta versão sempre manda os seis campos; o
+      anterior não manda nenhum. O cliente escrito para a 0.2.31 trata a ausência como "o servidor
+      ainda não diz" e segue como antes, sem falhar a leitura inteira.
+    - **`MeusDados.turnos`** usa o mesmo `Turno` e ganha `estado` e `avaliacao` junto.
+    - **Fica para a próxima.** O profissional vê que o turno foi cancelado, mas não por quê nem
+      se contou falta: `CancelamentoDaPosicao` só sai no painel. Levar o mesmo objeto ao `Turno`
+      é campo opcional novo, e é decisão de produto.
+
+    ---
 
     **Versão 0.2.30, aprovada em 02/10/2026.** O push passa a dizer a que vínculo do aparelho com
     a conta ele pertence, por um identificador opaco, para o app não mostrar nem abrir o aviso de
@@ -1966,7 +1998,11 @@ paths:
         Nenhum telefone sai por aqui: o contato sai por `contato_do_turno`, que confere o prazo de
         RN10. `contato_visivel_ate` vem em cada turno para que a tela saiba se pode oferecer o botão
         antes de tocá-lo.
-      x-requisitos: [RF13, RF22, RNF06, UC13]
+
+        **O turno cancelado continua na lista** (RN12): o cancelamento não apaga o registro do que
+        foi combinado. Desde a 0.2.31 ele vem com `estado: cancelada`, e é por esse campo que a tela
+        o separa do turno de pé. Cada turno traz também `avaliacao`, a que este lado já deu.
+      x-requisitos: [RF13, RF14, RF15, RF22, RN12, RNF06, UC13]
       parameters:
         - name: de
           in: query
@@ -2276,7 +2312,8 @@ paths:
         dois deles votando no mesmo turno dariam à casa dois votos sobre o mesmo profissional. O
         operador que reenvia a resposta que o administrador já gravou recebe `200` com a avaliação
         **do lado dele**; com resposta diferente, `409`. É o mesmo que `Turno.pode_avaliar` já
-        descrevia.
+        descrevia. Desde a 0.2.31 a avaliação gravada volta também em `Turno.avaliacao`, para a
+        tela mostrar a resposta já dada sem depender do que o aparelho guardou.
 
         Turno que não existe recebe o mesmo `403 sem_permissao` de turno alheio: a diferença diria a
         um estranho que aquele turno existe. `turno_id` ausente é `422 campo_obrigatorio` com
@@ -2363,7 +2400,12 @@ paths:
 
         Cada posição no painel expõe `a_caminho_em` (US14, 0.2.25), permitindo acompanhar se o
         profissional confirmado já sinalizou deslocamento.
-      x-requisitos: [RF20, RF13, UC07]
+
+        Desde a 0.2.31, cada posição traz também a hora e o tipo do check-in e a hora da
+        confirmação manual (`checkin_em`, `checkin_tipo`, `checkin_confirmado_em`), e a posição
+        cancelada que chegou a ter profissional traz `cancelamento`: a causa, se contou como falta,
+        o texto de quem cancelou e o instante (RN12).
+      x-requisitos: [RF20, RF13, RF14, RN12, UC07]
       parameters:
         - $ref: '#/components/parameters/EstabelecimentoId'
         - name: de
@@ -3843,6 +3885,32 @@ components:
         pode_avaliar:
           type: boolean
           description: Verdadeiro depois do fim previsto, com presença verificada e sem avaliação deste lado ainda (RN07).
+        estado:
+          description: |
+            O estado da posição deste turno (0.2.31), o mesmo campo de `PosicaoNoPainel.estado`:
+            `confirmada` com o turno de pé, `cumprida` depois do fim com check-in, `cancelada`
+            quando uma das partes cancelou, a casa reabriu por atraso, a vaga foi cancelada ou o
+            turno terminou sem check-in. Nunca `aberta`: posição aberta não tem turno. Quem passa a
+            `cumprida` ou fecha o turno sem check-in é o agendador, minutos depois do fim previsto;
+            até lá o turno encerrado ainda vem `confirmada`.
+
+            O turno cancelado continua em `/rpc/meus_turnos`, e é por este campo que a tela o
+            distingue. Opcional: o servidor anterior à 0.2.31 não o manda, e o cliente trata a
+            ausência como "o servidor ainda não diz", sem supor `confirmada`.
+          $ref: '#/components/schemas/EstadoPosicao'
+        avaliacao:
+          description: |
+            A avaliação que **este lado** do turno já deu (0.2.31), igual à resposta de
+            `/rpc/avaliar`. Nulo enquanto este lado não avaliou. Para quem opera a casa é o voto da
+            casa, dado por qualquer membro dela (um voto por lado). **Nunca** é a avaliação que a
+            outra parte deu sobre quem chama: essa só aparece agregada, na reputação (RN07, RN08).
+            Com `avaliacao` preenchida, `pode_avaliar` é falso.
+
+            Opcional: o servidor anterior à 0.2.31 não o manda. Ausente não é o mesmo que nulo: o
+            cliente só afirma "ainda não avaliou" quando o campo vem nulo.
+          oneOf:
+            - $ref: '#/components/schemas/Avaliacao'
+            - type: 'null'
     ResultadoCancelamento:
       type: object
       required: [posicao_id, falta, reaberta, nova_posicao_id]
@@ -3943,6 +4011,79 @@ components:
           description: |
             Instante em que o profissional avisou estar a caminho do turno (US14). Nulo se ainda não
             avisou ou se a posição ainda não tem turno confirmado.
+        checkin_em:
+          description: |
+            A hora do toque no check-in (0.2.31), o mesmo `Turno.checkin_em`. Nulo sem check-in ou
+            sem turno. Com `checkin_tipo: manual`, é a hora que o profissional declarou e a casa
+            confirma. Opcional: o servidor anterior à 0.2.31 não o manda.
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
+        checkin_tipo:
+          description: O tipo do check-in (0.2.31), o mesmo `Turno.checkin_tipo`. Nulo sem check-in. Opcional.
+          oneOf:
+            - $ref: '#/components/schemas/TipoRegistro'
+            - type: 'null'
+        checkin_confirmado_em:
+          description: |
+            Quando um membro da casa confirmou o check-in manual (0.2.31), o mesmo
+            `Turno.checkin_confirmado_em`. Nulo no check-in geolocalizado, que já nasce
+            verificado, e no manual ainda sem confirmação. Opcional.
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
+        cancelamento:
+          description: |
+            Por que a posição foi cancelada (0.2.31, RN12). Vem na posição `cancelada` que chegou a
+            ter profissional. Nulo nos outros estados e na posição cancelada **sem nunca ter tido
+            profissional** (`profissional` nulo), que não tem cancelamento registrado: a vaga foi
+            cancelada, o modo seleção fechou sem escolha, ou a posição reaberta por atraso não foi
+            preenchida a tempo. Opcional: o servidor anterior à 0.2.31 não o manda.
+          oneOf:
+            - $ref: '#/components/schemas/CancelamentoDaPosicao'
+            - type: 'null'
+    CausaDoCancelamento:
+      type: string
+      enum: [profissional, estabelecimento, reabertura_por_atraso, no_show_sem_checkin, outro]
+      description: |
+        Dicionário fechado (0.2.31): valor novo é mudança de contrato, com versão subindo.
+
+        - `profissional`: o profissional desistiu (`cancelar_posicao`).
+        - `estabelecimento`: um membro da casa cancelou a posição (`cancelar_posicao`) ou a vaga
+          inteira (`cancelar_vaga`).
+        - `reabertura_por_atraso`: a casa declarou o não comparecimento aos 15 minutos
+          (`reabrir_por_atraso`, D06).
+        - `no_show_sem_checkin`: o turno terminou sem check-in, e o agendador fechou a posição.
+        - `outro`: a posição saiu sem escolha de nenhuma das partes neste turno, por conta
+          encerrada ou por ação da Equipe Frila. O contrato não diz qual das duas: a situação da
+          conta de uma parte não é dado da outra (RN13, RN15).
+    CancelamentoDaPosicao:
+      type: object
+      required: [causa, falta, motivo, cancelada_em]
+      description: O registro do cancelamento de uma posição que tinha profissional (RN12), como a casa o lê no painel.
+      properties:
+        causa:
+          $ref: '#/components/schemas/CausaDoCancelamento'
+        falta:
+          type: boolean
+          description: |
+            Verdadeiro quando conta como falta do profissional na taxa de comparecimento (RN12):
+            desistência a menos de 24 horas do início, reabertura por atraso ou turno terminado sem
+            check-in. É o mesmo valor que `ResultadoCancelamento.falta` devolveu a quem cancelou.
+        motivo:
+          type: [string, 'null']
+          description: |
+            O texto que a pessoa escreveu ao cancelar, em `cancelar_posicao` ou `cancelar_vaga`, já
+            passado pelo filtro de termos. Só vem com `causa` `profissional` ou `estabelecimento`.
+            Nulo nas outras causas: o motivo delas é a própria causa, e nenhum código interno sai
+            aqui como texto.
+        cancelada_em:
+          $ref: '#/components/schemas/Instante'
+      example:
+        causa: profissional
+        falta: true
+        motivo: Tive um imprevisto de saúde e não consigo chegar.
+        cancelada_em: '2026-10-03T19:40:00Z'
 
     # ── Confiança e direitos
 
