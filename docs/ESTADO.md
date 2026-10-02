@@ -325,6 +325,11 @@ de novo: ele mudou em uma noite mais do que em três dias.
 
 ## O contrato mudou de endereço
 
+> **O resto desta seção é de 29/09 e não foi remedido em 02/10.** Ela fala de 0.2.20 e
+> 0.2.21 como se fossem o presente; o espelho está na **0.2.28** e o original na **0.2.32**,
+> medidos em 02/10 — ver *O espelho do contrato está quatro versões atrás*, no alto. O que
+> segue abaixo vale como procedimento e como histórico, não como número vigente.
+
 `FrilaApp/frila-docs` reorganizou o repositório por assunto: **`Documentos/API/openapi.yaml`
 virou `api/openapi.yaml`**. O redirect do GitHub cobre o nome antigo da organização, mas
 não cobre caminho dentro do repositório — quem tiver script ou marcador apontando para o
