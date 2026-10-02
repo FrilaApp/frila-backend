@@ -1,4 +1,4 @@
-# Estado do backend — 01/10/2026
+# Estado do backend — 02/10/2026
 
 Onde o trabalho parou e o que a próxima sessão precisa saber. As regras duráveis estão
 no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
@@ -7,34 +7,63 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-**A `develop` é o tronco e está 203 commits à frente do `main`, que não se move desde
+**A `develop` é o tronco e está 259 commits à frente do `main`, que não se move desde
 28/09.** O `main` continua inteiramente contido na `develop` (`git log
-origin/develop..origin/main` sai vazio) e parado em `c190836`. Em três dias a `develop`
-passou de 47 para **81 migrações** e de 29 para **71 arquivos de pgTAP**.
+origin/develop..origin/main` sai vazio) e parado em `c190836`. Em quatro dias a `develop`
+passou de 47 para **84 migrações** e de 29 para **78 arquivos de pgTAP**.
 
-Os números abaixo são de execução, não de estimativa. Todos saem da última execução verde
-da `develop` na CI, **run 36853028970** (sha `1e72896`, 01/10 às 11h04Z):
+Os números abaixo foram remedidos em 02/10, com a `develop` em `6d96d88` — os que estavam
+aqui eram de 01/10 e todos tinham envelhecido. As contagens de arquivo saem da árvore; as de
+teste saem da última execução da CI na `develop`, **run 36962663919** (sha `6d96d88`, 02/10
+às 04h00Z), verde nos cinco jobs que rodaram, com o sexto pulado.
 
-| | |
-|---|---|
-| Migrações na `develop` | **81** |
-| pgTAP | **70 arquivos, 2082 asserções**, verde |
-| Testes em Deno das Edge Functions | **136**, verde |
-| Edge Functions | **9** |
-| Scripts em `scripts/` | **30** |
-| Contrato espelhado | **0.2.27** |
+| | | Comando |
+|---|---|---|
+| Commits à frente do `main` | **259** | `git rev-list --count origin/main..origin/develop` |
+| Migrações na `develop` | **84** | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
+| pgTAP | **78 arquivos, 2197 asserções**, verde | `Files=78, Tests=2197 … Result: PASS`, no log do run 36962663919 |
+| Testes em Deno das Edge Functions | **169**, verde | `ok \| 169 passed \| 0 failed`, no mesmo run |
+| Edge Functions | **9** | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
+| Scripts em `scripts/` | **31** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` — 33 entradas no total, incluindo um `.py` e um `.sql` |
+| Contrato espelhado | **0.2.28** | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
-> ## 🔴 A `develop` está VERMELHA agora, e o motivo é de uma linha
+Um aviso sobre a contagem de pgTAP, porque ela já apareceu de três jeitos neste documento:
+`supabase/tests/*.sql` tem **77** arquivos, e o `prove` conta **78** porque alcança também
+`supabase/tests/carga/gerar_df.sql`, que é gerador de carga e não teste de regra. O número
+da CI, e o da tabela, é 78.
+
+> ## 🟡 O espelho do contrato está quatro versões atrás, e isso reprova um job em qualquer base
 >
-> Medido em 01/10: o run `36865976706` (sha `b96a7ed`) reprova no job **"Contrato em dia
-> com o Frila"**, passo *"O espelho não divergiu do original"*. Os outros jobs passam.
+> **A vermelhidão de 01/10 foi resolvida.** As duas causas entraram na `develop`: o **#103**
+> trouxe o espelho para a 0.2.28 (merge em 01/10 às 13h48Z) e o **#104** implementou o
+> bloqueio bidirecional em `public.perfil_publico` (13h45Z), com a migração
+> `20261001140000_perfil_publico_bloqueio.sql` e o teste
+> `supabase/tests/550_perfil_publico_bloqueio.sql`. Os dois arquivos estão na árvore.
 >
-> A causa não é código: **o `frila-docs` foi para 0.2.28 e o espelho ficou em 0.2.27.** A
-> 0.2.28 é a decisão de 30/09 do cartão `1aGJPQK2` — o bloqueio passa a esconder também o
-> perfil público, nos dois sentidos, e ela fecha a divergência que a 0.2.12 abriu e a
-> 0.2.27 adiou.
+> **E abriu uma divergência nova, por outro motivo e de outra pessoa.** Medido em 02/10:
 >
-> O conserto é o que o próprio portão imprime:
+> | | Versão | sha256 | bytes |
+> |---|---|---|---|
+> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.28** | `bd807fb2e73646d1d677f02dd8331a8d7f811e85434d50dd51165ed2d5f936c3` | 173 629 |
+> | original, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.32** | `5ed39f267af3c9b5b02d7e1fd8bf75dc99a2add1425e01d5170a193a5ddac196` | 198 697 |
+>
+> Quatro versões entraram no `frila-docs` em 02/10, todas já aprovadas: 0.2.29 (`afb3346`,
+> às 15h40Z), 0.2.30 (`dedf3ff`, 15h41Z), 0.2.31 (`80bb750`, 15h45Z) e 0.2.32 (`f40acfa`,
+> 16h51Z).
+>
+> **Consequência prática:** o job **"Contrato em dia com o Frila"**, passo *"O espelho não
+> divergiu do original"*, compara os bytes do espelho com os do original e sai **1** quando
+> eles diferem. Com sha256 diferente ele reprova em qualquer branch cuja base seja a
+> `develop` — inclusive num PR que só mexe em documentação, porque o passo olha o arquivo e
+> não o diff. O último run verde da `develop` (`36962663919`, 02/10 às 04h00Z) é **anterior**
+> às quatro versões e não contradiz isto.
+>
+> O mecanismo acima é a leitura do `scripts/contrato-em-dia.sh`, não uma execução do passo:
+> na máquina local ele não roda por falta de `FRILA_DOCS_TOKEN` e sai **2**, dizendo em voz
+> alta que mediu a integridade e não mediu a divergência.
+>
+> O conserto é um PR próprio, do espelho, e não um remendo dentro de PR que esteja em
+> revisão:
 >
 > ```
 > gh api repos/FrilaApp/frila-docs/contents/api/openapi.yaml \
@@ -42,15 +71,9 @@ da `develop` na CI, **run 36853028970** (sha `1e72896`, 01/10 às 11h04Z):
 > shasum -a 256 contrato/openapi.yaml | awk '{print $1}' > contrato/openapi.yaml.sha256
 > ```
 >
-> **Mas trazer o espelho sozinho deixa a CI pior, não melhor:** a 0.2.28 passa a prometer
-> `404` em `perfil_publico` entre partes bloqueadas, e `public.perfil_publico` ainda não
-> filtra bloqueio nenhum — a última definição dela é de `20260925030000`, e o único 404
-> que ela tem é o de não-encontrado. Espelho novo com função velha é promessa no contrato
-> sem código atrás.
->
-> O espelho e a implementação são a mesma metade do mesmo cartão (`1aGJPQK2`, critério 2),
-> e ele está **atribuído ao Cauê** no quadro — conferido por `idMembers`, não pelo campo
-> de texto "Responsável sugerido", que diz "a definir". É dele, e a ordem é dele.
+> Antes de subir o espelho, conferir o que as quatro versões prometem e se o código atrás
+> delas existe. Espelho novo com função velha é promessa no contrato sem código atrás, e foi
+> isso que segurou a 0.2.28 por um dia.
 
 **Três portões nasceram em 30/09 e 01/10, e os três pegam coisa que antes passava calada:**
 o plano do caminho quente com o volume do DF, os testes em Deno das Edge Functions, e o
@@ -58,10 +81,11 @@ corpo das Edge Functions contra o contrato. Estão descritos em *Os portões*.
 
 ## Onde cada coisa parou
 
-### O que entrou em 30/09 e 01/10: vinte e dois PRs
+### O que entrou desde 30/09: quarenta e quatro PRs
 
 Contados, não lembrados: `gh pr list --state merged` filtrado por `mergedAt >= 2026-09-30`
-devolve **22**. Em três grupos, porque eles contam três histórias diferentes.
+devolve **44** em 02/10. Eram 22 quando este documento foi escrito, em 01/10. Em quatro
+grupos, porque eles contam histórias diferentes.
 
 **Produto e backend do Sprint 2 e 3** — #70 (fila `email` com consumidor), #77 (exportar
 meus dados), #79 (aviso de fim sem check-out), #80 (rastro do pedido de exclusão), #82
@@ -77,13 +101,34 @@ prometidos pelo contrato), #90 (classifica `pedido_de_exclusao` no catálogo), #
 
 **Espelho do contrato** — #88 (0.2.26) e #92 (0.2.27).
 
-### A fila de PRs aberta em 01/10, e o que cada um espera
+**O que entrou depois que este documento foi escrito, em 01 e 02/10** — vinte e dois PRs,
+todos na `develop`:
+
+- *contrato e portões*: **#103** (espelha a 0.2.28), **#105** (a direção
+  contrato-à-frente passa a ser medida, com `scripts/teste-contrato-promete.sh`) e **#116**
+  (padroniza a regra de base `develop` no README, nos agentes e no template de PR);
+- *produto e segurança*: **#104** (o bloqueio esconde o perfil público, com o teste 550),
+  **#117** (índice cobrindo a FK de `despacho_notificacao` no caminho quente), **#118**
+  (higienização e endurecimento de produção nas Edge Functions) e **#121** (revoga
+  `references`, `trigger` e `maintain` de `authenticated` em `public`);
+- *backup*: **#119** (ensaio de restauração local do backup lógico) e **#120** (o workflow
+  agendado do ensaio);
+- *cobertura*: **#106** a **#115** e **#122** a **#124** — treze PRs de recusas prometidas
+  pelo contrato, asserções de unicidade e caminhos de erro das Edge Functions.
+
+### A fila de PRs aberta em 02/10, e o que cada um espera
+
+Medida com `gh pr list --state open` em 02/10, campo `mergeable` do próprio GitHub. Todos
+têm `develop` como base. **Correção ao que a revisão do #102 afirmou em 01/10 às 19h51Z: o
+#100 não foi mergeado.** Está aberto, e hoje está conflitando.
 
 | PR | Estado | O que falta, e de quem é |
 |---|---|---|
-| **#101** | aberto | Conserta a inversão de ordem de travas do `40P01` (cartão `CPD2c74A`): **19 de 20 impasses antes, 0 de 50 depois**. Medido pelo blendops-5. Espera revisão |
-| **#100** | aberto | O portão do corpo das Edge Functions contra o contrato (cartão `oCv0WPNY`). CI verde nos seis jobs, run `36862558241`. Espera revisão |
-| **#99** | **draft** | `privado.meus_dados` com as sete coleções. **Em draft de propósito:** depende do `frila-docs` #32 (0.2.29) entrar primeiro. Sem isso a exportação devolve 16 campos com o contrato declarando 9 |
+| **#125** | **draft**, do Cauê | `meu_estabelecimento`, a leitura do cadastro da casa por um membro (contrato 0.2.29, proposta). Em draft |
+| **#102** | aberto, sem conflito | Este documento. A revisão pediu o merge da `develop` e os números remedidos, e é o que o último commit faz |
+| **#101** | aberto, sem conflito | Conserta a inversão de ordem de travas do `40P01` (cartão `CPD2c74A`): **19 de 20 impasses antes, 0 de 50 depois**. Medido pelo blendops-5. Espera revisão |
+| **#100** | aberto, **conflitando** | O portão do corpo das Edge Functions contra o contrato (cartão `oCv0WPNY`). Estava verde em 01/10 (run `36862558241`), mas a `develop` andou desde então e o PR passou a conflitar — `mergeable=CONFLICTING` em 02/10. Precisa do merge da `develop` antes da revisão |
+| **#99** | **draft** | `privado.meus_dados` com as sete coleções. Em draft de propósito: dependia de o `frila-docs` #32 (0.2.29) entrar primeiro. **A 0.2.29 entrou lá em 02/10 às 15h40Z** (`afb3346`); o que falta agora é o espelho subir aqui |
 | **#89** | aberto | Entrega contínua: `develop` no `frila-dev`, tag no `frila-prod`. Depende de credencial de conta |
 | **#81** | aberto | Registra o SMTP próprio do `frila-dev`. **Já aponta para `develop`** — abriu contra o `main` e foi retargetado |
 
