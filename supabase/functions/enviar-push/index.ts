@@ -705,11 +705,11 @@ export async function processarEnvioPush(
 
     // 2. Busca todos os aparelhos registrados da conta destinatária
     const dispRes = await fetchFn(
-      `${supabaseUrl}/rest/v1/dispositivo?usuario_id=eq.${n.usuario_id}&select=id,token_fcm,plataforma`,
+      `${supabaseUrl}/rest/v1/dispositivo?usuario_id=eq.${n.usuario_id}&select=id,token_fcm,plataforma,vinculo_id`,
       { headers: dbHeaders },
     );
 
-    const aparelhos: Array<{ id: string; token_fcm: string; plataforma: string }> =
+    const aparelhos: Array<{ id: string; token_fcm: string; plataforma: string; vinculo_id?: string }> =
       dispRes.ok ? await dispRes.json() : [];
 
     if (aparelhos.length === 0) {
@@ -788,6 +788,10 @@ export async function processarEnvioPush(
 
     // 4. Envia para cada aparelho
     for (const disp of aparelhos) {
+      const dataParaDispositivo = { ...dataStrings };
+      if (disp.vinculo_id) {
+        dataParaDispositivo.vinculo_id = disp.vinculo_id;
+      }
       const resultado: FcmSendResult = await sendFcmMessage(
         sa.project_id,
         accessToken,
@@ -795,7 +799,7 @@ export async function processarEnvioPush(
           token: disp.token_fcm,
           title,
           body,
-          data: dataStrings,
+          data: dataParaDispositivo,
           plataforma: disp.plataforma,
         },
         { apiUrl: deps.fcmApiUrl, fetchFn },
