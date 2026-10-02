@@ -46,6 +46,24 @@ Deno.test("saude: HEAD retorna 200 OK sem corpo quando saudavel", async () => {
   assertEquals(text, "");
 });
 
+Deno.test("saude: HEAD retorna 503 sem corpo quando ping retorna falso", async () => {
+  const req = new Request("http://localhost/functions/v1/saude", { method: "HEAD" });
+  const res = await processarSaude(req, { sqlProbe: probeMock({ ok: false }) });
+
+  assertEquals(res.status, 503);
+  const text = await res.text();
+  assertEquals(text, "");
+});
+
+Deno.test("saude: HEAD retorna 503 sem corpo quando ping lanca excecao", async () => {
+  const req = new Request("http://localhost/functions/v1/saude", { method: "HEAD" });
+  const res = await processarSaude(req, { sqlProbe: probeMock({ erro: true }) });
+
+  assertEquals(res.status, 503);
+  const text = await res.text();
+  assertEquals(text, "");
+});
+
 Deno.test("saude: metodos que nao sejam GET nem HEAD retornam 405", async () => {
   const metodos = ["POST", "PUT", "DELETE", "PATCH"];
   for (const m of metodos) {

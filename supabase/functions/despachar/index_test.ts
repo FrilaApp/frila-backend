@@ -308,3 +308,104 @@ Deno.test("despachar: processa lote da fila com sucesso quando vaga_id omitido",
   assertEquals(json.mensagens.length, 2);
   assertEquals(chamadaFila, { limite: 25, vt: 60 });
 });
+
+Deno.test("despachar: erro ao conectar ao banco responde 500 erro_conexao_banco", async () => {
+  const req = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ vaga_id: "a1000000-0000-4000-8000-000000000001" }),
+  });
+
+  const res = await handler(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    dbUrl: "", // Força obterDbUrl a lançar erro
+  });
+
+  assertEquals(res.status, 500);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.erro, "erro_conexao_banco");
+});
+
+Deno.test("despachar: falha no sqlClient ao despachar vaga responde 500 falha_processamento", async () => {
+  const mockSql = criarMockSqlClient({
+    despacharVaga: () => Promise.reject(new Error("falha_postgres_pontual")),
+  });
+
+  const req = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ vaga_id: "a1000000-0000-4000-8000-000000000001" }),
+  });
+
+  const res = await handler(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    sqlClient: mockSql,
+  });
+
+  assertEquals(res.status, 500);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.erro, "falha_processamento");
+});
+
+Deno.test("despachar: falha no sqlClient ao processar fila responde 500 falha_processamento", async () => {
+  const mockSql = criarMockSqlClient({
+    processarFilaDespacho: () => Promise.reject(new Error("falha_postgres_fila")),
+  });
+
+  const req = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({}),
+  });
+
+  const res = await handler(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    sqlClient: mockSql,
+  });
+
+  assertEquals(res.status, 500);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.erro, "falha_processamento");
+});
+
+Deno.test("despachar: preserva campo origem customizado no disparo pontual", async () => {
+  const mockSql = criarMockSqlClient({
+    despacharVaga: () => Promise.resolve(4),
+  });
+
+  const req = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({
+      vaga_id: "a1000000-0000-4000-8000-000000000001",
+      origem: "reabertura_automatica",
+    }),
+  });
+
+  const res = await handler(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    sqlClient: mockSql,
+  });
+
+  assertEquals(res.status, 200);
+  const json = await res.json();
+  assertEquals(json.ok, true);
+  assertEquals(json.origem, "reabertura_automatica");
+  assertEquals(json.despachos, 4);
+});
+
