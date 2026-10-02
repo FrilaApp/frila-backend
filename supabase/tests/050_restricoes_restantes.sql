@@ -5,7 +5,7 @@
 -- alguém remove numa refatoração sem nada avisar.
 
 begin;
-select plan(13);
+select plan(19);
 
 create function pg_temp.conta(p_id uuid, p_perfil public.perfil_conta)
 returns uuid language sql as $$
@@ -63,6 +63,26 @@ select throws_ok(
 insert into public.estabelecimento (nome, documento, tipo, endereco, ponto)
 values ('Bar do Zé', '11222333000181', 'food_service', 'CLN 201',
         'POINT(-47.8822 -15.7942)'::extensions.geography);
+
+select throws_ok(
+  $$ insert into public.estabelecimento (nome, documento, tipo, endereco, ponto)
+     values ('Outro Bar', '11222333000181', 'food_service', 'CLN 202',
+             'POINT(-47.88 -15.79)'::extensions.geography) $$,
+  '23505',
+  null,
+  'estabelecimento_documento_key: CNPJ/CPF é único por estabelecimento');
+
+insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
+select 'eeeeeeee-0000-0000-0000-000000000002', id, 'administrador'
+  from public.estabelecimento where documento = '11222333000181';
+
+select throws_ok(
+  $$ insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
+     select 'eeeeeeee-0000-0000-0000-000000000002', id, 'operador'
+       from public.estabelecimento where documento = '11222333000181' $$,
+  '23505',
+  null,
+  'membro_estabelecimento_usuario_id_estabelecimento_id_key: conta só é membro uma vez da mesma casa');
 
 select throws_ok(
   $$ update public.estabelecimento set aval_positivas = 5, aval_total = 2 $$,
@@ -133,12 +153,28 @@ values ('eeeeeeee-0000-0000-0000-000000000003','profissional','Ana','+5561999990
 insert into public.profissional (usuario_id, ponto_base)
 values ('eeeeeeee-0000-0000-0000-000000000003','POINT(-47.88 -15.79)'::extensions.geography);
 
+select throws_ok(
+  $$ insert into public.profissional (usuario_id, ponto_base)
+     values ('eeeeeeee-0000-0000-0000-000000000003', 'POINT(-47.88 -15.79)'::extensions.geography) $$,
+  '23505',
+  null,
+  'profissional_usuario_id_key: conta de profissional só tem um registro em profissional');
+
 insert into public.posicao (vaga_id, estado, profissional_id, confirmado_em, inicio_em, fim_em)
 select pg_temp.vaga(), 'confirmada',
        (select id from public.profissional where usuario_id = 'eeeeeeee-0000-0000-0000-000000000003'),
        now(), now() + interval '4 h', now() + interval '12 h';
 
-create temp table p1 as select id from public.posicao limit 1;
+create temp table p1 as select id, vaga_id, inicio_em, fim_em from public.posicao limit 1;
+
+select throws_ok(
+  $$ insert into public.posicao (vaga_id, estado, inicio_em, fim_em, reaberta_por_atraso_de)
+     select vaga_id, 'aberta'::estado_posicao, inicio_em, fim_em, id from p1;
+     insert into public.posicao (vaga_id, estado, inicio_em, fim_em, reaberta_por_atraso_de)
+     select vaga_id, 'aberta'::estado_posicao, inicio_em, fim_em, id from p1; $$,
+  '23505',
+  null,
+  'posicao_uma_reabertura_por_falta: uma falta só reabre uma vez');
 
 select throws_ok(
   $$ insert into public.turno (posicao_id, checkin_em, checkin_tipo, checkin_distancia_m,
@@ -164,6 +200,36 @@ select throws_ok(
   '23514',
   null,
   'RN18: turno com valor acordado zero não existe');
+
+insert into public.turno (posicao_id, valor_acordado_centavos)
+select id, 12000 from p1;
+
+select throws_ok(
+  $$ insert into public.turno (posicao_id, valor_acordado_centavos)
+     select id, 15000 from p1 $$,
+  '23505',
+  null,
+  'turno_posicao_id_key: uma posição só gera um turno');
+
+alter table public.avaliacao disable trigger avaliacao_rn07;
+alter table public.avaliacao disable trigger avaliacao_auditoria;
+alter table public.avaliacao disable trigger avaliacao_soma_na_reputacao;
+
+insert into public.avaliacao (turno_id, autor_id, alvo_tipo, alvo_id, resposta)
+select t.id, 'eeeeeeee-0000-0000-0000-000000000001', 'profissional', 'eeeeeeee-0000-0000-0000-000000000002', true
+  from public.turno t where t.posicao_id in (select id from p1);
+
+select throws_ok(
+  $$ insert into public.avaliacao (turno_id, autor_id, alvo_tipo, alvo_id, resposta)
+     select t.id, 'eeeeeeee-0000-0000-0000-000000000001', 'estabelecimento', 'eeeeeeee-0000-0000-0000-000000000002', true
+       from public.turno t where t.posicao_id in (select id from p1) $$,
+  '23505',
+  null,
+  'avaliacao_turno_id_autor_id_key: autor só avalia uma vez o mesmo turno');
+
+alter table public.avaliacao enable trigger avaliacao_rn07;
+alter table public.avaliacao enable trigger avaliacao_auditoria;
+alter table public.avaliacao enable trigger avaliacao_soma_na_reputacao;
 
 select * from finish();
 rollback;

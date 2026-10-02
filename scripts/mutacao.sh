@@ -88,13 +88,19 @@ adicionar() { while IFS= read -r l; do [ -n "$l" ] && alvos+=("$l"); done; }
 # cobertura que se apresenta como coberta.
 adicionar < <(psql -tAc "
   select 'restrição|' || c.conname || '|' ||
-         'alter table ' || c.conrelid::regclass || ' drop constraint ' || quote_ident(c.conname) || '|' ||
+         case when count(f.oid) > 0
+              then 'alter table ' || c.conrelid::regclass || ' drop constraint ' || quote_ident(c.conname) || ' cascade'
+              else 'alter table ' || c.conrelid::regclass || ' drop constraint ' || quote_ident(c.conname)
+         end || '|' ||
          'alter table ' || c.conrelid::regclass || ' add constraint ' ||
-           quote_ident(c.conname) || ' ' || pg_get_constraintdef(c.oid)
+           quote_ident(c.conname) || ' ' || pg_get_constraintdef(c.oid) ||
+         coalesce('; ' || string_agg('alter table ' || f.conrelid::regclass || ' add constraint ' || quote_ident(f.conname) || ' ' || pg_get_constraintdef(f.oid), '; '), '')
     from pg_constraint c
     join pg_class t on t.oid = c.conrelid
     join pg_namespace n on n.oid = t.relnamespace
-   where n.nspname in ('public','privado') and c.contype in ('c','x')
+    left join pg_constraint f on f.confrelid = c.conrelid and f.confkey = c.conkey
+   where n.nspname in ('public','privado') and c.contype in ('c','x','u')
+   group by c.oid, c.conname, c.conrelid
    order by c.conname")
 
 # Trigger não se derruba e se recria de graça — desabilitar basta e é reversível.
@@ -107,6 +113,23 @@ adicionar < <(psql -tAc "
     join pg_namespace n on n.oid = c.relnamespace
    where n.nspname in ('public','privado') and not t.tgisinternal
    order by t.tgname")
+
+# Índices únicos parciais sem constraint (5 declarações nos arquivos de migração,
+# mas apenas 3 objetos no esquema final: notificacao_marca_de_envio é criado 3 vezes e
+# derrubado duas ao longo de 20260925233000, 20260926010000 e 20260929110000).
+# Todos os 3 são parciais: o WHERE é a regra inteira, então o restore usa pg_get_indexdef.
+adicionar < <(psql -tAc "
+  select 'índice único|' || i.relname || '|' ||
+         'drop index ' || n.nspname || '.' || quote_ident(i.relname) || '|' ||
+         pg_get_indexdef(i.oid)
+    from pg_index x
+    join pg_class i on i.oid = x.indexrelid
+    join pg_class t on t.oid = x.indrelid
+    join pg_namespace n on n.oid = t.relnamespace
+   where n.nspname in ('public','privado')
+     and x.indisunique
+     and not exists (select 1 from pg_constraint c where c.conindid = i.oid)
+   order by i.relname")
 
 # Política de RLS, por dois caminhos opostos, porque as falhas são opostas.
 #
@@ -155,6 +178,24 @@ adicionar < <(psql -tAc "
    where n.nspname = 'public'
    order by p.polname")
 
+echo "▸ Total de alvos: ${#alvos[@]}"
+echo
+
+alvo_pendente=""
+restaurar_pendente=""
+limpar_trap() {
+  if [ -n "$restaurar_pendente" ]; then
+    echo
+    echo "⚠ INTERRUPÇÃO DETECTADA! Restaurando alvo pendente '$alvo_pendente'..." >&2
+    if psql -q -c "$restaurar_pendente" >/dev/null 2>&1; then
+      echo "✓ '$alvo_pendente' restaurado com sucesso." >&2
+    else
+      echo "✗ RESTAURAÇÃO FALHOU para '$alvo_pendente'! O banco ficou sem ele. Restaure com 'supabase db reset'." >&2
+    fi
+  fi
+}
+trap limpar_trap EXIT INT TERM
+
 sobreviventes=()
 pulados=()
 mortos=0
@@ -164,7 +205,7 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
 
   [ -n "$filtro" ] && [[ "$nome" != *"$filtro"* ]] && continue
 
-  printf '  %-9s %-40s ' "$tipo" "$nome"
+  printf '  %-13s %-40s ' "$tipo" "$nome"
 
   # Alvo que não se consegue mutar é alvo **não medido**, e não medido nunca conta como
   # coberto. Regra geral deste repositório para portão: qualquer caminho que não seja
@@ -174,6 +215,9 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
     pulados+=("$tipo $nome")
     continue
   fi
+
+  alvo_pendente="$nome"
+  restaurar_pendente="$restaurar"
 
   quem=$(falhas)
 
@@ -186,6 +230,8 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
     echo "Restaure com 'supabase db reset'."
     exit 1
   fi
+  alvo_pendente=""
+  restaurar_pendente=""
 
   # ── Defesa 2: identidade do que falhou ───────────────────────────────────────
   if [ -z "$quem" ]; then
