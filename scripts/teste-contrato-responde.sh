@@ -51,32 +51,29 @@ caso() {
   echo "  ✓ $nome"
 }
 
-# Um corpo de `MeusDados` com os nove campos que o contrato 0.2.27 declara. É o ponto de
+# Um corpo de `MeusDados` com os dezesseis campos que o contrato 0.2.33 declara. É o ponto de
 # partida: sem este caso verde, os dois vermelhos abaixo não provariam nada — provariam
 # apenas que o validador reprova tudo.
-NOVE='{"op":"exportarMeusDados","corpo":{"gerado_em":"2026-09-29T14:00:00Z","conta":{"id":"a0000000-0000-4000-8000-000000000001","perfil":"profissional","nome":"Ana","telefone":"+5561999990001","email":"ana@frila.test","nascimento":"1998-04-02","estado":"ativa"},"perfil_profissional":null,"estabelecimentos":[],"disponibilidade":[],"turnos":[],"avaliacoes_dadas":[],"avaliacoes_recebidas":[],"dispositivos":[]}}'
+DEZESSEIS='{"op":"exportarMeusDados","corpo":{"gerado_em":"2026-09-29T14:00:00Z","conta":{"id":"a0000000-0000-4000-8000-000000000001","perfil":"profissional","nome":"Ana","telefone":"+5561999990001","email":"ana@frila.test","nascimento":"1998-04-02","estado":"ativa"},"perfil_profissional":null,"estabelecimentos":[],"disponibilidade":[],"turnos":[],"avaliacoes_dadas":[],"avaliacoes_recebidas":[],"dispositivos":[],"candidaturas":[],"ocorrencias":[],"bloqueios":[],"notificacoes":[],"despachos":[],"equipe_confianca":[],"pedido_de_exclusao":null}}'
 
 echo "▸ O portão do corpo contra o contrato"
 
-caso "corpo com os campos declarados passa" 0 "$NOVE"
+caso "corpo com os campos declarados passa" 0 "$DEZESSEIS"
 
-# O CASO DE 01/10, que é o motivo deste portão existir: `privado.meus_dados` passou a
-# devolver as sete coleções do PR #99 enquanto o contrato ainda declarava nove campos. Não
-# havia portão que reclamasse — o `contrato-acompanha-o-codigo.sh` só dispara em função de
-# `public`, e `meus_dados` é de `privado`.
-DEZESSEIS=${NOVE%\}\}}',"candidaturas":[],"ocorrencias":[],"bloqueios":[],"notificacoes":[],"despachos":[],"equipe_confianca":[],"pedido_de_exclusao":null}}'
-caso "campo que o contrato não declara reprova" 1 "$DEZESSEIS" "candidaturas não está declarada"
-caso "e nomeia a operação" 1 "$DEZESSEIS" "exportarMeusDados:"
+# Campo a mais no JSON devolvido: o contrato não declara e o validador precisa acusar.
+EXTRA=${DEZESSEIS%\}\}}',"campo_inventado_nao_declarado":true}}'
+caso "campo que o contrato não declara reprova" 1 "$EXTRA" "campo_inventado_nao_declarado não está declarada"
+caso "e nomeia a operação" 1 "$EXTRA" "exportarMeusDados:"
 
 # O outro sentido, que é o que quebra cliente em produção: o modelo gerado espera o campo
 # e ele some da resposta.
-SEM_CONTA=$(printf '%s' "$NOVE" | "$PY" -c '
+SEM_CONTA=$(printf '%s' "$DEZESSEIS" | "$PY" -c '
 import json,sys
 d=json.load(sys.stdin); d["corpo"].pop("conta"); print(json.dumps(d))')
 caso "campo obrigatório que sumiu reprova" 1 "$SEM_CONTA" "conta"
 
 # Tipo trocado: o contrato declara `turnos` como array.
-TIPO=$(printf '%s' "$NOVE" | "$PY" -c '
+TIPO=$(printf '%s' "$DEZESSEIS" | "$PY" -c '
 import json,sys
 d=json.load(sys.stdin); d["corpo"]["turnos"] = "nenhum"; print(json.dumps(d))')
 caso "tipo que não bate reprova" 1 "$TIPO" "turnos"
@@ -91,8 +88,8 @@ caso "e reprova com campo a mais" 1 "$DOIS_ZERO_DOIS_EXTRA" "segredo não está 
 
 # As que o portão não alcança saem nomeadas, com o motivo, em seção própria — e não
 # misturadas com as que ainda não foram implementadas.
-caso "declara o que não alcança, com o motivo" 0 "$NOVE" "Fora do alcance deste portão"
-caso "e separa de quem só não foi implementada" 0 "$NOVE" "Ainda sem implementação"
+caso "declara o que não alcança, com o motivo" 0 "$DEZESSEIS" "Fora do alcance deste portão"
+caso "e separa de quem só não foi implementada" 0 "$DEZESSEIS" "Ainda sem implementação"
 
 echo
 if [ "$falhas" -ne 0 ]; then
