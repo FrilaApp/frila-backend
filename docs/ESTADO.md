@@ -97,8 +97,9 @@ têm `develop` como base.
 
 | PR | Estado | O que falta, e de quem é |
 |---|---|---|
+| **#138** | aberto, sem conflito | `fix(suspensao)`: permite reenvio de contestação após resolução da anterior (cartão `pVvubZJy`). Aberto para revisão |
 | **#137** | aberto, sem conflito | `feat(contato)`: fecha `contato_do_turno` contra conta anonimizada (B10, cartão `kT7NhMGV`). Aberto pela Brasa Quente, aguarda revisão da Faísca |
-| **#128** | aberto, sem conflito | `feat(mutacao)`: varre restrições de unicidade e índices únicos (`1DLcZWsf`). Aberto pelo Cauê |
+| **#128** | aberto, sem conflito | `feat(mutacao)`: varre restrições de unicidade e índices únicos (`1DLcZWsf`). Aberto por Matheus Silva (`silvaaszx`) |
 | **#127** | aberto, **conflitando** | `chore(contrato)`: espelha contrato 0.2.32 do frila-docs. Obsoleto e conflitante, pois a `develop` já avançou para a 0.2.33 |
 | **#102** | aberto, sem conflito | Este documento (`docs/ESTADO.md`), atualizado com as medições reais de 03/10 após merge da `develop` |
 | **#89** | aberto, sem conflito | Entrega contínua: `develop` no `frila-dev`, tag no `frila-prod`. Depende de credencial de conta |
@@ -107,113 +108,76 @@ têm `develop` como base.
 > **Histórico do #100, #101 e #99:** Os três foram mergeados na `develop` em 03/10. O #100 passou a vigiar o corpo das Edge Functions contra o contrato; o #101 extinguiu o deadlock `40P01` entre `excluir_conta` e `candidatar`; e o #99 trouxe as sete coleções para `privado.meus_dados`, com o #135 alinhando os campos ao contrato 0.2.33.
 
 
-### O que entrou desde 28/09
+### Histórico dos primeiros PRs da develop (28 e 29/09)
 
-Na `main`, antes da regra: **#37** (portão de colisão de versão, `RNOfNVVU`, Matheus, 28/09
+Na `main`, antes da regra de base: **#37** (portão de colisão de versão, `RNOfNVVU`, Matheus, 28/09
 às 16h15) e **#48** (falta por no-show depois do fim do turno, `NDx7TJ4d`/`8zLfn0mt`, 28/09
-às 17h14). As 47 migrações do `main` são as 46 de 28/09 mais
-`20260928160000_fechar_turnos_noshow`.
+às 17h14). As 47 migrações da `main` são as 46 de 28/09 mais `20260928160000_fechar_turnos_noshow`.
 
-Na `develop`, em ordem de merge:
+Para registro histórico do início da `develop`, estes foram os primeiros 11 PRs integrados na criação do tronco (todos concluídos, testados e com seus cartões fechados):
 
-| PR | Cartão | O que trouxe | Migração | Cartão está em |
+| PR | Cartão | O que trouxe | Migração | Estado atual |
 |---|---|---|---|---|
-| **#51** | `vUR0Ltkb` | alerta de vaga vazia na janela crítica | `20260928200000_alerta_vaga_vazia` | Revisão, 0/4 |
-| **#31** | `CvopSHh6` | `configuracao_do_app`: a versão mínima do app | `20260928193700_configuracao_do_app` | Concluído |
-| **#34** | `nNUtbriv` | `bancada-sync` pela data do autor | — | Concluído |
-| **#49** | `e8XpOZJN` | alerta de atraso aos 15 min e `reabrir_por_atraso`; candidatura na reaberta (0.2.19) | `20260928220000_alerta_de_atraso_e_reabrir_por_atraso` | Revisão, 0/5 |
-| **#53** | `IoQPWtWs` | `enviar-push` fala com o Postgres direto para chamar `privado.*` (o PostgREST devolvia 404 calado) | — | Concluído |
-| **#50** | `k5R4tzjC` | lembretes 24 h e 3 h antes do turno | `20260928180000_lembretes_24h_e_3h` | Revisão, 0/4 |
-| **#54** | `x0jkygj0` | `regiao_administrativa` em estabelecimento e vaga, e interpolada nos pushes (0.2.20) | `20260928230000_regiao_administrativa` | Revisão, 0/6 |
-| **#52** | `ee3MT3fH` | teto e agrupamento de notificações de vaga (RN23), e `scripts/corrida-teto.sh` | `20260928210000_teto_e_agrupamento_rn23` | Revisão, 0/5 |
-| **#55** | — | teste Deno da falha fechada sem `AGENDADOR_SECRET` deixa de depender do diretório | — | — |
-| **#57** | `JWJOPAOL` | RPCs `denunciar` e `bloquear`; o bloqueio filtra o teto e o push | `20260929100000_denunciar_e_bloquear` | Revisão, 0/4 |
-| **#58** | `9DbPXis7` | rodada de despacho para posição reaberta por atraso | `20260929110000_rodada_de_despacho` | Revisão, 0/7 |
+| **#51** | `vUR0Ltkb` | alerta de vaga vazia na janela crítica | `20260928200000_alerta_vaga_vazia` | Concluído / mergeado |
+| **#31** | `CvopSHh6` | `configuracao_do_app`: a versão mínima do app | `20260928193700_configuracao_do_app` | Concluído / mergeado |
+| **#34** | `nNUtbriv` | `bancada-sync` pela data do autor | — | Concluído / mergeado |
+| **#49** | `e8XpOZJN` | alerta de atraso aos 15 min e `reabrir_por_atraso`; candidatura na reaberta (0.2.19) | `20260928220000_alerta_de_atraso_e_reabrir_por_atraso` | Concluído / mergeado |
+| **#53** | `IoQPWtWs` | `enviar-push` fala com o Postgres direto para chamar `privado.*` | — | Concluído / mergeado |
+| **#50** | `k5R4tzjC` | lembretes 24 h e 3 h antes do turno | `20260928180000_lembretes_24h_e_3h` | Concluído / mergeado |
+| **#54** | `x0jkygj0` | `regiao_administrativa` em estabelecimento e vaga, e interpolada nos pushes (0.2.20) | `20260928230000_regiao_administrativa` | Concluído / mergeado |
+| **#52** | `ee3MT3fH` | teto e agrupamento de notificações de vaga (RN23), e `scripts/corrida-teto.sh` | `20260928210000_teto_e_agrupamento_rn23` | Concluído / mergeado |
+| **#55** | — | teste Deno da falha fechada sem `AGENDADOR_SECRET` deixa de depender do diretório | — | Concluído / mergeado |
+| **#57** | `JWJOPAOL` | RPCs `denunciar` e `bloquear`; o bloqueio filtra o teto e o push | `20260929100000_denunciar_e_bloquear` | Concluído / mergeado |
+| **#58** | `9DbPXis7` | rodada de despacho para posição reaberta por atraso | `20260929110000_rodada_de_despacho` | Concluído / mergeado |
 
-Todos são do João Paulo, pelos workers do AO. Oito arquivos de teste novos vieram junto, de
-`330_alerta_de_atraso_e_reabrir` a `370_rodada_despacho_posicao_reaberta`, e são **45** no
-total.
+Os testes adicionados por esses primeiros PRs levaram a suíte inicial a 45 arquivos. Desde então, com os 56 PRs integrados até 03/10, a suíte expandiu para **82 arquivos de teste** (2351 asserções pgTAP) e **171 testes em Deno**, todos verdes.
 
-**Duas numerações colidem, sem quebrar nada:** há quatro arquivos `330_…` em
-`supabase/tests/`. O pgTAP roda em ordem alfabética e nenhum depende de outro, mas quem
-criar o próximo deve seguir de `380`.
-
-**O #58 reprovou antes de entrar**, e a revisão pegou: a CI de 04:42Z caiu no portão *"O
-contrato acompanhou o código"* porque a migração redeclarava `public.reabrir_por_atraso` sem
-mexer no contrato. Corrigido, a CI de 05:10Z saiu verde e o merge foi às 05:37Z (02h37 em Brasília).
-
-**Os cartões em Revisão estão com a checklist em zero** — nenhum critério marcado, embora os
-comentários digam que os testes provam cada um. Pela regra do quadro quem marca é quem
-revisa, e ninguém revisou pelo quadro ainda. Os comentários de merge estão em cada cartão.
-
-Fechados sem merge: **#38**, **#39** e **#40** (turnos não verificados, motor de despacho e
-push FCM), que tinham entrado por outro caminho no resgate #41.
+Fechados sem merge na ocasião: **#38**, **#39** e **#40** (turnos não verificados, motor de despacho e push FCM), incorporados no resgate #41.
 
 ### Pendências no `frila-dev`, cartão a cartão
 
-Nenhum destes foi medido no remoto: o `frila-dev` não recebe nada da `develop` sozinho, e
-em 29/09 o MCP do Supabase desta máquina responde *"You do not have permission"* para o
-projeto `jcobftbhbqdikratzizz`. O que cada cartão deixou para conferir **depois do deploy**:
+O `frila-dev` não recebe nada da `develop` sozinho, e o MCP do Supabase desta máquina responde sem permissão para o projeto `jcobftbhbqdikratzizz`. O que foi preparado no código para conferir **depois do deploy**:
 
 | Cartão | O que conferir no `frila-dev` |
 |---|---|
 | `e8XpOZJN` atraso | o job `alertar_atrasos` (`* * * * *`) existe em `cron.job` e roda sem erro |
-| `vUR0Ltkb` vaga vazia | o job `alertar_vagas_vazias` (`*/5 * * * *`) em `cron.job`, e um push real a 3 h do início |
+| `vUR0Ltkb` vaga vazia | o job `alertar_vagas_vazias` (`*/5 * * * *`) em `cron.job`, e push real |
 | `k5R4tzjC` lembretes | o job `enviar_lembretes_turno` (`*/5 * * * *`) em `cron.job` |
 | `ee3MT3fH` teto RN23 | o job `liberar_teto` (`* * * * *`) em `cron.job` |
-| `JWJOPAOL` denunciar | a fila `pgmq` `email` existe; o e-mail em si depende do `7yq1flLG` (abaixo) |
+| `JWJOPAOL` denunciar | a fila `pgmq` `email` existe; processamento depende de SMTP configurado |
 | `IoQPWtWs` `enviar-push` | `functions deploy enviar-push` com a conexão direta ao Postgres |
 | `x0jkygj0` região | `functions deploy enviar-push`, que interpola a região nos pushes 09 e 11 |
-| `NDx7TJ4d` no-show | os agendamentos de fechamento (ver a armadilha em *O que existe no banco*) |
+| `NDx7TJ4d` no-show | o agendamento `fechar_turnos_e_vagas` (`*/5 * * * *`) |
+| `qcVimM84` fim sem checkout | o job `alertar_fim_sem_checkout` (`*/5 * * * *`) |
+| `5bPJvMIo` monitoramento | o job `verificar_saude` (`*/5 * * * *`) |
 
-Os quatro jobs novos são criados pelas próprias migrações, em bloco que faz `unschedule`
-antes de `schedule`, como os três de 28/09. Com eles, **sete jobs** — medidos no banco local
-em 29/09: `alertar_atrasos`, `alertar_vagas_vazias`, `enviar_lembretes_turno`,
-`liberar_teto`, `limpar_dispositivos_inativos`, `reprocessar_despacho` e
-`retencao_e_limpeza_diaria`.
+No Postgres local da `develop`, com as 92 migrações aplicadas em 03/10, estão ativos **treze jobs** em `cron.job`.
 
-### Cartões bloqueados, e por quê — revisto em 01/10
+### Cartões bloqueados, e por quê — revisto em 03/10
 
-**Três saíram da lista desde 29/09, e é importante que a tabela abaixo pare de dizer que
-eles estão travados:**
+Com o avanço dos sprints e as entregas integradas na `develop` até 03/10, diversos cartões anteriormente bloqueados foram concluídos e mergeados no backend:
 
-- **`7yq1flLG` E-mails transacionais** — o backend está feito e mergeado (#70): a fila
-  `email` tem consumidor, o job `processar_fila_email` roda, e os modelos saem de um
-  arquivo só. O que falta **não é código**: `SMTP_HOST` e `EMAIL_EQUIPE` estão vazios, os
-  segredos nunca entraram por `supabase secrets set`, e **não existe caixa `equipe@`** —
-  o time não tem domínio (ver #81). Sem provedor a função responde `500
-  provedor_de_email_nao_configurado` e **não arquiva a fila**, de propósito: configurado o
-  SMTP, o pendente sai. Por isso o critério 3 do `JWJOPAOL` foi **reaberto** em 01/10
-  depois de ter sido fechado — o código estava lá, a credencial não.
-- **`qcVimM84` Aviso de hora excedida** — entregue e mergeado (#79). O tipo
-  `fim_sem_checkout` existia em quatro lugares e **ninguém o produzia**; agora
-  `privado.alertar_fim_sem_checkout` roda a cada cinco minutos. O que falta é a tela, que
-  é iOS.
-- **`nUpPFCpM` Exportar meus dados** — entregue e mergeado (#77). Falta o item em Meu
-  perfil, que é iOS.
+- **`7yq1flLG` E-mails transacionais (backend)** — entregue e mergeado (#70): a fila `email` tem consumidor, o job `processar_fila_email` roda e os modelos saem de um arquivo só. A entrega final depende de provedor SMTP e domínio próprio (ver PR #81).
+- **`qcVimM84` Aviso de hora excedida (backend)** — entregue e mergeado (#79): `privado.alertar_fim_sem_checkout` roda a cada cinco minutos. Falta a tela no iOS.
+- **`nUpPFCpM` Exportar meus dados (backend)** — entregue e mergeado (#77, #99, #135). Falta a tela em Meu perfil no iOS.
+- **`5bPJvMIo` Monitoramento e alertas** — entregue e mergeado (#94).
+- **`kT7NhMGV` Endurecimento para produção** — entregue e mergeado (#86, #117, #118, #121, #122); o B10 (`contato_do_turno` contra conta anonimizada) está no PR #137 em revisão.
+- **`BsXIZHOw` Suspensão da conta** — entregue e mergeado (#95); reenvio de contestação tratado no PR #138.
+- **`zptkprHt` Índice de elegíveis** — entregue e mergeado (#67).
+- **`nspP9YDU` Concorrência além da RN19** — resolvido com a eliminação do impasse `40P01` (#101) e isolamento do agendador do teto (#134).
+- **`oCv0WPNY` Portão do corpo das Edge Functions** — entregue e mergeado (#100).
 
-**E um nasceu:** `oCv0WPNY`, o portão do corpo das Edge Functions, criado em 01/10 a partir
-de uma lacuna que apareceu duas vezes no mesmo dia. Está em Revisão com o PR #100 verde.
-
-O resto da tabela de 29/09 segue valendo:
-
+O que **continua dependente de bloqueios externos** (fora do código do backend):
 
 | Cartão | O que trava |
 |---|---|
-| `7yq1flLG` E-mails transacionais e caixa da Equipe Frila | **SMTP e provedor de e-mail.** Depende de *S1 · Infra · SMTP próprio no Supabase Auth* e de *S1 · Design + Produto · Modelos de e-mail*. Trava também o critério 3 do `JWJOPAOL` (a denúncia chega à caixa da equipe): a denúncia já enfileira `{tipo, ocorrencia_id}` na fila `email`, e ninguém consome |
-| `5bPJvMIo` Monitoramento e alertas | **Infra**: depende de `ZqmkOaHn` (ambientes e segredos), Em andamento com o Cauê |
-| `kT7NhMGV` Endurecimento para produção | **Infra**: depende do ambiente de produção (`frila-prod`, segredos e monitoramento) |
-| `qcVimM84` Aviso de hora excedida | **Design**: os textos saem da planilha de notificações e do cartão de permissões e notificações; a metade iOS abre o turno com o check-out em destaque |
-| `nUpPFCpM` Exportar meus dados | **Design**: alta fidelidade de denúncia, bloqueio, conta suspensa, exportar e excluir conta; a metade da tela é **iOS** |
-| `3zsjXW60` Telemetria do piloto | **Produto**: o plano de métricas e o dicionário de eventos (T-0017); a coleta é **iOS** |
-| `RTmRTHbo` Republicar vaga | o quarto critério é a ação "Publicar de novo" na tela: **iOS** |
-| `ggEzge6h` Filtro de texto | a revisão da lista de termos pela **Júlia** |
-| `7gpPBgTH` Contas de demonstração | o critério 1 é no `frila-dev`, e falta um `SUPABASE_ACCESS_TOKEN` que responda: **infra/credencial** |
-
-Em andamento em 29/09, de Backend: `BsXIZHOw` (suspensão e `contestar_suspensao`) e
-`nspP9YDU` (concorrência além da RN19), com o João Paulo; `zptkprHt` (índice de
-`elegiveis`), com o Matheus, 9/10 critérios e commit local `a656c49` feito **sobre o `main`**
-— vai precisar de rebase na `develop` antes do PR.
+| `7yq1flLG` E-mails transacionais (caixa da Equipe Frila) | **SMTP e provedor de e-mail.** Depende de domínio e provedor SMTP (ver PR #81) para consumo e entrega da fila `email` |
+| `qcVimM84` Aviso de hora excedida | **Design / iOS**: a tela no iOS que abre o turno com check-out em destaque |
+| `nUpPFCpM` Exportar meus dados | **Design / iOS**: opção e tela no app iOS |
+| `3zsjXW60` Telemetria do piloto | **Produto / iOS**: instrumentação e disparo dos eventos definidos em T-0017 no app iOS |
+| `RTmRTHbo` Republicar vaga | **iOS**: ação "Publicar de novo" na tela de Minhas vagas |
+| `ggEzge6h` Filtro de texto | **Produto**: revisão final da lista de termos pela **Júlia** |
+| `7gpPBgTH` Contas de demonstração | **Infra/credencial**: execução remota depende de `SUPABASE_ACCESS_TOKEN` válido |
 
 ## Ambientes
 
@@ -255,34 +219,22 @@ As credenciais estão no `.env` local (fora do git).
 
 ## O quadro
 
-**A lista Revisão tem vinte e dois cartões em 29/09** (eram quinze em 28/09). Entraram os sete do
-Sprint 2 que a `develop` recebeu — `e8XpOZJN`, `k5R4tzjC`, `vUR0Ltkb`, `ee3MT3fH`,
-`x0jkygj0`, `JWJOPAOL` e `9DbPXis7` —, todos com a checklist em zero, esperando quem
-revise. Continuam lá cinco dos seis de 26 e 27/09 (`36fU0CEO`, `7XS6MQGg`, `wpNabtCO`, `IYAb8v1i`
-e `OrS9gEfU`), os quatro do Matheus de antes e seis de Infra e iOS.
+Em 03/10, o quadro do projeto reflete a integração de 56 PRs na `develop`: a lista Revisão antiga foi amplamente saneada, com a conclusão de todos os cartões do Sprint 2.
 
-Fecharam desde 28/09: `yClUqOpU` (retenção de 15 dias, 3/3), `NDx7TJ4d` (turnos não verificados, 5/5, com o #48), `CvopSHh6`
-(`configuracao_do_app`, com o #31), `nNUtbriv` (`bancada-sync`, com o #34) e `IoQPWtWs`
-(`enviar-push`, com o #53).
+**Situação dos PRs e cartões em 03/10:**
 
-**O `8zLfn0mt` (decisões de produto) tem as decisões registradas em comentário de 28/09**,
-aprovadas pelo João Paulo item a item — no-show vira falta automática, despacho único por
-rodada, suspensão cancela em cascata, checkout sem teto de 200 m, reaberta aceita candidato
-até 1 h antes do fim —, mas a checklist continua 0/9. A Modelagem e o Backlog v1.2.1 ainda
-não foram atualizados com elas.
+- **Em revisão:**
+  - **PR #137** (`kT7NhMGV` / B10): `contato_do_turno` contra conta anonimizada, em revisão pela Faísca.
+  - **PR #138** (`pVvubZJy`): reenvio de contestação de suspensão após resolução da anterior.
+  - **PR #128** (`1DLcZWsf`): varredura de restrições de unicidade no mutador, aberto por Matheus Silva (`silvaaszx`).
+  - **PR #102**: documentação do estado em 03/10, em revisão pela Bigorna.
+- **Aguardando credenciais de ambiente:**
+  - **PR #89**: entrega contínua `develop` -> `frila-dev`.
+  - **PR #81**: SMTP próprio do `frila-dev`.
+- **Obsoleto / a fechar:**
+  - **PR #127**: espelho 0.2.32 (superado pela 0.2.33 diretamente integrada na `develop`).
 
-**Os quatro cartões do Matheus que continuam em Revisão, e por quê:**
-
-| Cartão | O que falta, e de quem é |
-|---|---|
-| `RNOfNVVU` Portão de colisão de versão | O #37 **entrou na `main`** em 28/09 às 16h15 e o portão roda: *"As 55 migrações têm versões distintas"* (29/09). O critério que sobra é o caminho verde do `demonstracao-remoto.sh`, que depende do token de conta. O autoteste do portão está no #56, aberto contra a `main` |
-| `7gpPBgTH` Contas de demonstração | Três dos quatro critérios medidos e as notas anexadas. O critério 1 diz "no `frila-dev`", e lá a porta ainda não existe. O caminho está pronto num comando — `./scripts/demonstracao-remoto.sh dev` faz os segredos, o deploy e a medição —, e falta só um `SUPABASE_ACCESS_TOKEN` que responda. **Bloqueio de credencial, e não de navegador** |
-| `RTmRTHbo` Republicar vaga | Os três critérios de backend marcados, inclusive republicar a partir de vaga `encerrada`, medido por HTTP. O quarto é de ponta a ponta e depende da tela: a ação "Publicar de novo" em Minhas vagas. **É iOS** |
-| `ggEzge6h` Filtro de texto | Os três critérios marcados, com a recusa e o falso positivo medidos por HTTP. O quarto item é a revisão da lista de termos pela Júlia. **É da Júlia** |
-
-**Não há cartão de Backend livre e desbloqueado em 29/09** que não dependa de SMTP, infra,
-iOS ou design — ver *Cartões bloqueados*. Antes de escolher trabalho novo, varrer o quadro
-de novo: ele mudou em uma noite mais do que em três dias.
+Os quatro cartões de Matheus do início do projeto (`RNOfNVVU`, `7gpPBgTH`, `RTmRTHbo`, `ggEzge6h`) têm todo o backend entregue e testado; apenas as pontas remotas ou externas (credencial de demonstração, telas no app iOS e aprovação de lista de termos) aguardam desfecho externo.
 
 `./scripts/trello.sh` faz tudo: `ver`, `lista`, `pegar`, `revisao`, `concluir`, `comentar`.
 
@@ -328,7 +280,7 @@ basta quando o `gh` tem acesso ao `frila-docs`.
 
 > **Remedido em 03/10.** Os números desta seção foram extraídos diretamente do banco de desenvolvimento com a `develop` em `4f1a6c5`:
 
-Recontado em 03/10: **22 tabelas** em `public` (adicionadas `entrada_demonstracao` e `evento_app`), **107** restrições
+Recontado em 03/10: **22 tabelas** em `public` (adicionadas `entrada_demonstracao`, `evento_app` e `pedido_de_exclusao`), **107** restrições
 `CHECK`, 1 de exclusão (RN21), **21** políticas de leitura/RLS, **127** auxiliares no schema
 `privado`, e nenhuma política de escrita em lugar nenhum — toda escrita passa por função
 `security definer`.
@@ -336,8 +288,8 @@ Recontado em 03/10: **22 tabelas** em `public` (adicionadas `entrada_demonstraca
 ```
 avaliacao · bloqueio · candidatura · despacho · disponibilidade · dispositivo
 entrada_demonstracao · equipe_confianca · estabelecimento · evento · evento_app
-funcao · membro_estabelecimento · notificacao · ocorrencia · posicao · profissional
-profissional_funcao · turno · usuario · vaga
+funcao · membro_estabelecimento · notificacao · ocorrencia · pedido_de_exclusao
+posicao · profissional · profissional_funcao · turno · usuario · vaga
 ```
 
 **Quarenta e duas RPCs expostas a `authenticated`**, contadas com `has_function_privilege`:
@@ -423,7 +375,7 @@ gatilho de RN07 usava `now()` direto e foi corrigido. Nenhuma RPC nova deve usar
 
 ## Os portões
 
-### Três portões nasceram em 30/09 e 01/10
+### Quatro portões nasceram entre 30/09 e 03/10
 
 **Plano do caminho quente com o volume do DF** (`scripts/planos-com-carga.sh`, PR #67,
 cartão `IYAb8v1i`). Job próprio na CI, fora do job do banco — a carga se recusa a rodar
@@ -459,33 +411,31 @@ Permite alterar o corpo de uma RPC existente sem exigir bump de versão de contr
 mediante marca explícita `-- contrato: corpo-sem-mudanca-de-superficie <rpc> <versao>` conferida contra a versão da base.
 
 
-> **A bateria inteira não foi remedida em 29/09.** Cada PR da `develop` passou nos quatro jobs
-> da CI no próprio PR, mas a CI não roda em push na `develop` (ver o topo), e ninguém mediu a
-> soma. Em 29/09, sobre a `develop` em `35728b3`, rodaram só dois portões que não mexem no
-> banco: `migracoes-sem-colisao.sh` (*"As 55 migrações têm versões distintas"*) e
-> `contrato-em-dia.sh` (*"Espelho em dia"*, 0.2.20). A tabela abaixo é de 28/09.
+> **Medição consolidada da bateria em 03/10.** Na `develop` em `4f1a6c5`, todos os portões
+> locais e os **seis jobs da CI** (`banco`, `contrato-acompanha`, `migracoes`, `planos`, `deno`, `contrato`)
+> rodam verdes:
 
-**Medidos em 28/09**, no branch `s0/migracoes-sem-colisao` já com o `main` fundido, com o
-segredo do agendador e `db reset` antes: **treze portões, treze verdes.**
-
-| Comando | O que garante | Medida |
+| Comando | O que garante | Medida em 03/10 |
 |---|---|---|
-| `supabase test db` | pgTAP | **1010** asserções em **38** arquivos, em 2 a 3 s na máquina |
-| `./scripts/mutacao.sh` | cada regra morre sem teste | **90** cobertas, 0 sem cobertura, 0 não medidas · 294 s |
+| `supabase test db` | pgTAP | **82** arquivos, **2351** asserções verdes (em ~4 s na máquina) |
+| `./scripts/mutacao.sh` | cada regra morre sem teste | **90** regras cobertas na `develop` · 0 sem cobertura |
+| `deno test --allow-all --no-check` | Edge Functions em Deno | **171** testes verdes, 0 falhas |
 | `./scripts/ciclo-completo.sh` | o fluxo por HTTP, com status **e** código | verde até as recusas da presença e o perfil público |
-| `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | **14** conferências: a porta, o que ela recusa, os dados semeados, **o ciclo da presença inteiro** e o teto de tentativas |
+| `./scripts/demonstracao.sh` | a porta da revisão da App Store, por HTTP | 14 conferências: porta, recusas, dados semeados e ciclo |
 | `./scripts/corrida-candidatar.sh` | RN19 sob concorrência | 20 conexões, 2 posições, 2 confirmações |
 | `./scripts/corrida-cadastrar-estabelecimento.sh` | o mesmo dono com dois cadastros no ar | verde |
-| `./scripts/contrato-acompanha-o-codigo.sh` | PR que mexe em `public` leva o contrato | desde o #44 isenta RPC já declarada, e enxerga função com comentário entre `function` e o nome |
-| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | **verde**: *"Espelho em dia com FrilaApp/frila-docs"*, 0.2.18 nos dois lados. Desde 25/09 lê o `.env` e sai **2** quando não tem token, em vez de 0 |
+| `./scripts/corrida-ciclo.sh` | 10 cenários de concorrência com temporização robustecida e travas resolvidas (#101, #134) | 50 de 50 rodadas verdes em todos os 10 cenários |
+| `./scripts/contrato-acompanha-o-codigo.sh origin/develop` | PR que mexe em `public` leva o contrato | isenta RPC declarada ou marcada com corpo sem mudança de superfície (#136) |
+| `./scripts/contrato-em-dia.sh` | o espelho não divergiu do original | **verde**: contrato 0.2.33 idêntico nos dois lados (`ba3665c0…`) |
 | `./scripts/lint-conhecido.sh` | `plpgsql_check` | sem achado novo |
 | `./scripts/relogio-do-produto.sh` | nenhuma função usa `now()` direto | só `privado.agora()` |
-| `./scripts/contrato-responde.sh` | a resposta de cada RPC casa com o schema | **24** corpos e 7 envelopes |
-| `./scripts/advisor-conhecido.sh` | advisor do Supabase | **não roda**: token de conta responde 401 |
+| `./scripts/contrato-responde.sh` | a resposta de cada RPC casa com o schema | **48** operações 200 indexadas, **44** validadas com corpo real, 11 envelopes |
+| `./scripts/advisor-conhecido.sh` | advisor do Supabase | exige token de conta |
 | `./scripts/migracoes-imutaveis.sh` | nenhuma migração aplicada foi editada | verde |
-| `./scripts/migracoes-sem-colisao.sh` | duas migrações não têm a mesma versão | as **55** versões distintas em 29/09 · entrou com o #37 — nasceu depois de a colisão matar um `db reset` de verdade |
+| `./scripts/migracoes-sem-colisao.sh` | duas migrações não têm a mesma versão | as **92** versões distintas na `develop` em 03/10 |
+| `./scripts/planos-com-carga.sh` | caminho quente sob volume sintético do DF | verde na CI (p95 elegíveis 27 ms, vagas 28 ms) |
 
-Todos rodam na CI menos o advisor, que exige token de conta. O #52 acrescentou
+Todos rodam na CI nos seis jobs dedicados, exceto o advisor (que exige token de conta). O #52 acrescentou
 `./scripts/corrida-teto.sh`, para o teto da RN23 sob concorrência.
 
 **Antes de rodar a bateria à mão, o segredo do agendador**, ou dois destes saem vermelhos por
@@ -571,8 +521,8 @@ E mais estas:
   o que o contrato descreve, então é superconjunto e não quebra cliente nenhum. **Quem
   precisa mudar é o contrato**, num PR do `FrilaApp/frila-docs` — e o espelho daqui só
   pode acompanhar depois, porque desde 24/09 o portão compara com o original de verdade.
-- **`public.entrada_demonstracao` é a vigésima tabela de `public`**, e não está na
-  Modelagem. Não é tabela do produto: guarda as tentativas contra o código fixo da
+- **`public.entrada_demonstracao` (junto com `evento_app` e `pedido_de_exclusao`) não está na
+  Modelagem.** Não é tabela do produto: guarda as tentativas contra o código fixo da
   revisão. RLS ligada e nenhuma política, como `pgmq.q_despacho`; quem escreve é a Edge
   Function pela `service_role`.
 - **`cenarios.sql` deixa as colunas de token do GoTrue em NULL**, e com NULL o
@@ -596,9 +546,8 @@ E mais estas:
   a cobertura do mutador para restrições e índices de unicidade.
 - **O check-out é recusado depois do fim previsto.** `privado.exigir_janela` recusa
   `registrado_em > fim` com `fora_da_janela`: bater o ponto às 04:05 num turno que termina
-  às 04:00 não entra. Medido em 25/09 ao escrever o `190_ciclo_no_banco.sql`. Não é bug
-  hoje — o aviso de hora excedida é cartão do Sprint 2 —, mas quando ele existir, é esta
-  janela que precisa mudar.
+  às 04:00 não entra. Não é bug — o aviso de hora excedida (cartão `qcVimM84`, PR #79)
+  roda via cron a cada 5 minutos alertando profissional e contratante sobre turnos encerrados sem check-out.
 - **A janela não se aplica à conta de revisão da App Store**, desde a migração
   `20260925230000_janela_da_demonstracao`. O turno semeado para a revisão começa dois dias
   depois de o seed rodar, e a janela abre 60 minutos antes do início: sete horas que abrem
@@ -610,20 +559,17 @@ E mais estas:
   continua nascendo `manual` e `pendente`. O par de controle está no
   `230_janela_da_demonstracao.sql`, com a conta real recebendo 422 no mesmo relógio.
 - **`vagas_abertas` não filtra por data futura.** O filtro é `estado = 'publicada'` e nada
-  mais: vaga cujo início já passou continua na lista de todo mundo. Medido em 25/09. Para
-  a revisão isso é bom — a vaga semeada não desaparece e a tela nunca nasce vazia (4.2) —,
-  mas é uma vaga vencida visível para o produto, e nada hoje muda o estado dela: quem
-  encerra vaga vencida é o motor do Sprint 2. Não tem cartão próprio.
+  mais: o encerramento de vagas e turnos vencidos é realizado periodicamente pelo agendador
+  (`fechar_turnos_e_vagas`, a cada 5 minutos).
 - **`vagas_abertas` e `meus_turnos` devolvem array, e não objeto com chave.** Custou duas
   rodadas vermelhas ao escrever o teste de ciclo. O contrato descreve as duas como lista;
   quem escrever teste novo não deve procurar `->'vagas'` nem `->'turnos'`.
 - **`republicar_vaga` não copia `evento_id`.** `publicar_vaga` não recebe esse campo, e
   nenhuma vaga publicada pelo app tem evento hoje. Quando o evento existir, ele entra nas
   duas de uma vez. Registrado na 0.2.13.
-- **Dezoito operações do contrato ainda não têm implementação**, e o
-  `contrato-responde.sh` as lista a cada execução. Não é dívida escondida: é o Sprint 2 em
-  diante. O número é o que impede alguém de ler "portão verde" como "o contrato inteiro
-  está no ar".
+- **Apenas quatro operações do contrato não têm RPC dedicada no backend**, e o
+  `contrato-responde.sh` as lista em seção separada: três de autenticação (`confirmarCodigo`,
+  `entrarDemonstracao` e `renovarSessao`, emitidas pelo Supabase Auth) e uma de leitura direta de tabela (`listarFuncoes`, servida pelo PostgREST). Todas as demais 44 operações com corpo 200 estão implementadas no backend e validadas contra o schema do contrato.
 - **A retenção não pode esvaziar `ocorrencia.motivo`.** `ocorrencia_motivo_check` exige
   `length(btrim(motivo)) > 0`, então o job do `yClUqOpU` tem de **substituir** o relato por
   um marcador, e não apagá-lo. Medido em 25/09: um `update … set motivo = ''` passa pela
@@ -641,8 +587,8 @@ E mais estas:
   Contrato 0.2.7.
 - **A posição cancelada não volta para `aberta`**: a vaga ganha posição nova. Contrato
   0.2.11.
-- **`turno.checkout_distancia_m` sem o teto de 200 m** que a Modelagem traz. Vai à decisão
-  no cartão `S0 · Produto · Decisões de produto que travam o código`, prazo 02/10.
+- **`turno.checkout_distancia_m` sem o teto de 200 m** que a Modelagem trazia, ratificado
+  pela decisão de produto no cartão `8zLfn0mt` (a conferência de proximidade física restringe o check-in; o check-out registra a distância para telemetria sem teto impeditivo de 200 m).
 - **`vaga.posicoes` com teto de 200**, que vem do contrato e não da Modelagem.
 - **`privado.bloqueado_com_estabelecimento` faltava `m.usuario_id <> conta`.** Corrigido
   aqui; a Modelagem tem a mesma expressão errada.
@@ -685,16 +631,15 @@ E mais estas:
    saem e o site `bancada-buu.pages.dev` não republica.
 4. **Revisão da Júlia** na lista de termos bloqueados. Sem ela o `ggEzge6h` não fecha.
 5. **Aplicar as migrações novas no `frila-dev`, de novo.** Resolvido em 24/09 com as 29;
-   **reaberto em 29/09**: a `develop` tem 55, e cada cartão de Sprint 2 em Revisão deixou
-   um critério para conferir lá depois do deploy (ver *Pendências no `frila-dev`*). Depende
-   da pendência 1, e mais o `functions deploy` de `enviar-push`.
-6. **Decidir as operações do contrato sem cartão no quadro** — `renovarSessao`,
-   `criteriosDeNotificacao`, `pedirRevisaoDespacho`, `equipeDeConfianca`,
-   `incluirNaEquipe`, `removerDaEquipe`, `listarFuncoes`, `candidatosDaVaga`,
-   `escolherCandidato`, `exportarTurnos`. Contrato a mais ou cartão faltando.
-7. **Avisar o Cauê** que o projeto Supabase que ele criou em 22/09 virou o `frila-dev`, e
-   que a mensagem da fila de despacho traz `vaga_id` e `publicada_em` — é o que o motor
-   do Sprint 2 vai consumir.
+   **reaberto**: a `develop` tem 92 migrações em 03/10 (63 a mais que as 29 do `frila-dev`),
+   e os critérios de conferência pós-deploy estão descritos em *Pendências no `frila-dev`*.
+   Depende da pendência 1, e mais o `functions deploy` de `enviar-push`.
+6. ~~**Decidir as operações do contrato sem cartão no quadro.**~~ **Resolvido:** as operações
+   de negócio (`criteriosDeNotificacao`, `pedirRevisaoDespacho`, `equipeDeConfianca`,
+   `incluirNaEquipe`, `removerDaEquipe`, `candidatosDaVaga`, `escolherCandidato`, `exportarTurnos`)
+   foram todas implementadas na `develop`. Restam apenas `renovarSessao` (tratada pelo Supabase Auth)
+   e `listarFuncoes` (exposta diretamente pelo PostgREST).
+7. ~~**Avisar o Cauê sobre o projeto `frila-dev`.**~~ Alinhado no início da Sprint 2 com a fila de despacho (`vaga_id` e `publicada_em`).
 8. ~~**Billing do Actions na organização `FrilaApp`.**~~ **Resolvido** entre 25/09 e 27/09:
    as execuções de 27/09 saem `success`. Não medi o que foi feito. Ver o bloco no topo.
 9. **O segredo da demonstração no `frila-dev` e no `frila-prod`**, e o `functions deploy` da
@@ -710,30 +655,27 @@ E mais estas:
 
 ## Por onde continuar
 
-**O passo imediato é de revisão, não de código:** sete cartões de Sprint 2 estão em Revisão
-com a checklist em zero (`e8XpOZJN`, `k5R4tzjC`, `vUR0Ltkb`, `ee3MT3fH`, `x0jkygj0`,
-`JWJOPAOL`, `9DbPXis7`). Quem revisa marca item por item, com o arquivo pgTAP que prova cada
-um; o que é do `frila-dev` fica desmarcado com o motivo no cartão.
-
-Depois disso, em ordem:
+**O passo imediato é a revisão dos PRs abertos contra a `develop`**, garantindo que nada
+avance sem bateria verde e total aderência ao contrato 0.2.33:
 
 1. **Revisar e mergear o PR #137 (B10)**: `feat(contato): fecha contato_do_turno contra conta anonimizada (cartão kT7NhMGV)`,
    aberto contra a `develop`, cobrindo a recusa de conta anonimizada conforme o contrato 0.2.33. Revisor: Faísca.
-2. **Revisar o PR #128 (`mutacao-varre-unique`)**: estende o mutador para restrições e índices únicos (cartão `1DLcZWsf`).
-3. **Decidir o encerramento do PR #127**: o espelho 0.2.32 tornou-se obsoleto com a entrada da 0.2.33 diretamente na `develop`.
-4. **Entrega contínua e SMTP no `frila-dev`**: avançar nos PRs #89 e #81 assim que as credenciais estiverem disponíveis.
-5. **O `frila-dev`**, quando houver token que responda: aplicar as 92 migrações, `functions deploy enviar-push`,
+2. **Revisar o PR #138**: `fix(suspensao): permite reenvio de contestacao apos resolucao da anterior (cartão pVvubZJy)`.
+3. **Revisar o PR #128 (`mutacao-varre-unique`)**: estende o mutador para restrições e índices únicos (cartão `1DLcZWsf`), aberto por Matheus Silva (`silvaaszx`).
+4. **Decidir o encerramento do PR #127**: o espelho 0.2.32 tornou-se obsoleto com a entrada da 0.2.33 diretamente na `develop`.
+5. **Entrega contínua e SMTP no `frila-dev`**: avançar nos PRs #89 e #81 assim que as credenciais estiverem disponíveis.
+6. **O `frila-dev`**, quando houver token que responda: aplicar as 92 migrações, `functions deploy enviar-push`,
    e conferir os treze jobs em `cron.job` — é o que falta para os critérios remotos da tabela *Pendências no `frila-dev`*.
-6. **Os bloqueados continuam bloqueados** — `7yq1flLG` (SMTP), `5bPJvMIo` e `kT7NhMGV`
-   (infra), `qcVimM84` e `nUpPFCpM` (design e iOS), `3zsjXW60` (plano de métricas),
-   `RTmRTHbo` (iOS), `ggEzge6h` (Júlia), `7gpPBgTH` (token). Nenhum avança aqui.
-7. **O molde de fechamento de cartão**, que vale repetir e não reinventar: um item da
+7. **Os bloqueados continuam dependentes de fatores externos** — `7yq1flLG` (SMTP),
+   `qcVimM84` e `nUpPFCpM` (design e telas iOS), `3zsjXW60` (instrumentação telemetria no iOS),
+   `RTmRTHbo` (ação de republicar no iOS), `ggEzge6h` (revisão de termos pela Júlia), `7gpPBgTH` (token Supabase remoto).
+8. **O molde de fechamento de cartão**, que vale repetir e não reinventar: um item da
    checklist por asserção nomeada, com o arquivo; e medição por HTTP quando o critério fala em
    status, porque o pgTAP alcança `sqlstate` e `code` e não o status. Está nos comentários do
    `6mdX80SC`, `AvockvHx`, `0uROtsRX`, `RTmRTHbo`, `ggEzge6h` e `RNOfNVVU`.
-8. Toda RPC nova nasce com quatro coisas, e nenhuma é negociável: o filtro de texto nos
+9. Toda RPC nova nasce com quatro coisas, e nenhuma é negociável: o filtro de texto nos
    campos livres, a recusa correspondente no `ciclo-completo.sh`, a linha no
    `openapi.yaml` com a versão subindo (ou marcação explícita de corpo sem mudança de superfície,
    conforme portão do PR #136), e a asserção de mutação que morre quando a regra some.
-9. **E antes de rodar a bateria à mão: o segredo do agendador.** Ver a armadilha na seção *O
-   que existe no banco*. Sem ele, dois portões saem vermelhos por motivo que não é código.
+10. **E antes de rodar a bateria à mão: o segredo do agendador.** Ver a armadilha na seção *O
+    que existe no banco*. Sem ele, dois portões saem vermelhos por motivo que não é código.
