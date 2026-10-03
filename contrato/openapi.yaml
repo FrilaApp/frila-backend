@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.32
+  version: 0.2.33
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -95,6 +95,57 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.33, de 03/10/2026.** `MeusDados` passa a declarar as sete coleções que faltavam
+    para a exportação cobrir todo dado do titular (cartão nUpPFCpM, IrtkCWDz, RF25, UC16, LGPD art. 18),
+    e `contato_do_turno` passa a exigir conta ativa (B10, RF25, RNF08). Sete tabelas guardam dado
+    pessoal e não tinham lugar no schema: `candidaturas`, `ocorrencias`, `bloqueios`, `notificacoes`,
+    `despachos`, `equipe_confianca` e `pedido_de_exclusao`.
+
+    **Os sete são obrigatórios.** Eles nasceram opcionais nesta mudança, enquanto
+    `privado.meus_dados` devolvia só as nove chaves das versões anteriores, e passam a `required`
+    porque a implementação os devolve: medido na migração
+    `20261003060000_meus_dados_sete_colecoes.sql`, a função monta as dezesseis chaves, e o teste
+    `440_exportar_meus_dados` exige cada uma. Um campo opcional que o servidor sempre manda é um
+    campo que o cliente trata com um caminho de nulo que nunca acontece, e os três clientes geram
+    o modelo deste arquivo.
+
+    **Esta versão e a implementação entram juntas.** O contrato que exige sete campos que o backend
+    publicado não manda reprova o portão do contrato para todo mundo, e não só para quem mexeu na
+    exportação.
+
+    - **`candidaturas`**: array de `Candidatura`, o mesmo objeto de `/rpc/minhas_candidaturas`.
+      Inclui as retiradas, recusadas e expiradas — o estado final faz parte do registro. Ganha
+      `turno_id` junto (da 0.2.32).
+    - **`ocorrencias`**: os registros em que o titular é autor ou alvo (denúncia, contestação,
+      revisão de despacho, atendimento e suspensão). `motivo` vem só quando ele é o autor, ou
+      quando o tipo é `suspensao` — o motivo é da Equipe Frila e ele já o lê em
+      `/rpc/situacao_da_conta`. Quando ele é o alvo de uma denúncia, o texto foi escrito por
+      outra pessoa, e devolvê-lo aqui abriria pela porta da portabilidade o que RF26 e RN07
+      fecham. Sem `resultado`: o que o titular precisa saber do próprio caso é se ele foi
+      resolvido, e `resolvido_em` diz.
+    - **`bloqueios`**: quem o titular bloqueou (RF26), no mesmo par `alvo_tipo` + `alvo_id` que
+      `/rpc/bloquear` devolve, e não o id de conta da outra parte. Só os que ele criou: saber que
+      foi bloqueado é exatamente o que RF26 esconde.
+    - **`notificacoes`**: os avisos endereçados à conta do titular (0.2.14). Sem a mecânica de
+      entrega: nada de token de aparelho, contagem de tentativas ou erro devolvido pelo provedor
+      de push (RN15).
+    - **`despachos`**: o registro de ter sido considerado para uma vaga (RF18, RN05). Uma linha por
+      vaga, com `reaberta`.
+    - **`equipe_confianca`**: as casas que puseram o titular na equipe de confiança (RF18). Só o
+      lado do profissional: a equipe das casas que o titular administra é dado dos profissionais
+      dela, não dele.
+    - **`pedido_de_exclusao`**: o pedido de exclusão de conta, quando existe (RF25), ou `null`.
+    - **`TipoNotificacao`**: enum com os 18 tipos de aviso, para gerar o modelo de `notificacoes`.
+    - **`contato_do_turno` exige conta ativa (B10, RF25, RNF08):** token de conta encerrada ou
+      anonimizada não acessa telefones nem dados de contato da contraparte, respondendo
+      `401 nao_autenticado` (o mesmo status já declarado e documentado na tabela de recusas). A checagem
+      roda no início da função antes de qualquer leitura no banco, impedindo vazamento de dados
+      pessoais por JWTs emitidos antes da exclusão.
+    - **`MeusDados.turnos`** usa o mesmo `Turno` e já traz `estado`, `avaliacao` (0.2.31) e
+      `cancelamento` (0.2.32) incorporados.
+
+    ---
 
     **Versão 0.2.32, de 02/10/2026.** Três decisões de produto de 02/10/2026: o profissional passa
     a ver por que o turno foi cancelado e se contou falta, a candidatura diz qual turno nasceu
@@ -2105,10 +2156,13 @@ paths:
         a execução do contrato (LGPD, art. 7º, V). Depois do prazo, `403 contato_expirado`, para os
         dois lados; o sétimo dia conta inteiro.
 
+        Token de conta encerrada/anonimizada não lê contatos (RF25, RNF08): a verificação de conta
+        ativa roda antes de qualquer leitura e recusa com `401 nao_autenticado`.
+
         Todo o resto é `404 nao_encontrado`: antes da confirmação, para quem não é nenhum dos dois
         lados, e quando há bloqueio entre as partes. Um `403` confirmaria que aquele turno existe a
         quem não deveria saber.
-      x-requisitos: [RF11, RN10]
+      x-requisitos: [RF11, RF25, RN10, RNF08]
       parameters:
         - name: turno_id
           in: query
@@ -3237,6 +3291,17 @@ components:
         que ele já tem na tela.
       type: string
       enum: [profissional, estabelecimento]
+    TipoNotificacao:
+      description: |
+        Os avisos que o sistema endereça a uma conta. Descritos em prosa desde a 0.2.14 (e mais
+        dois na 0.2.24), declarados como enum a partir da 0.2.33 porque `MeusDados.notificacoes`
+        os devolve e o cliente precisa gerar o modelo. Só `vaga` e `vagas_agrupadas` contam para o
+        teto da RN23.
+      type: string
+      enum: [vaga, vagas_agrupadas, vaga_sem_elegiveis, confirmacao, lembrete_24h, lembrete_3h,
+             inicio_sem_checkin, atraso_15min, fim_sem_checkout, vaga_vazia, checkin,
+             checkin_manual_pendente, cancelamento, avaliacao_disponivel, suspensao, reativacao,
+             candidatura_recusada, selecao_encerrada]
     EventoDeTelemetria:
       description: |
         Dicionário fechado. Acrescentar evento é mudança de contrato, com versão subindo — é o
@@ -4318,9 +4383,16 @@ components:
 
     MeusDados:
       type: object
-      required: [gerado_em, conta, turnos, avaliacoes_dadas, avaliacoes_recebidas, dispositivos]
+      required: [gerado_em, conta, turnos, avaliacoes_dadas, avaliacoes_recebidas, dispositivos,
+                 candidaturas, ocorrencias, bloqueios, notificacoes, despachos, equipe_confianca,
+                 pedido_de_exclusao]
       description: |
         Portabilidade da LGPD: o que o titular forneceu e o que o sistema registrou sobre ele.
+
+        As sete coleções acrescentadas na 0.2.33 — `candidaturas`, `ocorrencias`, `bloqueios`,
+        `notificacoes`, `despachos`, `equipe_confianca` e `pedido_de_exclusao` — são obrigatórias
+        como as demais: coleção vazia é `[]`, e `pedido_de_exclusao` é `null` quando não há pedido.
+        Nenhuma delas vem ausente.
       properties:
         gerado_em:
           $ref: '#/components/schemas/Instante'
@@ -4366,6 +4438,168 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Dispositivo'
+        candidaturas:
+          description: |
+            As candidaturas do titular, no mesmo objeto que `/rpc/minhas_candidaturas` devolve — e
+            pelo mesmo caminho, para não existir uma segunda definição de candidatura.
+
+            Entram todas, inclusive as retiradas, recusadas e expiradas: o registro de ter se
+            candidatado é dado do titular, e o estado final faz parte dele.
+          type: array
+          items:
+            $ref: '#/components/schemas/Candidatura'
+        ocorrencias:
+          description: |
+            Os registros em que o titular saiu do curso normal, de um lado ou do outro: denúncia
+            que ele abriu, contestação de suspensão, pedido de revisão de despacho, atendimento de
+            suporte, suspensão aplicada a ele e cancelamento registrado no nome dele. `papel` diz
+            de que lado ele está em cada um.
+
+            **`motivo` vem só quando o titular é o autor**, ou quando o tipo é `suspensao` — nesse
+            caso o motivo é da Equipe Frila e ele já o lê em `/rpc/situacao_da_conta`. Quando ele é
+            o alvo de uma denúncia, o texto foi escrito por outra pessoa, e devolvê-lo aqui abriria
+            pela porta da portabilidade o que RF26 e RN07 fecham: quem denuncia precisa poder
+            denunciar sem ser identificado.
+
+            **Sem `resultado`.** O desfecho que a Equipe Frila escreve fala das duas partes; o que
+            o titular precisa saber do próprio caso é se ele foi resolvido, e `resolvido_em` diz.
+          type: array
+          items:
+            type: object
+            required: [id, tipo, papel, criada_em]
+            properties:
+              id:
+                $ref: '#/components/schemas/Uuid'
+              tipo:
+                type: string
+                enum: [cancelamento, suspensao, contestacao, suporte, denuncia, revisao_despacho]
+              papel:
+                type: string
+                enum: [autor, alvo]
+                description: |
+                  `autor` quando o titular abriu o registro, `alvo` quando ele é a parte sobre
+                  quem o registro foi aberto.
+              motivo:
+                oneOf:
+                  - type: string
+                  - type: 'null'
+                description: Nulo quando o titular é o alvo e o tipo não é `suspensao`.
+              criada_em:
+                $ref: '#/components/schemas/Instante'
+              resolvido_em:
+                oneOf:
+                  - $ref: '#/components/schemas/Instante'
+                  - type: 'null'
+        bloqueios:
+          description: |
+            Quem o titular bloqueou (RF26), no mesmo par `alvo_tipo` + `alvo_id` que `/rpc/bloquear`
+            devolve, e não o id de conta da outra parte.
+
+            **Só os que ele criou.** Os bloqueios feitos contra ele não entram: saber que foi
+            bloqueado é exatamente o que RF26 esconde, e uma exportação que contasse isso desfaria
+            a proteção de todos os bloqueios já existentes.
+          type: array
+          items:
+            $ref: '#/components/schemas/Bloqueio'
+        notificacoes:
+          description: |
+            Os avisos endereçados à conta do titular (0.2.14): o que o sistema mandou para ele, de
+            que tipo, sobre o que e quando.
+
+            **Sem a mecânica de entrega.** Nada de token de aparelho, contagem de tentativas ou
+            erro devolvido pelo provedor de push — é credencial e diagnóstico de infraestrutura,
+            não dado do titular, pela mesma razão que `Dispositivo` não leva o token (RN15).
+          type: array
+          items:
+            type: object
+            required: [tipo, referencia_id, payload, enviada_em]
+            properties:
+              tipo:
+                $ref: '#/components/schemas/TipoNotificacao'
+              referencia_id:
+                $ref: '#/components/schemas/Uuid'
+                description: A vaga, posição, turno ou estabelecimento de que o aviso trata.
+              payload:
+                type: object
+                description: |
+                  O corpo que o toque no push carrega: só o tipo e ids (RN15). Chaves possíveis:
+                  `vaga_id`, `posicao_id`, `turno_id`, `estabelecimento_id` e, no cancelamento,
+                  `reaberta` (booleano). Nunca telefone, e-mail, nome ou coordenada.
+                additionalProperties: true
+              enviada_em:
+                $ref: '#/components/schemas/Instante'
+              entregue_em:
+                oneOf:
+                  - $ref: '#/components/schemas/Instante'
+                  - type: 'null'
+                description: Nulo enquanto o push não foi confirmado pelo aparelho, ou se falhou.
+        despachos:
+          description: |
+            O registro de ter sido considerado para uma vaga (RF18, RN05): é o que sustenta a tela
+            "Por que recebo vagas" e o pedido em `/rpc/pedir_revisao_despacho`.
+
+            Uma linha por vaga, mesmo quando o aviso saiu agrupado com outras ou ainda não saiu: o
+            despacho diz que o titular foi considerado, e a notificação diz o que chegou até ele.
+            É por isso que os dois são coleções separadas aqui, como são duas tabelas no banco.
+          type: array
+          items:
+            type: object
+            required: [vaga_id, criado_em, reaberta]
+            properties:
+              vaga_id:
+                $ref: '#/components/schemas/Uuid'
+              criado_em:
+                $ref: '#/components/schemas/Instante'
+              reaberta:
+                type: boolean
+                description: O despacho nasceu da reabertura de uma posição por atraso (D06).
+        equipe_confianca:
+          description: |
+            As casas que puseram o titular na equipe de confiança (RF18), com o instante em que
+            isso aconteceu. Estar na equipe não muda a ordem de ninguém (RN06); muda o alcance: a
+            pessoa é avisada das vagas daquela casa mesmo além dos 15 km.
+
+            **Só o lado do profissional.** A equipe das casas que o titular administra é dado dos
+            profissionais dela, e não dele — quem exporta os próprios dados não leva a lista de
+            outras pessoas. Quem administra a casa lê essa equipe em `/rpc/equipe_de_confianca`.
+          type: array
+          items:
+            type: object
+            required: [estabelecimento_id, nome, adicionado_em]
+            properties:
+              estabelecimento_id:
+                $ref: '#/components/schemas/Uuid'
+              nome:
+                type: string
+              adicionado_em:
+                $ref: '#/components/schemas/Instante'
+        pedido_de_exclusao:
+          description: |
+            O pedido de exclusão de conta, quando existe (RF25), ou `null`. É registro de operação,
+            e não cópia de dado: guarda o instante, o estado e quantas vezes o pedido foi repetido.
+
+            Ele aparece na exportação porque sobrevive a uma exclusão que falhou — o pedido é
+            gravado em transação própria, **antes** de a exclusão ser tentada, para não desaparecer
+            junto com ela se ela voltar atrás. É nessa janela que o titular precisa poder ver que o
+            pedido está registrado e pendente, em vez de não ter prova de que pediu.
+          oneOf:
+            - type: object
+              required: [pedido_em, estado, tentativas]
+              properties:
+                pedido_em:
+                  $ref: '#/components/schemas/Instante'
+                estado:
+                  type: string
+                  enum: [pendente, concluido]
+                tentativas:
+                  type: integer
+                  minimum: 1
+                  description: Quantas vezes o pedido foi registrado. Quem repetiu porque a exclusão falhou aparece aqui.
+                concluido_em:
+                  oneOf:
+                    - $ref: '#/components/schemas/Instante'
+                    - type: 'null'
+            - type: 'null'
 
     Dispositivo:
       type: object
