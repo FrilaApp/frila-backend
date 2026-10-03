@@ -1,0 +1,54 @@
+name: Ensaio de restauração
+
+# Base do backup diário (cartão mwdFSEHe, RNF12). Hoje roda só o ENSAIO, contra o banco local
+# que o próprio job sobe: gera o dump, cifra e decifra, restaura num banco descartável,
+# compara a contagem de linhas por tabela com a origem e roda as asserções pgTAP.
+#
+# O que este workflow NÃO faz, de propósito (cartão ainda sem frila-prod, segredos nem
+# storage): ele não toca o frila-dev nem o frila-prod, não usa segredo nenhum e não guarda
+# artefato. O repositório é público e os artefatos de uma execução são legíveis por quem
+# lê o repositório; só vale guardar dump quando ele vier cifrado com chave que está fora
+# daqui. O dump do frila-prod, a chave de cifra e o envio ao storage externo entram quando
+# o frila-prod existir, como passo novo deste workflow, e o critério "sete execuções
+# diárias" do cartão conta a partir desse dia.
+on:
+  schedule:
+    # 04:00 BRT = 07:00 UTC
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ensaio-backup
+  cancel-in-progress: false
+
+jobs:
+  ensaio:
+    name: Ensaio de restauração
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # Mesmo motivo do `ci.yml`: pull anônimo do ghcr.io divide a cota com o Actions inteiro.
+      - name: Autenticar no ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Subir o ambiente local
+        run: supabase start --exclude studio,realtime,storage-api,imgproxy,logflare,vector
+
+      - name: Aplicar as migrações do zero
+        run: supabase db reset
+
+      - name: Autoteste e ensaio de restauração
+        run: ./scripts/teste-ensaio-restauracao.sh

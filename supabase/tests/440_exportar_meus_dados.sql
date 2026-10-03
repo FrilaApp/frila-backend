@@ -17,7 +17,7 @@
 -- avaliações; Zélia (b…01) administra o Bar do Cerrado (c…01).
 
 begin;
-select plan(53);
+select plan(55);
 
 select set_config('frila.agora', '2026-09-29 11:00:00-03', true);
 
@@ -105,6 +105,17 @@ select is(
 select is(
   (select jsonb_typeof(j->'turnos') from d), 'array',
   'turnos é array');
+
+select ok(
+  (select bool_and(t.value ? 'cancelamento')
+     from jsonb_array_elements((select j->'turnos' from d)) t),
+  'turnos exportados contêm o campo cancelamento (0.2.32)');
+
+select is(
+  (select count(*)::int from jsonb_array_elements((select j->'turnos' from d)) t
+    where t ? 'estado' and t ? 'avaliacao'),
+  (select jsonb_array_length(j->'turnos') from d),
+  '0.2.31: todos os turnos exportados contêm estado e avaliacao');
 
 select is(
   (select jsonb_typeof(j->'avaliacoes_dadas') from d), 'array',
@@ -211,12 +222,12 @@ insert into cobertas values
   ('vaga',                   'turnos, em turno.vaga'),
   ('avaliacao',              'avaliacoes_dadas e avaliacoes_recebidas'),
   ('candidatura',            'candidaturas'),
-  ('ocorrencia',             'ocorrencias, com papel e sem resultado'),
-  ('bloqueio',               'bloqueios, só os que o titular criou (RF26)'),
-  ('notificacao',            'notificacoes, sem tentativas nem erro do provedor'),
+  ('ocorrencia',             'ocorrencias'),
+  ('bloqueio',               'bloqueios'),
+  ('notificacao',            'notificacoes'),
   ('despacho',               'despachos'),
-  ('equipe_confianca',       'equipe_confianca, só o lado do profissional'),
-  ('pedido_de_exclusao',     'pedido_de_exclusao, ou null');
+  ('equipe_confianca',       'equipe_confianca'),
+  ('pedido_de_exclusao',     'pedido_de_exclusao');
 
 create temp table fora (t text, motivo text);
 insert into fora values

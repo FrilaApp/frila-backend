@@ -8,9 +8,10 @@
 // 4. Instante real de envio ao FCM gravado em enviada_em e aceita_em medidos no RNF02.
 
 import "./test_setup.ts";
-import { assertEquals, assert, assertMatch } from "jsr:@std/assert@1";
+import { assertEquals, assert, assertMatch, assertRejects } from "jsr:@std/assert@1";
 import {
   processarEnvioPush,
+  carregarContaDeServico,
   titulosECorposPorTipo,
   filtrarDataPayloadFcm,
   calcularProximaTentativa,
@@ -350,7 +351,7 @@ Deno.test("Bloqueio 3: worker não reenvia notificação antes do vencimento de 
         new Response(
           JSON.stringify([
             {
-              id: "n1000000-0000-4000-8000-000000000001",
+              id: "a1000000-0000-4000-8000-000000000001",
               usuario_id: "u1000000-0000-4000-8000-000000000001",
               tipo: "vaga",
               referencia_id: "v1000000-0000-4000-8000-000000000001",
@@ -379,7 +380,7 @@ Deno.test("Bloqueio 3: worker não reenvia notificação antes do vencimento de 
       "Content-Type": "application/json",
       "x-agendador-secret": SEGREDO_TESTE,
     },
-    body: JSON.stringify({ notificacao_id: "n1000000-0000-4000-8000-000000000001" }),
+    body: JSON.stringify({ notificacao_id: "a1000000-0000-4000-8000-000000000001" }),
   });
 
   const res = await processarEnvioPush(req, {
@@ -417,7 +418,7 @@ Deno.test("Bloqueio 3: erro transitório agenda proxima_tentativa_em no banco", 
         new Response(
           JSON.stringify([
             {
-              id: "n3000000-0000-4000-8000-000000000003",
+              id: "a3000000-0000-4000-8000-000000000003",
               usuario_id: "u3000000-0000-4000-8000-000000000003",
               tipo: "vaga",
               referencia_id: "v3000000-0000-4000-8000-000000000003",
@@ -462,7 +463,7 @@ Deno.test("Bloqueio 3: erro transitório agenda proxima_tentativa_em no banco", 
       "Content-Type": "application/json",
       "x-agendador-secret": SEGREDO_TESTE,
     },
-    body: JSON.stringify({ notificacao_id: "n3000000-0000-4000-8000-000000000003" }),
+    body: JSON.stringify({ notificacao_id: "a3000000-0000-4000-8000-000000000003" }),
   });
 
   const res = await processarEnvioPush(req, {
@@ -507,7 +508,7 @@ Deno.test("Bloqueio 4: 200 grava instante real de envio e aceite para medir RNF0
         new Response(
           JSON.stringify([
             {
-              id: "n1000000-0000-4000-8000-000000000001",
+              id: "a1000000-0000-4000-8000-000000000001",
               usuario_id: "u1000000-0000-4000-8000-000000000001",
               tipo: "vaga",
               referencia_id: "v1000000-0000-4000-8000-000000000001",
@@ -555,7 +556,7 @@ Deno.test("Bloqueio 4: 200 grava instante real de envio e aceite para medir RNF0
       "Content-Type": "application/json",
       "x-agendador-secret": SEGREDO_TESTE,
     },
-    body: JSON.stringify({ notificacao_id: "n1000000-0000-4000-8000-000000000001" }),
+    body: JSON.stringify({ notificacao_id: "a1000000-0000-4000-8000-000000000001" }),
   });
 
   const res = await processarEnvioPush(req, {
@@ -606,7 +607,7 @@ Deno.test("Edge Function: 404/410 UNREGISTERED remove o token do aparelho", asyn
         new Response(
           JSON.stringify([
             {
-              id: "n2000000-0000-4000-8000-000000000002",
+              id: "a2000000-0000-4000-8000-000000000002",
               usuario_id: "u2000000-0000-4000-8000-000000000002",
               tipo: "vaga",
               referencia_id: "v2000000-0000-4000-8000-000000000002",
@@ -657,7 +658,7 @@ Deno.test("Edge Function: 404/410 UNREGISTERED remove o token do aparelho", asyn
       "Content-Type": "application/json",
       "x-agendador-secret": SEGREDO_TESTE,
     },
-    body: JSON.stringify({ notificacao_id: "n2000000-0000-4000-8000-000000000002" }),
+    body: JSON.stringify({ notificacao_id: "a2000000-0000-4000-8000-000000000002" }),
   });
 
   const res = await processarEnvioPush(req, {
@@ -703,7 +704,7 @@ Deno.test("Edge Function: não reenvia se início da vaga ou turno já passou", 
         new Response(
           JSON.stringify([
             {
-              id: "n4000000-0000-4000-8000-000000000004",
+              id: "a4000000-0000-4000-8000-000000000004",
               usuario_id: "u4000000-0000-4000-8000-000000000004",
               tipo: "vaga",
               referencia_id: "v4000000-0000-4000-8000-000000000004",
@@ -732,7 +733,7 @@ Deno.test("Edge Function: não reenvia se início da vaga ou turno já passou", 
       "Content-Type": "application/json",
       "x-agendador-secret": SEGREDO_TESTE,
     },
-    body: JSON.stringify({ notificacao_id: "n4000000-0000-4000-8000-000000000004" }),
+    body: JSON.stringify({ notificacao_id: "a4000000-0000-4000-8000-000000000004" }),
   });
 
   const res = await processarEnvioPush(req, {
@@ -1122,18 +1123,18 @@ Deno.test("Ciclo do token: depois da troca de conta, só a conta B recebe push n
   // Estado depois de A e em seguida B registrarem o mesmo token (troca de dono).
   const dispositivos = [{ usuario_id: CONTA_B, token_fcm: TOKEN_COMPARTILHADO }];
   const notificacoes = {
-    "n3000000-0000-4000-8000-00000000000a": CONTA_A,
-    "n3000000-0000-4000-8000-00000000000b": CONTA_B,
+    "a3000000-0000-4000-8000-00000000000a": CONTA_A,
+    "a3000000-0000-4000-8000-00000000000b": CONTA_B,
   };
   const enviados: string[] = [];
   const fetchFn = mockCicloDoToken(dispositivos, notificacoes, enviados);
 
-  const paraA = await enviarNotificacao("n3000000-0000-4000-8000-00000000000a", fetchFn);
+  const paraA = await enviarNotificacao("a3000000-0000-4000-8000-00000000000a", fetchFn);
   assertEquals(paraA.status, "falhou");
   assertEquals(paraA.detalhe, "sem_dispositivo");
   assertEquals(enviados, [], "O push da conta A não pode sair para o aparelho que passou para B");
 
-  const paraB = await enviarNotificacao("n3000000-0000-4000-8000-00000000000b", fetchFn);
+  const paraB = await enviarNotificacao("a3000000-0000-4000-8000-00000000000b", fetchFn);
   assertEquals(paraB.status, "enviada");
   assertEquals(enviados, [TOKEN_COMPARTILHADO]);
 });
@@ -1141,11 +1142,11 @@ Deno.test("Ciclo do token: depois da troca de conta, só a conta B recebe push n
 Deno.test("Ciclo do token: depois de sair da conta, nenhuma notificação sai para o aparelho", async () => {
   // Estado depois de remover_dispositivo: a linha do aparelho não existe mais.
   const dispositivos: Array<{ usuario_id: string; token_fcm: string }> = [];
-  const notificacoes = { "n3000000-0000-4000-8000-00000000000c": CONTA_B };
+  const notificacoes = { "a3000000-0000-4000-8000-00000000000c": CONTA_B };
   const enviados: string[] = [];
 
   const relatorio = await enviarNotificacao(
-    "n3000000-0000-4000-8000-00000000000c",
+    "a3000000-0000-4000-8000-00000000000c",
     mockCicloDoToken(dispositivos, notificacoes, enviados),
   );
 
@@ -1477,7 +1478,7 @@ Deno.test("Segurança / PostgREST: nenhuma RPC de privado.* é chamada via Postg
         new Response(
           JSON.stringify([
             {
-              id: "n5000000-0000-4000-8000-000000000005",
+              id: "a5000000-0000-4000-8000-000000000005",
               usuario_id: "u5000000-0000-4000-8000-000000000005",
               tipo: "vaga",
               referencia_id: "v5000000-0000-4000-8000-000000000005",
@@ -1516,7 +1517,7 @@ Deno.test("Segurança / PostgREST: nenhuma RPC de privado.* é chamada via Postg
       "Content-Type": "application/json",
       "x-agendador-secret": SEGREDO_TESTE,
     },
-    body: JSON.stringify({ notificacao_id: "n5000000-0000-4000-8000-000000000005" }),
+    body: JSON.stringify({ notificacao_id: "a5000000-0000-4000-8000-000000000005" }),
   });
 
   const res = await processarEnvioPush(req, {
@@ -1863,4 +1864,267 @@ Deno.test("BsXIZHOw: textos de suspensao e reativacao cabem no iPhone SE e nao t
   assert(reat.body.length <= 85, "corpo de reativacao cabe na tela bloqueada do iPhone SE");
   assert(!reat.body.includes("Contestação"), "o motivo da reativação não vai no corpo do push");
 });
+
+// Hardening de Produção (cartão kT7NhMGV): B7, B5, B4, B3
+Deno.test("kT7NhMGV / B7: processarEnvioPush recusa notificacao_id invalido com 422 campo_invalido", async () => {
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ notificacao_id: "invalido-not-uuid" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    agendadorSecret: SEGREDO_TESTE,
+  });
+
+  assertEquals(res.status, 422);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.erro, "campo_invalido");
+  assertEquals(json.campo, "notificacao_id");
+});
+
+Deno.test("kT7NhMGV / B5: carregarContaDeServico com JSON malformado nao lanca erro e retorna null", () => {
+  const fcmAntigo = Deno.env.get("FCM_SERVICE_ACCOUNT");
+  try {
+    Deno.env.set("FCM_SERVICE_ACCOUNT", "conteudo-invalido-que-nao-e-json{");
+    const sa = carregarContaDeServico();
+    assertEquals(sa, null);
+  } finally {
+    if (fcmAntigo !== undefined) {
+      Deno.env.set("FCM_SERVICE_ACCOUNT", fcmAntigo);
+    } else {
+      Deno.env.delete("FCM_SERVICE_ACCOUNT");
+    }
+  }
+});
+
+Deno.test("kT7NhMGV / B4: falha de autenticacao OAuth Google responde 500 sem detalhe interno", async () => {
+  const sa: FcmServiceAccount = {
+    client_email: "test@example.com",
+    private_key: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC...\n-----END PRIVATE KEY-----",
+    project_id: "test-proj",
+  };
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
+    const url = input.toString();
+    if (url.includes("/rest/v1/notificacao")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "b1000000-0000-4000-8000-000000000001",
+              usuario_id: "u1000000-0000-4000-8000-000000000001",
+              tipo: "vaga",
+              referencia_id: "v1000000-0000-4000-8000-000000000001",
+              payload: {},
+              tentativas: 0,
+              estado_entrega: "pendente",
+              proxima_tentativa_em: null,
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    // Falha o OAuth
+    return Promise.reject(new Error("Falha de rede interna simulada com stack sensível"));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ notificacao_id: "b1000000-0000-4000-8000-000000000001" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    sqlClient: criarMockSqlClient(),
+    agendadorSecret: SEGREDO_TESTE,
+  });
+
+  assertEquals(res.status, 500);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.erro, "falha_oauth_google");
+  assertEquals(json.detalhe, undefined, "detalhe interno com stack não deve ser exposto no payload");
+});
+
+Deno.test("kT7NhMGV / B3: processarEnvioPush exige SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY", async () => {
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({}),
+  });
+
+  const urlAntiga = Deno.env.get("SUPABASE_URL");
+  const keyAntiga = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+  try {
+    Deno.env.delete("SUPABASE_URL");
+    Deno.env.delete("SUPABASE_SERVICE_ROLE_KEY");
+
+    await assertRejects(
+      async () => {
+        await processarEnvioPush(req, { supabaseUrl: "", serviceRoleKey: "key-ok" });
+      },
+      Error,
+      "SUPABASE_URL é obrigatório",
+    );
+
+    await assertRejects(
+      async () => {
+        await processarEnvioPush(req, { supabaseUrl: "http://localhost:54321", serviceRoleKey: "" });
+      },
+      Error,
+      "SUPABASE_SERVICE_ROLE_KEY é obrigatório",
+    );
+  } finally {
+    if (urlAntiga !== undefined) Deno.env.set("SUPABASE_URL", urlAntiga);
+    if (keyAntiga !== undefined) Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", keyAntiga);
+  }
+});
+
+Deno.test("Contrato 0.2.30 (FmgMnRx4): FCM message.data inclui vinculo_id do aparelho correspondente", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const mensagensEnviadas: Array<{ token: string; data?: Record<string, string> }> = [];
+  const urlsDispositivoChamadas: string[] = [];
+
+  const mockFetch: typeof fetch = (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+
+    if (url.includes("/token")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ access_token: "mock_fcm_token", expires_in: 3600, token_type: "Bearer" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "a3000000-0000-4000-8000-000000000099",
+              usuario_id: "c3000000-0000-4000-8000-000000000001",
+              tipo: "vaga",
+              referencia_id: "d0000000-0000-4000-8000-000000000001",
+              payload: {
+                vaga_id: "d0000000-0000-4000-8000-000000000001",
+              },
+              tentativas: 0,
+              estado_entrega: "pendente",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      urlsDispositivoChamadas.push(url);
+      const match = url.match(/[?&]select=([^&]+)/);
+      const campos = match ? match[1].split(",") : [];
+      const pede = (campo: string) => campos.includes(campo);
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              ...(pede("id") ? { id: "disp-1" } : {}),
+              ...(pede("token_fcm") ? { token_fcm: "fcm_token_iphone_1" } : {}),
+              ...(pede("plataforma") ? { plataforma: "ios" } : {}),
+              ...(pede("vinculo_id") ? { vinculo_id: "11111111-1111-4000-8000-000000000001" } : {}),
+            },
+            {
+              ...(pede("id") ? { id: "disp-2" } : {}),
+              ...(pede("token_fcm") ? { token_fcm: "fcm_token_ipad_2" } : {}),
+              ...(pede("plataforma") ? { plataforma: "ios" } : {}),
+              ...(pede("vinculo_id") ? { vinculo_id: "22222222-2222-4000-8000-000000000002" } : {}),
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/messages:send") && init?.body) {
+      const parsed = JSON.parse(init.body as string);
+      mensagensEnviadas.push({
+        token: parsed.message.token,
+        data: parsed.message.data,
+      });
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ name: `projects/frila-test/messages/msg-${mensagensEnviadas.length}` }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    return Promise.reject(new Error(`URL não tratada no mock: ${url}`));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+    body: JSON.stringify({ notificacao_id: "a3000000-0000-4000-8000-000000000099" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient: criarMockSqlClient(),
+  });
+
+  assertEquals(res.status, 200);
+  const jsonCorpo = await res.json();
+  assertEquals(jsonCorpo.relatorio[0].status, "enviada");
+
+  assertEquals(urlsDispositivoChamadas.length, 1);
+  const urlDisp = urlsDispositivoChamadas[0];
+  const selectMatch = urlDisp.match(/[?&]select=([^&]+)/);
+  assert(selectMatch !== null, "consulta a /rest/v1/dispositivo deve ter parâmetro select");
+  const camposSelect = selectMatch[1].split(",");
+  assert(
+    camposSelect.includes("vinculo_id"),
+    "consulta a /rest/v1/dispositivo deve exigir vinculo_id no select",
+  );
+
+  assertEquals(mensagensEnviadas.length, 2);
+  assertEquals(mensagensEnviadas[0].token, "fcm_token_iphone_1");
+  assertEquals(mensagensEnviadas[0].data?.vinculo_id, "11111111-1111-4000-8000-000000000001");
+  assertEquals(mensagensEnviadas[0].data?.tipo, "vaga");
+  assertEquals(mensagensEnviadas[0].data?.vaga_id, "d0000000-0000-4000-8000-000000000001");
+
+  assertEquals(mensagensEnviadas[1].token, "fcm_token_ipad_2");
+  assertEquals(mensagensEnviadas[1].data?.vinculo_id, "22222222-2222-4000-8000-000000000002");
+  assertEquals(mensagensEnviadas[1].data?.tipo, "vaga");
+  assertEquals(mensagensEnviadas[1].data?.vaga_id, "d0000000-0000-4000-8000-000000000001");
+});
+
+Deno.test("Contrato 0.2.30: vinculo_id não entra em notificacao.payload e filtrarDataPayloadFcm não aceita vinculo_id do payload", () => {
+  const payloadComVinculo = {
+    vaga_id: "d0000000-0000-4000-8000-000000000001",
+    vinculo_id: "33333333-3333-4000-8000-000000000003",
+  };
+  const filtrado = filtrarDataPayloadFcm("vaga", payloadComVinculo);
+  assertEquals(filtrado.vaga_id, "d0000000-0000-4000-8000-000000000001");
+  assertEquals((filtrado as Record<string, string>).vinculo_id, undefined);
+});
+
+
 
