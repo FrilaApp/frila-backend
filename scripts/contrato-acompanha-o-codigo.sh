@@ -12,11 +12,33 @@
 #   ./scripts/contrato-acompanha-o-codigo.sh                 compara com origin/main
 #   ./scripts/contrato-acompanha-o-codigo.sh origin/s0/algo  compara com outra base
 #
+# ── Isenções aceitas pelo portão ──────────────────────────────────────────────
+#
+# 1. Primeira implementação de RPC já declarada no contrato:
+#    Quando a RPC já está em paths no contrato da base, nenhuma migração da base a cria,
+#    e o PR só cria a função. Os clientes já conhecem o modelo; nada a exigir.
+#
+# 2. Mudança só de corpo sem alteração de superfície (marca explícita):
+#    Quando uma RPC já existente tem apenas seu corpo modificado (correção interna,
+#    performance, etc.) sem qualquer alteração na lista de argumentos ou tipo de retorno,
+#    a migração pode declarar a marca explícita:
+#
+#      -- contrato: corpo-sem-mudanca-de-superficie public.<nome> <versao>
+#
+#    Onde <versao> é o info.version do contrato da BASE.
+#    A marca é estreita de propósito e só é aceita se:
+#      (1) O contrato da base declara /rpc/<nome>;
+#      (2) A função já existe em migração da base (senão cai na primeira implementação);
+#      (3) A marca está na MESMA migração que faz o create or replace;
+#      (4) A assinatura (argumentos e retorno) é idêntica à da base; drop e alter
+#          continuam exigindo sempre contrato e bump de versão;
+#      (5) A versão indicada na marca bate com a versão do contrato da base.
+#
 # ── O que este portão NÃO cobre ───────────────────────────────────────────────
 #
 # Ele lê o diff, não o banco. Uma função criada por caminho que o padrão abaixo não
-# reconhece passa batido, e uma mudança de corpo que não altera a assinatura é acusada
-# à toa — o primeiro é o erro caro, e por isso o padrão é largo de propósito.
+# reconhece passa batido — o que é o erro caro, e por isso o padrão é largo de
+# propósito.
 #
 # Quem mede a superfície de verdade é o teste de contrato contra o banco de pé. Este
 # portão é a rede que pega o esquecimento antes de o PR ser aberto.
@@ -74,6 +96,39 @@ funcoes_em() {
     | sort -u || true
 }
 
+versao_de() {
+  local ref="$1"
+  if [ "$ref" = "HEAD" ]; then
+    sed -n 's/^  version: *//p' "$ESPELHO" | head -1
+  else
+    git show "$ref:$ESPELHO" 2>/dev/null | sed -n 's/^  version: *//p' | head -1
+  fi
+}
+
+extrair_assinatura() {
+  local nome="$1"
+  perl -e '
+    my $name = shift @ARGV;
+    my $sql = join("", <>);
+    $sql =~ s/--.*$//mg;
+    $sql =~ s{/\*.*?\*/}{}gs;
+    my $sig = "";
+    while ($sql =~ m/\bcreate\s+(?:or\s+replace\s+)?function\s+"?public"?\s*\.\s*"?\Q$name\E"?\s*\((.*?)\)\s*returns\s+(table\s*\(.*?\)|setof\s+[a-z0-9_.]+|[a-z0-9_.]+)/gsi) {
+      my ($args, $ret) = ($1, $2);
+      for ($args, $ret) {
+        s/\s+/ /g;
+        s/^\s+|\s+$//g;
+        s/\s*,\s*/, /g;
+        s/\s*\(\s*/(/g;
+        s/\s*\)\s*/)/g;
+        $_ = lc($_);
+      }
+      $sig = "($args) returns $ret";
+    }
+    print $sig;
+  ' "$nome"
+}
+
 toques=$(git diff "$BASE"...HEAD -- supabase/migrations \
   | { grep -E '^\+' || true; } | { grep -vE '^\+\+\+' || true; } | sed 's/^+//' \
   | funcoes_em)
@@ -108,25 +163,96 @@ criadas_na_base=$(git ls-tree -r --name-only "$BASE" -- supabase/migrations/ \
   | while IFS= read -r f; do git show "$BASE:$f"; printf '\n'; done \
   | funcoes_em | awk '$1 == "create" { print $2 }' | sort -u || true)
 
-isentas=""
+versao_base=$(versao_de "$BASE")
+arquivos_pr=$(git diff --name-only "$BASE"...HEAD -- supabase/migrations 2>/dev/null || true)
+
+isentas_primeira=""
+isentas_marca=""
+marcas_exibicao=""
 exigidas=""
+
 for funcao in $tocadas; do
   nome=${funcao#public.}
   so_cria=$(printf '%s\n' "$toques" | awk -v f="$funcao" '$2 == f && $1 != "create"' | wc -l | tr -d ' ')
-  # `grep <<<` e não `printf | grep -q`: sob `pipefail`, o `grep -q` sai no primeiro
-  # acerto, o `printf` que ainda escrevia o contrato leva SIGPIPE e o teste vira falso.
-  if [ "$so_cria" = "0" ] \
-     && grep -qE "^  /rpc/${nome}:[[:space:]]*$" <<<"$contrato_base" \
-     && ! grep -qxF "$funcao" <<<"$criadas_na_base"; then
-    isentas="$isentas $funcao"
+
+  no_contrato_base=0
+  if grep -qE "^  /rpc/${nome}:[[:space:]]*$" <<<"$contrato_base"; then
+    no_contrato_base=1
+  fi
+
+  na_base=0
+  if grep -qxF "$funcao" <<<"$criadas_na_base"; then
+    na_base=1
+  fi
+
+  # 1. Primeira implementação de RPC que o contrato da base já declara
+  if [ "$so_cria" = "0" ] && [ "$no_contrato_base" = "1" ] && [ "$na_base" = "0" ]; then
+    isentas_primeira="$isentas_primeira $funcao"
+    continue
+  fi
+
+  # 2. Mudança só de corpo com marca explícita:
+  #    -- contrato: corpo-sem-mudanca-de-superficie public.<nome> <versao>
+  #
+  # Condições obrigatórias:
+  #   (1) Contrato da base declara /rpc/<nome>
+  #   (2) Função já existe em migração da base
+  #   (3) Marca está na MESMA migração que faz o create or replace
+  #   (4) Assinatura (argumentos e retorno) é idêntica à da base; PR só cria (sem drop/alter)
+  #   (5) Versão da marca bate com info.version da base
+  marca_valida=0
+  if [ "$so_cria" = "0" ] && [ "$no_contrato_base" = "1" ] && [ "$na_base" = "1" ] && [ -n "$versao_base" ]; then
+    sig_base=""
+    arquivos_base=$(git grep -lE "public[[:space:]]*\.[[:space:]]*$nome" "$BASE" -- supabase/migrations/ 2>/dev/null | sed 's/^[^:]*://' | sort || true)
+    if [ -n "$arquivos_base" ]; then
+      sig_base=$(for f in $arquivos_base; do git show "$BASE:$f"; printf '\n'; done | extrair_assinatura "$nome")
+    fi
+
+    if [ -n "$sig_base" ]; then
+      achou_em_todas=1
+      pelo_menos_um=0
+      for f in $arquivos_pr; do
+        conteudo_f=$(git show "HEAD:$f" 2>/dev/null || cat "$f" 2>/dev/null || true)
+        toca_f=$(git diff "$BASE"...HEAD -- "$f" \
+          | { grep -E '^\+' || true; } | { grep -vE '^\+\+\+' || true; } | sed 's/^+//' \
+          | funcoes_em | awk -v f="$funcao" '$2 == f { print $1 }' || true)
+        if grep -q "create" <<<"$toca_f"; then
+          pelo_menos_um=1
+          tem_marca=$(grep -E '^[[:space:]]*--[[:space:]]*contrato:[[:space:]]+corpo-sem-mudanca-de-superficie[[:space:]]+'"$funcao"'[[:space:]]+'"$versao_base"'[[:space:]]*$' <<<"$conteudo_f" || true)
+          if [ -z "$tem_marca" ]; then
+            achou_em_todas=0
+            break
+          fi
+          sig_pr=$(extrair_assinatura "$nome" <<<"$conteudo_f")
+          if [ "$sig_pr" != "$sig_base" ]; then
+            achou_em_todas=0
+            break
+          fi
+        fi
+      done
+      if [ "$pelo_menos_um" = "1" ] && [ "$achou_em_todas" = "1" ]; then
+        marca_valida=1
+      fi
+    fi
+  fi
+
+  if [ "$marca_valida" = "1" ]; then
+    isentas_marca="$isentas_marca $funcao"
+    marcas_exibicao="${marcas_exibicao}  $funcao (-- contrato: corpo-sem-mudanca-de-superficie $funcao $versao_base)\n"
   else
     exigidas="$exigidas $funcao"
   fi
 done
 
-if [ -n "$isentas" ]; then
+if [ -n "$isentas_primeira" ]; then
   echo "Primeira implementação de RPC que o contrato da base já declara:"
-  printf '  %s\n' $isentas
+  printf '  %s\n' $isentas_primeira
+  echo
+fi
+
+if [ -n "$isentas_marca" ]; then
+  echo "Mudança de corpo de RPC sem alteração de superfície (marca válida):"
+  printf '%b' "$marcas_exibicao"
   echo
 fi
 
@@ -161,16 +287,7 @@ fi
 # Não basta o arquivo ter mudado: sem a versão subindo, o cliente não tem como saber
 # que o modelo que ele gerou é de antes. É a única coisa que um app já publicado
 # consegue comparar.
-versao_de() {
-  local ref="$1"
-  if [ "$ref" = "HEAD" ]; then
-    sed -n 's/^  version: *//p' "$ESPELHO" | head -1
-  else
-    git show "$ref:$ESPELHO" 2>/dev/null | sed -n 's/^  version: *//p' | head -1
-  fi
-}
-
-antes=$(versao_de "$BASE")
+antes="$versao_base"
 depois=$(versao_de HEAD)
 
 if [ -z "$depois" ]; then
