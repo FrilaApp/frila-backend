@@ -304,3 +304,20 @@ jobs:
         env:
           FRILA_DOCS_TOKEN: ${{ secrets.FRILA_DOCS_TOKEN }}
         run: ./scripts/contrato-em-dia.sh
+
+  # As Edge Functions têm 105 testes em Deno (`index_test.ts`), e até aqui nenhum rodava na
+  # CI: o workflow `Entrega` publica a função no frila-dev a cada merge, e função quebrada
+  # só aparecia no aparelho. Job próprio porque não precisa de Postgres nem de Docker: banco
+  # e provedores entram injetados nos testes (#207).
+  funcoes:
+    name: Testes das Edge Functions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: deno test
+        run: deno test --allow-all supabase/functions/
