@@ -17,7 +17,7 @@
 -- avaliações; Zélia (b…01) administra o Bar do Cerrado (c…01).
 
 begin;
-select plan(55);
+select plan(58);
 
 select set_config('frila.agora', '2026-09-29 11:00:00-03', true);
 
@@ -79,6 +79,19 @@ select is(
   'não existe tabela de pedidos de exportação: o corpo da resposta morre com a conexão');
 
 -- ── 3. O corpo casa com o schema MeusDados do contrato ───────────────────────
+
+-- Notificação para o titular é fixture deste arquivo, para as asserções de notificacoes
+-- medirem dado real e não passarem sobre array vazio.
+insert into public.notificacao (usuario_id, tipo, referencia_id, payload, urgente, enviada_em, entregue_em)
+values (
+  (select ana from ids),
+  'lembrete_24h'::public.tipo_notificacao,
+  'c0000000-0000-4000-8000-000000000001'::uuid,
+  '{"turno_id": "c0000000-0000-4000-8000-000000000001"}'::jsonb,
+  true,
+  privado.agora() - interval '2 hours',
+  privado.agora() - interval '1 hour'
+);
 
 create temp table d as select privado.meus_dados((select ana from ids)) as j;
 
@@ -336,6 +349,9 @@ select ok(
 
 select ok((select j ? 'notificacoes' from d),
   'notificacoes está no corpo');
+select cmp_ok(
+  (select jsonb_array_length(j->'notificacoes') from d), '>=', 1,
+  'notificacoes traz ao menos um registro para medição');
 -- RN15: o diário de bordo do provedor de push não é dado do titular.
 select ok(
   (select not exists (
@@ -344,6 +360,19 @@ select ok(
          or n.value ? 'proxima_tentativa_em' or n.value ? 'esperou_teto')
      from d),
   'RN15: nenhuma notificação leva tentativas, motivo_falha, proxima_tentativa_em nem esperou_teto');
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'notificacoes') n
+      where n.value ? 'id' or n.value ? 'urgente')
+     from d),
+  'notificacoes não traz id nem urgente: contrato 0.2.33 declara apenas dados de entrega ao titular');
+select is(
+  (select string_agg(k, ',' order by k)
+     from jsonb_array_elements((select j->'notificacoes' from d)) x,
+          jsonb_object_keys(x.value) k
+    limit 5),
+  'entregue_em,enviada_em,payload,referencia_id,tipo',
+  'cada notificação traz exatamente as cinco chaves declaradas no schema do contrato');
 
 select ok((select j ? 'despachos' from d),
   'despachos está no corpo');
