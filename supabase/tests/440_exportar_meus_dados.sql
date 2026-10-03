@@ -82,6 +82,7 @@ select is(
 
 -- Notificação para o titular é fixture deste arquivo, para as asserções de notificacoes
 -- medirem dado real e não passarem sobre array vazio.
+delete from public.notificacao where usuario_id = (select ana from ids);
 insert into public.notificacao (usuario_id, tipo, referencia_id, payload, urgente, enviada_em, entregue_em)
 values (
   (select ana from ids),
@@ -367,11 +368,11 @@ select ok(
      from d),
   'notificacoes não traz id nem urgente: contrato 0.2.33 declara apenas dados de entrega ao titular');
 select is(
-  (select string_agg(k, ',' order by k)
-     from jsonb_array_elements((select j->'notificacoes' from d)) x,
-          jsonb_object_keys(x.value) k
-    limit 5),
-  'entregue_em,enviada_em,payload,referencia_id,tipo',
+  (select bool_and(
+            (select string_agg(k, ',' order by k) from jsonb_object_keys(x.value) k)
+            = 'entregue_em,enviada_em,payload,referencia_id,tipo')
+     from jsonb_array_elements((select j->'notificacoes' from d)) x),
+  true,
   'cada notificação traz exatamente as cinco chaves declaradas no schema do contrato');
 
 select ok((select j ? 'despachos' from d),
