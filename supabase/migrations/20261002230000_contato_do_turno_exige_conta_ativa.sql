@@ -7,6 +7,7 @@
 -- O erro resultante para conta anonimizada é 401 nao_autenticado (e 403 sem_permissao
 -- para suspensa), ambos já previstos e prometidos no contrato.
 
+-- contrato: corpo-sem-mudanca-de-superficie public.contato_do_turno 0.2.33
 create or replace function public.contato_do_turno(turno_id uuid)
 returns jsonb
 language plpgsql
