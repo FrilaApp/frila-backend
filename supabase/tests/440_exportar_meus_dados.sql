@@ -17,7 +17,7 @@
 -- avaliações; Zélia (b…01) administra o Bar do Cerrado (c…01).
 
 begin;
-select plan(32);
+select plan(34);
 
 select set_config('frila.agora', '2026-09-29 11:00:00-03', true);
 
@@ -105,6 +105,17 @@ select is(
 select is(
   (select jsonb_typeof(j->'turnos') from d), 'array',
   'turnos é array');
+
+select ok(
+  (select bool_and(t.value ? 'cancelamento')
+     from jsonb_array_elements((select j->'turnos' from d)) t),
+  'turnos exportados contêm o campo cancelamento (0.2.32)');
+
+select is(
+  (select count(*)::int from jsonb_array_elements((select j->'turnos' from d)) t
+    where t ? 'estado' and t ? 'avaliacao'),
+  (select jsonb_array_length(j->'turnos') from d),
+  '0.2.31: todos os turnos exportados contêm estado e avaliacao');
 
 select is(
   (select jsonb_typeof(j->'avaliacoes_dadas') from d), 'array',

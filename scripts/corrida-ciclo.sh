@@ -277,9 +277,9 @@ DONA=$(psql -tAc "select conta from corrida_ciclo.contas where papel = 'dona'")
 # Os tempos de cada lado numa rodada: "espera_antes segura_depois".
 tempos() { # rodada lado(1|2|3)
   case $(( $1 % 4 )):$2 in
-    0:1) echo "0 0.3" ;;    0:*) echo "0.1 0" ;;
-    1:1) echo "0.1 0" ;;    1:2) echo "0 0.3" ;;  1:*) echo "0.15 0" ;;
-    2:*) echo "0 0.05" ;;
+    0:1) echo "0 0.5" ;;    0:*) echo "0.2 0" ;;
+    1:1) echo "0.2 0" ;;    1:2) echo "0 0.5" ;;  1:*) echo "0.3 0" ;;
+    2:*) echo "0 0.08" ;;
     3:*) echo "0 0" ;;
   esac
 }
@@ -299,9 +299,8 @@ set statement_timeout = ${7:-0};
 -- sessão da corrida usa um valor de teste, como o pgTAP faz com \`set local\`.
 select set_config('frila.agendador_secret', 'segredo-da-corrida', false)
  where nullif(current_setting('frila.agendador_secret', true), '') is null;
-begin;
-set local statement_timeout = 0;
 select pg_sleep($ant);
+begin;
 set local statement_timeout = ${7:-0};
 select corrida_ciclo.agir('$1', $2, '$3', $conta, \$sql\$$5\$sql\$);
 set local statement_timeout = 0;
@@ -513,11 +512,26 @@ SQL
     [ "$n_livres" -gt 0 ] || { falhou "rodada $r: nenhum elegível livre do teto"; continue; }
     livres=$(sed "s/.*/'&'::uuid/" "$TMP/livres" | paste -sd, -)
 
-    # O terceiro executor é o agendador do teto (\`liberar_teto\`), restrito aos livres
-    # desta corrida para não liberar a fila de ninguém de fora dela.
+    # O terceiro executor é o agendador do teto (\`liberar_teto\`), liberando por profissional
+    # em transações separadas, como o pg_cron faz.
     lado teto "$r" 1 "" "select to_jsonb(privado.despachar_vaga('$TETO_A'))"
     lado teto "$r" 2 "" "select to_jsonb(privado.despachar_vaga('$TETO_B'))"
-    lado teto "$r" 3 "" "select to_jsonb(count(privado.liberar_teto_do_profissional(x))) from unnest(array[$livres]) x"
+    local ant3 dep3
+    read -r ant3 dep3 < <(tempos "$r" 3)
+    psql -tA >/dev/null 2>"$TMP/teto-$r-3.err" <<SQL &
+set application_name = 'corrida_ciclo_teto_3';
+select set_config('frila.agendador_secret', 'segredo-da-corrida', false)
+ where nullif(current_setting('frila.agendador_secret', true), '') is null;
+select pg_sleep($ant3);
+$(while read -r p; do
+  cat <<RODADA
+begin;
+select corrida_ciclo.agir('teto', $r, '3', null, \$sql\$select to_jsonb(privado.liberar_teto_do_profissional('$p'))\$sql\$);
+commit;
+RODADA
+done < "$TMP/livres")
+select pg_sleep($dep3);
+SQL
     wait
 
     local erros duas esperando
