@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.28
+  version: 0.2.29
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -95,6 +95,31 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.29, aprovada em 02/10/2026.** Uma leitura nova, `/rpc/meu_estabelecimento`, para
+    o contratante que já tem estabelecimento conseguir publicar a segunda vaga. Uma operação e um
+    schema novos (`MeuEstabelecimento`); nenhum código de erro novo.
+
+    - **O buraco.** `/rpc/publicar_vaga` exige `local`, `regiao_administrativa` e `ponto`
+      (`NovaVaga`), e os três "vêm preenchidos com os do estabelecimento". Só
+      `/rpc/cadastrar_estabelecimento` devolvia esses dados, uma vez, na hora do cadastro.
+      `/rpc/meus_estabelecimentos` não os traz, de propósito, e o painel traz o local de cada vaga,
+      não o do estabelecimento. Quem abre o app num outro dia não tinha de onde ler o endereço e o
+      ponto da própria casa: o app só conseguia publicar logo depois do cadastro.
+    - **`/rpc/meu_estabelecimento`** (`GET`, `estabelecimento_id`): devolve o `MeuEstabelecimento`
+      a quem é **membro** dele, com o `papel` de quem chama. Quem não é membro recebe
+      `403 sem_permissao`, que é também a resposta para um id que não existe e para conta de
+      profissional, como no painel.
+    - **`MeuEstabelecimento` é o `Estabelecimento` sem o `documento`** (decisão de produto de
+      02/10/2026): o CNPJ ou CPF não sai nesta leitura, nem para o administrador nem para o
+      operador. A publicação não usa o documento, e o dado que a finalidade não pede não trafega
+      (RN15). O `Estabelecimento` completo, com o documento, continua saindo só na resposta de
+      `/rpc/cadastrar_estabelecimento`, para quem acabou de informá-lo.
+    - **`/rpc/meus_estabelecimentos`** não muda. A descrição dizia que "quem precisa disso chama o
+      painel"; passa a apontar para a leitura nova.
+    - O espelho `contrato/openapi.yaml` do backend e o app seguem em PRs próprios.
+
+    ---
 
     **Versão 0.2.28, de 01/10/2026.** O bloqueio passa a esconder também o perfil público (cartão
     1aGJPQK2, US26, RF26, UC17), conforme a decisão de produto de 30/09/2026 registrada na 0.2.27.
@@ -1235,7 +1260,8 @@ paths:
         A lista vem **ordenada por nome**, para o seletor do app não trocar de posição entre duas
         aberturas da mesma tela. `reputacao` vem no mesmo formato do `PerfilPublico` de
         estabelecimento, da mesma função. Nenhum dado de cadastro sai aqui (RN10): sem documento,
-        sem endereço, sem coordenada e sem contato — quem precisa disso chama o painel.
+        sem endereço, sem coordenada e sem contato — quem precisa do endereço e do ponto para
+        publicar uma vaga chama `/rpc/meu_estabelecimento` (0.2.29).
       x-requisitos: [RF02, RF21, UC07]
       responses:
         '200':
@@ -1250,6 +1276,43 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '422':
           $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/meu_estabelecimento:
+    get:
+      tags: [Estabelecimento]
+      operationId: meuEstabelecimento
+      summary: O cadastro de um estabelecimento de que a conta é membro
+      description: |
+        O endereço, a Região Administrativa e o ponto do estabelecimento, para o app preencher a
+        publicação de uma vaga (`NovaVaga.local`, `regiao_administrativa` e `ponto` vêm preenchidos
+        com os do estabelecimento). Sem esta operação, só quem acabou de cadastrar tem esses dados,
+        na resposta de `/rpc/cadastrar_estabelecimento`: quem volta ao app noutro dia não consegue
+        publicar a segunda vaga.
+
+        Só para **membro** do estabelecimento, administrador ou operador: os dois publicam vagas
+        (RF21). `papel` é o de quem chama. Quem não é membro recebe `403 sem_permissao`, que é o
+        que responde também quando o estabelecimento não existe, como em `/rpc/painel_estabelecimento`.
+        Conta de profissional nunca é membro e recebe o mesmo `403`, e não o `422
+        perfil_incompativel` de `/rpc/meus_estabelecimentos`.
+
+        A resposta é o `MeuEstabelecimento`: o cadastro **sem o `documento`** (CNPJ ou CPF), para
+        o administrador e para o operador (decisão de produto de 02/10/2026). A publicação não usa
+        o documento, e ele não sai onde não é preciso (RN15). Também sem contato e sem os outros
+        membros.
+      x-requisitos: [RF02, RF04, RF21, RN02, RN15, UC01]
+      parameters:
+        - $ref: '#/components/parameters/EstabelecimentoId'
+      responses:
+        '200':
+          description: O estabelecimento, sem o documento, com o papel de quem chama.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeuEstabelecimento'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
 
   /rpc/equipe_de_confianca:
     get:
@@ -3259,6 +3322,42 @@ components:
           $ref: '#/components/schemas/Coordenada'
         papel:
           $ref: '#/components/schemas/PapelMembro'
+    MeuEstabelecimento:
+      type: object
+      required: [id, nome, tipo, endereco, regiao_administrativa, ponto, papel]
+      description: |
+        O cadastro do estabelecimento como um membro o lê em `/rpc/meu_estabelecimento` (0.2.29):
+        os campos do `Estabelecimento`, **sem o `documento`**. O CNPJ ou CPF só aparece na resposta
+        de `/rpc/cadastrar_estabelecimento`, para quem acabou de informá-lo (RN15).
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        nome:
+          type: string
+        tipo:
+          $ref: '#/components/schemas/TipoEstabelecimento'
+        endereco:
+          type: string
+          description: Logradouro, número e complemento. É o que preenche `NovaVaga.local`.
+        regiao_administrativa:
+          type: string
+          description: "Região Administrativa do Distrito Federal onde o estabelecimento fica (ex.: Plano Piloto, Águas Claras, Taguatinga)."
+          example: Plano Piloto
+        ponto:
+          $ref: '#/components/schemas/Coordenada'
+        papel:
+          description: O papel de quem chama neste estabelecimento.
+          $ref: '#/components/schemas/PapelMembro'
+      example:
+        id: 5b0f6c1e-2a47-4f0b-9d3e-8c1a7e2f4b10
+        nome: Bar da Lia
+        tipo: food_service
+        endereco: CLS 408, Bloco B, Loja 12
+        regiao_administrativa: Plano Piloto
+        ponto:
+          latitude: -15.7942
+          longitude: -47.8822
+        papel: operador
     MembroDaEquipe:
       type: object
       required: [estabelecimento_id, profissional_id]
