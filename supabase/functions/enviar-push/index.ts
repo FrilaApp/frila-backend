@@ -103,8 +103,8 @@ export function carregarContaDeServico(): FcmServiceAccount | null {
       ? raw
       : atob(raw); // suporta base64
     return JSON.parse(texto) as FcmServiceAccount;
-  } catch (e) {
-    console.error("Erro ao fazer parse de FCM_SERVICE_ACCOUNT:", e);
+  } catch {
+    console.error("Erro ao fazer parse de FCM_SERVICE_ACCOUNT: formato JSON inválido");
     return null;
   }
 }
@@ -552,10 +552,15 @@ export async function processarEnvioPush(
     });
   }
 
-  const supabaseUrl =
-    deps.supabaseUrl || Deno.env.get("SUPABASE_URL") || "http://127.0.0.1:54321";
+  const supabaseUrl = (deps.supabaseUrl || Deno.env.get("SUPABASE_URL"))?.trim();
+  if (!supabaseUrl) {
+    throw new Error("SUPABASE_URL é obrigatório e deve estar configurado no ambiente.");
+  }
   const serviceRoleKey =
-    deps.serviceRoleKey || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    (deps.serviceRoleKey || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"))?.trim();
+  if (!serviceRoleKey) {
+    throw new Error("SUPABASE_SERVICE_ROLE_KEY é obrigatório e deve estar configurado no ambiente.");
+  }
   const fetchFn = deps.fetchFn || fetch;
 
   if (!segredoValido(req, deps.agendadorSecret)) {
@@ -563,6 +568,24 @@ export async function processarEnvioPush(
       status: 401,
       headers: { "Content-Type": "application/json" },
     });
+  }
+
+  let corpo: Record<string, unknown> = {};
+  try {
+    corpo = await req.json();
+  } catch {
+    corpo = {};
+  }
+
+  const notificacaoId =
+    typeof corpo?.notificacao_id === "string" ? corpo.notificacao_id : null;
+  const limite = typeof corpo?.limite === "number" ? corpo.limite : 50;
+
+  if (notificacaoId && !UUID_REGEX.test(notificacaoId)) {
+    return new Response(
+      JSON.stringify({ ok: false, erro: "campo_invalido", campo: "notificacao_id" }),
+      { status: 422, headers: { "Content-Type": "application/json" } },
+    );
   }
 
   const sa = deps.serviceAccount || carregarContaDeServico();
@@ -576,17 +599,6 @@ export async function processarEnvioPush(
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
-
-  let corpo: Record<string, unknown> = {};
-  try {
-    corpo = await req.json();
-  } catch {
-    corpo = {};
-  }
-
-  const notificacaoId =
-    typeof corpo?.notificacao_id === "string" ? corpo.notificacao_id : null;
-  const limite = typeof corpo?.limite === "number" ? corpo.limite : 50;
 
   // Headers de acesso ao PostgREST com service_role
   const dbHeaders: Record<string, string> = {
@@ -653,7 +665,7 @@ export async function processarEnvioPush(
   } catch (err) {
     console.error("Erro ao autenticar no Google OAuth:", err);
     return new Response(
-      JSON.stringify({ ok: false, erro: "falha_oauth_google", detalhe: String(err) }),
+      JSON.stringify({ ok: false, erro: "falha_oauth_google" }),
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
@@ -693,11 +705,11 @@ export async function processarEnvioPush(
 
     // 2. Busca todos os aparelhos registrados da conta destinatária
     const dispRes = await fetchFn(
-      `${supabaseUrl}/rest/v1/dispositivo?usuario_id=eq.${n.usuario_id}&select=id,token_fcm,plataforma`,
+      `${supabaseUrl}/rest/v1/dispositivo?usuario_id=eq.${n.usuario_id}&select=id,token_fcm,plataforma,vinculo_id`,
       { headers: dbHeaders },
     );
 
-    const aparelhos: Array<{ id: string; token_fcm: string; plataforma: string }> =
+    const aparelhos: Array<{ id: string; token_fcm: string; plataforma: string; vinculo_id?: string }> =
       dispRes.ok ? await dispRes.json() : [];
 
     if (aparelhos.length === 0) {
@@ -776,6 +788,10 @@ export async function processarEnvioPush(
 
     // 4. Envia para cada aparelho
     for (const disp of aparelhos) {
+      const dataParaDispositivo = { ...dataStrings };
+      if (disp.vinculo_id) {
+        dataParaDispositivo.vinculo_id = disp.vinculo_id;
+      }
       const resultado: FcmSendResult = await sendFcmMessage(
         sa.project_id,
         accessToken,
@@ -783,7 +799,7 @@ export async function processarEnvioPush(
           token: disp.token_fcm,
           title,
           body,
-          data: dataStrings,
+          data: dataParaDispositivo,
           plataforma: disp.plataforma,
         },
         { apiUrl: deps.fcmApiUrl, fetchFn },

@@ -24,7 +24,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(25);
+select plan(26);
 
 create function pg_temp.conta(id uuid, email text, perfil public.perfil_conta, fone text)
 returns void
@@ -129,6 +129,13 @@ select is((select count(*)::int from public.pedido_de_exclusao
             where usuario_id = 'c6000000-0000-4000-8000-0000000000d1'),
           1,
           'pedido repetido não cria segunda linha (idempotente por conta)');
+
+select throws_ok(
+  $$ insert into public.pedido_de_exclusao (usuario_id)
+     values ('c6000000-0000-4000-8000-0000000000d1') $$,
+  '23505',
+  null,
+  'pedido_de_exclusao_usuario_id_key: duplicar usuario_id viola unicidade');
 
 select is((select tentativas from public.pedido_de_exclusao
             where usuario_id = 'c6000000-0000-4000-8000-0000000000d1'),

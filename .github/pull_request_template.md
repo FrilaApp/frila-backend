@@ -2,6 +2,8 @@
 Quatro pessoas com Claude Code trabalham neste quadro ao mesmo tempo, e nenhuma
 enxerga o que a outra está fazendo agora. Este PR é metade do sinal; a outra metade é
 o cartão no Trello. PR sem cartão é trabalho que alguém pode estar refazendo.
+
+Lembrete: a base do PR é SEMPRE develop (`gh pr create --base develop`). Nunca abra contra a main.
 -->
 
 ## Cartão

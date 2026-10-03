@@ -1,13 +1,13 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.27
+  version: 0.2.32
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
     sejam construídos em paralelo contra a mesma especificação. É a fonte de onde saem os modelos
     de cada cliente. Regras, requisitos e casos de uso citados (RN, RF, UC) estão no Documento de
-    Requisitos v1.3.0; o esquema do banco, na Modelagem de Banco de Dados.
+    Requisitos v1.5.0; o esquema do banco, na Modelagem de Banco de Dados.
 
     ## Como o contrato funciona no Supabase
 
@@ -95,6 +95,148 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.32, de 02/10/2026.** Três decisões de produto de 02/10/2026: o profissional passa
+    a ver por que o turno foi cancelado e se contou falta, a candidatura diz qual turno nasceu
+    dela, e três operações de candidatura passam a declarar o `422` que o servidor já devolve.
+    Dois campos opcionais, um schema novo (`CancelamentoDoTurno`) e três respostas declaradas;
+    nenhuma operação, parâmetro ou código de erro novo, e nenhum campo existente muda de
+    significado. A 0.2.31 vem antes desta.
+
+    - **`Turno.cancelamento`** (`CancelamentoDoTurno` ou nulo, opcional): no turno cancelado, a
+      causa (`CausaDoCancelamento`, o mesmo dicionário do painel), se contou como falta e o
+      instante. Fecha o "fica para a próxima" da 0.2.31.
+    - **Sem texto livre, para os dois lados.** `CancelamentoDoTurno` não tem `motivo`: o texto
+      que a casa escreveu ao cancelar não chega ao profissional (decisão de produto de
+      02/10/2026). O `Turno` é o mesmo schema para os dois lados de `/rpc/meus_turnos`, então a
+      regra não depende de quem lê. A casa continua lendo o texto em
+      `PosicaoNoPainel.cancelamento.motivo`, que não muda.
+    - **Quando foi o próprio profissional quem cancelou**, ele recebe `causa: profissional`, a
+      `falta` (verdadeira quando desistiu a menos de 24 horas do início) e o instante. O texto
+      que ele mesmo escreveu não volta.
+    - **A `causa` é a mesma nas duas leituras.** A mesma posição cancelada lê a mesma `causa` no
+      painel e no turno, e `outro` continua sem dizer se foi conta encerrada ou ação da Equipe
+      Frila (RN13, RN15).
+    - **`Candidatura.turno_id`** (uuid ou nulo, opcional): o turno que nasceu desta candidatura,
+      só no estado `aceita`. Cruzar `/rpc/minhas_candidaturas` com `/rpc/meus_turnos` pela vaga
+      não identifica o turno: o cancelado continua na lista, e a mesma pessoa pode ter mais de
+      um turno na mesma vaga.
+    - **`422` declarado** em `/rpc/retirar_candidatura`, `/rpc/minhas_candidaturas` e
+      `/rpc/candidatos_da_vaga`: `perfil_incompativel` nas três (RN25) e `campo_obrigatorio` em
+      `retirar_candidatura` e `candidatos_da_vaga`. O servidor já respondia assim; faltava a
+      declaração, como na 0.2.26.
+    - **Opcionais de propósito**, como na 0.2.31. O servidor a partir desta versão sempre manda
+      os dois campos; o anterior não manda nenhum, e o cliente trata a ausência como "o servidor
+      ainda não diz".
+    - **`MeusDados.turnos`** usa o mesmo `Turno` e ganha `cancelamento` junto.
+    - O cabeçalho passa a citar o Documento de Requisitos v1.5.0, de 02/10/2026, que traz na
+      RN15 o texto aprovado com a 0.2.30.
+
+    ---
+
+    **Versão 0.2.31, de 02/10/2026.** Três decisões de produto de 02/10/2026, todas acréscimos em
+    leituras que já existem: o turno diz se foi cancelado, o turno traz a avaliação que este lado
+    já deu, e o painel diz por que a posição foi cancelada e quando foi o check-in. Seis campos
+    opcionais e dois schemas novos
+    (`CancelamentoDaPosicao`, `CausaDoCancelamento`); nenhuma operação, parâmetro, código de erro
+    ou status novo, e nenhum campo existente muda de significado. A 0.2.30 vem antes desta.
+
+    - **`Turno.estado`** (`EstadoPosicao`, opcional): o estado da posição do turno, o mesmo que
+      `PosicaoNoPainel.estado` já traz. `/rpc/meus_turnos` sempre devolveu o turno cancelado, sem
+      nada que o distinguisse do confirmado; agora ele vem com `estado: cancelada`. O turno
+      cancelado **continua na lista**: é histórico (RN12, UC13), e tirá-lo mudaria o que a
+      operação já devolve a quem tem o app instalado.
+    - **`Turno.avaliacao`** (`Avaliacao` ou nulo, opcional): a avaliação que **este lado** do
+      turno já deu, a mesma que `/rpc/avaliar` devolve. O app guardava a resposta só no aparelho e
+      a perdia na saída da conta. Nunca é a avaliação que a outra parte deu sobre quem chama
+      (RN07).
+    - **`PosicaoNoPainel.cancelamento`** (`CancelamentoDaPosicao` ou nulo, opcional): na posição
+      cancelada que chegou a ter profissional, a causa (`CausaDoCancelamento`), se contou como
+      falta, o texto de quem cancelou e o instante (RN12).
+    - **`PosicaoNoPainel.checkin_em`, `checkin_tipo` e `checkin_confirmado_em`** (opcionais, nulos
+      sem check-in): a hora e o tipo do check-in e a hora da confirmação manual, com os mesmos
+      nomes e o mesmo significado que têm em `Turno`.
+    - **Opcionais de propósito.** O servidor a partir desta versão sempre manda os seis campos; o
+      anterior não manda nenhum. O cliente escrito para a 0.2.31 trata a ausência como "o servidor
+      ainda não diz" e segue como antes, sem falhar a leitura inteira.
+    - **`MeusDados.turnos`** usa o mesmo `Turno` e ganha `estado` e `avaliacao` junto.
+    - **Fica para a próxima.** O profissional vê que o turno foi cancelado, mas não por quê nem
+      se contou falta: `CancelamentoDaPosicao` só sai no painel. Levar o mesmo objeto ao `Turno`
+      é campo opcional novo, e é decisão de produto.
+
+    ---
+
+    **Versão 0.2.30, aprovada em 02/10/2026.** O push passa a dizer a que vínculo do aparelho com
+    a conta ele pertence, por um identificador opaco, para o app não mostrar nem abrir o aviso de
+    uma conta para outra no mesmo aparelho (RN15). Um campo opcional novo numa resposta e uma
+    chave nova no push; nenhuma operação, código de erro ou status muda. A 0.2.29 vem antes desta.
+
+    - **O buraco.** O push leva `tipo` e ids do destino, e não diz para quem é. Num aparelho em que
+      uma conta sai e outra entra, o aviso mandado à primeira e entregue depois da troca chega ao
+      app sem nada que o distinga. O app do iOS contorna com o relógio (só vale o aviso entregue
+      depois de o servidor confirmar o token para quem entrou, mais 60 s de carência), o que deixa
+      passar o aviso atrasado e descarta os avisos de quem entrou no primeiro minuto.
+    - **`Dispositivo.vinculo_id`** (uuid, opcional): o vínculo deste token com a conta que o
+      registrou. `/rpc/registrar_dispositivo` gera um id novo quando o token é registrado pela
+      primeira vez e quando ele passa de uma conta para outra; o registro repetido pela mesma conta
+      devolve o mesmo id. `/rpc/remover_dispositivo` encerra o vínculo: o registro seguinte, mesmo
+      da mesma conta, recebe um id novo.
+    - **Todo push leva `vinculo_id`** entre os dados, ao lado de `tipo` e dos ids do destino. O
+      valor é o do aparelho para o qual aquele envio vai, lido na hora do envio: ele não fica em
+      `notificacao.payload`, e as chaves aceitas ali continuam as da 0.2.14.
+    - **A regra do cliente.** O app guarda o `vinculo_id` devolvido pelo registro junto com a
+      sessão do aparelho e o apaga na saída. O aviso cujo `vinculo_id` é diferente do guardado não
+      é mostrado com o app aberto, não abre tela no toque e sai da central de notificações. O
+      aviso sem `vinculo_id` (servidor anterior a esta versão) segue a regra antiga do cliente.
+    - **O id é opaco.** Não é o id da conta, não é derivado dele nem do token, e não identifica a
+      pessoa fora do servidor: o payload continua só com tipo e identificadores (RN15).
+    - **Fica para a próxima.** Com o app fechado ou em segundo plano, quem mostra o aviso é o
+      sistema, antes de o app conferir qualquer coisa. No iOS, trocar o texto do aviso de outro
+      vínculo antes da exibição pede uma extensão de notificação e a chave `mutable-content` no
+      envio; a decisão é separada e não muda esta superfície.
+
+    ---
+
+    **Versão 0.2.29, aprovada em 02/10/2026.** Uma leitura nova, `/rpc/meu_estabelecimento`, para
+    o contratante que já tem estabelecimento conseguir publicar a segunda vaga. Uma operação e um
+    schema novos (`MeuEstabelecimento`); nenhum código de erro novo.
+
+    - **O buraco.** `/rpc/publicar_vaga` exige `local`, `regiao_administrativa` e `ponto`
+      (`NovaVaga`), e os três "vêm preenchidos com os do estabelecimento". Só
+      `/rpc/cadastrar_estabelecimento` devolvia esses dados, uma vez, na hora do cadastro.
+      `/rpc/meus_estabelecimentos` não os traz, de propósito, e o painel traz o local de cada vaga,
+      não o do estabelecimento. Quem abre o app num outro dia não tinha de onde ler o endereço e o
+      ponto da própria casa: o app só conseguia publicar logo depois do cadastro.
+    - **`/rpc/meu_estabelecimento`** (`GET`, `estabelecimento_id`): devolve o `MeuEstabelecimento`
+      a quem é **membro** dele, com o `papel` de quem chama. Quem não é membro recebe
+      `403 sem_permissao`, que é também a resposta para um id que não existe e para conta de
+      profissional, como no painel.
+    - **`MeuEstabelecimento` é o `Estabelecimento` sem o `documento`** (decisão de produto de
+      02/10/2026): o CNPJ ou CPF não sai nesta leitura, nem para o administrador nem para o
+      operador. A publicação não usa o documento, e o dado que a finalidade não pede não trafega
+      (RN15). O `Estabelecimento` completo, com o documento, continua saindo só na resposta de
+      `/rpc/cadastrar_estabelecimento`, para quem acabou de informá-lo.
+    - **`/rpc/meus_estabelecimentos`** não muda. A descrição dizia que "quem precisa disso chama o
+      painel"; passa a apontar para a leitura nova.
+    - O espelho `contrato/openapi.yaml` do backend e o app seguem em PRs próprios.
+
+    ---
+
+    **Versão 0.2.28, de 01/10/2026.** O bloqueio passa a esconder também o perfil público (cartão
+    1aGJPQK2, US26, RF26, UC17), conforme a decisão de produto de 30/09/2026 registrada na 0.2.27.
+    Nenhuma operação, campo ou código de erro novo: o `404 NaoEncontrado` já era declarado em
+    `/rpc/perfil_publico`; o que muda é **quando** ele vem.
+
+    - **`/rpc/perfil_publico`**: devolve `404 nao_encontrado` quando há bloqueio entre quem chama e o
+      perfil consultado, **nos dois sentidos** (quem bloqueou não vê quem foi bloqueado, e quem foi
+      bloqueado não vê quem bloqueou). Vale também quando a outra parte é membro do estabelecimento
+      consultado, como já vale para vagas e candidaturas. A resposta é a mesma de um id que não
+      existe: o cliente não distingue bloqueio de perfil inexistente, e a tela mostra "perfil
+      indisponível" sem dizer que houve bloqueio (RF26).
+    - **Fecha a divergência aberta** na 0.2.12 e adiada na 0.2.27. O espelho `contrato/openapi.yaml`
+      do backend e o app seguem em PRs próprios.
+
+    ---
 
     **Versão 0.2.27, de 30/09/2026.** Só texto: nenhuma operação, campo, código de erro ou status
     muda. Alinha a descrição ao que o backend faz e registra duas decisões de produto de 30/09,
@@ -1219,7 +1361,8 @@ paths:
         A lista vem **ordenada por nome**, para o seletor do app não trocar de posição entre duas
         aberturas da mesma tela. `reputacao` vem no mesmo formato do `PerfilPublico` de
         estabelecimento, da mesma função. Nenhum dado de cadastro sai aqui (RN10): sem documento,
-        sem endereço, sem coordenada e sem contato — quem precisa disso chama o painel.
+        sem endereço, sem coordenada e sem contato — quem precisa do endereço e do ponto para
+        publicar uma vaga chama `/rpc/meu_estabelecimento` (0.2.29).
       x-requisitos: [RF02, RF21, UC07]
       responses:
         '200':
@@ -1234,6 +1377,43 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '422':
           $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/meu_estabelecimento:
+    get:
+      tags: [Estabelecimento]
+      operationId: meuEstabelecimento
+      summary: O cadastro de um estabelecimento de que a conta é membro
+      description: |
+        O endereço, a Região Administrativa e o ponto do estabelecimento, para o app preencher a
+        publicação de uma vaga (`NovaVaga.local`, `regiao_administrativa` e `ponto` vêm preenchidos
+        com os do estabelecimento). Sem esta operação, só quem acabou de cadastrar tem esses dados,
+        na resposta de `/rpc/cadastrar_estabelecimento`: quem volta ao app noutro dia não consegue
+        publicar a segunda vaga.
+
+        Só para **membro** do estabelecimento, administrador ou operador: os dois publicam vagas
+        (RF21). `papel` é o de quem chama. Quem não é membro recebe `403 sem_permissao`, que é o
+        que responde também quando o estabelecimento não existe, como em `/rpc/painel_estabelecimento`.
+        Conta de profissional nunca é membro e recebe o mesmo `403`, e não o `422
+        perfil_incompativel` de `/rpc/meus_estabelecimentos`.
+
+        A resposta é o `MeuEstabelecimento`: o cadastro **sem o `documento`** (CNPJ ou CPF), para
+        o administrador e para o operador (decisão de produto de 02/10/2026). A publicação não usa
+        o documento, e ele não sai onde não é preciso (RN15). Também sem contato e sem os outros
+        membros.
+      x-requisitos: [RF02, RF04, RF21, RN02, RN15, UC01]
+      parameters:
+        - $ref: '#/components/parameters/EstabelecimentoId'
+      responses:
+        '200':
+          description: O estabelecimento, sem o documento, com o papel de quem chama.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeuEstabelecimento'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
 
   /rpc/equipe_de_confianca:
     get:
@@ -1708,8 +1888,15 @@ paths:
       tags: [Candidatura e confirmação]
       operationId: retirarCandidatura
       summary: Retirar a candidatura antes de ser escolhido
-      description: Sem penalidade (RN24). Candidatura já escolhida não se retira; vira cancelamento (`cancelar_posicao`). Retirar de novo devolve a mesma candidatura retirada; recusada ou expirada responde `409 candidatura_indisponivel`.
-      x-requisitos: [RN16, RN24, UC04]
+      description: |
+        Sem penalidade (RN24). Candidatura já escolhida não se retira; vira cancelamento
+        (`cancelar_posicao`). Retirar de novo devolve a mesma candidatura retirada; recusada ou
+        expirada responde `409 candidatura_indisponivel`.
+
+        É do profissional: conta de contratante recebe `422 perfil_incompativel` (RN25).
+        `candidatura_id` nulo responde `422 campo_obrigatorio`, com `details: candidatura_id`
+        (declarados na 0.2.32).
+      x-requisitos: [RN16, RN24, RN25, UC04]
       requestBody:
         required: true
         content:
@@ -1733,6 +1920,8 @@ paths:
           $ref: '#/components/responses/NaoEncontrado'
         '409':
           $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/minhas_candidaturas:
     get:
@@ -1742,7 +1931,13 @@ paths:
       description: |
         A candidatura pendente numa vaga ocultada pela moderação da Equipe Frila continua listada e
         pendente (0.2.23); o detalhe da vaga abre para quem a tem, com `oculta: true`.
-      x-requisitos: [RF08, UC04]
+
+        Desde a 0.2.32, a candidatura `aceita` traz `turno_id`, o turno que nasceu dela: é por
+        ele, e não pela vaga, que a tela chega ao turno em `/rpc/meus_turnos`.
+
+        É do profissional: conta de contratante recebe `422 perfil_incompativel` (RN25, declarado
+        na 0.2.32).
+      x-requisitos: [RF08, RN25, UC04]
       parameters:
         - name: estado
           in: query
@@ -1759,6 +1954,8 @@ paths:
                   $ref: '#/components/schemas/Candidatura'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/candidatos_da_vaga:
     get:
@@ -1769,7 +1966,10 @@ paths:
         Com reputação, denominador e taxa de comparecimento de cada um (RN08, UC04). Continua legível
         pela casa quando a vaga foi ocultada pela moderação da Equipe Frila; escolher é que é
         recusado (`escolher_candidato`, `422 vaga_oculta`).
-      x-requisitos: [RF09, RF16, RN08, UC04]
+
+        É do contratante: conta de profissional recebe `422 perfil_incompativel` (RN25). `vaga_id`
+        nulo responde `422 campo_obrigatorio`, com `details: vaga_id` (declarados na 0.2.32).
+      x-requisitos: [RF09, RF16, RN08, RN25, UC04]
       parameters:
         - name: vaga_id
           in: query
@@ -1791,6 +1991,8 @@ paths:
           $ref: '#/components/responses/SemPermissao'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/escolher_candidato:
     post:
@@ -1856,7 +2058,15 @@ paths:
         Nenhum telefone sai por aqui: o contato sai por `contato_do_turno`, que confere o prazo de
         RN10. `contato_visivel_ate` vem em cada turno para que a tela saiba se pode oferecer o botão
         antes de tocá-lo.
-      x-requisitos: [RF13, RF22, RNF06, UC13]
+
+        **O turno cancelado continua na lista** (RN12): o cancelamento não apaga o registro do que
+        foi combinado. Desde a 0.2.31 ele vem com `estado: cancelada`, e é por esse campo que a tela
+        o separa do turno de pé. Cada turno traz também `avaliacao`, a que este lado já deu.
+
+        Desde a 0.2.32, o turno cancelado traz `cancelamento`: a causa, se contou como falta e o
+        instante. O texto que alguém escreveu ao cancelar não sai por aqui, para nenhum dos dois
+        lados.
+      x-requisitos: [RF13, RF14, RF15, RF22, RN12, RNF06, UC13]
       parameters:
         - name: de
           in: query
@@ -2166,7 +2376,8 @@ paths:
         dois deles votando no mesmo turno dariam à casa dois votos sobre o mesmo profissional. O
         operador que reenvia a resposta que o administrador já gravou recebe `200` com a avaliação
         **do lado dele**; com resposta diferente, `409`. É o mesmo que `Turno.pode_avaliar` já
-        descrevia.
+        descrevia. Desde a 0.2.31 a avaliação gravada volta também em `Turno.avaliacao`, para a
+        tela mostrar a resposta já dada sem depender do que o aparelho guardou.
 
         Turno que não existe recebe o mesmo `403 sem_permissao` de turno alheio: a diferença diria a
         um estranho que aquele turno existe. `turno_id` ausente é `422 campo_obrigatorio` com
@@ -2214,9 +2425,10 @@ paths:
         Conta anonimizada (RF25) devolve `nome: "Conta encerrada"`. O turno e a avaliação sobrevivem à
         exclusão porque pertencem também à contraparte; o nome, não.
 
-        Bloqueio (RF26): hoje o perfil continua visível entre partes bloqueadas. A decisão de produto
-        de 30/09 é escondê-lo; a mudança de comportamento entra numa versão futura deste contrato,
-        junto com o backend e o app.
+        Bloqueio (RF26, 0.2.28): entre partes bloqueadas, nos dois sentidos, o perfil responde
+        `404 nao_encontrado`, igual a um id que não existe. Vale também quando a outra parte é
+        membro do estabelecimento consultado. O cliente mostra "perfil indisponível" e não revela
+        que houve bloqueio.
       x-requisitos: [RF16, RN08]
       parameters:
         - name: id
@@ -2252,7 +2464,12 @@ paths:
 
         Cada posição no painel expõe `a_caminho_em` (US14, 0.2.25), permitindo acompanhar se o
         profissional confirmado já sinalizou deslocamento.
-      x-requisitos: [RF20, RF13, UC07]
+
+        Desde a 0.2.31, cada posição traz também a hora e o tipo do check-in e a hora da
+        confirmação manual (`checkin_em`, `checkin_tipo`, `checkin_confirmado_em`), e a posição
+        cancelada que chegou a ter profissional traz `cancelamento`: a causa, se contou como falta,
+        o texto de quem cancelou e o instante (RN12).
+      x-requisitos: [RF20, RF13, RF14, RN12, UC07]
       parameters:
         - $ref: '#/components/parameters/EstabelecimentoId'
         - name: de
@@ -2437,7 +2654,12 @@ paths:
         O agendador manda o push pelo FCM, que no iOS entrega pelo APNs (B17). Chamar a cada abertura do
         app e sempre que o token mudar. O mesmo token reenviado só atualiza a data. Quem recusou a
         permissão de notificação não registra token e, para o despacho, não é alcançável.
-      x-requisitos: [RF06, RNF02]
+
+        A resposta traz o `vinculo_id` deste token com a conta que chama. O mesmo id vem em todo
+        push mandado a este aparelho para esta conta, e é por ele que o app sabe que o aviso é de
+        quem está no aparelho: o token que era de outra conta passa para quem chama com um
+        `vinculo_id` novo, e o aviso que ainda carrega o anterior não é mostrado nem aberto (RN15).
+      x-requisitos: [RF06, RN15, RNF02]
       requestBody:
         required: true
         content:
@@ -2889,6 +3111,13 @@ components:
                 message: campo_invalido
                 details: relato
                 hint: null
+            perfil_incompativel:
+              summary: A operação é do outro perfil (RN25)
+              value:
+                code: perfil_incompativel
+                message: perfil_incompativel
+                details: null
+                hint: null
             selecao_sem_antecedencia:
               value:
                 code: selecao_sem_antecedencia
@@ -3242,6 +3471,42 @@ components:
           $ref: '#/components/schemas/Coordenada'
         papel:
           $ref: '#/components/schemas/PapelMembro'
+    MeuEstabelecimento:
+      type: object
+      required: [id, nome, tipo, endereco, regiao_administrativa, ponto, papel]
+      description: |
+        O cadastro do estabelecimento como um membro o lê em `/rpc/meu_estabelecimento` (0.2.29):
+        os campos do `Estabelecimento`, **sem o `documento`**. O CNPJ ou CPF só aparece na resposta
+        de `/rpc/cadastrar_estabelecimento`, para quem acabou de informá-lo (RN15).
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        nome:
+          type: string
+        tipo:
+          $ref: '#/components/schemas/TipoEstabelecimento'
+        endereco:
+          type: string
+          description: Logradouro, número e complemento. É o que preenche `NovaVaga.local`.
+        regiao_administrativa:
+          type: string
+          description: "Região Administrativa do Distrito Federal onde o estabelecimento fica (ex.: Plano Piloto, Águas Claras, Taguatinga)."
+          example: Plano Piloto
+        ponto:
+          $ref: '#/components/schemas/Coordenada'
+        papel:
+          description: O papel de quem chama neste estabelecimento.
+          $ref: '#/components/schemas/PapelMembro'
+      example:
+        id: 5b0f6c1e-2a47-4f0b-9d3e-8c1a7e2f4b10
+        nome: Bar da Lia
+        tipo: food_service
+        endereco: CLS 408, Bloco B, Loja 12
+        regiao_administrativa: Plano Piloto
+        ponto:
+          latitude: -15.7942
+          longitude: -47.8822
+        papel: operador
     MembroDaEquipe:
       type: object
       required: [estabelecimento_id, profissional_id]
@@ -3586,6 +3851,21 @@ components:
           $ref: '#/components/schemas/EstadoCandidatura'
         criada_em:
           $ref: '#/components/schemas/Instante'
+        turno_id:
+          description: |
+            O turno que nasceu desta candidatura (0.2.32). Só vem preenchido no estado `aceita`,
+            e é o mesmo `turno_id` que `/rpc/candidatar` (modo urgência) ou
+            `/rpc/escolher_candidato` (modo seleção) devolveu na confirmação. Nulo nos outros
+            estados: `pendente`, `recusada`, `retirada` e `expirada`.
+
+            O cancelamento do turno não muda a candidatura: ela segue `aceita`, com o `turno_id`
+            do turno cancelado, e é `Turno.estado` que diz se o turno está de pé.
+
+            Opcional: o servidor anterior à 0.2.32 não o manda. Ausente não é o mesmo que nulo: o
+            cliente só afirma "não há turno" quando o campo vem nulo.
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
     Candidato:
       type: object
       required: [candidatura_id, profissional, criada_em]
@@ -3691,6 +3971,74 @@ components:
         pode_avaliar:
           type: boolean
           description: Verdadeiro depois do fim previsto, com presença verificada e sem avaliação deste lado ainda (RN07).
+        estado:
+          description: |
+            O estado da posição deste turno (0.2.31), o mesmo campo de `PosicaoNoPainel.estado`:
+            `confirmada` com o turno de pé, `cumprida` depois do fim com check-in, `cancelada`
+            quando uma das partes cancelou, a casa reabriu por atraso, a vaga foi cancelada ou o
+            turno terminou sem check-in. Nunca `aberta`: posição aberta não tem turno. Quem passa a
+            `cumprida` ou fecha o turno sem check-in é o agendador, minutos depois do fim previsto;
+            até lá o turno encerrado ainda vem `confirmada`.
+
+            O turno cancelado continua em `/rpc/meus_turnos`, e é por este campo que a tela o
+            distingue. Opcional: o servidor anterior à 0.2.31 não o manda, e o cliente trata a
+            ausência como "o servidor ainda não diz", sem supor `confirmada`.
+          $ref: '#/components/schemas/EstadoPosicao'
+        avaliacao:
+          description: |
+            A avaliação que **este lado** do turno já deu (0.2.31), igual à resposta de
+            `/rpc/avaliar`. Nulo enquanto este lado não avaliou. Para quem opera a casa é o voto da
+            casa, dado por qualquer membro dela (um voto por lado). **Nunca** é a avaliação que a
+            outra parte deu sobre quem chama: essa só aparece agregada, na reputação (RN07, RN08).
+            Com `avaliacao` preenchida, `pode_avaliar` é falso.
+
+            Opcional: o servidor anterior à 0.2.31 não o manda. Ausente não é o mesmo que nulo: o
+            cliente só afirma "ainda não avaliou" quando o campo vem nulo.
+          oneOf:
+            - $ref: '#/components/schemas/Avaliacao'
+            - type: 'null'
+        cancelamento:
+          description: |
+            Por que este turno foi cancelado e se contou como falta (0.2.32, RN12). Vem preenchido
+            quando `estado` é `cancelada`, e nulo nos outros estados. Não traz texto livre, para
+            nenhum dos dois lados: o que a pessoa escreveu ao cancelar só sai no painel da casa
+            (`PosicaoNoPainel.cancelamento.motivo`).
+
+            Opcional: o servidor anterior à 0.2.32 não o manda. Ausente não é o mesmo que nulo.
+          oneOf:
+            - $ref: '#/components/schemas/CancelamentoDoTurno'
+            - type: 'null'
+    CancelamentoDoTurno:
+      type: object
+      required: [causa, falta, cancelada_em]
+      description: |
+        O cancelamento de um turno, como as duas partes o leem em `/rpc/meus_turnos` (0.2.32,
+        RN12). É o `CancelamentoDaPosicao` do painel **sem o `motivo`**: o texto que a casa
+        escreveu ao cancelar não vai ao profissional (decisão de produto de 02/10/2026). Por isso
+        este schema não tem a propriedade, em vez de trazê-la nula. `causa`, `falta` e
+        `cancelada_em` são os mesmos valores que o painel mostra para a mesma posição.
+
+        O que o profissional lê em cada causa:
+
+        - `profissional`: ele mesmo desistiu. `falta` diz se a desistência contou (menos de 24
+          horas do início). O texto que ele escreveu não volta.
+        - `estabelecimento`: a casa cancelou a posição ou a vaga inteira. Não conta falta.
+        - `reabertura_por_atraso` e `no_show_sem_checkin`: sempre com `falta: true`.
+        - `outro`: o turno saiu sem escolha de nenhuma das partes. Não conta falta.
+      properties:
+        causa:
+          $ref: '#/components/schemas/CausaDoCancelamento'
+        falta:
+          type: boolean
+          description: |
+            Verdadeiro quando o cancelamento conta como falta do profissional na taxa de
+            comparecimento (RN12). O mesmo valor de `CancelamentoDaPosicao.falta`.
+        cancelada_em:
+          $ref: '#/components/schemas/Instante'
+      example:
+        causa: estabelecimento
+        falta: false
+        cancelada_em: '2026-10-03T19:40:00Z'
     ResultadoCancelamento:
       type: object
       required: [posicao_id, falta, reaberta, nova_posicao_id]
@@ -3791,6 +4139,81 @@ components:
           description: |
             Instante em que o profissional avisou estar a caminho do turno (US14). Nulo se ainda não
             avisou ou se a posição ainda não tem turno confirmado.
+        checkin_em:
+          description: |
+            A hora do toque no check-in (0.2.31), o mesmo `Turno.checkin_em`. Nulo sem check-in ou
+            sem turno. Com `checkin_tipo: manual`, é a hora que o profissional declarou e a casa
+            confirma. Opcional: o servidor anterior à 0.2.31 não o manda.
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
+        checkin_tipo:
+          description: O tipo do check-in (0.2.31), o mesmo `Turno.checkin_tipo`. Nulo sem check-in. Opcional.
+          oneOf:
+            - $ref: '#/components/schemas/TipoRegistro'
+            - type: 'null'
+        checkin_confirmado_em:
+          description: |
+            Quando um membro da casa confirmou o check-in manual (0.2.31), o mesmo
+            `Turno.checkin_confirmado_em`. Nulo no check-in geolocalizado, que já nasce
+            verificado, e no manual ainda sem confirmação. Opcional.
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
+        cancelamento:
+          description: |
+            Por que a posição foi cancelada (0.2.31, RN12). Vem na posição `cancelada` que chegou a
+            ter profissional. Nulo nos outros estados e na posição cancelada **sem nunca ter tido
+            profissional** (`profissional` nulo), que não tem cancelamento registrado: a vaga foi
+            cancelada, o modo seleção fechou sem escolha, ou a posição reaberta por atraso não foi
+            preenchida a tempo. Opcional: o servidor anterior à 0.2.31 não o manda.
+          oneOf:
+            - $ref: '#/components/schemas/CancelamentoDaPosicao'
+            - type: 'null'
+    CausaDoCancelamento:
+      type: string
+      enum: [profissional, estabelecimento, reabertura_por_atraso, no_show_sem_checkin, outro]
+      description: |
+        Dicionário fechado (0.2.31): valor novo é mudança de contrato, com versão subindo. Desde a
+        0.2.32 é também a causa em `Turno.cancelamento`, com o mesmo valor que o painel mostra
+        para a mesma posição.
+
+        - `profissional`: o profissional desistiu (`cancelar_posicao`).
+        - `estabelecimento`: um membro da casa cancelou a posição (`cancelar_posicao`) ou a vaga
+          inteira (`cancelar_vaga`).
+        - `reabertura_por_atraso`: a casa declarou o não comparecimento aos 15 minutos
+          (`reabrir_por_atraso`, D06).
+        - `no_show_sem_checkin`: o turno terminou sem check-in, e o agendador fechou a posição.
+        - `outro`: a posição saiu sem escolha de nenhuma das partes neste turno, por conta
+          encerrada ou por ação da Equipe Frila. O contrato não diz qual das duas: a situação da
+          conta de uma parte não é dado da outra (RN13, RN15).
+    CancelamentoDaPosicao:
+      type: object
+      required: [causa, falta, motivo, cancelada_em]
+      description: O registro do cancelamento de uma posição que tinha profissional (RN12), como a casa o lê no painel.
+      properties:
+        causa:
+          $ref: '#/components/schemas/CausaDoCancelamento'
+        falta:
+          type: boolean
+          description: |
+            Verdadeiro quando conta como falta do profissional na taxa de comparecimento (RN12):
+            desistência a menos de 24 horas do início, reabertura por atraso ou turno terminado sem
+            check-in. É o mesmo valor que `ResultadoCancelamento.falta` devolveu a quem cancelou.
+        motivo:
+          type: [string, 'null']
+          description: |
+            O texto que a pessoa escreveu ao cancelar, em `cancelar_posicao` ou `cancelar_vaga`, já
+            passado pelo filtro de termos. Só vem com `causa` `profissional` ou `estabelecimento`.
+            Nulo nas outras causas: o motivo delas é a própria causa, e nenhum código interno sai
+            aqui como texto.
+        cancelada_em:
+          $ref: '#/components/schemas/Instante'
+      example:
+        causa: profissional
+        falta: true
+        motivo: Tive um imprevisto de saúde e não consigo chegar.
+        cancelada_em: '2026-10-03T19:40:00Z'
 
     # ── Confiança e direitos
 
@@ -3952,6 +4375,15 @@ components:
           $ref: '#/components/schemas/Plataforma'
         atualizado_em:
           $ref: '#/components/schemas/Instante'
+        vinculo_id:
+          type: string
+          format: uuid
+          description: |
+            O vínculo deste token com a conta que o registrou, opaco. Muda quando o token passa de
+            uma conta para outra e quando é registrado de novo depois de `remover_dispositivo`; o
+            registro repetido pela mesma conta devolve o mesmo valor. Vem igual em todo push
+            mandado a este aparelho para esta conta. Opcional: o servidor anterior à 0.2.30 não o
+            devolve, e o app trata a ausência como "sem conferência por vínculo".
     ExclusaoDeConta:
       type: object
       required: [perfil_removido_em, dados_apagados_ate, turnos_cancelados]

@@ -327,6 +327,36 @@ printf '%s' "$corpo" | grep -qiE 'telefone|email|documento|endereco|latitude|lon
   && falhou "meus_estabelecimentos vazou dado de contato ou de cadastro: $corpo"
 ok "RN10: nenhum contato, documento ou coordenada em meus_estabelecimentos"
 
+# `meu_estabelecimento` (contrato 0.2.29) é de onde o app tira o endereço, a região e o
+# ponto da casa para preencher a publicação. Por GET, como o contrato manda, e só para
+# membro: o id que não é de nenhuma casa da conta responde 403.
+tmp=$(mktemp)
+http=$(curl -s -o "$tmp" -w '%{http_code}' -G "$URL/rest/v1/rpc/meu_estabelecimento" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "estabelecimento_id=$ESTAB")
+corpo=$(cat "$tmp"); rm -f "$tmp"
+[ "$http" = "200" ] || falhou "GET meu_estabelecimento devolveu $http: $corpo"
+achou=$(printf '%s' "$corpo" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+ponto = d.get('ponto') or {}
+ok = d.get('id') == sys.argv[1] and d.get('papel') == 'administrador' and d.get('endereco') \
+     and d.get('regiao_administrativa') and 'latitude' in ponto and 'longitude' in ponto
+print('sim' if ok else 'nao')" "$ESTAB" 2>/dev/null || true)
+[ "$achou" = "sim" ] \
+  || falhou "meu_estabelecimento não trouxe o cadastro da casa criada: $corpo"
+ok "GET meu_estabelecimento → 200, com endereço, região e ponto da casa"
+
+tmp=$(mktemp)
+http=$(curl -s -o "$tmp" -w '%{http_code}' -G "$URL/rest/v1/rpc/meu_estabelecimento" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "estabelecimento_id=00000000-0000-4000-8000-000000000000")
+corpo=$(cat "$tmp"); rm -f "$tmp"
+code=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || true)
+[ "$http" = "403" ] && [ "$code" = "sem_permissao" ] \
+  || falhou "meu_estabelecimento de casa alheia: HTTP $http code '$code', esperado 403 sem_permissao"
+ok "GET meu_estabelecimento de casa alheia → 403 sem_permissao"
+
 echo
 echo "▸ A vaga"
 #
