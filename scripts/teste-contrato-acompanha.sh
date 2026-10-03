@@ -135,6 +135,34 @@ caso "comentário de bloco entre function e o nome é detectado" 1 "public.nova_
 caso "comentário com create function não conta" 0 "Nenhuma função de public tocada" \
 '-- create or replace function public.so_no_comentario() era o plano'
 
+caso "marca válida passa" 0 "corpo-sem-mudanca-de-superficie" \
+'-- contrato: corpo-sem-mudanca-de-superficie public.ja_no_ar 0.2.17
+create or replace function public.ja_no_ar() returns int language sql as $$ select 2 $$;'
+
+caso "sem marca reprova" 1 "O contrato não acompanhou o código." \
+'create or replace function public.ja_no_ar() returns int language sql as $$ select 2 $$;'
+
+caso "marca com nome errado reprova" 1 "O contrato não acompanhou o código." \
+'-- contrato: corpo-sem-mudanca-de-superficie public.outro_nome 0.2.17
+create or replace function public.ja_no_ar() returns int language sql as $$ select 2 $$;'
+
+caso "função só declarada no contrato mas nova reprova pela regra de primeira implementação, não pela marca" 1 \
+"O contrato não acompanhou o código." \
+'-- contrato: corpo-sem-mudanca-de-superficie public.declarada_sem_codigo 0.2.17
+drop function public.declarada_sem_codigo(text);'
+
+caso "assinatura alterada com marca reprova" 1 "O contrato não acompanhou o código." \
+'-- contrato: corpo-sem-mudanca-de-superficie public.ja_no_ar 0.2.17
+create or replace function public.ja_no_ar(p int) returns int language sql as $$ select p $$;'
+
+caso "versão da marca desatualizada reprova" 1 "O contrato não acompanhou o código." \
+'-- contrato: corpo-sem-mudanca-de-superficie public.ja_no_ar 0.2.16
+create or replace function public.ja_no_ar() returns int language sql as $$ select 2 $$;'
+
+caso "drop com marca reprova" 1 "O contrato não acompanhou o código." \
+'-- contrato: corpo-sem-mudanca-de-superficie public.ja_no_ar 0.2.17
+drop function public.ja_no_ar();'
+
 echo
 if [ "$falhas" -ne 0 ]; then
   echo "$falhas de $casos casos falharam."

@@ -4,7 +4,7 @@
 -- Prefixo 270: reservado para o ciclo de push e dispositivos.
 
 begin;
-select plan(43);
+select plan(48);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -121,6 +121,10 @@ select ok(
   (select (res->>'atualizado_em') is not null from res_reg1),
   'Resposta traz atualizado_em');
 
+select ok(
+  (select (res->>'vinculo_id') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' from res_reg1),
+  'Resposta traz vinculo_id como UUID válido (RN15, 0.2.30)');
+
 select is(
   (select res ? 'token_fcm' or res ? 'usuario_id' or res ? 'id' from res_reg1),
   false,
@@ -134,6 +138,11 @@ select is(
   1,
   'Dispositivo gravado na tabela public.dispositivo para o Usuário A');
 
+select ok(
+  (select vinculo_id is not null from public.dispositivo
+    where token_fcm = 'fcm_token_aparelho_user_a_1234567890'),
+  'Coluna vinculo_id preenchida no banco para o Usuário A');
+
 -- Idempotência: reenviar o mesmo token atualiza a data e não duplica
 create temp table res_reg2 as
   select pg_temp.como('c7000000-0000-4000-8000-000000000001',
@@ -144,6 +153,18 @@ select is(
     where token_fcm = 'fcm_token_aparelho_user_a_1234567890'),
   1,
   'Idempotência: reenviar mesmo token não cria segunda linha');
+
+select is(
+  (select res->>'vinculo_id' from res_reg2),
+  (select res->>'vinculo_id' from res_reg1),
+  'Idempotência: reenviar mesmo token pela mesma conta preserva o vinculo_id');
+
+select throws_ok(
+  $$ insert into public.dispositivo (usuario_id, token_fcm, plataforma)
+     values ('c7000000-0000-4000-8000-000000000001', 'fcm_token_aparelho_user_a_1234567890', 'ios') $$,
+  '23505',
+  null,
+  'dispositivo_token_fcm_key: duplicar token_fcm viola unicidade');
 
 -- ── 4. Troca de Dono e Múltiplos Dispositivos ──────────────────────────────────
 
@@ -157,6 +178,11 @@ select is(
     where token_fcm = 'fcm_token_aparelho_user_a_1234567890'),
   'c7000000-0000-4000-8000-000000000002'::uuid,
   'Troca de dono: token transferido para o Usuário B');
+
+select isnt(
+  (select res->>'vinculo_id' from res_reg_troca),
+  (select res->>'vinculo_id' from res_reg1),
+  'Troca de dono: novo vinculo_id gerado quando token passa para Usuário B');
 
 select is(
   (select count(*)::int from public.dispositivo

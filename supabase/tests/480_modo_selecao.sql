@@ -20,7 +20,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(70);
+select plan(77);
 
 insert into privado.ambiente (id, eh_teste) values (true, true);
 select set_config('frila.agora', '2026-11-02 12:00:00+00', true);
@@ -249,6 +249,34 @@ select is((select array_agg(k order by k) from jsonb_object_keys(
   array['fim_em', 'funcao', 'id', 'inicio_em', 'local', 'regiao_administrativa', 'valor_centavos'],
   'a vaga da candidatura é um VagaResumo do contrato');
 
+select is(
+  (select array_agg(k order by k) from jsonb_object_keys(
+    pg_temp.como(pg_temp.p(1), $$ select public.minhas_candidaturas('pendente') $$)->0) k),
+  array['criada_em', 'estado', 'id', 'turno_id', 'vaga'],
+  'Candidatura traz exatamente os cinco campos do schema (0.2.32)');
+
+select is(
+  pg_temp.como(pg_temp.p(1), $$ select public.minhas_candidaturas('pendente') $$)->0->>'turno_id',
+  null,
+  'candidatura pendente traz turno_id nulo (0.2.32)');
+
+select is(
+  pg_temp.como(pg_temp.p(4), $$ select public.minhas_candidaturas() $$)->0->>'turno_id',
+  null,
+  'candidatura retirada traz turno_id nulo (0.2.32)');
+
+select throws_ok(
+  $$ select pg_temp.como(pg_temp.p(1), $x$ select public.retirar_candidatura(null::uuid) $x$) $$,
+  'PGRST',
+  '{"code" : "campo_obrigatorio", "message" : "campo_obrigatorio", "details" : "candidatura_id", "hint" : null}',
+  'retirar_candidatura(null) é 422 campo_obrigatorio');
+
+select throws_ok(
+  $$ select pg_temp.como('c9000000-0000-4000-8000-0000000000d1', $x$ select public.candidatos_da_vaga(null::uuid) $x$) $$,
+  'PGRST',
+  '{"code" : "campo_obrigatorio", "message" : "campo_obrigatorio", "details" : "vaga_id", "hint" : null}',
+  'candidatos_da_vaga(null) é 422 campo_obrigatorio');
+
 -- ── 4. escolher_candidato ───────────────────────────────────────────────────────
 
 select throws_ok(
@@ -282,6 +310,20 @@ select is(array[pg_temp.estado_cand(1, (select s1 from vagas)), pg_temp.estado_c
                 pg_temp.estado_cand(3, (select s1 from vagas)), pg_temp.estado_cand(4, (select s1 from vagas))],
   array['aceita', 'recusada', 'recusada', 'retirada'],
   'os não escolhidos são liberados (recusada); quem retirou continua retirada');
+
+select is(
+  (select c->>'turno_id' from jsonb_array_elements(
+    pg_temp.como(pg_temp.p(1), $$ select public.minhas_candidaturas() $$)) c
+    where c->>'id' = pg_temp.cand(1, (select s1 from vagas))::text),
+  (select r->>'turno_id' from escolha),
+  'candidatura aceita no modo seleção traz o turno_id criado (0.2.32)');
+
+select is(
+  (select c->>'turno_id' from jsonb_array_elements(
+    pg_temp.como(pg_temp.p(2), $$ select public.minhas_candidaturas() $$)) c
+    where c->>'id' = pg_temp.cand(2, (select s1 from vagas))::text),
+  null,
+  'candidatura recusada traz turno_id nulo (0.2.32)');
 select is(pg_temp.avisos(1, 'confirmacao', (select s1 from vagas)), 1,
   'o escolhido recebe confirmacao');
 select is(pg_temp.avisos(2, 'candidatura_recusada', (select s1 from vagas))

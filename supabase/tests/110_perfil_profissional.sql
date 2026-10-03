@@ -9,7 +9,7 @@
 -- reflexo excluiria do produto — justamente o turno que o Frila existe para preencher.
 
 begin;
-select plan(33);
+select plan(34);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -112,6 +112,14 @@ select is(
     where (x->>'dia_semana')::int = 5),
   '{"dia_semana": 5, "hora_fim": "02:00", "hora_inicio": "18:00"}'::jsonb,
   'a janela 18:00–02:00 é gravada e lida de volta igual');
+
+select throws_ok(
+  format($$ insert into public.disponibilidade (profissional_id, dia_semana, hora_inicio, hora_fim)
+            values ((select id from public.profissional where usuario_id = 'd1000000-0000-4000-8000-000000000001'),
+                    5, '18:00'::time, '02:00'::time) $$),
+  '23505',
+  null,
+  'disponibilidade_profissional_id_dia_semana_hora_inicio_hora_key: duplicar janela de disponibilidade viola unicidade');
 
 -- Sem histórico, a taxa é nula e não zero: as duas contam histórias opostas sobre quem
 -- acabou de chegar, e a tela precisa saber a diferença (RF16).

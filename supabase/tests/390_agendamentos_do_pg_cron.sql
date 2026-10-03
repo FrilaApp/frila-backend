@@ -12,7 +12,7 @@
 -- o job existe e a função dele chama o fechamento de turnos.
 begin;
 
-select plan(11);
+select plan(14);
 
 -- ── 1. Fechamento de turnos e vagas a cada cinco minutos ──────────────────────────
 select is(
@@ -59,7 +59,24 @@ select ok(
   (select active from cron.job where jobname = 'reconciliar_reputacao_diaria'),
   'Job reconciliar_reputacao_diaria está ativo');
 
--- ── 3. O conjunto inteiro de jobs ──────────────────────────────────────────────────
+-- ── 3. Verificação de saúde operacional a cada cinco minutos (5bPJvMIo) ──────────
+select is(
+  (select count(*)::int from cron.job
+    where jobname = 'verificar_saude'
+      and command = 'select privado.verificar_saude()'),
+  1,
+  'Job verificar_saude está agendado no pg_cron chamando privado.verificar_saude()');
+
+select is(
+  (select schedule from cron.job where jobname = 'verificar_saude'),
+  '*/5 * * * *',
+  'Job verificar_saude roda a cada cinco minutos');
+
+select ok(
+  (select active from cron.job where jobname = 'verificar_saude'),
+  'Job verificar_saude está ativo');
+
+-- ── 4. O conjunto inteiro de jobs ──────────────────────────────────────────────────
 -- Todo job agendado é `select privado.<função>()` e a função existe e aceita a chamada
 -- sem argumento (todos os parâmetros com default, como `liberar_teto(p_limite)`). Um job
 -- cujo comando aponta para função renomeada ou removida falha em silêncio a cada execução.
@@ -95,9 +112,13 @@ select set_eq(
     'reconciliar_reputacao_diaria',
     'fechar_selecoes',
     -- Drena a fila `email` e acorda a Edge Function `enviar-email` (cartão 7yq1flLG).
-    'processar_fila_email'
+    'processar_fila_email',
+    -- Avisa os dois lados quando o fim passa sem check-out (cartão qcVimM84).
+    'alertar_fim_sem_checkout',
+    -- Varre saúde, filas, falhas e emite alertas à equipe (cartão 5bPJvMIo).
+    'verificar_saude'
   ],
-  'Os jobs agendados são exatamente os onze conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os treze conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;

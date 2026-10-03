@@ -148,7 +148,19 @@ jobs:
       # Este chama cada RPC da v1.0 com o relógio do produto sob controle e valida a
       # resposta contra o schema declarado, nos dois sentidos: campo que sumiu e campo que
       # o contrato não declara.
-      - name: A resposta de cada RPC casa com o contrato
+      # Portão com furo aprova calado, e este decide se o corpo que o iOS desserializa
+      # casa com o modelo que ele gerou. Roda antes de julgar o PR, como os outros
+      # autotestes. Não precisa de Postgres, mas fica aqui porque o passo seguinte precisa.
+      - name: O portão do corpo fecha nos casos conhecidos
+        run: ./scripts/teste-contrato-responde.sh
+
+      # A direção contrato-à-frente: o contrato promete uma recusa e o código não a
+      # levanta. Os outros três portões de contrato medem a direção oposta. Autoteste
+      # antes, como os outros, porque portão com furo aprova calado.
+      - name: O portão da promessa fecha nos casos conhecidos
+        run: ./scripts/teste-contrato-promete.sh
+
+      - name: A resposta de cada RPC e de cada Edge Function casa com o contrato, e toda recusa prometida é alcançável
         run: ./scripts/contrato-responde.sh
 
       - name: Diagnóstico ao falhar
@@ -250,6 +262,35 @@ jobs:
           P95_MAX_ELEGIVEIS: 400
           P95_MAX_VAGAS: 600
         run: ./scripts/planos-com-carga.sh --plano
+
+  # As Edge Functions tinham testes que nunca rodaram: até 29/09, `grep -rin deno
+  # .github/` devolvia zero linhas. Os treze portões cobriam migração, pgTAP, HTTP, corrida,
+  # contrato, lint e relógio — e nenhum tocava no TypeScript, que é onde mora o envio de
+  # push, a exclusão de conta e a limpeza de contas órfãs.
+  #
+  # O que ficava sem rede: entre os 42 testes do `enviar-push` está
+  # `filtrarDataPayloadFcm só permite chaves autorizadas`, que é a garantia de RN15 e RN10
+  # de o payload não levar telefone, e-mail nem relato. O `mutacao.sh` não alcança — ele
+  # derruba restrição e política no Postgres, e esse filtro é uma lista em TypeScript.
+  #
+  # Job próprio porque não precisa de Postgres: roda em segundos, e não deve esperar os três
+  # minutos de `docker pull` do job do banco para dizer que o TypeScript quebrou.
+  deno:
+    name: Testes das Edge Functions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # `--no-check` de propósito: as funções importam do `esm.sh` e de `deno.land/std` sem
+      # mapa de importação, e a checagem de tipos puxaria a rede inteira para dizer o que o
+      # teste já diz. O que este portão mede é comportamento, não tipo.
+      - name: deno test
+        working-directory: supabase/functions
+        run: deno test --allow-all --no-check
 
   contrato:
     name: Contrato em dia com o Frila

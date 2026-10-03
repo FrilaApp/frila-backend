@@ -160,6 +160,15 @@ returns void
 language plpgsql as \$agir\$
 declare
   r jsonb;
+  -- O DETAIL do impasse e a unica parte que nomeia o ciclo: quais processos esperam quais
+  -- travas, e em que relacao. O sqlerrm traz so "deadlock detected", que diz que houve
+  -- impasse e nao entre o que. Sem isto a instrumentacao esconde a causa, e quem for
+  -- consertar conserta palpite.
+  --
+  -- Sem crase nestes comentarios de proposito: o bloco SQL vai num heredoc nao citado, e
+  -- crase ali vira substituicao de comando do shell.
+  v_detalhe text;
+  v_contexto text;
 begin
   if p_conta is not null then
     execute 'set local role authenticated';
@@ -176,15 +185,20 @@ begin
     -- nomeado. A subtransação desfaz o que o lado fez, como o rollback do app.
     execute 'reset role';
     execute 'reset request.jwt.claims';
+    get stacked diagnostics v_detalhe = pg_exception_detail,
+                            v_contexto = pg_exception_context;
     insert into corrida_ciclo.placar values (p_cenario, p_rodada, p_lado,
-      'sqlstate:' || sqlstate, jsonb_build_object('mensagem', sqlerrm));
+      'sqlstate:' || sqlstate,
+      jsonb_build_object('mensagem', sqlerrm, 'detalhe', v_detalhe, 'contexto', v_contexto));
   when others then
     execute 'reset role';
     execute 'reset request.jwt.claims';
+    get stacked diagnostics v_detalhe = pg_exception_detail,
+                            v_contexto = pg_exception_context;
     insert into corrida_ciclo.placar values (p_cenario, p_rodada, p_lado,
       case when sqlerrm like '{%' then coalesce((sqlerrm::jsonb)->>'code', 'sem_code')
            else 'sqlstate:' || sqlstate end,
-      jsonb_build_object('mensagem', sqlerrm));
+      jsonb_build_object('mensagem', sqlerrm, 'detalhe', v_detalhe, 'contexto', v_contexto));
   end;
 end
 \$agir\$;
@@ -277,9 +291,9 @@ DONA=$(psql -tAc "select conta from corrida_ciclo.contas where papel = 'dona'")
 # Os tempos de cada lado numa rodada: "espera_antes segura_depois".
 tempos() { # rodada lado(1|2|3)
   case $(( $1 % 4 )):$2 in
-    0:1) echo "0 0.3" ;;    0:*) echo "0.1 0" ;;
-    1:1) echo "0.1 0" ;;    1:2) echo "0 0.3" ;;  1:*) echo "0.15 0" ;;
-    2:*) echo "0 0.05" ;;
+    0:1) echo "0 0.5" ;;    0:*) echo "0.2 0" ;;
+    1:1) echo "0.2 0" ;;    1:2) echo "0 0.5" ;;  1:*) echo "0.3 0" ;;
+    2:*) echo "0 0.08" ;;
     3:*) echo "0 0" ;;
   esac
 }
@@ -299,9 +313,8 @@ set statement_timeout = ${7:-0};
 -- sessão da corrida usa um valor de teste, como o pgTAP faz com \`set local\`.
 select set_config('frila.agendador_secret', 'segredo-da-corrida', false)
  where nullif(current_setting('frila.agendador_secret', true), '') is null;
-begin;
-set local statement_timeout = 0;
 select pg_sleep($ant);
+begin;
 set local statement_timeout = ${7:-0};
 select corrida_ciclo.agir('$1', $2, '$3', $conta, \$sql\$$5\$sql\$);
 set local statement_timeout = 0;
@@ -513,11 +526,26 @@ SQL
     [ "$n_livres" -gt 0 ] || { falhou "rodada $r: nenhum elegível livre do teto"; continue; }
     livres=$(sed "s/.*/'&'::uuid/" "$TMP/livres" | paste -sd, -)
 
-    # O terceiro executor é o agendador do teto (\`liberar_teto\`), restrito aos livres
-    # desta corrida para não liberar a fila de ninguém de fora dela.
+    # O terceiro executor é o agendador do teto (\`liberar_teto\`), liberando por profissional
+    # em transações separadas, como o pg_cron faz.
     lado teto "$r" 1 "" "select to_jsonb(privado.despachar_vaga('$TETO_A'))"
     lado teto "$r" 2 "" "select to_jsonb(privado.despachar_vaga('$TETO_B'))"
-    lado teto "$r" 3 "" "select to_jsonb(count(privado.liberar_teto_do_profissional(x))) from unnest(array[$livres]) x"
+    local ant3 dep3
+    read -r ant3 dep3 < <(tempos "$r" 3)
+    psql -tA >/dev/null 2>"$TMP/teto-$r-3.err" <<SQL &
+set application_name = 'corrida_ciclo_teto_3';
+select set_config('frila.agendador_secret', 'segredo-da-corrida', false)
+ where nullif(current_setting('frila.agendador_secret', true), '') is null;
+select pg_sleep($ant3);
+$(while read -r p; do
+  cat <<RODADA
+begin;
+select corrida_ciclo.agir('teto', $r, '3', null, \$sql\$select to_jsonb(privado.liberar_teto_do_profissional('$p'))\$sql\$);
+commit;
+RODADA
+done < "$TMP/livres")
+select pg_sleep($dep3);
+SQL
     wait
 
     local erros duas esperando
@@ -1129,8 +1157,6 @@ end
 SQL
 
   psql -tA -F' ' -c "select n, vaga, dona, c1 from corrida_ciclo.excluir order by n" >"$TMP/excluir"
-  local ms
-  ms() { printf '0.%03d 0' "$(( RANDOM % 30 ))"; }
   # O pedido de exclusão é registrado antes da corrida, em transação própria, exatamente como
   # a Edge Function faz (cartão SHUDSozj). É o que se quer medir aqui: quando a exclusão bate
   # em 40P01 e volta atrás, esta linha tem de continuar de pé.
@@ -1141,9 +1167,31 @@ SQL
     psql -q -c "select privado.registrar_pedido_de_exclusao('$dona')" >/dev/null </dev/null
   done <"$TMP/excluir"
 
+  # Os tempos deixaram de ser sorteados, e isso conserta o cenario em vez de enfeitar.
+  #
+  # Com dois lados em 0-29 ms sorteados, a janela entre o excluir_conta travar o usuario e
+  # querer a vaga e de microssegundos. Medido em 50 rodadas: 21 sairam vaga_encerrada, isto
+  # e, a candidatura chegou DEPOIS do cancelamento e nao disputou nada, e so 2 produziram o
+  # entrelacamento que este cenario existe para testar. Cenario que quase nao disputa faz
+  # "zero impasses" passar sem significar nada.
+  #
+  # O ciclo, medido pelo PG_EXCEPTION_CONTEXT que o agir passou a gravar:
+  #   excluir_conta: usuario FOR UPDATE (linha 41) -> vaga FOR UPDATE (linha 74)
+  #   candidatar:    vaga FOR UPDATE -> insert em public.notificacao -> usuario FOR KEY SHARE
+  #
+  # A ultima aresta e CHECAGEM DE CHAVE ESTRANGEIRA, e nao trava escrita: nao existe
+  # "for update" de usuario dentro do candidatar. Quem procurar "for update" nos dois lados
+  # nao acha o ciclo.
+  #
+  # Para forcar o ciclo em vez de esperar pelo sorteio, no molde do cenario 6: uma sessao de
+  # servico segura a vaga por 1 s; a candidatura entra na fila dela aos 0,2 s; a exclusao
+  # entra aos 0,4 s, trava o usuario e vai para a fila da vaga atras da candidatura. Quando
+  # a sessao de servico solta, a candidatura leva a vaga e vai pedir o usuario pela FK, que a
+  # exclusao segura -- e a exclusao continua esperando a vaga, que a candidatura agora tem.
   while read -r n vaga dona c1; do
-    lado excluir "$n" 1 ""   "select privado.excluir_conta('$dona')" "$(ms)"
-    lado excluir "$n" 2 "$c1" "select public.candidatar('$vaga')"    "$(ms)"
+    lado excluir "$n" 0 ""    "select to_jsonb(count(*)) from (select 1 from public.vaga where id = '$vaga' for update) x" "0 1.0"
+    lado excluir "$n" 2 "$c1" "select public.candidatar('$vaga')"     "0.2 0"
+    lado excluir "$n" 1 ""    "select privado.excluir_conta('$dona')" "0.4 0"
     wait
   done <"$TMP/excluir"
 
@@ -1170,10 +1218,13 @@ SQL
     # diferença que este cartão trouxe: antes, o caminho do 40P01 não deixava rastro algum.
     # Desfecho 1: exclusão passa, recolhe a confirmação se houve (ou candidatura falha/aborta), vaga cancelada sem posição viva e sem falta, pedido concluído
     ($2 == "ok" && ($3 == "ok" || $3 == "vaga_encerrada" || $3 == "posicao_ja_preenchida" || $3 == "sqlstate:40P01") && $4 == "cancelada" && $5 == 0 && $6 == 0 && $7 == "anonimizada" && $8 == "concluido") { next }
-    # Desfecho 2: limite conhecido de 40P01 (CPD2c74A) — rollback consistente da exclusão, vaga
-    # preenchida pelo candidato, conta ainda ativa. O pedido continua PENDENTE, e é isso que
-    # torna o caso recuperável em vez de silencioso: a linha sobreviveu ao rollback.
-    ($2 == "sqlstate:40P01" && $3 == "ok" && $4 == "preenchida" && $5 == 1 && $6 == 0 && $7 == "ativa" && $8 == "pendente") { next }
+    # O desfecho de 40P01 SAIU da lista de aceitos. Ele era um limite conhecido enquanto a
+    # causa era desconhecida; agora foi medida — inversão de ordem de aquisição, consertada
+    # pela 20261002090000 — e o critério 2 do CPD2c74A diz "nenhuma rodada termina em 40P01",
+    # sem tolerância. Aceitar o desfecho aqui era o portão combinando com o defeito.
+    #
+    # Medido no mesmo cenário que provoca a disputa: antes do conserto, 19 de 20 rodadas
+    # terminavam em 40P01; depois, 0 de 20, com 20 de 20 exercitando o recolhimento.
     { print }' "$TMP/excluir.res")
   confirmou=$(awk '$2 == "ok" && $3 == "ok"' "$TMP/excluir.res" | grep -c . || true)
   impasses=$(grep -c 'sqlstate:40P01' "$TMP/excluir.res" || true)

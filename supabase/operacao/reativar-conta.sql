@@ -31,5 +31,5 @@
 \endif
 
 begin;
-select privado.operacao_reativar_conta(:'usuario_id'::uuid, :'justificativa', :'operador_id'::uuid);
+select privado.reativar(:'usuario_id'::uuid, :'justificativa', :'operador_id'::uuid);
 commit;
