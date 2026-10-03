@@ -81,51 +81,60 @@ da CI, e o da tabela, é 78.
 > arquivos e nada mais** — `contrato/openapi.yaml` (+426/-11) e `contrato/openapi.yaml.sha256`
 > (+1/-1). Nada em `supabase/`.
 >
-> No run `37045334547` do #127, o job **"Contrato em dia com o Frila" passou** — é a prova de
-> que o espelho 0.2.32 fecha a divergência —, e com ele "O contrato acompanhou o código",
-> "Migrações sem colisão de versão", "Plano do caminho quente com o volume do DF" e "Testes
-> das Edge Functions".
+> **O run do #127 fechou verde inteiro:** `37045334547`, headSha `614d9e4`, encerrado em
+> 02/10 às 18h35Z, `conclusion=success` nos **seis jobs**. O job "Contrato em dia com o
+> Frila" passou, e é a prova de que o espelho 0.2.32 fecha a divergência. No job "Migrações e
+> pgTAP" **todos os passos saíram verdes**, incluindo os quatro portões do contrato — os dois
+> que são job próprio ("Contrato em dia com o Frila" e "O contrato acompanhou o código") e os
+> dois que são passo ("O portão da promessa fecha nos casos conhecidos" e "A resposta de cada
+> RPC casa com o contrato, e toda recusa prometida é alcançável").
 >
-> O sexto job do #127, "Migrações e pgTAP", reprovou na **primeira** tentativa por motivo de
-> runner e não por diff: o passo *"Subir o ambiente"* não subiu o Postgres —
+> A **primeira** tentativa daquele job havia reprovado por motivo de runner, e não por diff: o
+> passo *"Subir o ambiente"* não subiu o Postgres —
 > `failed to bind host port for 0.0.0.0:54322:172.18.0.2:5432/tcp: address already in use`,
-> com um `toomanyrequests: Rate exceeded` do daemon no mesmo passo — e os onze passos de
-> teste foram pulados. Na **segunda** tentativa o passo subiu e o job seguiu verde, inclusive
-> o `pgTAP` e o `Corridas do ciclo`.
+> com um `toomanyrequests: Rate exceeded` do daemon no mesmo passo — e os onze passos de teste
+> foram pulados. Vale como lembrete: passo de ambiente que cai leva onze portões com ele, e
+> nenhum deles mediu nada.
 >
 > **É o #127 que destrava o `Contrato em dia` de todo mundo**, inclusive de PR que só mexe em
 > documentação. Enquanto ele não entra, nenhum PR baseado na `develop` fica verde nesse job,
 > e o vermelho não é do PR que o recebe.
 
-> ## 🔴 Uma rodada de 50 fora da regra em `Corridas do ciclo`, e não está determinado o que é
+> ## 🔴 O cenário 3 de `Corridas do ciclo` reprovou duas vezes, em rodadas diferentes
 >
-> Medido em 02/10 no run **`37045010032`** (headSha `ee622ad0ad201fcbca1c4b1f0ebd3c20ef8ed51c`,
-> criado às 18h04Z, encerrado às 18h13Z), job "Migrações e pgTAP". **O passo que reprovou não
-> foi o pgTAP** — esse passou. Foi o passo *"Corridas do ciclo"*
-> (`./scripts/corrida-ciclo.sh`), com exit code **1**:
+> Medido em 02/10, no job "Migrações e pgTAP". **O passo que reprova não é o pgTAP** — esse
+> passou em todas as execuções abaixo. É o passo *"Corridas do ciclo"*
+> (`./scripts/corrida-ciclo.sh`), exit code **1**, sempre no **cenário 3: dois despachos e o
+> agendador do teto ao mesmo tempo**, e sempre em uma única rodada de 50:
 >
-> ```
-> ▸ Cenário 3: dois despachos e o agendador do teto ao mesmo tempo (50 rodadas)
->   ✗ rodadas fora da regra:
-> rodada 45: erros=[] fora_de_uma=1 esperando=6/5
-> ```
+> | run | headSha | hora (UTC) | resultado do cenário 3 |
+> |---|---|---|---|
+> | `36962663919` | `6d96d88` (`develop`) | 04h00Z | passou — *"Corridas do ciclo: ok"* |
+> | `37045010032` | `ee622ad` | 18h04Z | **reprovou**: `rodada 45: erros=[] fora_de_uma=1 esperando=6/5` |
+> | `37045334547` | `614d9e4` (PR #127) | ~18h15Z, 2ª tentativa | passou |
+> | `37047429081` | `28c57a2` | 18h26Z | **reprovou**: `rodada 9: erros=[] fora_de_uma=1 esperando=5/5` |
 >
-> Os outros **nove cenários passaram 50 de 50**. Os onze passos seguintes do job foram
-> **pulados** por causa dele, inclusive o portão da resposta de cada RPC contra o contrato —
-> então um verde que não aparece ali não quer dizer vermelho, quer dizer que não rodou.
+> Nas quatro execuções os outros **nove cenários passaram 50 de 50**. Nas duas reprovações o
+> que quebra é a asserção `fora_de_uma`, e na segunda com `esperando=5/5` — o contador
+> esperado bateu e a regra ainda assim foi violada em uma rodada, o que afasta a hipótese de
+> ser só contagem de espera.
 >
-> **MEDIDO que não é regressão do PR que o recebeu, e que o passo já passou duas vezes no
-> mesmo código:** verde na `develop` (`6d96d88`, run `36962663919`, 02/10 às 04h00Z, com
-> *"Corridas do ciclo: ok"*) e verde no run `37045334547` do PR #127, segunda tentativa, por
-> volta das 18h15Z — ali a única diferença de código é o espelho do contrato. Contra uma só
-> reprovação, às 18h04Z. O diff do PR que reprovou é um arquivo `.md`.
+> Quando esse passo cai, os **onze passos seguintes do job são pulados**, inclusive o portão
+> da resposta de cada RPC contra o contrato. Verde que não aparece ali não é vermelho: é passo
+> que não rodou.
 >
-> **Mesmo assim não está determinado se é flake ou bug intermitente real, e as duas passagens
-> não decidem isso.** Uma passagem não prova flake: 1 em 50 vira 1 em 100, e depois 1 em 150,
-> o que continua fraco. Corrida de concorrência é a classe de defeito que **só a CI pega** —
-> a máquina local não reproduz corrida de commit —, e por isso ela não se resolve por rodada
-> verde, e sim por repetição deliberada. O dono é quem toca concorrência, não quem escreve
-> documentação. **É candidato a cartão próprio.**
+> **Não é regressão do PR que recebeu as reprovações.** O diff dele é um arquivo `.md`, e o
+> código em `supabase/` é o mesmo da `develop` em `6d96d88`. As duas passagens vieram de
+> árvores com o mesmo `supabase/`.
+>
+> **O que isto decide, e o que não decide.** Duas reprovações no mesmo cenário, em rodadas
+> diferentes (45 e 9) e com valores diferentes, tiram o caso do terreno de falha de
+> infraestrutura — há **sinal de bug intermitente real** no encontro entre os dois despachos e
+> o agendador do teto. Não está provado: duas passagens no mesmo código mostram que ele não
+> falha sempre. Corrida de concorrência é a classe de defeito que **só a CI pega** — a máquina
+> local não reproduz corrida de commit —, e ela não se resolve por rodada verde, e sim por
+> repetição deliberada. O dono é quem toca concorrência, não quem escreve documentação.
+> **É cartão próprio, e ainda não existe.**
 
 **Três portões nasceram em 30/09 e 01/10, e os três pegam coisa que antes passava calada:**
 o plano do caminho quente com o volume do DF, os testes em Deno das Edge Functions, e o
