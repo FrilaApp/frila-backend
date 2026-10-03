@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.29
+  version: 0.2.30
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -95,6 +95,37 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.30, aprovada em 02/10/2026.** O push passa a dizer a que vínculo do aparelho com
+    a conta ele pertence, por um identificador opaco, para o app não mostrar nem abrir o aviso de
+    uma conta para outra no mesmo aparelho (RN15). Um campo opcional novo numa resposta e uma
+    chave nova no push; nenhuma operação, código de erro ou status muda. A 0.2.29 vem antes desta.
+
+    - **O buraco.** O push leva `tipo` e ids do destino, e não diz para quem é. Num aparelho em que
+      uma conta sai e outra entra, o aviso mandado à primeira e entregue depois da troca chega ao
+      app sem nada que o distinga. O app do iOS contorna com o relógio (só vale o aviso entregue
+      depois de o servidor confirmar o token para quem entrou, mais 60 s de carência), o que deixa
+      passar o aviso atrasado e descarta os avisos de quem entrou no primeiro minuto.
+    - **`Dispositivo.vinculo_id`** (uuid, opcional): o vínculo deste token com a conta que o
+      registrou. `/rpc/registrar_dispositivo` gera um id novo quando o token é registrado pela
+      primeira vez e quando ele passa de uma conta para outra; o registro repetido pela mesma conta
+      devolve o mesmo id. `/rpc/remover_dispositivo` encerra o vínculo: o registro seguinte, mesmo
+      da mesma conta, recebe um id novo.
+    - **Todo push leva `vinculo_id`** entre os dados, ao lado de `tipo` e dos ids do destino. O
+      valor é o do aparelho para o qual aquele envio vai, lido na hora do envio: ele não fica em
+      `notificacao.payload`, e as chaves aceitas ali continuam as da 0.2.14.
+    - **A regra do cliente.** O app guarda o `vinculo_id` devolvido pelo registro junto com a
+      sessão do aparelho e o apaga na saída. O aviso cujo `vinculo_id` é diferente do guardado não
+      é mostrado com o app aberto, não abre tela no toque e sai da central de notificações. O
+      aviso sem `vinculo_id` (servidor anterior a esta versão) segue a regra antiga do cliente.
+    - **O id é opaco.** Não é o id da conta, não é derivado dele nem do token, e não identifica a
+      pessoa fora do servidor: o payload continua só com tipo e identificadores (RN15).
+    - **Fica para a próxima.** Com o app fechado ou em segundo plano, quem mostra o aviso é o
+      sistema, antes de o app conferir qualquer coisa. No iOS, trocar o texto do aviso de outro
+      vínculo antes da exibição pede uma extensão de notificação e a chave `mutable-content` no
+      envio; a decisão é separada e não muda esta superfície.
+
+    ---
 
     **Versão 0.2.29, aprovada em 02/10/2026.** Uma leitura nova, `/rpc/meu_estabelecimento`, para
     o contratante que já tem estabelecimento conseguir publicar a segunda vaga. Uma operação e um
@@ -2517,7 +2548,12 @@ paths:
         O agendador manda o push pelo FCM, que no iOS entrega pelo APNs (B17). Chamar a cada abertura do
         app e sempre que o token mudar. O mesmo token reenviado só atualiza a data. Quem recusou a
         permissão de notificação não registra token e, para o despacho, não é alcançável.
-      x-requisitos: [RF06, RNF02]
+
+        A resposta traz o `vinculo_id` deste token com a conta que chama. O mesmo id vem em todo
+        push mandado a este aparelho para esta conta, e é por ele que o app sabe que o aviso é de
+        quem está no aparelho: o token que era de outra conta passa para quem chama com um
+        `vinculo_id` novo, e o aviso que ainda carrega o anterior não é mostrado nem aberto (RN15).
+      x-requisitos: [RF06, RN15, RNF02]
       requestBody:
         required: true
         content:
@@ -4068,6 +4104,15 @@ components:
           $ref: '#/components/schemas/Plataforma'
         atualizado_em:
           $ref: '#/components/schemas/Instante'
+        vinculo_id:
+          type: string
+          format: uuid
+          description: |
+            O vínculo deste token com a conta que o registrou, opaco. Muda quando o token passa de
+            uma conta para outra e quando é registrado de novo depois de `remover_dispositivo`; o
+            registro repetido pela mesma conta devolve o mesmo valor. Vem igual em todo push
+            mandado a este aparelho para esta conta. Opcional: o servidor anterior à 0.2.30 não o
+            devolve, e o app trata a ausência como "sem conferência por vínculo".
     ExclusaoDeConta:
       type: object
       required: [perfil_removido_em, dados_apagados_ate, turnos_cancelados]

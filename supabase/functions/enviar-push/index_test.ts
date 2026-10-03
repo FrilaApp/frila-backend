@@ -1995,4 +1995,136 @@ Deno.test("kT7NhMGV / B3: processarEnvioPush exige SUPABASE_URL e SUPABASE_SERVI
   }
 });
 
+Deno.test("Contrato 0.2.30 (FmgMnRx4): FCM message.data inclui vinculo_id do aparelho correspondente", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const mensagensEnviadas: Array<{ token: string; data?: Record<string, string> }> = [];
+  const urlsDispositivoChamadas: string[] = [];
+
+  const mockFetch: typeof fetch = (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+
+    if (url.includes("/token")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ access_token: "mock_fcm_token", expires_in: 3600, token_type: "Bearer" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "a3000000-0000-4000-8000-000000000099",
+              usuario_id: "c3000000-0000-4000-8000-000000000001",
+              tipo: "vaga",
+              referencia_id: "d0000000-0000-4000-8000-000000000001",
+              payload: {
+                vaga_id: "d0000000-0000-4000-8000-000000000001",
+              },
+              tentativas: 0,
+              estado_entrega: "pendente",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      urlsDispositivoChamadas.push(url);
+      const match = url.match(/[?&]select=([^&]+)/);
+      const campos = match ? match[1].split(",") : [];
+      const pede = (campo: string) => campos.includes(campo);
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              ...(pede("id") ? { id: "disp-1" } : {}),
+              ...(pede("token_fcm") ? { token_fcm: "fcm_token_iphone_1" } : {}),
+              ...(pede("plataforma") ? { plataforma: "ios" } : {}),
+              ...(pede("vinculo_id") ? { vinculo_id: "11111111-1111-4000-8000-000000000001" } : {}),
+            },
+            {
+              ...(pede("id") ? { id: "disp-2" } : {}),
+              ...(pede("token_fcm") ? { token_fcm: "fcm_token_ipad_2" } : {}),
+              ...(pede("plataforma") ? { plataforma: "ios" } : {}),
+              ...(pede("vinculo_id") ? { vinculo_id: "22222222-2222-4000-8000-000000000002" } : {}),
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/messages:send") && init?.body) {
+      const parsed = JSON.parse(init.body as string);
+      mensagensEnviadas.push({
+        token: parsed.message.token,
+        data: parsed.message.data,
+      });
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ name: `projects/frila-test/messages/msg-${mensagensEnviadas.length}` }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    return Promise.reject(new Error(`URL não tratada no mock: ${url}`));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+    body: JSON.stringify({ notificacao_id: "a3000000-0000-4000-8000-000000000099" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient: criarMockSqlClient(),
+  });
+
+  assertEquals(res.status, 200);
+  const jsonCorpo = await res.json();
+  assertEquals(jsonCorpo.relatorio[0].status, "enviada");
+
+  assertEquals(urlsDispositivoChamadas.length, 1);
+  const urlDisp = urlsDispositivoChamadas[0];
+  const selectMatch = urlDisp.match(/[?&]select=([^&]+)/);
+  assert(selectMatch !== null, "consulta a /rest/v1/dispositivo deve ter parâmetro select");
+  const camposSelect = selectMatch[1].split(",");
+  assert(
+    camposSelect.includes("vinculo_id"),
+    "consulta a /rest/v1/dispositivo deve exigir vinculo_id no select",
+  );
+
+  assertEquals(mensagensEnviadas.length, 2);
+  assertEquals(mensagensEnviadas[0].token, "fcm_token_iphone_1");
+  assertEquals(mensagensEnviadas[0].data?.vinculo_id, "11111111-1111-4000-8000-000000000001");
+  assertEquals(mensagensEnviadas[0].data?.tipo, "vaga");
+  assertEquals(mensagensEnviadas[0].data?.vaga_id, "d0000000-0000-4000-8000-000000000001");
+
+  assertEquals(mensagensEnviadas[1].token, "fcm_token_ipad_2");
+  assertEquals(mensagensEnviadas[1].data?.vinculo_id, "22222222-2222-4000-8000-000000000002");
+  assertEquals(mensagensEnviadas[1].data?.tipo, "vaga");
+  assertEquals(mensagensEnviadas[1].data?.vaga_id, "d0000000-0000-4000-8000-000000000001");
+});
+
+Deno.test("Contrato 0.2.30: vinculo_id não entra em notificacao.payload e filtrarDataPayloadFcm não aceita vinculo_id do payload", () => {
+  const payloadComVinculo = {
+    vaga_id: "d0000000-0000-4000-8000-000000000001",
+    vinculo_id: "33333333-3333-4000-8000-000000000003",
+  };
+  const filtrado = filtrarDataPayloadFcm("vaga", payloadComVinculo);
+  assertEquals(filtrado.vaga_id, "d0000000-0000-4000-8000-000000000001");
+  assertEquals((filtrado as Record<string, string>).vinculo_id, undefined);
+});
+
+
 
