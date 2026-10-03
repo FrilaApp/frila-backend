@@ -431,6 +431,34 @@ select pg_temp.guarda('promete:perfilPublico:404',
     (select p.id from public.profissional p
       where p.usuario_id = 'cc000000-0000-4000-8000-000000000003'))));
 
+-- ── As Edge Functions ─────────────────────────────────────────────────────────
+--
+-- Cartão `oCv0WPNY`. Até 01/10 este arquivo colhia só as RPCs, e as Edge Functions não
+-- eram medidas por portão nenhum: o `contrato-acompanha-o-codigo.sh` só dispara em função
+-- de `public`, e quem monta a exportação é `privado.meus_dados`.
+--
+-- O corpo que a Edge Function devolve é, sem remodelar, o jsonb que a função de `privado`
+-- montou — as duas fazem `return resposta(200, dados)` com o que veio do banco. Então
+-- colher aqui mede exatamente o que o cliente recebe, pelo mesmo raciocínio que vale para
+-- as RPCs e sem precisar subir `functions serve`.
+--
+-- As que ficam de fora estão em `FORA_DO_ALCANCE`, no `contrato_responde.py`, cada uma com
+-- o motivo. A lista vive **só lá**, e este comentário não a repete de propósito: duas
+-- cópias de uma lista divergem na primeira mudança, e a primeira versão deste comentário
+-- citava dois exemplos dela — o bastante para um leitor concluir que eram a lista inteira.
+-- Aconteceu em 01/10, na revisão deste PR.
+
+select pg_temp.guarda('exportarMeusDados',
+  privado.meus_dados('cc000000-0000-4000-8000-000000000002'));
+
+-- Por último, e depois de tudo: ela anonimiza a conta e cancela os turnos futuros dela.
+-- Qualquer colheita posterior veria um cenário diferente do que as outras viram. A conta
+-- anonimizada é a `…0003`, a mesma que os dois guardas de `promete:perfilPublico:404`
+-- acima usam — por isso a ordem destes dois blocos é obrigatória, e inverter não daria
+-- erro de sintaxe nem conflito: daria colheita sobre conta anonimizada, com portão verde.
+select pg_temp.guarda('excluirConta',
+  privado.excluir_conta('cc000000-0000-4000-8000-000000000003'));
+
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o
 \pset format unaligned
