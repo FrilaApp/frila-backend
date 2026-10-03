@@ -11,7 +11,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(29);
+select plan(30);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -126,10 +126,13 @@ select is(
 
 select is(
   (select array_agg(k order by k) from lista, jsonb_object_keys((select j->0 from lista)) k),
-  array['a_caminho_em','avaliacao','checkin_confirmado_em','checkin_distancia_m','checkin_em','checkin_tipo',
+  array['a_caminho_em','avaliacao','cancelamento','checkin_confirmado_em','checkin_distancia_m','checkin_em','checkin_tipo',
         'checkout_distancia_m','checkout_em','contato_visivel_ate','contraparte','estado','id',
         'pode_avaliar','posicao_id','vaga','valor_acordado_centavos','verificacao'],
   'cada turno traz exatamente os campos do schema Turno do contrato');
+
+select is((select j->0->'cancelamento' from lista), 'null'::jsonb,
+  'turno confirmado traz cancelamento nulo (0.2.32)');
 
 select is(
   (select array_agg(k order by k) from lista, jsonb_object_keys((select j->0->'vaga' from lista)) k),

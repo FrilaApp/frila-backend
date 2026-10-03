@@ -1,13 +1,13 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.31
+  version: 0.2.32
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
     sejam construídos em paralelo contra a mesma especificação. É a fonte de onde saem os modelos
     de cada cliente. Regras, requisitos e casos de uso citados (RN, RF, UC) estão no Documento de
-    Requisitos v1.3.0; o esquema do banco, na Modelagem de Banco de Dados.
+    Requisitos v1.5.0; o esquema do banco, na Modelagem de Banco de Dados.
 
     ## Como o contrato funciona no Supabase
 
@@ -95,6 +95,44 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.32, de 02/10/2026.** Três decisões de produto de 02/10/2026: o profissional passa
+    a ver por que o turno foi cancelado e se contou falta, a candidatura diz qual turno nasceu
+    dela, e três operações de candidatura passam a declarar o `422` que o servidor já devolve.
+    Dois campos opcionais, um schema novo (`CancelamentoDoTurno`) e três respostas declaradas;
+    nenhuma operação, parâmetro ou código de erro novo, e nenhum campo existente muda de
+    significado. A 0.2.31 vem antes desta.
+
+    - **`Turno.cancelamento`** (`CancelamentoDoTurno` ou nulo, opcional): no turno cancelado, a
+      causa (`CausaDoCancelamento`, o mesmo dicionário do painel), se contou como falta e o
+      instante. Fecha o "fica para a próxima" da 0.2.31.
+    - **Sem texto livre, para os dois lados.** `CancelamentoDoTurno` não tem `motivo`: o texto
+      que a casa escreveu ao cancelar não chega ao profissional (decisão de produto de
+      02/10/2026). O `Turno` é o mesmo schema para os dois lados de `/rpc/meus_turnos`, então a
+      regra não depende de quem lê. A casa continua lendo o texto em
+      `PosicaoNoPainel.cancelamento.motivo`, que não muda.
+    - **Quando foi o próprio profissional quem cancelou**, ele recebe `causa: profissional`, a
+      `falta` (verdadeira quando desistiu a menos de 24 horas do início) e o instante. O texto
+      que ele mesmo escreveu não volta.
+    - **A `causa` é a mesma nas duas leituras.** A mesma posição cancelada lê a mesma `causa` no
+      painel e no turno, e `outro` continua sem dizer se foi conta encerrada ou ação da Equipe
+      Frila (RN13, RN15).
+    - **`Candidatura.turno_id`** (uuid ou nulo, opcional): o turno que nasceu desta candidatura,
+      só no estado `aceita`. Cruzar `/rpc/minhas_candidaturas` com `/rpc/meus_turnos` pela vaga
+      não identifica o turno: o cancelado continua na lista, e a mesma pessoa pode ter mais de
+      um turno na mesma vaga.
+    - **`422` declarado** em `/rpc/retirar_candidatura`, `/rpc/minhas_candidaturas` e
+      `/rpc/candidatos_da_vaga`: `perfil_incompativel` nas três (RN25) e `campo_obrigatorio` em
+      `retirar_candidatura` e `candidatos_da_vaga`. O servidor já respondia assim; faltava a
+      declaração, como na 0.2.26.
+    - **Opcionais de propósito**, como na 0.2.31. O servidor a partir desta versão sempre manda
+      os dois campos; o anterior não manda nenhum, e o cliente trata a ausência como "o servidor
+      ainda não diz".
+    - **`MeusDados.turnos`** usa o mesmo `Turno` e ganha `cancelamento` junto.
+    - O cabeçalho passa a citar o Documento de Requisitos v1.5.0, de 02/10/2026, que traz na
+      RN15 o texto aprovado com a 0.2.30.
+
+    ---
 
     **Versão 0.2.31, de 02/10/2026.** Três decisões de produto de 02/10/2026, todas acréscimos em
     leituras que já existem: o turno diz se foi cancelado, o turno traz a avaliação que este lado
@@ -1850,8 +1888,15 @@ paths:
       tags: [Candidatura e confirmação]
       operationId: retirarCandidatura
       summary: Retirar a candidatura antes de ser escolhido
-      description: Sem penalidade (RN24). Candidatura já escolhida não se retira; vira cancelamento (`cancelar_posicao`). Retirar de novo devolve a mesma candidatura retirada; recusada ou expirada responde `409 candidatura_indisponivel`.
-      x-requisitos: [RN16, RN24, UC04]
+      description: |
+        Sem penalidade (RN24). Candidatura já escolhida não se retira; vira cancelamento
+        (`cancelar_posicao`). Retirar de novo devolve a mesma candidatura retirada; recusada ou
+        expirada responde `409 candidatura_indisponivel`.
+
+        É do profissional: conta de contratante recebe `422 perfil_incompativel` (RN25).
+        `candidatura_id` nulo responde `422 campo_obrigatorio`, com `details: candidatura_id`
+        (declarados na 0.2.32).
+      x-requisitos: [RN16, RN24, RN25, UC04]
       requestBody:
         required: true
         content:
@@ -1875,6 +1920,8 @@ paths:
           $ref: '#/components/responses/NaoEncontrado'
         '409':
           $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/minhas_candidaturas:
     get:
@@ -1884,7 +1931,13 @@ paths:
       description: |
         A candidatura pendente numa vaga ocultada pela moderação da Equipe Frila continua listada e
         pendente (0.2.23); o detalhe da vaga abre para quem a tem, com `oculta: true`.
-      x-requisitos: [RF08, UC04]
+
+        Desde a 0.2.32, a candidatura `aceita` traz `turno_id`, o turno que nasceu dela: é por
+        ele, e não pela vaga, que a tela chega ao turno em `/rpc/meus_turnos`.
+
+        É do profissional: conta de contratante recebe `422 perfil_incompativel` (RN25, declarado
+        na 0.2.32).
+      x-requisitos: [RF08, RN25, UC04]
       parameters:
         - name: estado
           in: query
@@ -1901,6 +1954,8 @@ paths:
                   $ref: '#/components/schemas/Candidatura'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/candidatos_da_vaga:
     get:
@@ -1911,7 +1966,10 @@ paths:
         Com reputação, denominador e taxa de comparecimento de cada um (RN08, UC04). Continua legível
         pela casa quando a vaga foi ocultada pela moderação da Equipe Frila; escolher é que é
         recusado (`escolher_candidato`, `422 vaga_oculta`).
-      x-requisitos: [RF09, RF16, RN08, UC04]
+
+        É do contratante: conta de profissional recebe `422 perfil_incompativel` (RN25). `vaga_id`
+        nulo responde `422 campo_obrigatorio`, com `details: vaga_id` (declarados na 0.2.32).
+      x-requisitos: [RF09, RF16, RN08, RN25, UC04]
       parameters:
         - name: vaga_id
           in: query
@@ -1933,6 +1991,8 @@ paths:
           $ref: '#/components/responses/SemPermissao'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/escolher_candidato:
     post:
@@ -2002,6 +2062,10 @@ paths:
         **O turno cancelado continua na lista** (RN12): o cancelamento não apaga o registro do que
         foi combinado. Desde a 0.2.31 ele vem com `estado: cancelada`, e é por esse campo que a tela
         o separa do turno de pé. Cada turno traz também `avaliacao`, a que este lado já deu.
+
+        Desde a 0.2.32, o turno cancelado traz `cancelamento`: a causa, se contou como falta e o
+        instante. O texto que alguém escreveu ao cancelar não sai por aqui, para nenhum dos dois
+        lados.
       x-requisitos: [RF13, RF14, RF15, RF22, RN12, RNF06, UC13]
       parameters:
         - name: de
@@ -3047,6 +3111,13 @@ components:
                 message: campo_invalido
                 details: relato
                 hint: null
+            perfil_incompativel:
+              summary: A operação é do outro perfil (RN25)
+              value:
+                code: perfil_incompativel
+                message: perfil_incompativel
+                details: null
+                hint: null
             selecao_sem_antecedencia:
               value:
                 code: selecao_sem_antecedencia
@@ -3780,6 +3851,21 @@ components:
           $ref: '#/components/schemas/EstadoCandidatura'
         criada_em:
           $ref: '#/components/schemas/Instante'
+        turno_id:
+          description: |
+            O turno que nasceu desta candidatura (0.2.32). Só vem preenchido no estado `aceita`,
+            e é o mesmo `turno_id` que `/rpc/candidatar` (modo urgência) ou
+            `/rpc/escolher_candidato` (modo seleção) devolveu na confirmação. Nulo nos outros
+            estados: `pendente`, `recusada`, `retirada` e `expirada`.
+
+            O cancelamento do turno não muda a candidatura: ela segue `aceita`, com o `turno_id`
+            do turno cancelado, e é `Turno.estado` que diz se o turno está de pé.
+
+            Opcional: o servidor anterior à 0.2.32 não o manda. Ausente não é o mesmo que nulo: o
+            cliente só afirma "não há turno" quando o campo vem nulo.
+          oneOf:
+            - $ref: '#/components/schemas/Uuid'
+            - type: 'null'
     Candidato:
       type: object
       required: [candidatura_id, profissional, criada_em]
@@ -3911,6 +3997,48 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Avaliacao'
             - type: 'null'
+        cancelamento:
+          description: |
+            Por que este turno foi cancelado e se contou como falta (0.2.32, RN12). Vem preenchido
+            quando `estado` é `cancelada`, e nulo nos outros estados. Não traz texto livre, para
+            nenhum dos dois lados: o que a pessoa escreveu ao cancelar só sai no painel da casa
+            (`PosicaoNoPainel.cancelamento.motivo`).
+
+            Opcional: o servidor anterior à 0.2.32 não o manda. Ausente não é o mesmo que nulo.
+          oneOf:
+            - $ref: '#/components/schemas/CancelamentoDoTurno'
+            - type: 'null'
+    CancelamentoDoTurno:
+      type: object
+      required: [causa, falta, cancelada_em]
+      description: |
+        O cancelamento de um turno, como as duas partes o leem em `/rpc/meus_turnos` (0.2.32,
+        RN12). É o `CancelamentoDaPosicao` do painel **sem o `motivo`**: o texto que a casa
+        escreveu ao cancelar não vai ao profissional (decisão de produto de 02/10/2026). Por isso
+        este schema não tem a propriedade, em vez de trazê-la nula. `causa`, `falta` e
+        `cancelada_em` são os mesmos valores que o painel mostra para a mesma posição.
+
+        O que o profissional lê em cada causa:
+
+        - `profissional`: ele mesmo desistiu. `falta` diz se a desistência contou (menos de 24
+          horas do início). O texto que ele escreveu não volta.
+        - `estabelecimento`: a casa cancelou a posição ou a vaga inteira. Não conta falta.
+        - `reabertura_por_atraso` e `no_show_sem_checkin`: sempre com `falta: true`.
+        - `outro`: o turno saiu sem escolha de nenhuma das partes. Não conta falta.
+      properties:
+        causa:
+          $ref: '#/components/schemas/CausaDoCancelamento'
+        falta:
+          type: boolean
+          description: |
+            Verdadeiro quando o cancelamento conta como falta do profissional na taxa de
+            comparecimento (RN12). O mesmo valor de `CancelamentoDaPosicao.falta`.
+        cancelada_em:
+          $ref: '#/components/schemas/Instante'
+      example:
+        causa: estabelecimento
+        falta: false
+        cancelada_em: '2026-10-03T19:40:00Z'
     ResultadoCancelamento:
       type: object
       required: [posicao_id, falta, reaberta, nova_posicao_id]
@@ -4046,7 +4174,9 @@ components:
       type: string
       enum: [profissional, estabelecimento, reabertura_por_atraso, no_show_sem_checkin, outro]
       description: |
-        Dicionário fechado (0.2.31): valor novo é mudança de contrato, com versão subindo.
+        Dicionário fechado (0.2.31): valor novo é mudança de contrato, com versão subindo. Desde a
+        0.2.32 é também a causa em `Turno.cancelamento`, com o mesmo valor que o painel mostra
+        para a mesma posição.
 
         - `profissional`: o profissional desistiu (`cancelar_posicao`).
         - `estabelecimento`: um membro da casa cancelou a posição (`cancelar_posicao`) ou a vaga
