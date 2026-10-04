@@ -50,4 +50,4 @@ if [ $estado -ne 0 ] || ! printf '%s' "$colheita" | grep -q '^{'; then
   exit 1
 fi
 
-printf '%s\n' "$colheita" | "$VENV/bin/python" scripts/contrato_responde.py
+printf '%s\n' "$colheita" | "$VENV/bin/python" scripts/contrato_responde.py --falhar-vazias "$@"

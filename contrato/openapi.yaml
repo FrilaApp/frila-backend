@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.33
+  version: 0.2.34
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -77,7 +77,7 @@ info:
     | 409 | `conta_existente`, `documento_ja_cadastrado` | Cadastro repetido |
     | 409 | `administrador_unico` | Exclusão de conta de quem é o único administrador (UC16) |
     | 409 | `perfil_ja_existe` | `criar_perfil_profissional` numa conta que já tem perfil. Conflito, e não sobrescrita: sobrescrever apagaria a grade de quem tocasse duas vezes no botão |
-    | 409 | `contestacao_ja_aberta` | Já existe contestação em análise para a suspensão em vigor (RF24) |
+    | 409 | `contestacao_ja_aberta` | Já existe contestação para a suspensão em vigor, em análise ou já respondida (RF24) |
     | 422 | `campo_obrigatorio` | Falta campo exigido; `details` diz qual (na vaga, RN02) |
     | 422 | `campo_invalido` | O campo veio, e o valor é recusado pela regra; `details` diz qual campo. Distinto de `campo_obrigatorio`, que é ausência — a tela destaca o mesmo campo, com texto diferente |
     | 422 | `menor_de_idade` | Nascimento com menos de 18 anos (RN20) |
@@ -95,6 +95,37 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.34, de 03/10/2026.** Só documentação: o contrato passa a declarar os status que o
+    servidor já devolve e que as operações não listavam. Eles foram medidos na auditoria app ×
+    contrato de 03/10 contra o `develop` do frila-backend (`14adec8`), seguindo cada RPC, as
+    funções que ela chama e os gatilhos do banco. Nenhum comportamento muda, e nenhum cliente
+    precisa mudar para continuar funcionando; quem trata só os status declarados passa a saber de
+    casos que já aconteciam.
+
+    - **Conta suspensa (RN13).** Resposta comum `ContaSuspensa` (`403 sem_permissao` com
+      `details: conta_suspensa`) nas 14 operações que exigem conta ativa e não declaravam 403,
+      inclusive `retirar_candidatura` e `minhas_candidaturas` (aprovado em 02/10). As que já
+      declaravam 403 apontam para `SemPermissao`, que ganha o mesmo exemplo.
+    - **Parâmetro nulo.** Resposta comum `ParametroObrigatorio` (`422 campo_obrigatorio`, com o
+      nome do parâmetro em `details`) em `contato_do_turno`, `confirmar_checkin_manual` e
+      `painel_estabelecimento`. Onde a operação também recusa por regra, vale `RegraRecusou`.
+    - **Cancelamentos.** `cancelar_posicao` e `cancelar_vaga` declaram o `422` do motivo
+      (`campo_obrigatorio` com menos de 3 caracteres, `campo_invalido` quando o filtro da diretriz
+      1.2 recusa, os dois com `details: motivo`) e o `404 nao_encontrado`.
+    - **Status que faltavam.** `409 contestacao_ja_aberta` em `contestar_suspensao`; `404` em
+      `fazer_checkin`, `fazer_checkout`, `confirmar_checkin_manual` e `criterios_de_notificacao`;
+      `422` em `vagas_abertas`, `detalhe_vaga`, `criterios_de_notificacao`,
+      `pedir_revisao_despacho`, `incluir_na_equipe` e `remover_da_equipe`; `405` e `422` em
+      `exportar-turnos`; `404` e `405` em `exportar-meus-dados`, com a resposta comum
+      `MetodoNaoPermitido`. O catálogo de `contestacao_ja_aberta` passa a dizer que a contestação
+      já respondida também conta: o servidor recusa a segunda contestação da mesma suspensão.
+    - **O 409 de `fazer_checkin` fica, agora explicado.** Check-in em posição já cancelada é
+      `409 vaga_encerrada` com `details: posicao_cancelada`, pelo gatilho
+      `turno_checkin_nunca_em_posicao_cancelada` do banco.
+
+    O `500 erro_interno` das Edge Functions continua fora, como nas demais operações: é falha do
+    servidor, e não uma resposta que o cliente trate.
 
     **Versão 0.2.33, de 03/10/2026.** `MeusDados` passa a declarar as sete coleções que faltavam
     para a exportação cobrir todo dado do titular (cartão nUpPFCpM, IrtkCWDz, RF25, UC16, LGPD art. 18),
@@ -1252,6 +1283,8 @@ paths:
                 $ref: '#/components/schemas/PerfilProfissional'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
         '409':
           $ref: '#/components/responses/Conflito'
         '422':
@@ -1304,6 +1337,8 @@ paths:
                 $ref: '#/components/schemas/PerfilProfissional'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
         '422':
@@ -1328,6 +1363,12 @@ paths:
                 $ref: '#/components/schemas/CriteriosDeNotificacao'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/pedir_revisao_despacho:
     post:
@@ -1356,6 +1397,10 @@ paths:
                 $ref: '#/components/schemas/Protocolo'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   # ───────────────────────────────────────────── Estabelecimento
 
@@ -1385,6 +1430,8 @@ paths:
                 $ref: '#/components/schemas/Estabelecimento'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
         '409':
           $ref: '#/components/responses/Conflito'
         '422':
@@ -1426,6 +1473,8 @@ paths:
                   $ref: '#/components/schemas/EstabelecimentoDaConta'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
@@ -1521,6 +1570,8 @@ paths:
           $ref: '#/components/responses/SemPermissao'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/remover_da_equipe:
     post:
@@ -1546,6 +1597,8 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           $ref: '#/components/responses/SemPermissao'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   # ───────────────────────────────────────────── Catálogo
 
@@ -1694,6 +1747,11 @@ paths:
         Cancela as posições abertas e as confirmadas, com motivo registrado (RN12). Profissionais já
         confirmados são avisados (`cancelamento`, com `reaberta = false`). Cancelamento pelo
         contratante não gera falta para ninguém.
+
+        Motivo com menos de 3 caracteres é `422 campo_obrigatorio`, e motivo que o filtro da
+        diretriz 1.2 recusa é `422 campo_invalido`, os dois com `details: motivo`. Vaga que não
+        existe, ou de outra casa, é `404 nao_encontrado`. É do contratante: conta de profissional
+        recebe `422 perfil_incompativel` (RN25).
       x-requisitos: [RF14, RN12]
       requestBody:
         required: true
@@ -1727,8 +1785,12 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
         '409':
           $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/vagas_abertas:
     get:
@@ -1808,6 +1870,10 @@ paths:
                   $ref: '#/components/schemas/VagaNaLista'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/detalhe_vaga:
     get:
@@ -1848,8 +1914,12 @@ paths:
                 $ref: '#/components/schemas/Vaga'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   # ───────────────────────────────────────────── Candidatura e confirmação
 
@@ -1927,6 +1997,8 @@ paths:
                     contato: null
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
         '409':
@@ -1967,6 +2039,8 @@ paths:
                 $ref: '#/components/schemas/Candidatura'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
         '409':
@@ -2005,6 +2079,8 @@ paths:
                   $ref: '#/components/schemas/Candidatura'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
@@ -2182,6 +2258,8 @@ paths:
           $ref: '#/components/responses/SemPermissao'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/ParametroObrigatorio'
 
   /rpc/avisar_a_caminho:
     post:
@@ -2245,6 +2323,11 @@ paths:
         `registrado_em` é a hora do toque, e não a da sincronização: o check-in feito sem rede entra na
         fila do app e sai depois com a hora certa. O banco recusa hora no futuro. Reenviar devolve o
         registro já gravado.
+
+        Turno que não existe, ou que não é de quem chama, é `404 nao_encontrado`. Check-in em
+        posição já cancelada (por exemplo, o que esperava na fila do app quando a posição foi
+        cancelada) é `409 vaga_encerrada` com `details: posicao_cancelada`; a trava é um gatilho do
+        banco.
       x-requisitos: [RF13, RN11, RN22, UC05]
       requestBody:
         required: true
@@ -2263,6 +2346,8 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
         '409':
           $ref: '#/components/responses/Conflito'
         '422':
@@ -2273,7 +2358,10 @@ paths:
       tags: [Turno]
       operationId: confirmarCheckinManual
       summary: Contratante confirma o check-in manual
-      description: Um toque, no app ou no Painel web. Só então o check-in manual conta como presença (RN22).
+      description: |
+        Um toque, no app ou no Painel web. Só então o check-in manual conta como presença (RN22).
+
+        Turno que não existe é `404 nao_encontrado`.
       x-requisitos: [RF13, RF20, RN22, UC05, UC07]
       requestBody:
         required: true
@@ -2296,8 +2384,12 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
         '409':
           $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/ParametroObrigatorio'
 
   /rpc/fazer_checkout:
     post:
@@ -2308,6 +2400,8 @@ paths:
         Mesma regra do check-in: localização lida só no toque e só a distância enviada. Sem
         localização, `distancia_m` vai nulo. O Frila não calcula hora extra: se o fim previsto passou,
         os dois já foram avisados pelo agendador, e o valor fica entre as partes (A09).
+
+        Turno que não existe, ou que não é de quem chama, é `404 nao_encontrado`.
       x-requisitos: [RF13, RN11, RN22, UC05]
       requestBody:
         required: true
@@ -2326,6 +2420,8 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
         '409':
           $ref: '#/components/responses/Conflito'
         '422':
@@ -2346,6 +2442,12 @@ paths:
 
         Cancelamento do profissional com menos de 24 horas do início conta como falta; com mais de 24
         horas, sai da taxa de comparecimento. Nenhum cancelamento suspende ninguém (RN13).
+
+        Motivo com menos de 3 caracteres é `422 campo_obrigatorio`, e motivo que o filtro da
+        diretriz 1.2 recusa é `422 campo_invalido`, os dois com `details: motivo`: a tela pede para
+        reescrever, e não para tentar de novo. Posição que não existe, ou de que quem chama não é
+        parte (nem o profissional nem membro da casa), é `404 nao_encontrado`: a diferença diria a
+        um estranho que a posição existe.
       x-requisitos: [RF14, RN12, RN13, RN16, UC08]
       requestBody:
         required: true
@@ -2371,8 +2473,12 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
         '409':
           $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/reabrir_por_atraso:
     post:
@@ -2547,6 +2653,8 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           $ref: '#/components/responses/SemPermissao'
+        '422':
+          $ref: '#/components/responses/ParametroObrigatorio'
 
   # ───────────────────────────────────────────── Confiança e direitos
 
@@ -2602,6 +2710,8 @@ paths:
                 $ref: '#/components/schemas/Protocolo'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
         '422':
@@ -2643,6 +2753,8 @@ paths:
                 $ref: '#/components/schemas/Bloqueio'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
         '422':
@@ -2673,6 +2785,11 @@ paths:
       description: |
         Vai à Equipe Frila, com resposta em até 5 dias úteis. Se a contestação for aceita, a conta volta
         na hora (RN13). Sem suspensão em vigor: `422 sem_suspensao_ativa`.
+
+        Relato vazio é `422 campo_obrigatorio`; relato com menos de 10 caracteres, ou que o filtro
+        da diretriz 1.2 recusa, é `422 campo_invalido`, os dois com `details: relato`. Quem já
+        contestou a suspensão em vigor, com a contestação em análise ou resolvida, recebe
+        `409 contestacao_ja_aberta`.
       x-requisitos: [RF24, RN13, UC15]
       requestBody:
         required: true
@@ -2694,6 +2811,8 @@ paths:
                 $ref: '#/components/schemas/Protocolo'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '409':
+          $ref: '#/components/responses/Conflito'
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
@@ -2736,6 +2855,8 @@ paths:
                 $ref: '#/components/schemas/Dispositivo'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
@@ -2853,6 +2974,11 @@ paths:
         Data, função, horários registrados, valor acordado e contraparte de cada turno (RF22, RN17). O
         valor é o acordado e registrado, nunca um pagamento processado pelo Frila (RN09). Turno "não
         verificado" sai marcado como tal.
+
+        Corpo incompleto ou inválido é `422`: `campo_obrigatorio` quando falta `de`, `ate` ou
+        `formato`; `campo_invalido` quando o instante não é ISO-8601, quando `de` vem depois de
+        `ate` (com `details: de`), quando o formato não é `csv` nem `pdf`, ou quando
+        `estabelecimento_id` não é um uuid. Método que não é POST é `405 metodo_nao_permitido`.
       x-requisitos: [RF22, RN09, RN17, UC13]
       requestBody:
         required: true
@@ -2891,6 +3017,10 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           $ref: '#/components/responses/SemPermissao'
+        '405':
+          $ref: '#/components/responses/MetodoNaoPermitido'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /exportar-meus-dados:
     servers:
@@ -2911,6 +3041,9 @@ paths:
         sistema registrou sobre ele. As avaliações **recebidas** entram sem o autor — a resposta
         individual não é do titular, e revelá-la convidaria à retaliação, que é o que RN07 evita
         ao manter a avaliação binária e agregada.
+
+        Sessão sem conta (antes de `criar_conta`) é `404 nao_encontrado`. Método que não é POST é
+        `405 metodo_nao_permitido`.
       x-requisitos: [RF25, RNF08, UC16]
       responses:
         '200':
@@ -2921,6 +3054,10 @@ paths:
                 $ref: '#/components/schemas/MeusDados'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '405':
+          $ref: '#/components/responses/MetodoNaoPermitido'
 
   /entrar-demonstracao:
     servers:
@@ -3079,7 +3216,9 @@ components:
                 details: null
                 hint: null
     SemPermissao:
-      description: Autenticado, mas sem papel para a ação, ou prazo de acesso vencido.
+      description: |
+        Autenticado, mas sem papel para a ação, ou prazo de acesso vencido. Conta suspensa, em
+        operação que exige conta ativa, recebe o mesmo código com `details: conta_suspensa` (RN13).
       content:
         application/json:
           schema:
@@ -3104,6 +3243,27 @@ components:
                 message: sem_permissao
                 details: sem_turno_cumprido
                 hint: null
+            conta_suspensa:
+              summary: Conta suspensa em operação que exige conta ativa (RN13)
+              value:
+                code: sem_permissao
+                message: sem_permissao
+                details: conta_suspensa
+                hint: null
+    ContaSuspensa:
+      description: |
+        A conta está suspensa, e a operação exige conta ativa (RN13). É o mesmo `403 sem_permissao`
+        do papel insuficiente, com `details: conta_suspensa`; a tela que explica a suspensão lê
+        `/rpc/situacao_da_conta`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            code: sem_permissao
+            message: sem_permissao
+            details: conta_suspensa
+            hint: null
     NaoEncontrado:
       description: Não existe, ou não é visível para quem pede.
       content:
@@ -3199,6 +3359,28 @@ components:
           example:
             code: limite_excedido
             message: limite_excedido
+            details: null
+            hint: null
+    ParametroObrigatorio:
+      description: Um parâmetro obrigatório veio nulo; `details` diz qual.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            code: campo_obrigatorio
+            message: campo_obrigatorio
+            details: turno_id
+            hint: null
+    MetodoNaoPermitido:
+      description: Método não permitido (apenas POST).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Erro'
+          example:
+            code: metodo_nao_permitido
+            message: metodo_nao_permitido
             details: null
             hint: null
 

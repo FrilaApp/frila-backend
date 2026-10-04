@@ -154,6 +154,37 @@ def chaves_nao_declaradas(schema, valor, doc, caminho="$"):
     return achados
 
 
+def varrer_colecoes(schema, valor, doc, caminho="$"):
+    """Varre o corpo colhido confrontando com o schema para medir o tamanho de cada coleção (array).
+
+    Retorna um dicionário {caminho: [tamanhos_encontrados]}.
+    Coleção com tamanho 0 em todas as amostras colhidas significa que o schema
+    de seus itens nunca foi exercitado pelo portão, deixando chaves extras,
+    ausentes ou de tipos divergentes passarem sem validação.
+    """
+    schema = resolve(schema, doc)
+    achados = {}
+    if schema.get("type") == "array" or "items" in schema:
+        if isinstance(valor, list):
+            achados.setdefault(caminho, []).append(len(valor))
+            if "items" in schema:
+                for v in valor:
+                    sub = varrer_colecoes(schema["items"], v, doc, f"{caminho}[]")
+                    for k, s in sub.items():
+                        achados.setdefault(k, []).extend(s)
+    elif schema.get("type") == "object" or "properties" in schema:
+        props = schema.get("properties", {})
+        if isinstance(valor, dict):
+            for k, v in valor.items():
+                if k in props:
+                    sub = varrer_colecoes(
+                        props[k], v, doc, f"{caminho}.{k}" if caminho != "$" else f"$.{k}"
+                    )
+                    for sk, s in sub.items():
+                        achados.setdefault(sk, []).extend(s)
+    return achados
+
+
 def resolve(schema, doc):
     """Segue um `$ref` interno até o schema de verdade. Só `#/…`, que é o que o contrato usa."""
     visto = 0
@@ -187,6 +218,7 @@ def main():
 
     falhas = []
     validadas = set()
+    colecoes_observadas = {}
 
     for item in colhidas:
         op, corpo = item["op"], item["corpo"]
@@ -212,6 +244,9 @@ def main():
             schema = por_op[op]
             rotulo = op
             validadas.add(op)
+            achados_cols = varrer_colecoes(schema, corpo, doc)
+            for cam, tam in achados_cols.items():
+                colecoes_observadas.setdefault((op, cam), []).extend(tam)
 
         # O schema da operação é validado **com `components` pendurado na raiz**, e não
         # resolvido antes. Resolver o `$ref` de cima deixava os `$ref` de dentro sem base:
@@ -294,6 +329,26 @@ def main():
     print(f"    isentos, com motivo:    {len(ISENTAS)}")
     print(f"    ainda não vigiados:     {nao_vigiados}")
 
+    # ── Auditoria de coleções declaradas e exercitadas ─────────────────────────
+    #
+    # Uma coleção colhida vazia (`[]`) valida como array válido no JSON Schema, mas nunca
+    # passa pelos schemas de seus itens nem por `chaves_nao_declaradas`: qualquer chave
+    # inventada ou renomeada dentro de um item passará sem ser vista.
+    colecoes_vazias = []
+    colecoes_exercitadas = []
+    for (op, caminho), tamanhos in sorted(colecoes_observadas.items()):
+        total_itens = sum(tamanhos)
+        if total_itens == 0:
+            colecoes_vazias.append((op, caminho, len(tamanhos)))
+        else:
+            colecoes_exercitadas.append((op, caminho, total_itens, len(tamanhos)))
+
+    if colecoes_observadas:
+        print(f"\nColeções declaradas e observadas nas respostas:")
+        print(f"    encontradas nas respostas: {len(colecoes_observadas)}")
+        print(f"    exercitadas com itens:     {len(colecoes_exercitadas)} de {len(colecoes_observadas)}")
+        print(f"    vazias (nunca exercitadas): {len(colecoes_vazias)}")
+
     if promessas_quebradas:
         print(
             f"\n✗ {len(promessas_quebradas)} promessa(s) do contrato que o código não cumpre:\n",
@@ -319,13 +374,30 @@ def main():
             file=sys.stderr,
         )
 
-    # Duas direções, um código de saída. Reprovar só numa delas deixaria a outra como
-    # aviso que ninguém lê.
-    if falhas or promessas_quebradas:
+    if colecoes_vazias:
+        print(
+            f"\n⚠ {len(colecoes_vazias)} coleção(ões) declarada(s) colhida(s) vazia(s) (nunca exercitadas):\n",
+            file=sys.stderr,
+        )
+        for op, caminho, n in colecoes_vazias:
+            print(f"    {op}: {caminho} (0 itens em {n} amostra(s))", file=sys.stderr)
+        print(
+            "\n  Coleção vazia não exercita o schema dos seus itens contra o contrato:\n"
+            "  chaves não declaradas, ausentes ou com tipos divergentes passam sem validação.\n"
+            "  Semeie dados para estas coleções em scripts/contrato-respostas.sql.",
+            file=sys.stderr,
+        )
+
+    falhar_vazias = "--falhar-vazias" in sys.argv or "--falhar-colecoes-vazias" in sys.argv
+
+    # Reprovação: falhas de corpo, promessas quebradas ou coleções vazias sob modo estrito.
+    if falhas or promessas_quebradas or (falhar_vazias and colecoes_vazias):
         return 1
 
     print("\n✓ Toda resposta colhida casa com o schema do contrato, e nenhuma traz chave que ele não declare.")
     print("✓ Toda recusa vigiada que o contrato promete é alcançável no banco.")
+    if colecoes_observadas and not colecoes_vazias:
+        print("✓ Toda coleção declarada observada nas respostas foi exercitada com itens reais.")
     return 0
 
 
