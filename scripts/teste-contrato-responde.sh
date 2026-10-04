@@ -35,9 +35,31 @@ julga() {
   codigo=$?
 }
 
+julga_com_flags() {
+  local flags="$1" entrada="$2"
+  saida=$(printf '%s\n%s\n' "$PROMESSA_OK" "$entrada" | "$PY" scripts/contrato_responde.py $flags 2>&1)
+  codigo=$?
+}
+
 caso() {
   local nome="$1" esperado="$2" entrada="$3" trecho="${4:-}"
   julga "$entrada"
+  if [ "$codigo" != "$esperado" ]; then
+    echo "  ✗ $nome — saiu $codigo, esperado $esperado"
+    falhas=$((falhas + 1))
+    return
+  fi
+  if [ -n "$trecho" ] && ! grep -qF "$trecho" <<<"$saida"; then
+    echo "  ✗ $nome — saiu $codigo, mas a mensagem não diz '$trecho'"
+    falhas=$((falhas + 1))
+    return
+  fi
+  echo "  ✓ $nome"
+}
+
+caso_flags() {
+  local flags="$1" nome="$2" esperado="$3" entrada="$4" trecho="${5:-}"
+  julga_com_flags "$flags" "$entrada"
   if [ "$codigo" != "$esperado" ]; then
     echo "  ✗ $nome — saiu $codigo, esperado $esperado"
     falhas=$((falhas + 1))
@@ -91,9 +113,17 @@ caso "e reprova com campo a mais" 1 "$DOIS_ZERO_DOIS_EXTRA" "segredo não está 
 caso "declara o que não alcança, com o motivo" 0 "$DEZESSEIS" "Fora do alcance deste portão"
 caso "e separa de quem só não foi implementada" 0 "$DEZESSEIS" "Ainda sem implementação"
 
+# Coleções vazias: o contrato declara o array, mas sem nenhum item colhido o schema dos
+# itens não é exercitado. Por padrão o portão avisa alto; com --falhar-vazias ele reprova.
+caso "coleção vazia emite aviso alto por padrão" 0 "$DEZESSEIS" "coleção(ões) declarada(s) colhida(s) vazia(s)"
+caso_flags "--falhar-vazias" "coleção vazia reprova com --falhar-vazias" 1 "$DEZESSEIS" "coleção(ões) declarada(s) colhida(s) vazia(s)"
+
+VAGA_COM_POSICAO='{"op":"publicarVaga","corpo":{"vaga_id":"00000000-0000-0000-0000-000000000001","posicoes":["00000000-0000-0000-0000-000000000002"]}}'
+caso_flags "--falhar-vazias" "coleção exercitada passa com --falhar-vazias" 0 "$VAGA_COM_POSICAO" "Toda coleção declarada observada nas respostas foi exercitada"
+
 echo
 if [ "$falhas" -ne 0 ]; then
   echo "✗ $falhas caso(s) do portão não fecharam."
   exit 1
 fi
-echo "Os 9 casos passaram."
+echo "Os 12 casos passaram."

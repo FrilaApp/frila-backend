@@ -148,9 +148,7 @@ create temp table ids as select ((select r from casa)->>'id')::uuid as casa_id;
 select pg_temp.guarda('meuEstabelecimento', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.meu_estabelecimento(%L::uuid) $$, (select casa_id from ids))));
 
-select pg_temp.guarda('painelEstabelecimento', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
-  $$ select public.painel_estabelecimento(%L::uuid, '2027-01-01T00:00:00Z'::timestamptz, '2027-12-31T00:00:00Z'::timestamptz) $$,
-  (select casa_id from ids))));
+
 
 insert into public.equipe_confianca (estabelecimento_id, profissional_id)
 select (select casa_id from ids), p.id
@@ -262,6 +260,9 @@ set local frila.agora = '2027-01-25 21:05:00+00';
 select pg_temp.como('cc000000-0000-4000-8000-000000000003', format(
   $$ select public.fazer_checkin(%L::uuid, null, '2027-01-25 21:05:00+00'::timestamptz) $$,
   ((select r from cand2)->>'turno_id')::uuid));
+select pg_temp.guarda('painelEstabelecimento', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.painel_estabelecimento(%L::uuid, '2027-01-01T00:00:00Z'::timestamptz, '2027-12-31T00:00:00Z'::timestamptz) $$,
+  (select casa_id from ids))));
 select pg_temp.guarda('confirmarCheckinManual', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.confirmar_checkin_manual(%L::uuid) $$, ((select r from cand2)->>'turno_id')::uuid)));
 
@@ -448,8 +449,51 @@ select pg_temp.guarda('promete:perfilPublico:404',
 -- citava dois exemplos dela — o bastante para um leitor concluir que eram a lista inteira.
 -- Aconteceu em 01/10, na revisão deste PR.
 
+-- Semeia dados nas coleções do titular Pê (...0002) para que nenhuma coleção seja avaliada vazia:
+-- 1. Despacho recebido para a vaga 1
+insert into public.despacho (vaga_id, profissional_id, rodada, reaberta, criado_em)
+select ((select r from vaga1)->>'vaga_id')::uuid,
+       p.id,
+       1,
+       false,
+       '2027-01-18 20:00:00+00'::timestamptz
+  from public.profissional p
+ where p.usuario_id = 'cc000000-0000-4000-8000-000000000002';
+
+-- 2. Avaliação dada pelo profissional para a casa no turno 1
+select pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
+  $$ select public.avaliar(%L::uuid, true) $$, ((select r from cand)->>'turno_id')::uuid));
+
+-- 3. Bloqueio registrado pelo profissional contra estabelecimento
+select pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
+  $$ select public.bloquear('estabelecimento', %L::uuid) $$,
+  (select casa_id from ids)));
+
+-- 4. Associação ativa em equipe de confiança
+insert into public.equipe_confianca (estabelecimento_id, profissional_id)
+select (select casa_id from ids), p.id
+  from public.profissional p
+ where p.usuario_id = 'cc000000-0000-4000-8000-000000000002'
+on conflict do nothing;
+
+-- 5. Notificação entregue (com urgente=true no banco para provar que MeusDados o omite)
+insert into public.notificacao (usuario_id, tipo, referencia_id, payload, urgente, enviada_em, entregue_em)
+values (
+  'cc000000-0000-4000-8000-000000000002',
+  'lembrete_24h'::public.tipo_notificacao,
+  'c0000000-0000-4000-8000-000000000001'::uuid,
+  '{"turno_id": "c0000000-0000-4000-8000-000000000001"}'::jsonb,
+  true,
+  '2027-01-20 10:00:00+00'::timestamptz,
+  '2027-01-20 10:05:00+00'::timestamptz
+);
+
 select pg_temp.guarda('exportarMeusDados',
   privado.meus_dados('cc000000-0000-4000-8000-000000000002'));
+
+-- Amostra também para a conta contratante (Casa), exercitando estabelecimentos vinculados
+select pg_temp.guarda('exportarMeusDados',
+  privado.meus_dados('cc000000-0000-4000-8000-000000000001'));
 
 -- Por último, e depois de tudo: ela anonimiza a conta e cancela os turnos futuros dela.
 -- Qualquer colheita posterior veria um cenário diferente do que as outras viram. A conta
