@@ -3,7 +3,6 @@ set local frila.agendador_secret = 'segredo-de-teste';
 select plan(16);
 
 insert into privado.ambiente (eh_teste) values (true);
-select set_config('frila.agora', '2026-10-02 12:00:00-03', true);
 
 create temp table ids as
 select
