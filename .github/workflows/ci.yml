@@ -219,6 +219,16 @@ jobs:
 
       - run: ./scripts/migracoes-sem-colisao.sh
 
+      # Previne a bomba-relógio de testes que quebrou 250 em 02/10 e 280 em 04/10: teste
+      # que usa data absoluta futura em vaga/turno sem congelar frila.agora antes de
+      # chamar rotina sensível ao relógio do produto. Autoteste antes, porque portão com
+      # furo aprova calado.
+      - name: O portão da bomba-relógio fecha nos casos conhecidos
+        run: ./scripts/teste-relogio-em-testes.sh
+
+      - name: Nenhum teste pgTAP tem bomba-relógio de relógio
+        run: ./scripts/relogio-em-testes.sh
+
   # O plano de consulta é a única coisa neste repositório que não pode ser medida na
   # suíte: plano depende de estatística, estatística depende de volume, e a suíte roda
   # sobre 12 profissionais. Por isso um job próprio, e não um passo do job do banco.
