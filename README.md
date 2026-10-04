@@ -179,6 +179,7 @@ entram como passos novos desse workflow, e a política registra que as cópias s
 
 | O quê | Onde |
 |---|---|
+| Histórico formal de versões (1.0.0+) | [`CHANGELOG.md`](CHANGELOG.md) |
 | Documentos de produto, contrato da API, requisitos | [`FrilaApp/frila-docs`](https://github.com/FrilaApp/frila-docs) |
 | Modelagem de banco, diagramas, decisões técnicas | [`FrilaApp/Bancada`](https://github.com/FrilaApp/Bancada) · `doc-harness/07 - Arquitetura/` |
 | Registro do processo, para os mentores | https://bancada-buu.pages.dev |
