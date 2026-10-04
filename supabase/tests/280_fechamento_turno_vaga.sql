@@ -1,6 +1,7 @@
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
 select plan(16);
+select set_config('frila.agora', '2026-10-02 12:00:00-03', true);
 
 insert into privado.ambiente (eh_teste) values (true);
 
