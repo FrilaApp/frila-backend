@@ -96,6 +96,12 @@ insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel
 select contratante_usuario, estabelecimento, 'administrador'
   from ids;
 
+-- O relógio do produto fica antes da vaga: sem isto, `candidatar` lia o relógio real e a
+-- vaga de 03/10 às 18h virava `vaga_encerrada` para sempre depois dessa data (o teste
+-- passou a falhar em 04/10, e a CI ficou vermelha). Mais adiante o relógio é movido para
+-- cada horário do cenário.
+select set_config('frila.agora', '2026-10-02 12:00:00-03', true);
+
 insert into public.vaga (
   id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
   valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
