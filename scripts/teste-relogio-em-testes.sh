@@ -40,6 +40,11 @@ echo "▸ Portão: prevenção de bomba-relógio em testes pgTAP"
 
 # ── 1. Casos históricos reais extraídos do Git ──────────────────────────────────
 #
+# Se o repositório estiver com clone raso (shallow), aprofunda para alcançar os commits
+if ! git rev-parse 18197c3~1 >/dev/null 2>&1 || ! git rev-parse 3604bea~1 >/dev/null 2>&1; then
+  git fetch --unshallow 2>/dev/null || git fetch --depth=100 origin 2>/dev/null || true
+fi
+
 # O teste 250 original antes do commit 18197c3 (PR #132) criava vagas para 02/10 às 18h
 # e chamava candidatar() antes do primeiro set_config('frila.agora').
 git show 18197c3~1:supabase/tests/250_turnos_nao_verificados_e_reconciliacao.sql > "$TMP/hist_250.sql"

@@ -208,6 +208,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # O autoteste do portão de relógio precisa do histórico para extrair os
+          # commits dos testes 250 e 280 originais que falharam no produto.
+          fetch-depth: 0
 
       # Mesmo motivo do job do contrato, na linha de cima deste arquivo: o portão é
       # testado antes de julgar o PR, porque um portão com furo aprova calado. Este nasceu
