@@ -35,21 +35,44 @@ caso() {
 
 echo "▸ O portão da direção contrato-à-frente"
 
+OUTRAS_VIGIADAS=$(cat <<'EOF'
+{"op":"promete:contatoDoTurno:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:contatoDoTurno:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:cancelarPosicao:409","corpo":{"status":409,"code":"posicao_nao_cancelavel"}}
+{"op":"promete:cancelarVaga:409","corpo":{"status":409,"code":"vaga_encerrada"}}
+{"op":"promete:excluirConta:409","corpo":{"status":409,"code":"administrador_unico"}}
+{"op":"promete:bloquear:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:bloquear:422","corpo":{"status":422,"code":"campo_invalido"}}
+{"op":"promete:denunciar:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:contestarSuspensao:409","corpo":{"status":409,"code":"contestacao_ja_aberta"}}
+{"op":"promete:contestarSuspensao:422","corpo":{"status":422,"code":"sem_suspensao_ativa"}}
+{"op":"promete:reabrirPorAtraso:409","corpo":{"status":409,"code":"posicao_nao_cancelavel"}}
+{"op":"promete:reabrirPorAtraso:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:confirmarCheckinManual:409","corpo":{"status":409,"code":"checkin_ja_confirmado"}}
+{"op":"promete:fazerCheckin:409","corpo":{"status":409,"code":"vaga_encerrada"}}
+{"op":"promete:fazerCheckout:409","corpo":{"status":409,"code":"checkin_pendente"}}
+EOF
+)
+
 # O par vigiado alcançado: `perfil_publico` devolvendo o 404 que o contrato promete. É o
 # ponto de partida — sem este caso verde, os vermelhos abaixo não provariam nada, porque
 # um portão que reprova tudo passaria em cada caso negativo.
-ALCANCADO='{"op":"promete:perfilPublico:404","corpo":{"status":404}}'
+ALCANCADO=$(printf '{"op":"promete:perfilPublico:404","corpo":{"status":404,"code":"nao_encontrado"}}\n%s' "$OUTRAS_VIGIADAS")
 caso "recusa prometida e alcançada passa" 0 "$ALCANCADO" "Toda recusa vigiada"
 
 # O CASO DE 01/10, que é o motivo deste portão existir: o contrato 0.2.28 promete 404 em
 # perfil_publico entre partes bloqueadas, e a função não filtra bloqueio.
-NAO_ENTREGUE='{"op":"promete:perfilPublico:404","corpo":{"status":200}}'
+NAO_ENTREGUE=$(printf '{"op":"promete:perfilPublico:404","corpo":{"status":200,"code":null}}\n%s' "$OUTRAS_VIGIADAS")
 caso "promessa que o código não cumpre reprova" 1 "$NAO_ENTREGUE" "promete 404 e o código devolveu 200"
 caso "e nomeia a operação" 1 "$NAO_ENTREGUE" "perfilPublico:"
 
 # Status errado também reprova: 403 no lugar de 404 vaza a existência de quem bloqueou.
-OUTRO_STATUS='{"op":"promete:perfilPublico:404","corpo":{"status":403}}'
+OUTRO_STATUS=$(printf '{"op":"promete:perfilPublico:404","corpo":{"status":403,"code":"sem_permissao"}}\n%s' "$OUTRAS_VIGIADAS")
 caso "status diferente do prometido reprova" 1 "$OUTRO_STATUS" "devolveu 403"
+
+# Code errado também reprova: status 404 com code divergente no envelope
+OUTRO_CODE=$(printf '{"op":"promete:perfilPublico:404","corpo":{"status":404,"code":"outro_codigo"}}\n%s' "$OUTRAS_VIGIADAS")
+caso "code diferente do prometido reprova" 1 "$OUTRO_CODE" "devolveu code"
 
 # Critério 4: caminho que não mediu sai diferente de zero e DIZ o que não mediu, em vez de
 # passar verde por ausência. É o erro que o `contrato-em-dia.sh` já evita saindo 2 sem token.
@@ -59,7 +82,7 @@ caso "colheita que não tentou reprova, dizendo o que não mediu" 1 \
 
 # Erro de banco sem envelope: `status` nulo não é recusa do contrato, e dizer que é
 # inventaria um status que ninguém devolveu.
-SEM_ENVELOPE='{"op":"promete:perfilPublico:404","corpo":{"status":null}}'
+SEM_ENVELOPE=$(printf '{"op":"promete:perfilPublico:404","corpo":{"status":null,"code":null}}\n%s' "$OUTRAS_VIGIADAS")
 caso "erro sem envelope não conta como recusa" 1 "$SEM_ENVELOPE" "devolveu None"
 
 # A lista que envelheceu: par vigiado que o contrato deixou de prometer tem de falar, e não

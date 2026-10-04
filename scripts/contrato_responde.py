@@ -75,7 +75,23 @@ FORA_DO_ALCANCE = {
 # medido é o buraco voltando.
 VIGIADAS = {
     # O caso que motivou o cartão. Contrato 0.2.28, cartão 1aGJPQK2.
-    ("perfilPublico", "404"),
+    ("perfilPublico", "404"): "nao_encontrado",
+    # Os 15 pares de maior risco (privacidade, dinheiro, exclusão, bloqueio, autorização, operações)
+    ("contatoDoTurno", "403"): "sem_permissao",
+    ("contatoDoTurno", "404"): "nao_encontrado",
+    ("cancelarPosicao", "409"): "posicao_nao_cancelavel",
+    ("cancelarVaga", "409"): "vaga_encerrada",
+    ("excluirConta", "409"): "administrador_unico",
+    ("bloquear", "403"): "sem_permissao",
+    ("bloquear", "422"): "campo_invalido",
+    ("denunciar", "403"): "sem_permissao",
+    ("contestarSuspensao", "409"): "contestacao_ja_aberta",
+    ("contestarSuspensao", "422"): "sem_suspensao_ativa",
+    ("reabrirPorAtraso", "409"): "posicao_nao_cancelavel",
+    ("reabrirPorAtraso", "403"): "sem_permissao",
+    ("confirmarCheckinManual", "409"): "checkin_ja_confirmado",
+    ("fazerCheckin", "409"): "vaga_encerrada",
+    ("fazerCheckout", "409"): "checkin_pendente",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
@@ -271,12 +287,13 @@ def main():
         if not item["op"].startswith("promete:"):
             continue
         _, operacao, esperado = item["op"].split(":", 2)
+        corpo = item["corpo"] or {}
         observados.setdefault((operacao, esperado), []).append(
-            (item["corpo"] or {}).get("status")
+            (corpo.get("status"), corpo.get("code"))
         )
 
     promessas_quebradas = []
-    for par in sorted(VIGIADAS):
+    for par, codigo_esperado in sorted(VIGIADAS.items()):
         operacao, esperado = par
         if esperado not in declaradas.get(operacao, set()):
             # O contrato deixou de prometer. Não é falha do código — é a lista que
@@ -292,10 +309,19 @@ def main():
                 f"{operacao}: o contrato promete {esperado} e a colheita não tentou. "
                 f"Sem cenário em contrato-respostas.sql, este par não está medido"
             )
-        elif not any(str(v) == esperado for v in vistos):
+        elif not any(str(st) == esperado for st, cd in vistos):
+            status_vistos = [st for st, cd in vistos]
             promessas_quebradas.append(
                 f"{operacao}: o contrato promete {esperado} e o código devolveu "
-                f"{', '.join(str(v) for v in vistos)}"
+                f"{', '.join(str(v) for v in status_vistos)}"
+            )
+        elif codigo_esperado is not None and not any(
+            str(st) == esperado and cd == codigo_esperado for st, cd in vistos
+        ):
+            codigos_vistos = [cd for st, cd in vistos if str(st) == esperado]
+            promessas_quebradas.append(
+                f"{operacao}: o contrato promete {esperado} com code '{codigo_esperado}', "
+                f"mas o código devolveu code {codigos_vistos}"
             )
 
     vigiadas_ok = len(VIGIADAS) - len(promessas_quebradas)

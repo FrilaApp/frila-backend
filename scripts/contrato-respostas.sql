@@ -56,19 +56,28 @@ end $$;
 -- corpo casa", é "a recusa que o contrato promete acontece".
 create function pg_temp.observado(conta uuid, sql text) returns jsonb
 language plpgsql as $$
-declare det text;
+declare
+  det text;
+  msg text;
 begin
   begin
-    perform pg_temp.como(conta, sql);
-    return jsonb_build_object('status', 200);
+    if conta is null then
+      execute sql;
+    else
+      perform pg_temp.como(conta, sql);
+    end if;
+    return jsonb_build_object('status', 200, 'code', null);
   exception when others then
-    get stacked diagnostics det = pg_exception_detail;
+    get stacked diagnostics det = pg_exception_detail, msg = message_text;
     reset role;
     begin execute 'reset request.jwt.claims'; exception when others then null; end;
     -- Sem DETAIL não é recusa do contrato: é erro de banco, e dizer 500 aqui seria
     -- inventar um status que ninguém devolveu.
-    return case when det is null or det = '' then jsonb_build_object('status', null)
-                else jsonb_build_object('status', (det::jsonb->>'status')::int) end;
+    return case when det is null or det = '' then jsonb_build_object('status', null, 'code', null)
+                else jsonb_build_object(
+                  'status', (det::jsonb->>'status')::int,
+                  'code', case when msg ~ '^\s*\{' then (msg::jsonb->>'code') else null end
+                ) end;
   end;
 end $$;
 
@@ -431,6 +440,102 @@ select pg_temp.guarda('promete:perfilPublico:404',
     $$ select public.perfil_publico(%L::uuid) $$,
     (select p.id from public.profissional p
       where p.usuario_id = 'cc000000-0000-4000-8000-000000000003'))));
+
+-- ── 15 pares de maior risco (privacidade, dinheiro, exclusão, bloqueio, autorização) ──
+-- 1. contatoDoTurno: 403 sem_permissao (conta suspensa tentando ler contato do turno)
+select pg_temp.guarda('promete:contatoDoTurno:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004', format(
+    $$ select public.contato_do_turno(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
+
+-- 2. contatoDoTurno: 404 nao_encontrado (turno inexistente)
+select pg_temp.guarda('promete:contatoDoTurno:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.contato_do_turno('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+
+-- 3. cancelarPosicao: 409 posicao_nao_cancelavel (tentativa de cancelar posição já cancelada)
+select pg_temp.guarda('promete:cancelarPosicao:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003', format(
+    $$ select public.cancelar_posicao(%L::uuid, 'duplicado') $$,
+    ((select r from cand2)->>'posicao_id')::uuid)));
+
+-- 4. cancelarVaga: 409 vaga_encerrada (tentativa de cancelar vaga já cancelada)
+select pg_temp.guarda('promete:cancelarVaga:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.cancelar_vaga(%L::uuid, 'duplicado') $$,
+    ((select r from vaga2)->>'vaga_id')::uuid)));
+
+-- 5. excluirConta: 409 administrador_unico (único admin de estabelecimento com outros membros)
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado)
+values ('ee000000-0000-4000-8000-000000000099', 'contratante', 'Aux Contratante', '+5561999999999', 'aux@frila.test', '1990-01-01', '1.0', now(), 'ativa')
+on conflict do nothing;
+
+insert into public.membro_estabelecimento (estabelecimento_id, usuario_id, papel)
+values ((select casa_id from ids), 'ee000000-0000-4000-8000-000000000099', 'operador')
+on conflict do nothing;
+
+select pg_temp.guarda('promete:excluirConta:409',
+  pg_temp.observado(null, format(
+    $$ select privado.excluir_conta(%L::uuid) $$, 'cc000000-0000-4000-8000-000000000001'::uuid)));
+
+delete from public.membro_estabelecimento
+ where estabelecimento_id = (select casa_id from ids)
+   and usuario_id = 'ee000000-0000-4000-8000-000000000099';
+
+-- 6. bloquear: 403 sem_permissao (conta suspensa tenta registrar bloqueio)
+select pg_temp.guarda('promete:bloquear:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004', format(
+    $$ select public.bloquear('estabelecimento', %L::uuid) $$, (select casa_id from ids))));
+
+-- 7. bloquear: 422 campo_invalido (tentativa de auto-bloqueio)
+select pg_temp.guarda('promete:bloquear:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.bloquear('profissional', (select p.id from public.profissional p where p.usuario_id = 'cc000000-0000-4000-8000-000000000002')) $$)));
+
+-- 8. denunciar: 403 sem_permissao (conta suspensa tenta abrir denúncia)
+select pg_temp.guarda('promete:denunciar:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004', format(
+    $$ select public.denunciar('estabelecimento', %L::uuid, 'outro', 'relato de teste', gen_random_uuid()) $$,
+    (select casa_id from ids))));
+
+-- 9. contestarSuspensao: 409 contestacao_ja_aberta (segunda contestação enquanto a primeira está aberta)
+select pg_temp.guarda('promete:contestarSuspensao:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004',
+    $$ select public.contestar_suspensao('Segunda tentativa de contestacao enquanto a primeira esta aberta.') $$));
+
+-- 10. contestarSuspensao: 422 sem_suspensao_ativa (conta não suspensa tenta contestar)
+select pg_temp.guarda('promete:contestarSuspensao:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.contestar_suspensao('Conta ativa tentando contestar suspensao inexistente.') $$));
+
+-- 11. reabrirPorAtraso: 409 posicao_nao_cancelavel (posição já possui check-in realizado)
+select pg_temp.guarda('promete:reabrirPorAtraso:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.reabrir_por_atraso(%L::uuid) $$, ((select r from cand)->>'posicao_id')::uuid)));
+
+-- 12. reabrirPorAtraso: 403 sem_permissao (não membro da contratante dona da vaga tenta reabrir)
+select pg_temp.guarda('promete:reabrirPorAtraso:403',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000099', format(
+    $$ select public.reabrir_por_atraso(%L::uuid) $$, ((select r from cand3)->>'posicao_id')::uuid)));
+
+-- 13. confirmarCheckinManual: 409 checkin_ja_confirmado (checkin geolocalizado já nasce verificado)
+select pg_temp.guarda('promete:confirmarCheckinManual:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.confirmar_checkin_manual(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
+
+-- 14. fazerCheckin: 409 vaga_encerrada (trigger turno_checkin_nunca_em_posicao_cancelada impede checkin em posição cancelada)
+select pg_temp.guarda('promete:fazerCheckin:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.fazer_checkin(%L::uuid, 40, '2027-02-01 21:20:00+00'::timestamptz) $$,
+    ((select r from cand3)->>'turno_id')::uuid)));
+
+-- 15. fazerCheckout: 409 checkin_pendente (checkout tentado antes de registrar check-in)
+select pg_temp.guarda('promete:fazerCheckout:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.fazer_checkout(%L::uuid, 40, '2027-02-01 22:00:00+00'::timestamptz) $$,
+    ((select r from cand3)->>'turno_id')::uuid)));
+
+delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000099';
+
 
 -- ── As Edge Functions ─────────────────────────────────────────────────────────
 --

@@ -23,8 +23,25 @@ falhas=0
 # passariam a medir a direção errada: os quatro que esperam 0 sairiam 1, e os cinco que
 # esperam 1 sairiam 1 mesmo sem o defeito de corpo que cada um existe para provar — cinco
 # casos decorativos, verdes com e sem a validação que eles vigiam. Medido em 02/10, ao
-# fundir a `develop`.
-PROMESSA_OK='{"op":"promete:perfilPublico:404","corpo":{"status":404}}'
+PROMESSA_OK=$(cat <<'EOF'
+{"op":"promete:perfilPublico:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:contatoDoTurno:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:contatoDoTurno:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:cancelarPosicao:409","corpo":{"status":409,"code":"posicao_nao_cancelavel"}}
+{"op":"promete:cancelarVaga:409","corpo":{"status":409,"code":"vaga_encerrada"}}
+{"op":"promete:excluirConta:409","corpo":{"status":409,"code":"administrador_unico"}}
+{"op":"promete:bloquear:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:bloquear:422","corpo":{"status":422,"code":"campo_invalido"}}
+{"op":"promete:denunciar:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:contestarSuspensao:409","corpo":{"status":409,"code":"contestacao_ja_aberta"}}
+{"op":"promete:contestarSuspensao:422","corpo":{"status":422,"code":"sem_suspensao_ativa"}}
+{"op":"promete:reabrirPorAtraso:409","corpo":{"status":409,"code":"posicao_nao_cancelavel"}}
+{"op":"promete:reabrirPorAtraso:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:confirmarCheckinManual:409","corpo":{"status":409,"code":"checkin_ja_confirmado"}}
+{"op":"promete:fazerCheckin:409","corpo":{"status":409,"code":"vaga_encerrada"}}
+{"op":"promete:fazerCheckout:409","corpo":{"status":409,"code":"checkin_pendente"}}
+EOF
+)
 
 # Roda o validador com uma colheita de mentira na entrada. Guarda a saída em `saida` e o
 # código em `codigo`, as duas globais de propósito: `codigo=$(julga ...)` abriria subshell
