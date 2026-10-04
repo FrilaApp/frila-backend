@@ -81,6 +81,28 @@ fi
 ok()    { printf '  ✓ %s\n' "$1"; }
 falhou(){ printf '  ✗ %s\n' "$1" >&2; exit 1; }
 
+echo "▸ Versão mínima do app (sem sessão)"
+# O app chama configuracao_do_app antes de qualquer interação, sem sessão, para saber se
+# precisa bloquear o uso por defeito grave e levar à loja (RNF12, contrato 0.2.16).
+tmp_cfg=$(mktemp)
+http_cfg=$(curl -s -o "$tmp_cfg" -w '%{http_code}' -G "$URL/rest/v1/rpc/configuracao_do_app" \
+  -H "apikey: $ANON" --data-urlencode "plataforma=ios")
+corpo_cfg=$(cat "$tmp_cfg")
+rm -f "$tmp_cfg"
+
+[ "$http_cfg" = "200" ] || falhou "GET configuracao_do_app?plataforma=ios como anon devolveu $http_cfg: $corpo_cfg"
+versao_min=$(printf '%s' "$corpo_cfg" | python3 -c "import json,sys; print(json.load(sys.stdin).get('versao_minima',''))" 2>/dev/null || true)
+[ -n "$versao_min" ] || falhou "configuracao_do_app não devolveu versao_minima: $corpo_cfg"
+ok "GET configuracao_do_app?plataforma=ios como anon → 200 (mínima: $versao_min)"
+
+# Recusa de plataforma inválida como anon (422 campo_invalido)
+http_err=$(curl -s -o /dev/null -w '%{http_code}' -G "$URL/rest/v1/rpc/configuracao_do_app" \
+  -H "apikey: $ANON" --data-urlencode "plataforma=invalida")
+[ "$http_err" = "422" ] || falhou "GET configuracao_do_app com plataforma inválida devolveu $http_err, esperado 422"
+ok "GET configuracao_do_app com plataforma inválida → 422"
+
+echo
+
 # Um endereço novo por execução: o script não pode depender de estado deixado pela
 # execução anterior, senão passa na segunda vez por motivo errado.
 # `date +%s` colide se o script rodar duas vezes no mesmo segundo, e aí a segunda

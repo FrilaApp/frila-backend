@@ -4,70 +4,119 @@ Quando um build publicado tem defeito grave e precisa sair de circulação. Abai
 `versao_minima`, o app troca todas as telas pela tela de atualização e leva à loja.
 Sem rede, ele abre normalmente: o bloqueio vale na próxima abertura com rede.
 
-A configuração mora em `privado.configuracao_app`, uma linha por plataforma, e é lida
-sem sessão por `GET /rest/v1/rpc/configuracao_do_app?plataforma=ios`.
+A configuração mora na tabela `privado.configuracao_app`, uma linha por plataforma, e é lida
+sem sessão por `GET /rest/v1/rpc/configuracao_do_app?plataforma=ios` (contrato 0.2.16+).
 
-## Antes
+---
+
+## 1. Antes de Alterar
 
 1. **A versão nova já está na loja e aprovada.** Subir a mínima antes disso bloqueia
-   todo mundo sem ter para onde mandar.
+   todo mundo sem ter para onde encaminhar o usuário.
 2. **A versão é a de build** (`MARKETING_VERSION` do `iOS/project.yml` no
-   `frila-frontend`), só números e pontos: `1.2.10`, nunca `v1.2.10`. O banco recusa o
-   formato errado, e recusa `versao_recomendada` abaixo de `versao_minima`.
-3. **Fora da janela de pico** (RNF12): nada de quinta a domingo, das 16h às 2h, salvo o
-   próprio defeito grave que motivou a subida.
+   `frila-frontend`), composta exclusivamente por números e pontos: `1.2.10`, nunca `v1.2.10`.
+   O banco recusa formatos inválidos e rejeita `versao_recomendada` abaixo de `versao_minima`.
+3. **Mensagem opcional:** Se `mensagem` for `null`, o app exibe o texto padrão de bloqueio.
+   Preencher apenas quando for necessário orientar o usuário sobre o motivo específico do bloqueio.
 
-## A mudança é uma migração
+---
 
-Nunca pelo painel do Supabase: o que não está em arquivo, o próximo ambiente não tem, e
-ninguém sabe depois quem bloqueou qual versão e por quê.
+## 2. Operação de Emergência (Sem Migração e Sem Janela Proibida RNF12)
 
-```bash
-git checkout -b s<N>/versao-minima-<versao>
-supabase migration new versao_minima_ios_<versao_com_underscore>
-```
+Em caso de defeito crítico em produção (ex.: vazamento de dados, falha grave de integridade,
+crash generalizado no lançamento), **a contenção deve ser imediata**. Não se deve aguardar
+a abertura de branch, revisão de PR e execução da esteira de CI (~35 minutos).
+
+### Por que é isento da Janela Proibida RNF12?
+- A regra **RNF12** e o script `scripts/janela-de-manutencao.sh` proíbem a aplicação de
+  **migrações estruturais DDL** de quinta a domingo, das 16h às 02h (horário de pico do food service),
+  para prevenir bloqueios de catálogo e riscos de indisponibilidade.
+- Alterar a versão mínima em `privado.configuracao_app` é uma operação **DML pontual de 1 linha**
+  (`UPDATE`), com execução em fração de milissegundo, sem lock estrutural e sem impacto na retrocompatibilidade.
+- Portanto, a contenção emergencial de um app com defeito grave via DML é **isenta da restrição de horário da RNF12**
+  e pode ser executada a qualquer momento.
+
+### Quem altera e segurança da tabela
+- A tabela `privado.configuracao_app` possui Row Level Security (RLS) habilitado sem políticas e
+  permissões revogadas para `public`, `anon` e `authenticated`.
+- Apenas operadores com papel administrativo (**`postgres`**, **`service_role`** ou DBA autorizado)
+  possuem privilégio para alterar os registros.
+
+### Comando SQL de atualização
+Mesmo no comando direto, o banco continua aplicando todas as restrições `CHECK` de integridade
+(`versao_minima_formato`, `versao_recomendada_formato`, `recomendada_nao_abaixo_da_minima`,
+`url_da_loja_https` e `mensagem_nao_vazia`):
 
 ```sql
--- Tira de circulação o build <antigo>: <o defeito, em uma linha, com o link do cartão>.
 update privado.configuracao_app
-   set versao_minima      = '1.2.10',
-       versao_recomendada = '1.2.10',
+   set versao_minima      = '1.0.1',
+       versao_recomendada = '1.0.1',
        mensagem           = null,      -- null usa o texto padrão do app
        atualizado_em      = now()
  where plataforma = 'ios';
 ```
 
-`mensagem` só quando o texto padrão não basta. Ela vai para a tela como está: frase
-curta, sem jargão, sem culpar quem usa.
+---
 
-`versao_recomendada` sozinha, sem mexer na mínima, é o aviso dispensável: aparece uma
-vez por versão e não bloqueia ninguém.
+## 3. Procedimento de Execução por Ambiente
 
-## Conferir no local
-
+### No ambiente local (desenvolvimento / teste)
+Via container local do Postgres:
 ```bash
-supabase db reset && supabase test db
-curl -s "http://127.0.0.1:54321/rest/v1/rpc/configuracao_do_app?plataforma=ios" \
-  -H "apikey: $ANON_KEY"
+docker exec -i supabase_db_frila-backend psql -U postgres -d postgres -c \
+  "UPDATE privado.configuracao_app SET versao_minima = '1.0.1', versao_recomendada = '1.0.1', atualizado_em = now() WHERE plataforma = 'ios';"
 ```
 
-## Aplicar
-
-Pelo PR, como qualquer migração, e depois no remoto:
-
+### No ambiente remoto (`frila-dev` e `frila-prod`)
+Pelo operador de infraestrutura / DBA, conectando diretamente com credencial administrativa
+(`postgres` / pooler de produção) ou executando o SQL via CLI administrativa:
 ```bash
-./scripts/aplicar-remoto.sh <project_ref> --seco   # mostra o que vai aplicar
-./scripts/aplicar-remoto.sh <project_ref>
+# Exemplo via psql conectado ao banco remoto:
+psql "$PROD_DB_URL" -c \
+  "UPDATE privado.configuracao_app SET versao_minima = '1.0.1', versao_recomendada = '1.0.1', atualizado_em = now() WHERE plataforma = 'ios';"
 ```
 
-E conferir no remoto com a chave publicável do ambiente, sem token de usuário. A
-resposta tem de trazer a versão nova.
+### Conferência imediata por HTTP
+Após o comando, consulte a RPC como cliente anônimo (chave pública, sem sessão). O PostgREST não
+faz cache e a resposta reflete a nova versão imediatamente:
+```bash
+curl -s "https://<project-ref>.supabase.co/rest/v1/rpc/configuracao_do_app?plataforma=ios" \
+  -H "apikey: $SUPABASE_ANON_KEY"
+```
 
-## Voltar atrás
+A resposta esperada é HTTP 200:
+```json
+{
+  "plataforma": "ios",
+  "versao_minima": "1.0.1",
+  "versao_recomendada": "1.0.1",
+  "url_da_loja": "https://apps.apple.com/app/id6815311991",
+  "mensagem": null
+}
+```
 
-Outra migração, com a versão anterior. A que subiu não se edita: já foi aplicada.
+---
 
-## Android e web
+## 4. Fase 2: Conciliação Pós-Incidente no Repositório
 
-Ainda não têm linha: a função responde `404 nao_encontrado` para eles. A linha entra por
-migração quando o app tiver loja — `insert`, com a URL de verdade.
+Após conter a crise em produção:
+1. **Registrar no histórico do repositório:** Em horário regular, abra um PR contra a `develop`
+   com uma migração registrando o novo patamar de versão (ex.: `202610..._versao_minima_ios_1_0_1.sql`).
+2. **Garantia para novos ambientes:** Isso assegura que novos ambientes de teste e reinicializações
+   com `supabase db reset` inicializem já com o piso de versão atualizado, evitando regressões locais.
+
+---
+
+## 5. Voltar Atrás
+
+Caso a atualização obrigatória precise ser afrouxada ou desfeita:
+- Execute novo `UPDATE` administrativo reduzindo a `versao_minima` para o patamar anterior.
+- Respeite a regra de que `versao_recomendada` nunca pode ser inferior à `versao_minima`.
+
+---
+
+## 6. Android e Web
+
+Atualmente respondem `404 nao_encontrado` porque não possuem lojas publicadas no piloto.
+Quando os aplicativos dessas plataformas forem disponibilizados, as linhas correspondentes
+devem ser inseridas em `privado.configuracao_app` com a respectiva `url_da_loja`.
