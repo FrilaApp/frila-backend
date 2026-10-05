@@ -492,3 +492,75 @@ Deno.test("tratarErroBanco com erro PGRST e detail sem status numérico mantém 
   const json = await res.json();
   assertEquals(json.code, "regra_violada");
 });
+
+// ── Auditoria de Privacidade (RN17, RN15, LGPD) ──────────────────────────────
+
+Deno.test("RN17 / RN15 / LGPD: CSV e PDF gerados contêm estritamente as colunas autorizadas e zero dados pessoais excessivos", async () => {
+  const e = criarEspiao();
+  const resCsv = await chamar(
+    e,
+    requisicao({
+      de: "2026-09-01T00:00:00Z",
+      ate: "2026-09-30T23:59:59Z",
+      formato: "csv",
+      estabelecimento_id: ESTABELECIMENTO_ID,
+    }),
+  );
+
+  assertEquals(resCsv.status, 200);
+  assertEquals(resCsv.headers.get("Cache-Control"), "no-store");
+  const csvTexto = await resCsv.text();
+  const linhas = csvTexto.split("\r\n");
+
+  // 1. Cabeçalho deve bater 100% com as 9 colunas da RN17
+  const cabecalhoEsperado = "Data,Funcao,Inicio Previsto,Fim Previsto,Checkin,Checkout,Valor Acordado,Contraparte,Status";
+  assertEquals(linhas[0], cabecalhoEsperado, "colunas do CSV devem ser estritamente as 9 da RN17");
+
+  // 2. Colunas proibidas não podem existir
+  const colunasProibidas = [
+    "telefone",
+    "email",
+    "cpf",
+    "cnpj",
+    "documento",
+    "distancia",
+    "distancia_m",
+    "endereco",
+    "latitude",
+    "longitude",
+    "ponto",
+    "usuario_id",
+    "posicao_id",
+  ];
+  for (const proibida of colunasProibidas) {
+    assert(
+      !linhas[0].toLowerCase().includes(proibida),
+      `Coluna não autorizada '${proibida}' vazou no cabeçalho do CSV (RN15)`,
+    );
+  }
+
+  // 3. Verificações negativas no corpo do CSV
+  const regexCpf = /\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/;
+  const regexTelefone = /(?:\+55|\(?\d{2}\)?\s*\d{4,5}-?\d{4})/;
+  assert(!csvTexto.includes("@"), "CSV não pode conter e-mail");
+  assert(!regexTelefone.test(csvTexto), "CSV não pode conter telefone");
+  assert(!regexCpf.test(csvTexto), "CSV não pode conter CPF");
+
+  // 4. PDF com Cache-Control: no-store
+  const resPdf = await chamar(
+    e,
+    requisicao({
+      de: "2026-09-01T00:00:00Z",
+      ate: "2026-09-30T23:59:59Z",
+      formato: "pdf",
+      estabelecimento_id: ESTABELECIMENTO_ID,
+    }),
+  );
+  assertEquals(resPdf.status, 200);
+  assertEquals(resPdf.headers.get("Cache-Control"), "no-store");
+  assertEquals(resPdf.headers.get("Content-Type"), "application/pdf");
+  const bytesPdf = new Uint8Array(await resPdf.arrayBuffer());
+  assert(bytesPdf.length > 500, "PDF deve conter bytes válidos");
+  assertEquals(new TextDecoder().decode(bytesPdf.subarray(0, 5)), "%PDF-");
+});
+
