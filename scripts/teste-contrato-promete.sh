@@ -51,6 +51,26 @@ OUTRAS_VIGIADAS=$(cat <<'EOF'
 {"op":"promete:confirmarCheckinManual:409","corpo":{"status":409,"code":"checkin_ja_confirmado"}}
 {"op":"promete:fazerCheckin:409","corpo":{"status":409,"code":"vaga_encerrada"}}
 {"op":"promete:fazerCheckout:409","corpo":{"status":409,"code":"checkin_pendente"}}
+{"op":"promete:cancelarPosicao:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:cancelarPosicao:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:cancelarVaga:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:cancelarVaga:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:publicarVaga:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:candidatar:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:candidatar:409","corpo":{"status":409,"code":"vaga_encerrada"}}
+{"op":"promete:retirarCandidatura:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:retirarCandidatura:409","corpo":{"status":409,"code":"candidatura_indisponivel"}}
+{"op":"promete:escolherCandidato:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:escolherCandidato:409","corpo":{"status":409,"code":"posicao_ja_preenchida"}}
+{"op":"promete:avaliar:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:avaliar:409","corpo":{"status":409,"code":"avaliacao_ja_registrada"}}
+{"op":"promete:cadastrarEstabelecimento:409","corpo":{"status":409,"code":"documento_ja_cadastrado"}}
+{"op":"promete:cadastrarEstabelecimento:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:bloquear:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:denunciar:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:denunciar:422","corpo":{"status":422,"code":"campo_invalido"}}
+{"op":"promete:avisarACaminho:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:configuracaoDoApp:404","corpo":{"status":404,"code":"nao_encontrado"}}
 EOF
 )
 
