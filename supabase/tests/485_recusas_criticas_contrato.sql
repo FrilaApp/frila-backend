@@ -177,8 +177,12 @@ select throws_ok(
 select pg_temp.como((select contratante_dono from ids), format(
   $$ select public.cancelar_vaga(%L::uuid, 'evento adiado') $$, (select vaga_id from v2)));
 
+insert into public.membro_estabelecimento (estabelecimento_id, usuario_id, papel)
+values ((select id from casa), (select contratante_outro from ids), 'operador')
+on conflict do nothing;
+
 select throws_ok(
-  pg_temp.por((select contratante_dono from ids), format(
+  pg_temp.por((select contratante_outro from ids), format(
     $$ select public.cancelar_vaga(%L::uuid, 'evento adiado') $$, (select vaga_id from v2))),
   'PGRST',
   pg_temp.erro('vaga_encerrada'),
@@ -186,10 +190,6 @@ select throws_ok(
 );
 
 -- ── 5. excluirConta: 409 administrador_unico ───────────────────────────────────
-insert into public.membro_estabelecimento (estabelecimento_id, usuario_id, papel)
-values ((select id from casa), (select contratante_outro from ids), 'operador')
-on conflict do nothing;
-
 select throws_ok(
   format('select privado.excluir_conta(%L::uuid)', (select contratante_dono from ids)),
   'PGRST',
