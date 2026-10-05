@@ -113,6 +113,22 @@ VIGIADAS = {
     ("denunciar", "422"): "campo_invalido",
     ("avisarACaminho", "403"): "sem_permissao",
     ("configuracaoDoApp", "404"): "nao_encontrado",
+    # Lote 3: mais 15 pares críticos por risco (presença, turnos, vagas, equipe)
+    ("confirmarCheckinManual", "403"): "sem_permissao",
+    ("confirmarCheckinManual", "404"): "nao_encontrado",
+    ("fazerCheckin", "403"): "sem_permissao",
+    ("fazerCheckin", "404"): "nao_encontrado",
+    ("fazerCheckout", "403"): "sem_permissao",
+    ("fazerCheckout", "404"): "nao_encontrado",
+    ("republicarVaga", "403"): "sem_permissao",
+    ("republicarVaga", "404"): "nao_encontrado",
+    ("detalheVaga", "403"): "sem_permissao",
+    ("detalheVaga", "404"): "nao_encontrado",
+    ("candidatosDaVaga", "403"): "sem_permissao",
+    ("candidatosDaVaga", "404"): "nao_encontrado",
+    ("incluirNaEquipe", "403"): "sem_permissao",
+    ("incluirNaEquipe", "404"): "nao_encontrado",
+    ("removerDaEquipe", "403"): "sem_permissao",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
