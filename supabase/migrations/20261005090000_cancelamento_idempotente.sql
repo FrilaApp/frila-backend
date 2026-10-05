@@ -21,6 +21,7 @@
 
 -- ── cancelar_posicao ──────────────────────────────────────────────────────────
 
+-- contrato: corpo-sem-mudanca-de-superficie public.cancelar_posicao 0.2.35
 create or replace function public.cancelar_posicao(posicao_id uuid, motivo text)
 returns jsonb
 language plpgsql
@@ -135,6 +136,7 @@ grant  execute on function public.cancelar_posicao(uuid, text) to authenticated;
 
 -- ── cancelar_vaga ─────────────────────────────────────────────────────────────
 
+-- contrato: corpo-sem-mudanca-de-superficie public.cancelar_vaga 0.2.35
 create or replace function public.cancelar_vaga(vaga_id uuid, motivo text)
 returns jsonb
 language plpgsql
