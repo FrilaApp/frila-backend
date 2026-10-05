@@ -649,6 +649,94 @@ select pg_temp.guarda('promete:configuracaoDoApp:404',
 
 delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000099';
 
+-- ── Lote 3: 15 pares críticos por risco (presença, turnos, vagas, equipe) ──────
+-- 36. confirmarCheckinManual: 403 sem_permissao (não membro do estabelecimento tentando confirmar)
+select pg_temp.guarda('promete:confirmarCheckinManual:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.confirmar_checkin_manual(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
+
+-- 37. confirmarCheckinManual: 404 nao_encontrado (turno inexistente)
+select pg_temp.guarda('promete:confirmarCheckinManual:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.confirmar_checkin_manual('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+
+-- 38. fazerCheckin: 403 sem_permissao (profissional suspenso tentando fazer check-in)
+select pg_temp.guarda('promete:fazerCheckin:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004', format(
+    $$ select public.fazer_checkin(%L::uuid, 40, '2027-01-18 21:05:00+00'::timestamptz) $$,
+    ((select r from cand)->>'turno_id')::uuid)));
+
+-- 39. fazerCheckin: 404 nao_encontrado (turno inexistente)
+select pg_temp.guarda('promete:fazerCheckin:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.fazer_checkin('c0000000-0000-4000-8000-000000000099'::uuid, 40, '2027-01-18 21:05:00+00'::timestamptz) $$));
+
+-- 40. fazerCheckout: 403 sem_permissao (profissional suspenso tentando fazer checkout)
+select pg_temp.guarda('promete:fazerCheckout:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004', format(
+    $$ select public.fazer_checkout(%L::uuid, 40, '2027-01-19 02:55:00+00'::timestamptz) $$,
+    ((select r from cand)->>'turno_id')::uuid)));
+
+-- 41. fazerCheckout: 404 nao_encontrado (turno inexistente)
+select pg_temp.guarda('promete:fazerCheckout:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.fazer_checkout('c0000000-0000-4000-8000-000000000099'::uuid, 40, '2027-01-19 02:55:00+00'::timestamptz) $$));
+
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado)
+values ('ee000000-0000-4000-8000-000000000098', 'contratante', 'Outro Contratante', '+5561999999998', 'outro_contratante@frila.test', '1990-01-01', '1.0', now(), 'ativa')
+on conflict do nothing;
+
+-- 42. republicarVaga: 403 sem_permissao (contratante de outro estabelecimento tentando republicar vaga)
+select pg_temp.guarda('promete:republicarVaga:403',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000098', format(
+    $$ select public.republicar_vaga(%L::uuid, '2027-02-15 21:00:00+00'::timestamptz, '2027-02-16 03:00:00+00'::timestamptz, gen_random_uuid()) $$,
+    ((select r from vaga1)->>'vaga_id')::uuid)));
+
+-- 43. republicarVaga: 404 nao_encontrado (vaga de origem inexistente)
+select pg_temp.guarda('promete:republicarVaga:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.republicar_vaga('c0000000-0000-4000-8000-000000000099'::uuid, '2027-02-15 21:00:00+00'::timestamptz, '2027-02-16 03:00:00+00'::timestamptz, gen_random_uuid()) $$));
+
+-- 44. detalheVaga: 403 sem_permissao (profissional suspenso tentando ver detalhe da vaga)
+select pg_temp.guarda('promete:detalheVaga:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004', format(
+    $$ select public.detalhe_vaga(%L::uuid) $$, ((select r from vaga1)->>'vaga_id')::uuid)));
+
+-- 45. detalheVaga: 404 nao_encontrado (vaga inexistente)
+select pg_temp.guarda('promete:detalheVaga:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.detalhe_vaga('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+
+-- 46. candidatosDaVaga: 403 sem_permissao (contratante de outro estabelecimento tentando listar candidatos)
+select pg_temp.guarda('promete:candidatosDaVaga:403',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000098', format(
+    $$ select public.candidatos_da_vaga(%L::uuid) $$, ((select r from vaga1)->>'vaga_id')::uuid)));
+
+-- 47. candidatosDaVaga: 404 nao_encontrado (vaga inexistente)
+select pg_temp.guarda('promete:candidatosDaVaga:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.candidatos_da_vaga('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+
+-- 48. incluirNaEquipe: 403 sem_permissao (profissional sem turno verificado cumprido no estabelecimento)
+select pg_temp.guarda('promete:incluirNaEquipe:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.incluir_na_equipe(%L::uuid, 'e0000000-0000-4000-8000-000000000004'::uuid) $$,
+    (select casa_id from ids))));
+
+-- 49. incluirNaEquipe: 404 nao_encontrado (profissional inexistente)
+select pg_temp.guarda('promete:incluirNaEquipe:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.incluir_na_equipe(%L::uuid, 'c0000000-0000-4000-8000-000000000099'::uuid) $$,
+    (select casa_id from ids))));
+
+-- 50. removerDaEquipe: 403 sem_permissao (contratante de outro estabelecimento tentando remover da equipe)
+select pg_temp.guarda('promete:removerDaEquipe:403',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000098', format(
+    $$ select public.remover_da_equipe(%L::uuid, 'e0000000-0000-4000-8000-000000000004'::uuid) $$,
+    (select casa_id from ids))));
+
+delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000098';
+
 
 -- ── As Edge Functions ─────────────────────────────────────────────────────────
 --
