@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.34
+  version: 0.2.35
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -35,7 +35,7 @@ info:
     | Tempo | UTC em ISO-8601: `"inicio_em": "2026-09-19T21:00:00Z"` (RN18). O fuso `America/Sao_Paulo` é da tela |
     | Identificadores | `uuid` |
     | Nomes | `snake_case`, iguais às colunas do banco |
-    | Idempotência | Reenviar a mesma escrita devolve o mesmo resultado. Onde há chave natural (candidatura por vaga e profissional, check-in por turno, avaliação por turno e lado, bloqueio por par), ela basta. `publicar_vaga` e `denunciar`, que não têm chave natural, recebem `chave` (uuid gerado pelo app) |
+    | Idempotência | Reenviar a mesma escrita devolve o mesmo resultado. Onde há chave natural (candidatura por vaga e profissional, check-in por turno, avaliação por turno e lado, bloqueio por par, cancelamento pelo mesmo autor), ela basta. `publicar_vaga` e `denunciar`, que não têm chave natural, recebem `chave` (uuid gerado pelo app) |
     | Versão | Mudança incompatível vira função nova (`publicar_vaga_v2`); a antiga continua no ar enquanto houver app antigo na loja |
 
     ## Erros
@@ -68,10 +68,10 @@ info:
     | 403 | `contato_expirado` | Contato pedido depois de 7 dias do fim do turno (RN10) |
     | 404 | `nao_encontrado` | O recurso não existe ou não é visível para quem pede (inclui bloqueio, RF26, e vaga ocultada pela moderação da Equipe Frila, diretriz 1.2) |
     | 409 | `posicao_ja_preenchida` | Alguém chegou antes (RN19). **Funcionamento normal no modo urgência** |
-    | 409 | `vaga_encerrada` | A vaga fechou, foi cancelada ou já começou. Posição reaberta por atraso: a partir de `fim_em - 1 h` |
+    | 409 | `vaga_encerrada` | A vaga fechou, já começou ou foi cancelada por outro autor. Reenvio pelo mesmo contratante autor do cancelamento devolve 200 (0.2.35). Posição reaberta por atraso: a partir de `fim_em - 1 h` |
     | 409 | `checkin_pendente` | Check-out ou confirmação de um turno que ainda não teve check-in. O código diz qual é o passo que falta |
     | 409 | `checkin_ja_confirmado` | Confirmação de um check-in geolocalizado, que já nasceu verificado |
-    | 409 | `posicao_nao_cancelavel` | A posição não está confirmada: aberta não tem o que cancelar, cumprida ou já cancelada não volta atrás |
+    | 409 | `posicao_nao_cancelavel` | A posição não está confirmada: aberta não tem o que cancelar, turno já em andamento ou cumprido não volta atrás, ou posição cancelada pela outra parte. Reenvio pelo mesmo autor devolve 200 (0.2.35) |
     | 409 | `candidatura_indisponivel` | A candidatura foi retirada, expirou ou já foi escolhida |
     | 409 | `avaliacao_ja_registrada` | Já existe avaliação **deste lado** do turno, com outra resposta — de quem chama ou de outro membro do mesmo estabelecimento |
     | 409 | `conta_existente`, `documento_ja_cadastrado` | Cadastro repetido |
@@ -95,6 +95,25 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.35, de 05/10/2026.** Reenvio idempotente de cancelamento pós-queda de rede (decisão
+    de produto de 05/10/2026 sobre o cartão pVvubZJy, opção A). Em condições de conectividade instável,
+    o cliente pode reenviar com segurança a chamada de cancelamento sem receber erro de conflito.
+
+    - **`cancelar_posicao` e `cancelar_vaga` idempotentes para o mesmo autor:** Repetir a chamada
+      pelo **mesmo autor** em uma posição ou vaga já cancelada por ele próprio devolve `200` com o
+      objeto já cancelado, em vez de `409 posicao_nao_cancelavel` ou `409 vaga_encerrada`. Nenhum
+      efeito colateral é duplicado no reenvio: não há nova ocorrência, nova penalidade na taxa de
+      comparecimento, nova notificação para a contraparte ou criação de nova posição reaberta.
+    - **O que continua sendo `409`:**
+      - Cancelar posição aberta sem confirmação (`409 posicao_nao_cancelavel`).
+      - Cancelar posição de turno já em andamento ou cumprido (`409 posicao_nao_cancelavel`).
+      - Cancelar o que foi cancelado pela contraparte ou por outro autor (`409 posicao_nao_cancelavel`
+        ou `409 vaga_encerrada`).
+      - Cancelar vaga já encerrada por horário (`409 vaga_encerrada`).
+    - **O que continua sendo `404` / `403` / `422`:** Cancelar o que não é seu (recurso inexistente
+      ou sem visibilidade para o usuário) continua respondendo `404 nao_encontrado`, sem permissão
+      continua `403 sem_permissao` e perfil trocado responde `422 perfil_incompativel`.
 
     **Versão 0.2.34, de 03/10/2026.** Só documentação: o contrato passa a declarar os status que o
     servidor já devolve e que as operações não listavam. Eles foram medidos na auditoria app ×
@@ -1748,6 +1767,11 @@ paths:
         confirmados são avisados (`cancelamento`, com `reaberta = false`). Cancelamento pelo
         contratante não gera falta para ninguém.
 
+        Reenvio idempotente (0.2.35): repetir a chamada após queda de rede pelo mesmo contratante
+        autor do cancelamento original devolve `200` com o objeto da vaga já cancelada, sem reprocessar
+        cancelamentos nem disparar notificações repetidas. Continua sendo `409 vaga_encerrada` se a
+        vaga já começou, ou se foi cancelada por outro autor (outro membro da casa ou moderação).
+
         Motivo com menos de 3 caracteres é `422 campo_obrigatorio`, e motivo que o filtro da
         diretriz 1.2 recusa é `422 campo_invalido`, os dois com `details: motivo`. Vaga que não
         existe, ou de outra casa, é `404 nao_encontrado`. É do contratante: conta de profissional
@@ -2442,6 +2466,13 @@ paths:
 
         Cancelamento do profissional com menos de 24 horas do início conta como falta; com mais de 24
         horas, sai da taxa de comparecimento. Nenhum cancelamento suspende ninguém (RN13).
+
+        Reenvio idempotente (0.2.35): repetir a chamada após queda de rede pelo mesmo autor do
+        cancelamento (o próprio profissional, ou o mesmo membro da casa) devolve `200` com o
+        objeto `ResultadoCancelamento`, sem duplicar penalidade na taxa de comparecimento, ocorrências,
+        notificações ou abertura de posições substitutas. Continua sendo `409 posicao_nao_cancelavel`
+        se a posição está aberta sem confirmação, se o turno já está em andamento ou cumprido, ou
+        se foi cancelada pela outra parte.
 
         Motivo com menos de 3 caracteres é `422 campo_obrigatorio`, e motivo que o filtro da
         diretriz 1.2 recusa é `422 campo_invalido`, os dois com `details: motivo`: a tela pede para

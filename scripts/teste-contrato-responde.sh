@@ -60,6 +60,21 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:denunciar:422","corpo":{"status":422,"code":"campo_invalido"}}
 {"op":"promete:avisarACaminho:403","corpo":{"status":403,"code":"sem_permissao"}}
 {"op":"promete:configuracaoDoApp:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:confirmarCheckinManual:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:confirmarCheckinManual:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:fazerCheckin:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:fazerCheckin:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:fazerCheckout:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:fazerCheckout:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:republicarVaga:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:republicarVaga:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:detalheVaga:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:detalheVaga:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:candidatosDaVaga:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:candidatosDaVaga:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:incluirNaEquipe:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:incluirNaEquipe:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:removerDaEquipe:403","corpo":{"status":403,"code":"sem_permissao"}}
 EOF
 )
 
