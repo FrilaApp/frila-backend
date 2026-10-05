@@ -452,19 +452,13 @@ select pg_temp.guarda('promete:contatoDoTurno:404',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002',
     $$ select public.contato_do_turno('c0000000-0000-4000-8000-000000000099'::uuid) $$));
 
--- 3. cancelarPosicao: 409 posicao_nao_cancelavel (tentativa de cancelar posição já cancelada)
+-- 3. cancelarPosicao: 409 posicao_nao_cancelavel (contraparte tentando cancelar posição já cancelada)
 select pg_temp.guarda('promete:cancelarPosicao:409',
-  pg_temp.observado('cc000000-0000-4000-8000-000000000003', format(
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
     $$ select public.cancelar_posicao(%L::uuid, 'duplicado') $$,
     ((select r from cand2)->>'posicao_id')::uuid)));
 
--- 4. cancelarVaga: 409 vaga_encerrada (tentativa de cancelar vaga já cancelada)
-select pg_temp.guarda('promete:cancelarVaga:409',
-  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
-    $$ select public.cancelar_vaga(%L::uuid, 'duplicado') $$,
-    ((select r from vaga2)->>'vaga_id')::uuid)));
-
--- 5. excluirConta: 409 administrador_unico (único admin de estabelecimento com outros membros)
+-- Outro membro da casa para exercitar recusas de autorização/encerramento
 insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado)
 values ('ee000000-0000-4000-8000-000000000099', 'contratante', 'Aux Contratante', '+5561999999999', 'aux@frila.test', '1990-01-01', '1.0', now(), 'ativa')
 on conflict do nothing;
@@ -473,6 +467,13 @@ insert into public.membro_estabelecimento (estabelecimento_id, usuario_id, papel
 values ((select casa_id from ids), 'ee000000-0000-4000-8000-000000000099', 'operador')
 on conflict do nothing;
 
+-- 4. cancelarVaga: 409 vaga_encerrada (outro membro tentando cancelar vaga já cancelada)
+select pg_temp.guarda('promete:cancelarVaga:409',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000099', format(
+    $$ select public.cancelar_vaga(%L::uuid, 'duplicado') $$,
+    ((select r from vaga2)->>'vaga_id')::uuid)));
+
+-- 5. excluirConta: 409 administrador_unico (único admin de estabelecimento com outros membros)
 select pg_temp.guarda('promete:excluirConta:409',
   pg_temp.observado(null, format(
     $$ select privado.excluir_conta(%L::uuid) $$, 'cc000000-0000-4000-8000-000000000001'::uuid)));
