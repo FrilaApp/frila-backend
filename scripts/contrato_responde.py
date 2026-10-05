@@ -92,6 +92,27 @@ VIGIADAS = {
     ("confirmarCheckinManual", "409"): "checkin_ja_confirmado",
     ("fazerCheckin", "409"): "vaga_encerrada",
     ("fazerCheckout", "409"): "checkin_pendente",
+    # Lote 2: mais 20 pares críticos por risco (cancelamentos, seleção, candidaturas, cadastro, bloqueio)
+    ("cancelarPosicao", "404"): "nao_encontrado",
+    ("cancelarPosicao", "403"): "sem_permissao",
+    ("cancelarVaga", "404"): "nao_encontrado",
+    ("cancelarVaga", "403"): "sem_permissao",
+    ("publicarVaga", "403"): "sem_permissao",
+    ("candidatar", "404"): "nao_encontrado",
+    ("candidatar", "409"): "vaga_encerrada",
+    ("retirarCandidatura", "404"): "nao_encontrado",
+    ("retirarCandidatura", "409"): "candidatura_indisponivel",
+    ("escolherCandidato", "403"): "sem_permissao",
+    ("escolherCandidato", "409"): "posicao_ja_preenchida",
+    ("avaliar", "403"): "sem_permissao",
+    ("avaliar", "409"): "avaliacao_ja_registrada",
+    ("cadastrarEstabelecimento", "409"): "documento_ja_cadastrado",
+    ("cadastrarEstabelecimento", "403"): "sem_permissao",
+    ("bloquear", "404"): "nao_encontrado",
+    ("denunciar", "404"): "nao_encontrado",
+    ("denunciar", "422"): "campo_invalido",
+    ("avisarACaminho", "403"): "sem_permissao",
+    ("configuracaoDoApp", "404"): "nao_encontrado",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não

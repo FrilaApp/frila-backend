@@ -534,6 +534,118 @@ select pg_temp.guarda('promete:fazerCheckout:409',
     $$ select public.fazer_checkout(%L::uuid, 40, '2027-02-01 22:00:00+00'::timestamptz) $$,
     ((select r from cand3)->>'turno_id')::uuid)));
 
+-- ── Lote 2: 20 pares críticos por risco (cancelamento, seleção, cadastro, bloqueio) ──
+-- 16. cancelarPosicao: 404 nao_encontrado (posição inexistente)
+select pg_temp.guarda('promete:cancelarPosicao:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003',
+    $$ select public.cancelar_posicao('c0000000-0000-4000-8000-000000000099'::uuid, 'imprevisto') $$));
+
+-- 17. cancelarPosicao: 403 sem_permissao (conta suspensa tentando cancelar posição)
+select pg_temp.guarda('promete:cancelarPosicao:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004',
+    $$ select public.cancelar_posicao('c0000000-0000-4000-8000-000000000099'::uuid, 'imprevisto') $$));
+
+-- 18. cancelarVaga: 404 nao_encontrado (vaga inexistente)
+select pg_temp.guarda('promete:cancelarVaga:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.cancelar_vaga('c0000000-0000-4000-8000-000000000099'::uuid, 'evento adiado') $$));
+
+-- 19. cancelarVaga: 403 sem_permissao (contratante suspenso tentando cancelar vaga)
+update public.usuario set estado = 'suspensa' where id = 'ee000000-0000-4000-8000-000000000099';
+select pg_temp.guarda('promete:cancelarVaga:403',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000099', format(
+    $$ select public.cancelar_vaga(%L::uuid, 'evento adiado') $$, ((select r from vaga1)->>'vaga_id')::uuid)));
+
+-- 20. publicarVaga: 403 sem_permissao (não membro tentando publicar vaga no estabelecimento)
+update public.usuario set estado = 'ativa' where id = 'ee000000-0000-4000-8000-000000000099';
+select pg_temp.guarda('promete:publicarVaga:403',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000099', format(
+    $$ select public.publicar_vaga(%L::uuid, %L::uuid,
+         '2027-02-10 21:00:00+00'::timestamptz, '2027-02-11 03:00:00+00'::timestamptz,
+         'CLN 108','{"latitude":-15.7905,"longitude":-47.8855}'::jsonb,
+         16000::bigint, 1, true, false, false, 'Gerente', 'urgencia'::public.modo_preenchimento,
+         gen_random_uuid()) $$,
+    (select casa_id from ids), (select id from f))));
+
+-- 21. candidatar: 404 nao_encontrado (vaga inexistente)
+select pg_temp.guarda('promete:candidatar:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.candidatar('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+
+-- 22. candidatar: 409 vaga_encerrada (candidatura em vaga cancelada)
+select pg_temp.guarda('promete:candidatar:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.candidatar(%L::uuid) $$, ((select r from vaga2)->>'vaga_id')::uuid)));
+
+-- 23. retirarCandidatura: 404 nao_encontrado (candidatura inexistente)
+select pg_temp.guarda('promete:retirarCandidatura:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.retirar_candidatura('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+
+-- 24. retirarCandidatura: 409 candidatura_indisponivel (candidatura já aceita/confirmada)
+select pg_temp.guarda('promete:retirarCandidatura:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.retirar_candidatura(%L::uuid) $$, ((select r from cand)->>'candidatura_id')::uuid)));
+
+-- 25. escolherCandidato: 403 sem_permissao (candidatura inexistente ou de outra casa)
+select pg_temp.guarda('promete:escolherCandidato:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.escolher_candidato('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+
+-- 26. escolherCandidato: 409 posicao_ja_preenchida (vaga de seleção já preenchida)
+select pg_temp.guarda('promete:escolherCandidato:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.escolher_candidato(%L::uuid) $$, ((select r from cand_sel2)->>'candidatura_id')::uuid)));
+
+-- 27. avaliar: 403 sem_permissao (profissional que não participou do turno)
+select pg_temp.guarda('promete:avaliar:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003', format(
+    $$ select public.avaliar(%L::uuid, true) $$, ((select r from cand)->>'turno_id')::uuid)));
+
+-- 28. avaliar: 409 avaliacao_ja_registrada (avaliação conflitante para o mesmo turno)
+select pg_temp.guarda('promete:avaliar:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.avaliar(%L::uuid, false) $$, ((select r from cand)->>'turno_id')::uuid)));
+
+-- 29. cadastrarEstabelecimento: 409 documento_ja_cadastrado (CNPJ duplicado)
+select pg_temp.guarda('promete:cadastrarEstabelecimento:409',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000099',
+    $$ select public.cadastrar_estabelecimento('Outra Casa','29979036000140','food_service',
+         'CLN 109','{"latitude":-15.7905,"longitude":-47.8855}') $$));
+
+-- 30. cadastrarEstabelecimento: 403 sem_permissao (conta suspensa)
+update public.usuario set estado = 'suspensa' where id = 'ee000000-0000-4000-8000-000000000099';
+select pg_temp.guarda('promete:cadastrarEstabelecimento:403',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000099',
+    $$ select public.cadastrar_estabelecimento('Outra Casa','44211993000160','food_service',
+         'CLN 109','{"latitude":-15.7905,"longitude":-47.8855}') $$));
+
+-- 31. bloquear: 404 nao_encontrado (alvo inexistente)
+select pg_temp.guarda('promete:bloquear:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.bloquear('estabelecimento', 'c0000000-0000-4000-8000-000000000099'::uuid) $$));
+
+-- 32. denunciar: 404 nao_encontrado (alvo inexistente)
+select pg_temp.guarda('promete:denunciar:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.denunciar('estabelecimento', 'c0000000-0000-4000-8000-000000000099'::uuid, 'outro', 'relato de teste para denuncia 404', gen_random_uuid()) $$));
+
+-- 33. denunciar: 422 campo_invalido (motivo inválido)
+select pg_temp.guarda('promete:denunciar:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.denunciar('estabelecimento', %L::uuid, 'motivo_invalido', 'relato de teste para denuncia 422', gen_random_uuid()) $$,
+    (select casa_id from ids))));
+
+-- 34. avisarACaminho: 403 sem_permissao (não é o profissional confirmado do turno)
+select pg_temp.guarda('promete:avisarACaminho:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003', format(
+    $$ select public.avisar_a_caminho(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
+
+-- 35. configuracaoDoApp: 404 nao_encontrado (plataforma sem linha de configuração)
+select pg_temp.guarda('promete:configuracaoDoApp:404',
+  pg_temp.observado(null,
+    $$ select public.configuracao_do_app('android') $$));
+
 delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000099';
 
 
