@@ -22,6 +22,7 @@ import {
   SqlClient,
   GravarFalhaPushParams,
   GravarAceitePushParams,
+  VariaveisDoTexto,
 } from "./index.ts";
 import { FcmServiceAccount, sendFcmMessage, getAccessToken } from "./fcm.ts";
 
@@ -2125,6 +2126,128 @@ Deno.test("Contrato 0.2.30: vinculo_id não entra em notificacao.payload e filtr
   assertEquals(filtrado.vaga_id, "d0000000-0000-4000-8000-000000000001");
   assertEquals((filtrado as Record<string, string>).vinculo_id, undefined);
 });
+
+// ── Auditoria de Privacidade (RN10, RN15, LGPD) ──────────────────────────────
+
+Deno.test("RN15 / LGPD: nenhum título ou corpo vaza dados pessoais mesmo com variáveis interpoladas", () => {
+  const todosOsTipos = [
+    "vaga",
+    "vagas_agrupadas",
+    "confirmacao",
+    "lembrete_24h",
+    "lembrete_3h",
+    "inicio_sem_checkin",
+    "atraso_15min",
+    "fim_sem_checkout",
+    "vaga_vazia",
+    "checkin",
+    "checkin_manual_pendente",
+    "cancelamento",
+    "avaliacao_disponivel",
+    "suspensao",
+    "reativacao",
+    "tipo_desconhecido_fallback",
+  ];
+
+  const variaveisCompletas: VariaveisDoTexto = {
+    funcao: "bartender",
+    estabelecimento: "Bar do Teste",
+    regiao: "Plano Piloto",
+    horario: "20:00",
+    urgente: true,
+    reaberta: true,
+    reaberturaPorAtraso: true,
+    quantidade: 4,
+  };
+
+  const regexCpf = /\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/;
+  const regexTelefone = /(?:\+55|\(?\d{2}\)?\s*\d{4,5}-?\d{4})/;
+  const regexLogradouroNumero = /\b(rua|avenida|quadra|conjunto|lote|bloco|nº|numero)\b/i;
+
+  for (const tipo of todosOsTipos) {
+    // 1. Teste com variáveis completas
+    const { title: t1, body: b1 } = titulosECorposPorTipo(
+      tipo,
+      { urgente: true, reaberta: true, estabelecimento_id: "c0000000-0000-4000-8000-000000000001" },
+      variaveisCompletas,
+    );
+    assert(t1.length > 0, `Título vazio para ${tipo}`);
+    assert(b1.length > 0, `Corpo vazio para ${tipo}`);
+    assert(!b1.includes("@"), `Corpo contém e-mail em ${tipo}: ${b1}`);
+    assert(!t1.includes("@"), `Título contém e-mail em ${tipo}: ${t1}`);
+    assert(!regexTelefone.test(b1), `Corpo contém telefone em ${tipo}: ${b1}`);
+    assert(!regexTelefone.test(t1), `Título contém telefone em ${tipo}: ${t1}`);
+    assert(!regexCpf.test(b1), `Corpo contém CPF em ${tipo}: ${b1}`);
+    assert(!regexCpf.test(t1), `Título contém CPF em ${tipo}: ${t1}`);
+    assert(!regexLogradouroNumero.test(b1), `Corpo contém logradouro com número em ${tipo}: ${b1}`);
+
+    // 2. Teste no papel profissional (sem estabelecimento_id no payload)
+    const { title: t2, body: b2 } = titulosECorposPorTipo(
+      tipo,
+      { destinatario: "profissional" },
+      variaveisCompletas,
+    );
+    assert(!b2.includes("@"), `Corpo contém e-mail em ${tipo} (prof)`);
+    assert(!regexTelefone.test(b2), `Corpo contém telefone em ${tipo} (prof)`);
+    assert(!regexCpf.test(b2), `Corpo contém CPF em ${tipo} (prof)`);
+  }
+});
+
+Deno.test("RN15 / LGPD: filtrarDataPayloadFcm remove estritamente quaisquer campos pessoais injetados", () => {
+  const payloadComDadosPessoais = {
+    // Campos válidos
+    vaga_id: "d0000000-0000-4000-8000-000000000001",
+    posicao_id: "e0000000-0000-4000-8000-000000000002",
+    turno_id: "f0000000-0000-4000-8000-000000000003",
+    estabelecimento_id: "c0000000-0000-4000-8000-000000000004",
+    reaberta: false,
+    // Dados pessoais / sensíveis (proibidos pela RN15 e LGPD)
+    nome: "Maria Oliveira da Silva",
+    cpf: "012.345.678-90",
+    rg: "1.234.567 SSP/DF",
+    telefone: "+5561988887777",
+    email: "maria.silva@exemplo.com",
+    endereco: "SCS Quadra 2 Bloco C Sala 101",
+    chave_pix: "01234567890",
+    usuario_id: "a0000000-0000-4000-8000-000000000099",
+    profissional_id: "b0000000-0000-4000-8000-000000000099",
+    token: "fcm_device_token_secreto_xyz",
+    token_fcm: "fcm_device_token_secreto_xyz",
+  };
+
+  const filtrado = filtrarDataPayloadFcm("lembrete_24h", payloadComDadosPessoais);
+
+  // Apenas as chaves permitidas devem estar presentes
+  const chavesPermitidas = new Set([
+    "tipo",
+    "vaga_id",
+    "posicao_id",
+    "turno_id",
+    "estabelecimento_id",
+    "reaberta",
+  ]);
+
+  for (const chave of Object.keys(filtrado)) {
+    assert(
+      chavesPermitidas.has(chave),
+      `Chave não autorizada '${chave}' vazou no data payload do FCM (RN15)`,
+    );
+  }
+
+  // Verificações negativas explícitas de dados pessoais
+  assertEquals((filtrado as Record<string, string>).nome, undefined);
+  assertEquals((filtrado as Record<string, string>).cpf, undefined);
+  assertEquals((filtrado as Record<string, string>).rg, undefined);
+  assertEquals((filtrado as Record<string, string>).telefone, undefined);
+  assertEquals((filtrado as Record<string, string>).email, undefined);
+  assertEquals((filtrado as Record<string, string>).endereco, undefined);
+  assertEquals((filtrado as Record<string, string>).chave_pix, undefined);
+  assertEquals((filtrado as Record<string, string>).usuario_id, undefined);
+  assertEquals((filtrado as Record<string, string>).profissional_id, undefined);
+  assertEquals((filtrado as Record<string, string>).token, undefined);
+  assertEquals((filtrado as Record<string, string>).token_fcm, undefined);
+});
+
 
 
 

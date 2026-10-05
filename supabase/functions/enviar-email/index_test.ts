@@ -25,6 +25,9 @@ import { Email, classificarErro, lerConfiguracaoSmtp, ResultadoEnvio } from "./p
 import {
   alertaParaEquipe,
   categoria,
+  contestacaoParaAutor,
+  contestacaoParaEquipe,
+  DadosDaOcorrencia,
   denunciaParaAutor,
   denunciaParaEquipe,
   formatarData,
@@ -567,3 +570,50 @@ Deno.test("classificarErro classifica timeouts, reset e mensagens de sucesso SMT
   assertEquals(classificarErro(new Error("250 Message accepted")).codigo, "smtp_250");
   assertEquals(classificarErro(new Error("250 Message accepted")).transitorio, false);
 });
+
+// ── Auditoria de Privacidade (RN15, LGPD) ────────────────────────────────────
+
+Deno.test("RN15 / LGPD: modelos de e-mail nunca vazam relato, telefone ou CPF, e e-mail do autor não entra no assunto", () => {
+  const mockDados: DadosDaOcorrencia = {
+    ocorrencia_id: "c1000000-0000-4000-8000-000000000001",
+    tipo: "denuncia",
+    motivo: "assedio",
+    criada_em: "2026-10-01T14:30:00Z",
+    prazo_resposta_ate: "2026-10-08",
+    alvo_tipo: "profissional",
+  };
+
+  const regexCpf = /\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/;
+  const regexTelefone = /(?:\+55\s*)?(?:\([1-9]{2}\)\s*|[1-9]{2}\s+)(?:9\d{4}|\d{4})[- ]\d{4}/;
+
+  const modelos = [
+    denunciaParaEquipe(mockDados),
+    denunciaParaAutor(mockDados),
+    contestacaoParaEquipe(mockDados),
+    contestacaoParaAutor(mockDados),
+    alertaParaEquipe("erro_5xx", 12),
+  ];
+
+  for (const m of modelos) {
+    // 1. Assunto nunca traz e-mail
+    assert(!m.assunto.includes("@"), `Assunto contém e-mail: ${m.assunto}`);
+    // 2. Nem assunto nem corpo contêm telefone
+    assert(!regexTelefone.test(m.assunto), `Assunto contém telefone: ${m.assunto}`);
+    assert(!regexTelefone.test(m.texto), `Texto contém telefone: ${m.texto}`);
+    // 3. Nem assunto nem corpo contêm CPF
+    assert(!regexCpf.test(m.assunto), `Assunto contém CPF: ${m.assunto}`);
+    assert(!regexCpf.test(m.texto), `Texto contém CPF: ${m.texto}`);
+  }
+
+  // Garante que o texto de denúncia avisa expressamente que o relato não vai por e-mail
+  const equipeMsg = denunciaParaEquipe(mockDados);
+  assert(
+    equipeMsg.texto.includes("O relato não vai por e-mail"),
+    "denúncia para equipe deve afirmar expressamente a ausência do relato por e-mail (RN15)",
+  );
+  assert(
+    !equipeMsg.texto.includes("Maria"),
+    "denúncia para equipe não pode inventar nomes civis",
+  );
+});
+
