@@ -124,7 +124,9 @@ gh pr create --title "…" --body "…"
 - Cada item da checklist do cartão mapeado para o teste que o prova. Item sem teste é
   item não cumprido.
 
-Depois de abrir: mova o cartão para **Revisão** e cole o link do PR num comentário.
+Depois de abrir: cole o link do PR num comentário do cartão
+(`./scripts/trello.sh pr <shortLink> <url-do-pr>`). O cartão continua em **Em andamento**
+até o merge e a conferência dos critérios; daí vai direto para **Concluído**.
 
 ## Regras que não se negociam
 
