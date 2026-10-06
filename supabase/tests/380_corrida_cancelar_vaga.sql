@@ -56,6 +56,8 @@ end $$;
 
 select pg_temp.conta('c5c00000-0000-4000-8000-0000000000d1', 'dona@corrida-cancelar.test',
                      'contratante', '+5561922220001');
+select pg_temp.conta('c5c00000-0000-4000-8000-0000000000d2', 'outro@corrida-cancelar.test',
+                     'contratante', '+5561922220002');
 select pg_temp.conta('c5c00000-0000-4000-8000-0000000000e1', 'e1@corrida-cancelar.test',
                      'profissional', '+5561922220011');
 select pg_temp.conta('c5c00000-0000-4000-8000-0000000000e2', 'e2@corrida-cancelar.test',
@@ -73,7 +75,9 @@ values ('c5c00000-0000-4000-8000-0000000000c1', 'Casa que Cancela', '55443322000
 
 insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
 values ('c5c00000-0000-4000-8000-0000000000d1', 'c5c00000-0000-4000-8000-0000000000c1',
-        'administrador');
+        'administrador'),
+       ('c5c00000-0000-4000-8000-0000000000d2', 'c5c00000-0000-4000-8000-0000000000c1',
+        'operador');
 
 -- a1: uma posição, aberta — o candidato chega nela no meio do cancelamento.
 -- a2: duas posições, uma confirmada e uma aberta — o caminho de sempre, sem corrida.
@@ -200,11 +204,11 @@ select is((select count(*)::int from public.posicao
           0, 'e nenhuma posição da vaga cancelada fica confirmada');
 
 select throws_ok(
-  $$ select pg_temp.como('c5c00000-0000-4000-8000-0000000000d1',
+  $$ select pg_temp.como('c5c00000-0000-4000-8000-0000000000d2',
        $x$ select public.cancelar_vaga('c5c00000-0000-4000-8000-0000000000a2', 'de novo') $x$) $$,
   'PGRST',
   '{"code" : "vaga_encerrada", "message" : "vaga_encerrada", "details" : null, "hint" : null}',
-  'cancelar de novo a vaga cancelada é 409 vaga_encerrada');
+  'cancelar de novo a vaga cancelada por outro membro é 409 vaga_encerrada');
 
 -- ── Onde o gatilho não entra ────────────────────────────────────────────────
 

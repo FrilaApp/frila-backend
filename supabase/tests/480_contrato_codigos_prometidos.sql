@@ -376,10 +376,10 @@ select lives_ok(
   'a Ana cancela a posição da terceira vaga, com mais de 24 h');
 
 select throws_ok(
-  pg_temp.por((select ana from ids),
+  pg_temp.por((select dona from ids),
     format($$ select public.cancelar_posicao(%L, 'não vou poder') $$, (select desistida from t))),
   'PGRST', pg_temp.erro('posicao_nao_cancelavel'),
-  'cancelar_posicao de posição já cancelada é 409 posicao_nao_cancelavel — não volta atrás');
+  'cancelar_posicao de posição já cancelada por outra parte é 409 posicao_nao_cancelavel — não volta atrás');
 
 select throws_ok(
   pg_temp.por((select suspenso from ids),
@@ -417,21 +417,26 @@ select lives_ok(
     format($$ select public.cancelar_vaga(%L, 'cancelando a vaga') $$, (select vazia from v))),
   'dona cancela a vaga vazia');
 
+-- Adiciona outro_dono como membro do estabelecimento para testar conflito (409) por outro membro
+insert into public.membro_estabelecimento (estabelecimento_id, usuario_id, papel)
+values ((select id from casa), (select outro_dono from ids), 'operador')
+on conflict do nothing;
+
 select throws_ok(
-  pg_temp.por((select dona from ids),
+  pg_temp.por((select outro_dono from ids),
     format($$ select public.cancelar_vaga(%L, 'tentando de novo') $$, (select vazia from v))),
   'PGRST', pg_temp.erro('vaga_encerrada'),
-  'cancelar_vaga de vaga já cancelada é 409 vaga_encerrada');
+  'cancelar_vaga de vaga já cancelada por outro membro é 409 vaga_encerrada');
 
--- Cancela a 4ª vaga e prova que tentar de novo é 409 vaga_encerrada
+-- Cancela a 4ª vaga e prova que tentar por outro membro é 409 vaga_encerrada
 select pg_temp.como((select dona from ids),
   format($$ select public.cancelar_vaga(%L, 'fechou o evento') $$, (select cancelavel from v)));
 
 select throws_ok(
-  pg_temp.por((select dona from ids),
+  pg_temp.por((select outro_dono from ids),
     format($$ select public.cancelar_vaga(%L, 'fechou de novo') $$, (select cancelavel from v))),
   'PGRST', pg_temp.erro('vaga_encerrada'),
-  'cancelar_vaga de vaga cancelavel já cancelada é 409 vaga_encerrada');
+  'cancelar_vaga de vaga cancelavel já cancelada por outro membro é 409 vaga_encerrada');
 -- ── Presença ──────────────────────────────────────────────────────────────────
 select throws_ok(
   pg_temp.por((select dona from ids),
