@@ -116,6 +116,21 @@ OUTRAS_VIGIADAS=$(cat <<'EOF'
 {"op":"promete:cancelarPosicao:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
 {"op":"promete:fazerCheckin:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
 {"op":"promete:fazerCheckout:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:publicarVaga:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:cancelarVaga:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:cancelarPosicao:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:candidatar:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:retirarCandidatura:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:fazerCheckin:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:fazerCheckout:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:confirmarCheckinManual:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:reabrirPorAtraso:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:avaliar:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:bloquear:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:denunciar:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:contestarSuspensao:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:pedirRevisaoDespacho:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:candidatosDaVaga:401","corpo":{"status":401,"code":"nao_autenticado"}}
 EOF
 )
 

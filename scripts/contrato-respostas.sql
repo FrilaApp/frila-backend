@@ -928,6 +928,86 @@ select pg_temp.guarda('promete:fazerCheckout:422',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002',
     $$ select public.fazer_checkout(null, 40, '2027-01-19 02:00:00+00'::timestamptz) $$));
 
+-- ── Lote 6: mais 15 pares críticos por risco (blindagem do perímetro de autenticação: 401 nao_autenticado) ──
+
+-- 81. publicarVaga: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:publicarVaga:401',
+  pg_temp.observado(null,
+    $$ select public.publicar_vaga('00000000-0000-0000-0000-000000000001'::uuid, '00000000-0000-0000-0000-000000000002'::uuid,
+         '2027-01-18 21:00:00+00'::timestamptz, '2027-01-19 03:00:00+00'::timestamptz,
+         'CLN 108', '{"latitude":-15.7905,"longitude":-47.8855}'::jsonb, 16000::bigint, 1, true, false, false,
+         'Gerente', 'urgencia'::public.modo_preenchimento, gen_random_uuid(), 'camisa preta', true, 'porta dos fundos', 180) $$));
+
+-- 82. cancelarVaga: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:cancelarVaga:401',
+  pg_temp.observado(null,
+    $$ select public.cancelar_vaga(null, 'motivo de teste') $$));
+
+-- 83. cancelarPosicao: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:cancelarPosicao:401',
+  pg_temp.observado(null,
+    $$ select public.cancelar_posicao(null, 'motivo de teste') $$));
+
+-- 84. candidatar: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:candidatar:401',
+  pg_temp.observado(null,
+    $$ select public.candidatar(null) $$));
+
+-- 85. retirarCandidatura: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:retirarCandidatura:401',
+  pg_temp.observado(null,
+    $$ select public.retirar_candidatura(null) $$));
+
+-- 86. fazerCheckin: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:fazerCheckin:401',
+  pg_temp.observado(null,
+    $$ select public.fazer_checkin(null, 40, now()) $$));
+
+-- 87. fazerCheckout: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:fazerCheckout:401',
+  pg_temp.observado(null,
+    $$ select public.fazer_checkout(null, 40, now()) $$));
+
+-- 88. confirmarCheckinManual: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:confirmarCheckinManual:401',
+  pg_temp.observado(null,
+    $$ select public.confirmar_checkin_manual(null) $$));
+
+-- 89. reabrirPorAtraso: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:reabrirPorAtraso:401',
+  pg_temp.observado(null,
+    $$ select public.reabrir_por_atraso(null) $$));
+
+-- 90. avaliar: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:avaliar:401',
+  pg_temp.observado(null,
+    $$ select public.avaliar(null, true) $$));
+
+-- 91. bloquear: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:bloquear:401',
+  pg_temp.observado(null,
+    $$ select public.bloquear('profissional', null) $$));
+
+-- 92. denunciar: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:denunciar:401',
+  pg_temp.observado(null,
+    $$ select public.denunciar('profissional', null, 'outro', 'relato de teste com tamanho suficiente', gen_random_uuid()) $$));
+
+-- 93. contestarSuspensao: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:contestarSuspensao:401',
+  pg_temp.observado(null,
+    $$ select public.contestar_suspensao('relato de teste com tamanho suficiente') $$));
+
+-- 94. pedirRevisaoDespacho: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:pedirRevisaoDespacho:401',
+  pg_temp.observado(null,
+    $$ select public.pedir_revisao_despacho('relato de teste com tamanho suficiente') $$));
+
+-- 95. candidatosDaVaga: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:candidatosDaVaga:401',
+  pg_temp.observado(null,
+    $$ select public.candidatos_da_vaga(null) $$));
+
 
 -- ── As Edge Functions ─────────────────────────────────────────────────────────
 --

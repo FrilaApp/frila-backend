@@ -161,6 +161,22 @@ VIGIADAS = {
     ("cancelarPosicao", "422"): "campo_obrigatorio",
     ("fazerCheckin", "422"): "campo_obrigatorio",
     ("fazerCheckout", "422"): "campo_obrigatorio",
+    # Lote 6: mais 15 pares críticos por risco (blindagem do perímetro de autenticação: 401 nao_autenticado)
+    ("publicarVaga", "401"): "nao_autenticado",
+    ("cancelarVaga", "401"): "nao_autenticado",
+    ("cancelarPosicao", "401"): "nao_autenticado",
+    ("candidatar", "401"): "nao_autenticado",
+    ("retirarCandidatura", "401"): "nao_autenticado",
+    ("fazerCheckin", "401"): "nao_autenticado",
+    ("fazerCheckout", "401"): "nao_autenticado",
+    ("confirmarCheckinManual", "401"): "nao_autenticado",
+    ("reabrirPorAtraso", "401"): "nao_autenticado",
+    ("avaliar", "401"): "nao_autenticado",
+    ("bloquear", "401"): "nao_autenticado",
+    ("denunciar", "401"): "nao_autenticado",
+    ("contestarSuspensao", "401"): "nao_autenticado",
+    ("pedirRevisaoDespacho", "401"): "nao_autenticado",
+    ("candidatosDaVaga", "401"): "nao_autenticado",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
