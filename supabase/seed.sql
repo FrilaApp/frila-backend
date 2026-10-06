@@ -179,9 +179,9 @@ select p.id, f.id
    and f.nome in ('garçom','bartender')
 on conflict do nothing;
 
-insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto)
+insert into public.estabelecimento (id, nome, documento, tipo, endereco, regiao_administrativa, ponto)
 values ('de000000-0000-4000-8000-000000000010','Bar da Revisão','19131243000197',
-        'food_service','CLS 405, Asa Sul, Brasília',
+        'food_service','CLS 405, Asa Sul, Brasília','Plano Piloto',
         'POINT(-47.8880 -15.8020)'::extensions.geography)
 on conflict (id) do nothing;
 
@@ -192,37 +192,6 @@ on conflict do nothing;
 
 -- Uma vaga aberta, para a lista não nascer vazia (diretriz 4.2), e uma vaga já preenchida
 -- que vira o turno confirmado — é nele que o revisor vê o contato liberado e o check-in.
-insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
-                         valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
-                         exige_material_proprio, responsavel_local, modo, estado,
-                         chave_cliente, publicado_por)
-select v.id, 'de000000-0000-4000-8000-000000000010',
-       (select id from public.funcao where nome = 'garçom'),
-       privado.agora() + v.daqui, privado.agora() + v.daqui + interval '6 h',
-       'CLS 405, Asa Sul', 'POINT(-47.8880 -15.8020)'::extensions.geography,
-       18000, 1, true, true, false, 'Gerente da Revisão', 'urgencia', v.estado,
-       v.id, 'de000000-0000-4000-8000-000000000001'
-  from (values
-    ('de000000-0000-4000-8000-000000000020'::uuid, interval '5 days',  'publicada'::public.estado_vaga),
-    ('de000000-0000-4000-8000-000000000021'::uuid, interval '2 days',  'preenchida'::public.estado_vaga)
-  ) as v(id, daqui, estado)
-on conflict (id) do nothing;
+-- Semeados e renovados via rotina idempotente e parametrizada (cartão RzllRo3o, item 6).
+select privado.renovar_dados_demonstracao();
 
-insert into public.posicao (id, vaga_id, estado, profissional_id, confirmado_em, inicio_em, fim_em)
-select 'de000000-0000-4000-8000-000000000030', 'de000000-0000-4000-8000-000000000020',
-       'aberta', null, null, v.inicio_em, v.fim_em
-  from public.vaga v where v.id = 'de000000-0000-4000-8000-000000000020'
-on conflict (id) do nothing;
-
-insert into public.posicao (id, vaga_id, estado, profissional_id, confirmado_em, inicio_em, fim_em)
-select 'de000000-0000-4000-8000-000000000031', 'de000000-0000-4000-8000-000000000021',
-       'confirmada',
-       (select id from public.profissional
-         where usuario_id = 'de000000-0000-4000-8000-000000000002'),
-       privado.agora(), v.inicio_em, v.fim_em
-  from public.vaga v where v.id = 'de000000-0000-4000-8000-000000000021'
-on conflict (id) do nothing;
-
-insert into public.turno (posicao_id, valor_acordado_centavos)
-values ('de000000-0000-4000-8000-000000000031', 18000)
-on conflict (posicao_id) do nothing;

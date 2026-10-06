@@ -16,7 +16,7 @@
 -- nenhuma feita por profissional.
 
 begin;
-select plan(35);
+select plan(47);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb
 language plpgsql as $$
@@ -280,11 +280,11 @@ select is(
 select is(
   (select array_agg(k order by k) from p,
           jsonb_object_keys(pg_temp.vaga_de(j,'d5000000-0000-4000-8000-000000000001')) k),
-  array['alerta_vaga_vazia','candidatos_pendentes','estado','modo','posicoes','vaga'],
+  array['alerta_vaga_vazia','candidatos_pendentes','estado','modo','oculta','posicoes','vaga'],
   'cada vaga traz exatamente os campos de VagaNoPainel');
 select is(
   (select (pg_temp.vaga_de(j,'d5000000-0000-4000-8000-000000000001')->'vaga') - 'inicio_em' - 'fim_em' from p),
-  '{"id":"d5000000-0000-4000-8000-000000000001","funcao":"garçom","local":"CLN 201","valor_centavos":12000}'::jsonb,
+  '{"id":"d5000000-0000-4000-8000-000000000001","funcao":"garçom","local":"CLN 201","regiao_administrativa":"Plano Piloto","valor_centavos":12000}'::jsonb,
   'VagaResumo traz a função pelo nome e o valor em centavos inteiros (RN18)');
 select is(
   (select (pg_temp.vaga_de(j,'d5000000-0000-4000-8000-000000000001')->'vaga'->>'inicio_em')::timestamptz from p),
@@ -293,8 +293,55 @@ select is(
 select is(
   (select array_agg(k order by k) from p,
           jsonb_object_keys(pg_temp.posicao_de(j,'d6000000-0000-4000-8000-0000000003a0')) k),
-  array['em_atraso','estado','id','profissional','turno_id','verificacao'],
+  array['a_caminho_em','cancelamento','checkin_confirmado_em','checkin_em','checkin_tipo',
+        'em_atraso','estado','id','profissional','turno_id','verificacao'],
   'cada posição traz exatamente os campos de PosicaoNoPainel');
+
+-- ── Contrato 0.2.31: check-in e cancelamento no painel ─────────────────────────
+select is(
+  (select pg_temp.posicao_de(j,'d6000000-0000-4000-8000-0000000003b0')->>'checkin_tipo' from p),
+  'manual',
+  '0.2.31: posicao com check-in manual traz checkin_tipo manual');
+
+select is(
+  (select (pg_temp.posicao_de(j,'d6000000-0000-4000-8000-0000000003b0')->>'checkin_em')::timestamptz from p),
+  '2026-10-10 19:35+00'::timestamptz,
+  '0.2.31: posicao com check-in manual traz checkin_em');
+
+select is(
+  (select pg_temp.posicao_de(j,'d6000000-0000-4000-8000-0000000003b0')->'checkin_confirmado_em' from p),
+  'null'::jsonb,
+  '0.2.31: antes da confirmacao, checkin_confirmado_em é null');
+
+select is(
+  (select pg_temp.posicao_de(j,'d6000000-0000-4000-8000-0000000003a0')->'cancelamento' from p),
+  'null'::jsonb,
+  '0.2.31: posicao confirmada de pé traz cancelamento null');
+
+select is(
+  (select pg_temp.posicao_de(j,'d6000000-0000-4000-8000-0000000002a0')->'cancelamento' from p),
+  'null'::jsonb,
+  '0.2.31: posicao aberta traz cancelamento null');
+
+select is(
+  (pg_temp.como('d2000000-0000-4000-8000-000000000001',
+     $$ select public.confirmar_checkin_manual('d7000000-0000-4000-8000-0000000003b0'::uuid) $$)->>'verificacao'),
+  'verificado',
+  '0.2.31: contratante confirma check-in manual');
+
+select ok(
+  (select (pg_temp.posicao_de(pg_temp.painel('d2000000-0000-4000-8000-000000000001'),
+            'd6000000-0000-4000-8000-0000000003b0')->>'checkin_confirmado_em') is not null),
+  '0.2.31: apos confirmar_checkin_manual, checkin_confirmado_em vem preenchido');
+
+update public.posicao set estado = 'cancelada'
+ where id = 'd6000000-0000-4000-8000-0000000002a0';
+
+select is(
+  (select pg_temp.posicao_de(pg_temp.painel('d2000000-0000-4000-8000-000000000001'),
+            'd6000000-0000-4000-8000-0000000002a0')->'cancelamento'),
+  'null'::jsonb,
+  '0.2.31: posicao cancelada sem profissional traz cancelamento null');
 
 -- O painel é do estabelecimento, e mesmo assim não repete o documento nem expõe o
 -- telefone de ninguém: contato sai só por contato_do_turno (RN10).
@@ -358,6 +405,29 @@ select is(pg_temp.tabelas_com_texto('d1000000-0000-4000-8000-000000000001', '112
 select is(pg_temp.tabelas_com_texto('d2000000-0000-4000-8000-000000000001', '11222333000181'),
   'estabelecimento',
   'e a mesma varredura, como membro, acha o documento — a varredura funciona');
+
+-- ── Cancelamento com profissional no painel ──────────────────────────────────
+select ok(
+  (select (pg_temp.como('d1000000-0000-4000-8000-000000000001',
+     $$ select public.cancelar_posicao('d6000000-0000-4000-8000-0000000003a0'::uuid, 'Imprevisto de saude') $$)->>'falta') is not null),
+  '0.2.31: profissional cancela posicao com motivo');
+
+select is(
+  (select pg_temp.posicao_de(pg_temp.painel('d2000000-0000-4000-8000-000000000001'),
+            'd6000000-0000-4000-8000-0000000003a0')->'cancelamento'->>'causa'),
+  'profissional',
+  '0.2.31: cancelamento por desistencia do profissional tem causa profissional');
+
+select is(
+  (select pg_temp.posicao_de(pg_temp.painel('d2000000-0000-4000-8000-000000000001'),
+            'd6000000-0000-4000-8000-0000000003a0')->'cancelamento'->>'motivo'),
+  'Imprevisto de saude',
+  '0.2.31: motivo do cancelamento traz o texto livre digitado pelo profissional');
+
+select ok(
+  (select (pg_temp.posicao_de(pg_temp.painel('d2000000-0000-4000-8000-000000000001'),
+            'd6000000-0000-4000-8000-0000000003a0')->'cancelamento'->>'cancelada_em') is not null),
+  '0.2.31: cancelada_em e registrado no objeto de cancelamento');
 
 select * from finish();
 rollback;

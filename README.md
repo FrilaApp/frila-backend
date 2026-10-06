@@ -60,6 +60,8 @@ supabase start -x vector,logflare
 | `supabase migration new <nome>` | Cria uma migração datada |
 | `supabase test db` | Roda o pgTAP de `supabase/tests/` |
 | `supabase db push` | Aplica as migrações no projeto remoto |
+| `./scripts/desvio.sh <ref>` | Compara o projeto remoto com o que as migrações constroem |
+| `./scripts/teste-entrega.sh` | Autoteste da janela de manutenção e do desvio |
 | `./scripts/ciclo-completo.sh` | Smoke test: `criar_conta` → `publicar_vaga` → `candidatar` → check-in → `avaliar` |
 | `./scripts/bancada-sync.sh` | Leva o trabalho do dia para o vault da Bancada |
 
@@ -94,6 +96,84 @@ Configure `frila.agendador_secret` no banco e o mesmo valor como
 motor de despacho. Sem os dois valores, `publicar_vaga` falha ao enfileirar o
 despacho.
 
+### Entrega contínua (#207)
+
+Ninguém aplica migração nem publica Edge Function à mão. O workflow `Entrega`
+(`.github/workflows/entrega.yml`) faz isso:
+
+| Quando | O que acontece |
+|---|---|
+| Merge na `develop` que muda `supabase/` | Migrações e semente no `frila-dev` (`scripts/aplicar-remoto.sh`), `supabase functions deploy` e a comparação de desvio |
+| Todo dia às 8h | Só a comparação de desvio no `frila-dev` |
+| Tag `backend-v*` num commit da `develop` | Pede aprovação no Environment `frila-prod`, confere a janela abaixo e faz o mesmo no `frila-prod` |
+
+Para publicar em produção: `git tag backend-v0.3.0 origin/develop && git push origin
+backend-v0.3.0`, e um revisor aprova em *Actions*. Dentro da janela proibida o job recusa;
+rode de novo depois das 2h.
+
+**Desvio.** `scripts/desvio.sh <project_ref>` compara o remoto com o banco que as
+migrações constroem do zero: tabelas, colunas, restrições, índices, funções (corpo em md5),
+quem pode executar cada uma, privilégios, políticas de RLS, gatilhos, visões e os jobs do
+pg_cron. O que foi mudado pelo painel aparece como `+` (só no remoto) ou `-` (só no
+repositório) e falha o workflow. Não usa `supabase db diff --linked` porque ele pede a
+senha do banco. Para rodar na máquina: `supabase db start` e depois o script, com o token
+no `.env`.
+
+**O que continua manual**, uma vez por projeto: o `frila.agendador_secret` no banco e os
+segredos das Edge Functions (`supabase secrets set`). O `aplicar-remoto.sh` recusa seguir
+sem o segredo do agendador, porque sem ele `publicar_vaga` falha.
+
+**Configuração no GitHub:** Environments `frila-dev` e `frila-prod`, cada um com o secret
+`SUPABASE_ACCESS_TOKEN`; o `frila-prod` com revisores obrigatórios. O repositório é
+público: nenhum segredo vai para o workflow.
+
+### Janela de migração (RNF12)
+
+Migração em `frila-prod` **nunca** de quinta a domingo entre 16h e 2h, horário de
+Brasília (19h às 5h UTC). É o pico do food service, e um turno que não abre porque o
+banco está em manutenção é um turno perdido para as duas partes.
+
+| Dia | Pode migrar |
+|---|---|
+| Segunda | A partir das 2h (o pico de domingo termina às 2h de segunda) |
+| Terça e quarta | O dia inteiro |
+| Quinta | Até 15h59 |
+| Sexta, sábado e domingo | Das 2h às 15h59 |
+
+Mudança destrutiva segue em duas fases (adiciona e escreve nos dois, depois remove), e
+cada fase respeita a janela. No `frila-dev` a janela não vale, mas avise no grupo antes
+de aplicar em dia de TestFlight.
+
+### Limite de escrita por conta
+
+Cada conta autenticada faz no máximo **60 escritas por minuto**; a seguinte recebe
+`429 limite_excedido` até o minuto virar. A conferência roda antes de cada requisição,
+pela opção `pgrst.db_pre_request` do papel `authenticator`
+(`requisicao.conferir_limite()`), e conta só o que não é GET: toda leitura do contrato é
+GET. Anônimo e `service_role` não contam. O teto muda por migração nova em
+`privado.limite_de_escrita_por_minuto()`.
+
+Num projeto remoto, confira depois de aplicar a migração `20260929220000`:
+
+```sql
+select setconfig from pg_db_role_setting s join pg_roles r on r.oid = s.setrole
+ where r.rolname = 'authenticator';   -- traz pgrst.db_pre_request=requisicao.conferir_limite
+```
+
+### Painel de métricas do piloto e contas da equipe
+
+As views de métricas do funil do piloto residem no schema `metrica` (`metrica.funil_geral`, `metrica.funil_por_estabelecimento`, `metrica.funil_por_dia`), com acesso restrito a `service_role`. Podem ser consultadas diretamente pelo terminal:
+
+```bash
+./scripts/funil.sh
+```
+
+As contas de demonstração (`usuario.demonstracao = true`) e as contas da Equipe Frila são automaticamente excluídas de todas as etapas do funil. Para marcar uma conta como da equipe, insira o `usuario_id` na tabela privada `privado.conta_equipe` por inserção manual via `service_role`:
+
+```sql
+insert into privado.conta_equipe (usuario_id) values ('<uuid-do-usuario>');
+```
+
 ### Limites do plano gratuito do Supabase
 
 Os dois projetos remotos rodam no plano gratuito, e o plano cobra o preço assim:
@@ -112,10 +192,27 @@ Os dois projetos remotos rodam no plano gratuito, e o plano cobra o preço assim
 Os números exatos de cada cota mudam; a fonte é a
 [página de preços do Supabase](https://supabase.com/pricing).
 
+### Backup lógico e ensaio de restauração (RNF12, cartão mwdFSEHe)
+
+O que existe hoje é o **ensaio**: `./scripts/ensaio-restauracao.sh` gera o dump do banco
+local (`public`, `privado`, `metrica`, `requisicao` e `auth`), empacota e cifra com AES-256
+(`openssl`, chave em `BACKUP_ENCRYPTION_KEY` ou efêmera), restaura num banco descartável,
+**compara a contagem de linhas por tabela com a origem**, roda o pgTAP de estrutura e RLS no
+banco restaurado e imprime o tempo de cada etapa (é o número que vai para o cartão).
+`./scripts/teste-ensaio-restauracao.sh` é o autoteste (7 casos, incluindo os que provam que
+restauração com dado perdido e estrutura quebrada reprovam). O workflow `.github/workflows/ensaio-backup.yml` roda o autoteste às 04h de Brasília e sob
+demanda, sem segredo e sem guardar artefato (o repositório é público).
+
+**Ainda não existe** o backup do `frila-prod`: faltam o projeto de produção, a chave de
+cifra (fora do repositório), o storage externo e a retenção de 14 dias. Quando existirem,
+entram como passos novos desse workflow, e a política registra que as cópias somem em até
+14 dias.
+
 ## Onde está o resto
 
 | O quê | Onde |
 |---|---|
+| Histórico formal de versões (1.0.0+) | [`CHANGELOG.md`](CHANGELOG.md) |
 | Documentos de produto, contrato da API, requisitos | [`FrilaApp/frila-docs`](https://github.com/FrilaApp/frila-docs) |
 | Modelagem de banco, diagramas, decisões técnicas | [`FrilaApp/Bancada`](https://github.com/FrilaApp/Bancada) · `doc-harness/07 - Arquitetura/` |
 | Registro do processo, para os mentores | https://bancada-buu.pages.dev |
@@ -127,8 +224,10 @@ Os números exatos de cada cota mudam; a fonte é a
 
 ## Como se trabalha
 
-Um cartão do Trello por vez, do quadro ao merge. O pipeline, os agentes e as regras que
-o código segue estão em [`CLAUDE.md`](CLAUDE.md).
+Um cartão do Trello por vez, do quadro ao merge.
+
+- **Branch base e destino de PR: SEMPRE `develop`**: todo branch parte de `origin/develop` (`git fetch origin develop && git checkout -b sX/<slug> origin/develop`), todo PR deve ser aberto com `--base develop` (`gh pr create --base develop`), e o merge de PR aprovado entra exclusivamente na `develop`. A branch `main` é estritamente reservada para releases estáveis de produção.
+- O pipeline, os agentes e as regras que o código segue estão em [`CLAUDE.md`](CLAUDE.md).
 
 ## Time
 

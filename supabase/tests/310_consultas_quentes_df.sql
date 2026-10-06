@@ -3,7 +3,7 @@
 -- Cartão IYAb8v1i
 
 begin;
-select plan(11);
+select plan(13);
 
 -- Helper para inspecionar planos de consulta sem executar
 create function pg_temp.explicar(p_sql text) returns text
@@ -43,11 +43,21 @@ select ok(
   'RNF11: índice vaga_data_publicada possui comentário documentando a finalidade'
 );
 
--- ── 2. Ausência de varredura sequencial nos caminhos quentes com volume controlado ─
--- Geramos 500 vagas fictícias distribuídas em dias diferentes dentro da transação.
--- Isso fornece volume controlado ao planejador sem poluir o banco (rollback ao final).
--- enable_seqscan = off assegura que o teste afere a usabilidade técnica do índice
--- sem quebrar sob oscilações de estatísticas de autoanalyze da CI.
+-- ── 2. Usabilidade técnica dos índices do caminho quente ────────────────────────
+-- LEIA ANTES DE CONFIAR NESTA SEÇÃO. Com `enable_seqscan = off` e 500 vagas fictícias,
+-- o que se afere aqui é se o índice **pode** ser usado — não se o planejador o escolhe
+-- com o volume da praça-piloto. As duas coisas não são a mesma, e a diferença já custou
+-- uma regressão: em 28/09, com o índice `disponibilidade_dia_horario` removido,
+-- `privado.elegiveis` varria `public.disponibilidade` inteira (185.732 linhas
+-- descartadas) e esta seção continuava verde, porque desligar o Seq Scan esconde
+-- exatamente a escolha que estava errada.
+--
+-- Quem mede a ESCOLHA do planejador é `./scripts/planos-com-carga.sh`, que gera a massa
+-- do DF de verdade e mede sem desligar nada. Plano depende de estatística, estatística
+-- depende de volume, e volume não cabe nesta suíte.
+--
+-- Esta seção continua valendo pelo que ela é: se o índice deixar de existir ou perder a
+-- forma, ela fica vermelha em dois segundos, sem precisar de 350 mil linhas.
 
 insert into public.vaga
 select
@@ -75,7 +85,14 @@ select
   gen_random_uuid(),
   v.publicado_por
 from generate_series(1, 500) i
-cross join (select * from public.vaga where estado = 'publicada' limit 1) v;
+-- A vaga-modelo em modo urgência, e escolhida por id. Sem o filtro, `limit 1` pegava a
+-- primeira da ordem física da tabela; se fosse a d…05 do cenário, em modo seleção, o
+-- CHECK `selecao_com_antecedencia` compara as datas fixas de outubro com o
+-- `publicado_em` dela, que anda com o dia do reset — e o teste passaria a falhar a
+-- partir de 01/10/2026, dependendo de qual linha o agendador tivesse regravado antes.
+cross join (select * from public.vaga
+             where estado = 'publicada' and modo = 'urgencia'
+             order by id limit 1) v;
 
 analyze public.vaga;
 
@@ -169,6 +186,21 @@ select ok(
      limit 1
   $$) !~* 'Seq Scan on notificacao',
   'RNF11: consulta do teto de notificações não faz Seq Scan em notificacao'
+);
+
+-- ── 3. Índice cobrindo a FK de despacho para notificacao (despacho_notificacao) ──
+
+select has_index(
+  'public', 'despacho', 'despacho_notificacao', array['notificacao_id'],
+  'RNF11: índice despacho_notificacao existe cobrindo a FK notificacao_id em despacho'
+);
+
+select ok(
+  pg_temp.explicar($$
+    select count(*)::int from public.despacho d
+     where d.notificacao_id = '5520d830-4a17-4300-9117-cb2fedcee638'::uuid
+  $$) ~* 'despacho_notificacao',
+  'RNF11: consulta de despachos por notificacao_id no caminho quente utiliza índice despacho_notificacao'
 );
 
 select * from finish();

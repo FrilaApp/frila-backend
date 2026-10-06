@@ -1,8 +1,12 @@
 name: CI
 
 on:
+  # `develop` é a base de todo PR desde 28/09, e o merge nela precisa passar pelos mesmos
+  # portões que o merge na `main`: um PR verde isolado não prova que dois PRs verdes,
+  # juntos, continuam verdes. O `pull_request` segue sem filtro de branch, então PR contra
+  # qualquer base roda a CI inteira.
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
 
 concurrency:
@@ -75,6 +79,11 @@ jobs:
       - name: Corrida na candidatura
         run: ./scripts/corrida-candidatar.sh
 
+      # As outras corridas do ciclo (RNF14), 50 rodadas cada: reabrir_por_atraso ×
+      # fazer_checkin, cancelar_vaga × candidatar e dois executores do despacho × teto.
+      - name: Corridas do ciclo
+        run: ./scripts/corrida-ciclo.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
@@ -108,6 +117,13 @@ jobs:
       # política — e afrouxa cada política para `using (true)` — exigindo que o pgTAP
       # fique vermelho em cada caso. Escrito depois de duas revisões medirem que 11 de
       # 31 restrições e 6 de 19 políticas passavam sem nenhum teste reclamar.
+      # Mesmo motivo dos dois jobs baratos no fim deste arquivo: o portão é testado antes de
+      # julgar o PR. Aqui o alvo é estreito — só a linha de base, que é a parte do
+      # `mutacao.sh` que reprova e precisa dizer **onde**. Roda sem Postgres, com o
+      # `supabase` dublado, e leva menos de um segundo.
+      - name: A linha de base da mutação nomeia o vermelho
+        run: ./scripts/teste-mutacao-linha-de-base.sh
+
       - name: Os testes cobrem as regras
         run: ./scripts/mutacao.sh
 
@@ -132,7 +148,19 @@ jobs:
       # Este chama cada RPC da v1.0 com o relógio do produto sob controle e valida a
       # resposta contra o schema declarado, nos dois sentidos: campo que sumiu e campo que
       # o contrato não declara.
-      - name: A resposta de cada RPC casa com o contrato
+      # Portão com furo aprova calado, e este decide se o corpo que o iOS desserializa
+      # casa com o modelo que ele gerou. Roda antes de julgar o PR, como os outros
+      # autotestes. Não precisa de Postgres, mas fica aqui porque o passo seguinte precisa.
+      - name: O portão do corpo fecha nos casos conhecidos
+        run: ./scripts/teste-contrato-responde.sh
+
+      # A direção contrato-à-frente: o contrato promete uma recusa e o código não a
+      # levanta. Os outros três portões de contrato medem a direção oposta. Autoteste
+      # antes, como os outros, porque portão com furo aprova calado.
+      - name: O portão da promessa fecha nos casos conhecidos
+        run: ./scripts/teste-contrato-promete.sh
+
+      - name: A resposta de cada RPC e de cada Edge Function casa com o contrato, e toda recusa prometida é alcançável
         run: ./scripts/contrato-responde.sh
 
       - name: Diagnóstico ao falhar
@@ -180,7 +208,103 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # O autoteste do portão de relógio precisa do histórico para extrair os
+          # commits dos testes 250 e 280 originais que falharam no produto.
+          fetch-depth: 0
+
+      # Mesmo motivo do job do contrato, na linha de cima deste arquivo: o portão é
+      # testado antes de julgar o PR, porque um portão com furo aprova calado. Este nasceu
+      # sem autoteste e o furo apareceu — a versão era lida como "o que vem antes do
+      # primeiro `_`", e um arquivo sem `_` no nome passava como versão distinta, embora a
+      # CLI o ignore em silêncio e nunca o aplique.
+      - name: O portão fecha nos casos conhecidos
+        run: ./scripts/teste-migracoes-sem-colisao.sh
+
       - run: ./scripts/migracoes-sem-colisao.sh
+
+      # Previne a bomba-relógio de testes que quebrou 250 em 02/10 e 280 em 04/10: teste
+      # que usa data absoluta futura em vaga/turno sem congelar frila.agora antes de
+      # chamar rotina sensível ao relógio do produto. Autoteste antes, porque portão com
+      # furo aprova calado.
+      - name: O portão da bomba-relógio fecha nos casos conhecidos
+        run: ./scripts/teste-relogio-em-testes.sh
+
+      - name: Nenhum teste pgTAP tem bomba-relógio de relógio
+        run: ./scripts/relogio-em-testes.sh
+
+  # O plano de consulta é a única coisa neste repositório que não pode ser medida na
+  # suíte: plano depende de estatística, estatística depende de volume, e a suíte roda
+  # sobre 12 profissionais. Por isso um job próprio, e não um passo do job do banco.
+  #
+  # Dois motivos para ficar separado. O primeiro é tempo: a carga são 350 mil linhas, e o
+  # job do banco já roda a suíte duas vezes. O segundo é contaminação — o job do banco
+  # grava de verdade em `ciclo-completo.sh` e `corrida-*.sh`, e a carga se recusa a rodar
+  # sobre base povoada (sai 2, "não medi"). Um passo no fim daquele job nunca mediria nada.
+  #
+  # O portão desfaz a carga com `rollback`, então não precisa de `db reset` depois e não
+  # apaga o `frila.agendador_secret`.
+  planos:
+    name: Plano do caminho quente com o volume do DF
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Autenticar no ghcr.io, para o pull não cair na cota anônima
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Só Postgres e PostgREST: o portão não faz HTTP nem Auth.
+      - name: Subir o ambiente
+        run: supabase start --exclude studio,realtime,storage-api,imgproxy,logflare,vector
+
+      # Os tetos são folgados de propósito. O runner do Actions é mais lento e mais
+      # variável que a máquina, e um portão que fica amarelo por hardware é um portão que
+      # o time aprende a reexecutar sem ler. O que reprova de verdade aqui é o Seq Scan,
+      # que é determinístico; o tempo é rede de proteção contra regressão grosseira.
+      # Medido na máquina em 29/09: p95 de 17,8 a 39,4 ms com a reescrita, 182,7 ms com a
+      # regressão de 26/09 reproduzida (MUTAR=cte).
+      - name: Nenhuma varredura sequencial no caminho quente
+        env:
+          P95_MAX_ELEGIVEIS: 400
+          P95_MAX_VAGAS: 600
+        run: ./scripts/planos-com-carga.sh --plano
+
+  # As Edge Functions tinham testes que nunca rodaram: até 29/09, `grep -rin deno
+  # .github/` devolvia zero linhas. Os treze portões cobriam migração, pgTAP, HTTP, corrida,
+  # contrato, lint e relógio — e nenhum tocava no TypeScript, que é onde mora o envio de
+  # push, a exclusão de conta e a limpeza de contas órfãs.
+  #
+  # O que ficava sem rede: entre os 42 testes do `enviar-push` está
+  # `filtrarDataPayloadFcm só permite chaves autorizadas`, que é a garantia de RN15 e RN10
+  # de o payload não levar telefone, e-mail nem relato. O `mutacao.sh` não alcança — ele
+  # derruba restrição e política no Postgres, e esse filtro é uma lista em TypeScript.
+  #
+  # Job próprio porque não precisa de Postgres: roda em segundos, e não deve esperar os três
+  # minutos de `docker pull` do job do banco para dizer que o TypeScript quebrou.
+  deno:
+    name: Testes das Edge Functions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # `--no-check` de propósito: as funções importam do `esm.sh` e de `deno.land/std` sem
+      # mapa de importação, e a checagem de tipos puxaria a rede inteira para dizer o que o
+      # teste já diz. O que este portão mede é comportamento, não tipo.
+      - name: deno test
+        working-directory: supabase/functions
+        run: deno test --allow-all --no-check
 
   contrato:
     name: Contrato em dia com o Frila
@@ -194,3 +318,20 @@ jobs:
         env:
           FRILA_DOCS_TOKEN: ${{ secrets.FRILA_DOCS_TOKEN }}
         run: ./scripts/contrato-em-dia.sh
+
+  # As Edge Functions têm 105 testes em Deno (`index_test.ts`), e até aqui nenhum rodava na
+  # CI: o workflow `Entrega` publica a função no frila-dev a cada merge, e função quebrada
+  # só aparecia no aparelho. Job próprio porque não precisa de Postgres nem de Docker: banco
+  # e provedores entram injetados nos testes (#207).
+  funcoes:
+    name: Testes das Edge Functions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: deno test
+        run: deno test --allow-all supabase/functions/

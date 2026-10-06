@@ -2,6 +2,8 @@
 Quatro pessoas com Claude Code trabalham neste quadro ao mesmo tempo, e nenhuma
 enxerga o que a outra está fazendo agora. Este PR é metade do sinal; a outra metade é
 o cartão no Trello. PR sem cartão é trabalho que alguém pode estar refazendo.
+
+Lembrete: a base do PR é SEMPRE develop (`gh pr create --base develop`). Nunca abra contra a main.
 -->
 
 ## Cartão
@@ -56,6 +58,13 @@ foi a mutação.
 - [ ] Nenhuma migração existente foi editada. Correção entrou como migração nova.
 - [ ] Nenhuma mudança foi feita pelo painel do Supabase — o que não está em arquivo, o
       próximo ambiente não tem.
+- [ ] A migração é compatível com o app que está na loja. Mudança incompatível vai em duas
+      fases: a primeira acrescenta sem tirar nada, e a segunda remove só quando nenhuma
+      versão na loja usa mais o que sai (RNF12).
+
+> O merge na `develop` publica a migração no `frila-dev` em minutos, pelo workflow
+> `Entrega`, e a tag `backend-v*` a leva ao `frila-prod`. Não existe mais o passo manual
+> em que alguém percebia o problema antes de aplicar.
 
 ## O que ficou de fora
 

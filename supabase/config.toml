@@ -423,6 +423,36 @@ verify_jwt = true
 enabled = true
 verify_jwt = false
 
+# Exportação de turnos em CSV ou PDF (cartão pd7zOS5P · US20, RF22, RN17, UC13).
+# verify_jwt fica ligado: a identidade vem do token Bearer e é reconferida em
+# auth/v1/user dentro da função.
+[functions.exportar-turnos]
+enabled = true
+verify_jwt = true
+
+# E-mails transacionais e a caixa da Equipe Frila (cartão 7yq1flLG).
+# Consome a fila `email` do pgmq: protocolo de denúncia e de contestação, e o alerta do
+# monitoramento. Acordada pelo gatilho da própria fila e pelo job `processar_fila_email`.
+# verify_jwt fica desligado porque a proteção é o segredo do agendador, como nas outras
+# duas do agendador: quem chama é o Postgres, que não tem sessão de usuário.
+[functions.enviar-email]
+enabled = true
+verify_jwt = false
+
+# Portabilidade da LGPD (cartão nUpPFCpM): devolve o JSON dos dados do titular no corpo.
+# verify_jwt fica ligado — quem chama é a pessoa, com a sessão dela, e a identidade ainda
+# é reconferida em auth/v1/user dentro da função. É Edge Function, e não RPC, porque o
+# contrato a declara em /functions/v1 e o corpo não passa pelo PostgREST.
+[functions.exportar-meus-dados]
+enabled = true
+verify_jwt = true
+
+# Health check operacional e disponibilidade para monitor externo (cartão 5bPJvMIo · RNF12).
+# verify_jwt desligado para permitir probes de monitoramento externo gratuito (sem dados sensíveis).
+[functions.saude]
+enabled = true
+verify_jwt = false
+
 
 [analytics]
 enabled = true

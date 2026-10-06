@@ -106,11 +106,24 @@ update public.usuario set demonstracao = true
 -- UTC: às 23:30 de sexta no horário de Brasília já é sábado em UTC, e uma comparação
 -- ingênua jogaria a vaga para o dia seguinte — o profissional que filtrasse "sexta" não
 -- veria o turno de sexta à noite, que é o turno mais comum do produto.
+--
+-- A sexta é contada a partir de hoje, e não escrita por extenso: com a data fixa
+-- (16/10/2026), `publicar_vaga` passaria a recusá-la por estar no passado no dia 17, e
+-- `vagas_abertas` deixaria de listá-la — o arquivo inteiro ficaria vermelho sem nada ter
+-- quebrado. É a mesma conta da âncora de `cenarios.sql`: a sexta seguinte, com 7 dias a
+-- mais, para cair entre 7 e 13 dias no futuro em qualquer dia e hora em que a suíte rode.
 create temp table quando as
-  select ('2026-10-16 23:30:00 America/Sao_Paulo'::timestamptz) as sexta_noite,
-         ('2026-10-17 05:30:00 America/Sao_Paulo'::timestamptz) as fim_sexta,
-         ('2026-10-20 18:00:00 America/Sao_Paulo'::timestamptz) as terca,
-         ('2026-10-21 00:00:00 America/Sao_Paulo'::timestamptz) as fim_terca;
+  with sexta as (
+    select (date_trunc('day', now() at time zone 'America/Sao_Paulo')
+            + (((5 - extract(dow from now() at time zone 'America/Sao_Paulo')::int + 7) % 7) + 7)
+                * interval '1 day') as dia)
+  select ((dia + interval '23 hours 30 minutes') at time zone 'America/Sao_Paulo') as sexta_noite,
+         ((dia + interval '1 day 5 hours 30 minutes') at time zone 'America/Sao_Paulo') as fim_sexta,
+         ((dia + interval '4 days 18 hours') at time zone 'America/Sao_Paulo') as terca,
+         ((dia + interval '5 days') at time zone 'America/Sao_Paulo') as fim_terca,
+         dia::date as dia_sexta,
+         (dia + interval '1 day')::date as dia_sabado
+    from sexta;
 
 create function pg_temp.publicar(conta uuid, estab uuid, funcao uuid,
                                  ini timestamptz, fim timestamptz, posicoes int,
@@ -212,7 +225,7 @@ select is(
   (select array_agg(k order by k) from minhas, jsonb_object_keys(minhas.item) k
     where minhas.item->>'id' = (select perto from vagas)::text),
   array['distancia_km','estabelecimento','fim_em','funcao','id','inclusos','inicio_em',
-        'local','modo','posicoes_abertas','valor_centavos'],
+        'local','modo','posicoes_abertas','regiao_administrativa','valor_centavos'],
   'cada item traz exatamente os campos do schema VagaNaLista do contrato');
 
 select is(
@@ -308,16 +321,16 @@ select is(
 -- O caso que o cartão nomeia: 23:30 de sexta em São Paulo é sábado em UTC.
 select is(
   (select count(*)::int
-     from jsonb_array_elements(pg_temp.como('ab000000-0000-4000-8000-0000000000e1',
-            $$ select public.vagas_abertas(data => '2026-10-16') $$)) e
+     from jsonb_array_elements(pg_temp.como('ab000000-0000-4000-8000-0000000000e1', format(
+            $$ select public.vagas_abertas(data => %L) $$, (select dia_sexta from quando)))) e
     where e->>'id' = (select perto from vagas)::text),
   1,
   'a vaga das 23:30 de sexta em São Paulo aparece no filtro de sexta, não no de sábado');
 
 select is(
   (select count(*)::int
-     from jsonb_array_elements(pg_temp.como('ab000000-0000-4000-8000-0000000000e1',
-            $$ select public.vagas_abertas(data => '2026-10-17') $$)) e
+     from jsonb_array_elements(pg_temp.como('ab000000-0000-4000-8000-0000000000e1', format(
+            $$ select public.vagas_abertas(data => %L) $$, (select dia_sabado from quando)))) e
     where e->>'id' = (select perto from vagas)::text),
   0,
   'e não aparece no dia seguinte');
@@ -383,8 +396,8 @@ create temp table det as
 select is(
   (select array_agg(k order by k) from det, jsonb_object_keys((select j from det)) k),
   array['distancia_km','estabelecimento','estado','fim_em','funcao','id','inclusos',
-        'inicio_em','local','modo','observacoes','participa_rateio','ponto','posicoes',
-        'posicoes_abertas','publicado_em','responsavel_local','traje','valor_centavos'],
+        'inicio_em','local','modo','observacoes','oculta','participa_rateio','ponto','posicoes',
+        'posicoes_abertas','publicado_em','regiao_administrativa','responsavel_local','traje','valor_centavos'],
   'o detalhe traz exatamente os campos do schema Vaga do contrato');
 
 -- RN10. O telefone da outra parte sai por `contato_do_turno`, depois da confirmação e

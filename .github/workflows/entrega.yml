@@ -1,0 +1,178 @@
+name: Entrega
+
+# O que chega à `develop` vai para o frila-dev sem passo manual, e a tag `backend-v*` leva ao
+# frila-prod com aprovação e fora da janela proibida da RNF12 (cartão dke9K3yV, #207).
+#
+# Por que não esperar a CI da `develop`: ela leva perto de meia hora, e o critério é o
+# frila-dev em dia em menos de dez minutos. O PR só entra verde, e o que a entrega aplica é
+# o mesmo commit que a CI do PR mediu. A CI da `develop` continua rodando ao lado e acusa a
+# soma de dois PRs; o frila-dev é justamente o ambiente em que isso pode aparecer.
+#
+# Migração vai pelo `scripts/aplicar-remoto.sh` (Management API), e não por `supabase db
+# push`, porque o push pede a senha do banco e o access token alcança o mesmo banco.
+#
+# Segredo: `SUPABASE_ACCESS_TOKEN` em cada Environment (`frila-dev` e `frila-prod`), nunca no
+# repositório, que é público. Os segredos das Edge Functions (`supabase secrets set`) e o
+# `frila.agendador_secret` ficam fora daqui: são configurados uma vez por projeto, à mão.
+on:
+  push:
+    branches: [develop]
+    tags: ['backend-v*']
+    # Só vale para o push de branch; tag não passa por filtro de caminho.
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/functions/**'
+      - 'supabase/seed.sql'
+      - 'supabase/config.toml'
+      - 'scripts/aplicar-remoto.sh'
+      - 'scripts/desvio.sh'
+      - 'scripts/desvio.sql'
+      - '.github/workflows/entrega.yml'
+  # Todo dia às 8h de São Paulo: pega a mudança de painel feita entre um merge e outro.
+  schedule:
+    - cron: '0 11 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Duas entregas no mesmo projeto ao mesmo tempo aplicariam a mesma migração duas vezes. A
+# segunda espera a primeira, e nenhuma é cancelada no meio.
+concurrency:
+  group: entrega-${{ startsWith(github.ref, 'refs/tags/') && 'prod' || 'dev' }}
+  cancel-in-progress: false
+
+jobs:
+  portoes:
+    name: Os portões da entrega fecham nos casos conhecidos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/teste-entrega.sh
+
+  frila-dev:
+    name: Publicar no frila-dev
+    needs: portoes
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/develop')
+    runs-on: ubuntu-latest
+    environment: frila-dev
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      REF: jcobftbhbqdikratzizz
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: O token existe
+        run: |
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || {
+            echo "::error::Falta o secret SUPABASE_ACCESS_TOKEN no Environment frila-dev."
+            exit 1
+          }
+
+      - name: Migrações e semente
+        run: ./scripts/aplicar-remoto.sh "$REF"
+
+      - name: Edge Functions
+        run: supabase functions deploy --project-ref "$REF"
+
+  desvio-dev:
+    name: O frila-dev é o que o repositório diz
+    needs: [portoes, frila-dev]
+    # Roda depois da publicação e no agendamento diário, e nunca depois de uma publicação
+    # que falhou: aí o desvio é esperado e só repetiria o erro.
+    if: >-
+      always() && needs.portoes.result == 'success' &&
+      (needs.frila-dev.result == 'success' || github.event_name == 'schedule')
+    runs-on: ubuntu-latest
+    environment: frila-dev
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      REF: jcobftbhbqdikratzizz
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      # Mesmo motivo do `ci.yml`: pull anônimo do ghcr.io divide a cota com o Actions inteiro.
+      - name: Autenticar no ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Só o Postgres, com as migrações do repositório aplicadas do zero.
+      - name: Banco descartável com as migrações
+        run: supabase db start
+
+      - name: Comparar com o frila-dev
+        run: ./scripts/desvio.sh "$REF"
+
+  frila-prod:
+    name: Publicar no frila-prod
+    needs: portoes
+    if: startsWith(github.ref, 'refs/tags/backend-v')
+    runs-on: ubuntu-latest
+    # O Environment `frila-prod` exige a aprovação de um revisor antes deste job começar.
+    environment: frila-prod
+    timeout-minutes: 15
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      REF: hbjkkcenbudiezmamiak
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A aprovação pode chegar horas depois da tag, então a janela é conferida aqui, quando
+      # o job de fato começa, e não na hora da tag.
+      - name: Fora da janela proibida (RNF12)
+        run: ./scripts/janela-de-manutencao.sh
+
+      # Produção só recebe o que já passou por PR e pelo frila-dev.
+      - name: A tag aponta para um commit da develop
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/develop || {
+            echo "::error::A tag $GITHUB_REF_NAME não está na develop. Produção só recebe o que passou por PR."
+            exit 1
+          }
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: O token existe
+        run: |
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || {
+            echo "::error::Falta o secret SUPABASE_ACCESS_TOKEN no Environment frila-prod."
+            exit 1
+          }
+
+      - name: Migrações e semente
+        run: ./scripts/aplicar-remoto.sh "$REF"
+
+      - name: Edge Functions
+        run: supabase functions deploy --project-ref "$REF"
+
+      # No mesmo job, e não num job à parte: cada job do Environment `frila-prod` pede a
+      # própria aprovação, e uma tag não pode pedir duas.
+      - name: Autenticar no ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Banco descartável com as migrações
+        run: supabase db start
+
+      - name: O frila-prod é o que o repositório diz
+        run: ./scripts/desvio.sh "$REF"
