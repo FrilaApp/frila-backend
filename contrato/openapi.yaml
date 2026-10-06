@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.35
+  version: 0.2.36
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -95,6 +95,26 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.36, de 05/10/2026.** Ciclo de vida da contestação de suspensão no app (decisão
+    de produto de 05/10/2026 sobre a opção B do cartão yoV2Ak4j / suspensão). Clarifica o contrato
+    de `situacaoDaConta` e `contestarSuspensao`:
+
+    - **Uma contestação por suspensão (opção B):** O titular pode submeter no máximo uma contestação
+      por suspensão através do aplicativo. Após a resposta do suporte da Equipe Frila, não há reenvio
+      nem abertura de nova contestação pelo app; qualquer recurso subsequente é realizado exclusivamente
+      por e-mail e não aparece na interface do aplicativo.
+    - **`situacaoDaConta` devolve o `Protocolo` em análise ou já respondido:** O campo `contestacao`
+      em `SituacaoDaConta.suspensao` devolve o `Protocolo` da contestação vinculada à suspensão em
+      vigor, quer ela esteja em análise (`resolvido_em` nulo) ou já respondida pela Equipe Frila. O
+      resultado da análise de suporte não é exposto no app (RN07, RF24) e a tela mantém a exibição do
+      protocolo original para acompanhamento. O campo só é nulo se nenhuma contestação foi enviada para
+      a suspensão em vigor.
+    - **`409 contestacao_ja_aberta` em `contestarSuspensao`:** O erro `409` cobre os dois casos:
+      impede nova contestação tanto quando a contestação da suspensão em vigor estiver em análise
+      quanto quando já tiver sido respondida pela Equipe Frila.
+    - **Sem alteração de schema:** A estrutura de `SituacaoDaConta` e de `Protocolo` permanece
+      inalterada.
 
     **Versão 0.2.35, de 05/10/2026.** Reenvio idempotente de cancelamento pós-queda de rede (decisão
     de produto de 05/10/2026 sobre o cartão pVvubZJy, opção A). Em condições de conectividade instável,
@@ -2796,7 +2816,11 @@ paths:
       tags: [Confiança e direitos]
       operationId: situacaoDaConta
       summary: Situação da conta e da suspensão, se houver
-      description: Mostra ao titular o motivo e a data da suspensão, e a contestação em andamento (RF24, RN13).
+      description: |
+        Mostra ao titular o motivo e a data da suspensão, e o protocolo da contestação vinculada à
+        suspensão em vigor, esteja ela em análise ou já respondida pela Equipe Frila (decisão de produto,
+        opção B) (RF24, RN13). O resultado da análise do suporte não é exposto no app (RN07), e eventual
+        recurso adicional é tratado exclusivamente por e-mail, sem reenvio pelo aplicativo.
       x-requisitos: [RF24, RN13, UC15]
       responses:
         '200':
@@ -2818,9 +2842,11 @@ paths:
         na hora (RN13). Sem suspensão em vigor: `422 sem_suspensao_ativa`.
 
         Relato vazio é `422 campo_obrigatorio`; relato com menos de 10 caracteres, ou que o filtro
-        da diretriz 1.2 recusa, é `422 campo_invalido`, os dois com `details: relato`. Quem já
-        contestou a suspensão em vigor, com a contestação em análise ou resolvida, recebe
-        `409 contestacao_ja_aberta`.
+        da diretriz 1.2 recusa, é `422 campo_invalido`, os dois com `details: relato`.
+
+        Uma contestação por suspensão (opção B, 0.2.36): quem já contestou a suspensão em vigor,
+        com a contestação em análise ou já respondida, recebe `409 contestacao_ja_aberta`. Depois de
+        respondida não há reenvio pelo app; o eventual recurso é por e-mail e não aparece no app.
       x-requisitos: [RF24, RN13, UC15]
       requestBody:
         required: true
@@ -4540,6 +4566,12 @@ components:
                 desde:
                   $ref: '#/components/schemas/Instante'
                 contestacao:
+                  description: |
+                    Protocolo da contestação vinculada à suspensão em vigor, quer esteja em análise
+                    ou já respondida pela Equipe Frila (decisão de produto, opção B, 0.2.36). O
+                    resultado do suporte não é exposto no app (RN07, RF24) e eventual recurso
+                    adicional é tratado exclusivamente por e-mail. Nulo se o titular ainda não
+                    contestou a suspensão em vigor.
                   oneOf:
                     - $ref: '#/components/schemas/Protocolo'
                     - type: 'null'
