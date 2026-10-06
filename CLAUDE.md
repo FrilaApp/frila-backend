@@ -62,16 +62,18 @@ discordar do documento, **o documento ganha** — ou o documento muda primeiro.
 
 ## O pipeline
 
-Um cartão por vez, do quadro ao merge, sem pular etapa.
+Um cartão por vez, do quadro até "Concluído", sem pular etapa.
 
 ```
 1. Ler o quadro          frila-task-auditor varre; escolhe o próximo cartão
                          Backend cuja dependência já está Concluída
 2. Reivindicar           atribui você mesmo ao cartão · move para "Em andamento"
 3. Codar                 frila-coder: branch, pgTAP vermelho, implementa, verde
-4. Abrir PR              cita o cartão pelo link curto · move para "Revisão" (--base develop)
+4. Abrir PR              cita o cartão pelo link curto (--base develop) · comenta o
+                         link no cartão, que continua em "Em andamento"
 5. Revisar               frila-reviewer: checklist do cartão + contrato + RLS + CI
-6. Mergear               aprovado → merge na develop → marca a checklist → move para "Concluído"
+6. Mergear e fechar      aprovado → merge na develop → confere cada critério e marca,
+                         com a prova no comentário → move para "Concluído"
 7. Registrar             no fim do dia, scripts/bancada-sync.sh leva o dia ao vault
 ```
 
@@ -87,9 +89,36 @@ Um cartão por vez, do quadro ao merge, sem pular etapa.
 - Mover para "Em andamento" **antes** de escrever a primeira linha. O quadro é o
   único sinal que os outros três têm.
 - Um cartão = um branch = um PR. Nome do branch: `s1/candidatar` (sprint + assunto).
-- O PR não fecha o cartão. Quem fecha é a checklist marcada por quem **revisou**.
+- **Quem pega o cartão leva até "Concluído".** Abrir o PR não muda o cartão de coluna,
+  e o merge sozinho não o fecha. Fecha quando cada critério de aceite foi conferido por
+  quem fez (teste rodado, medição ou link) e marcado, com a prova num comentário. A
+  revisão independente continua: é o `frila-reviewer` no PR, antes do merge.
+- **"Revisão" é só para PR aberto esperando outra pessoa**, como uma revisão humana
+  pedida ou uma decisão da Júlia. Cartão com tudo mesclado não fica lá.
+- **O que depende de outra frente não segura o cartão.** Se o que falta é trabalho de
+  outra frente (a tela do iOS, o texto do design), vira cartão dessa frente, com link
+  para este, e este fecha com o que é dele. Se falta uma ação ou credencial de alguém,
+  o cartão fica em "Em andamento" com um comentário dizendo o que falta e de quem;
+  enquanto espera, não conta no limite de dois.
 - Se o cartão estava errado, não conserte no código em silêncio: conserte o cartão,
   comente o porquê, e siga.
+
+### Por que o cartão vai direto para "Concluído"
+
+Em 05/10 havia 20 cartões em "Revisão". Só 1 tinha PR aberto; 16 já tinham os PRs
+mesclados. A regra anterior ("quem revisou marca a checklist") supunha uma segunda
+pessoa conferindo cada cartão. Com cada um de nós trabalhando com o seu Claude, essa
+pessoa não aparece, e o cartão encalha: o quadro mostrava 20 coisas esperando revisão
+quando quase todas já tinham sido mescladas. E o quadro é o único sinal que os outros
+têm do que está pronto.
+
+**Para arrumar o que já está lá, uma vez:** na próxima sessão, passe pelos cartões que
+são seus em "Revisão". PR mesclado e critérios cumpridos: marque com a prova e mova para
+"Concluído". Falta alguma coisa: comente o que falta e de quem, e devolva para "Em
+andamento" (ou abra o cartão da outra frente). Em cartão de outra pessoa, só comente.
+
+Se este fluxo atrapalhar algum caso seu, diga no cartão "Como usar este quadro" e
+ajustamos o texto.
 
 ### Cortesia entre os quatro
 
