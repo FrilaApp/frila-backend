@@ -86,32 +86,23 @@ values
   ((select profissional_suspenso from ids), 'profissional', 'Profissional Suspenso', '+5561999990004', 'suspenso@frila.test', '1996-04-04', '1.0', now(), 'suspensa'),
   ((select usuario_sem_perfil from ids), 'profissional', 'Profissional Sem Perfil', '+5561999990005', 'semperfil@frila.test', '1997-05-05', '1.0', now(), 'ativa');
 
-create temp table func as select id from public.funcao where nome = 'garçom' limit 1;
+create temp table fn as select (select id from public.funcao where nome = 'garçom') as garcom;
 
-insert into public.profissional (usuario_id)
-values ((select profissional_ativo from ids));
-
-create temp table prof_ativo as select id from public.profissional where usuario_id = (select profissional_ativo from ids);
-perform privado.gravar_funcoes((select id from prof_ativo), array[(select id from func)]);
+select pg_temp.como((select profissional_ativo from ids), format(
+  $$ select public.criar_perfil_profissional(array[%L]::uuid[], '{"latitude":-15.7900,"longitude":-47.8850}'::jsonb) $$,
+  (select garcom from fn)));
 
 -- Estabelecimento da casa 1 gerenciada por contratante_dono
-create temp table casa1 as
-select public.cadastrar_estabelecimento(
-  'Restaurante Lote 4',
-  'bar_restaurante'::public.tipo_estabelecimento,
-  '12345678000195',
-  '+5561999990001',
-  'Asa Sul, Bloco A',
-  -15.7942,
-  -47.8822,
-  'Plano Piloto'
-) as id;
+create temp table casa1 as select (
+  pg_temp.como((select contratante_dono from ids),
+    $$ select public.cadastrar_estabelecimento('Casa Principal 488','18465529000185','food_service','CLN 108','{"latitude":-15.7905,"longitude":-47.8855}') $$)
+)->>'id' as id;
 
 -- 1. criarPerfilProfissional: 403 sem_permissao (profissional suspenso tentando cadastrar perfil)
 select throws_ok(
   pg_temp.por((select profissional_suspenso from ids), format(
-    $$ select public.criar_perfil_profissional(array[%L::uuid], null, null) $$,
-    (select id from func))),
+    $$ select public.criar_perfil_profissional(array[%L]::uuid[], '{"latitude":-15.7900,"longitude":-47.8850}'::jsonb) $$,
+    (select garcom from fn))),
   'PGRST',
   pg_temp.erro('sem_permissao', 'conta_suspensa'),
   '1. criarPerfilProfissional: 403 sem_permissao quando conta esta suspensa'
@@ -120,8 +111,8 @@ select throws_ok(
 -- 2. atualizarPerfilProfissional: 403 sem_permissao (profissional suspenso tentando atualizar perfil)
 select throws_ok(
   pg_temp.por((select profissional_suspenso from ids), format(
-    $$ select public.atualizar_perfil_profissional(array[%L::uuid], null, null) $$,
-    (select id from func))),
+    $$ select public.atualizar_perfil_profissional(array[%L]::uuid[], null, null) $$,
+    (select garcom from fn))),
   'PGRST',
   pg_temp.erro('sem_permissao', 'conta_suspensa'),
   '2. atualizarPerfilProfissional: 403 sem_permissao quando conta esta suspensa'
@@ -140,7 +131,7 @@ select throws_ok(
 select throws_ok(
   pg_temp.por((select contratante_outro from ids), format(
     $$ select public.meu_estabelecimento(%L::uuid) $$,
-    (select (id->>'id')::uuid from casa1))),
+    (select id::uuid from casa1))),
   'PGRST',
   pg_temp.erro('sem_permissao'),
   '4. meuEstabelecimento: 403 sem_permissao quando chamador nao e membro'
@@ -150,7 +141,7 @@ select throws_ok(
 select throws_ok(
   pg_temp.por((select contratante_outro from ids), format(
     $$ select public.equipe_de_confianca(%L::uuid) $$,
-    (select (id->>'id')::uuid from casa1))),
+    (select id::uuid from casa1))),
   'PGRST',
   pg_temp.erro('sem_permissao'),
   '5. equipeDeConfianca: 403 sem_permissao quando chamador nao e membro'
@@ -187,7 +178,7 @@ select throws_ok(
 select throws_ok(
   pg_temp.por((select contratante_outro from ids), format(
     $$ select public.meus_turnos(null, null, %L::uuid) $$,
-    (select (id->>'id')::uuid from casa1))),
+    (select id::uuid from casa1))),
   'PGRST',
   pg_temp.erro('sem_permissao'),
   '9. meusTurnos: 403 sem_permissao quando chamador nao e membro do estabelecimento'
@@ -197,7 +188,7 @@ select throws_ok(
 select throws_ok(
   pg_temp.por((select contratante_outro from ids), format(
     $$ select public.painel_estabelecimento(%L::uuid, '2027-05-01 00:00:00+00'::timestamptz, '2027-05-01 23:59:59+00'::timestamptz) $$,
-    (select (id->>'id')::uuid from casa1))),
+    (select id::uuid from casa1))),
   'PGRST',
   pg_temp.erro('sem_permissao'),
   '10. painelEstabelecimento: 403 sem_permissao quando chamador nao e membro'
@@ -225,7 +216,7 @@ select throws_ok(
 select throws_ok(
   pg_temp.por((select usuario_sem_perfil from ids), format(
     $$ select public.atualizar_perfil_profissional(array[%L::uuid], null, null) $$,
-    (select id from func))),
+    (select garcom from fn))),
   'PGRST',
   pg_temp.erro('nao_encontrado'),
   '13. atualizarPerfilProfissional: 404 nao_encontrado quando profissional nao possui perfil criado'
@@ -243,8 +234,8 @@ select throws_ok(
 -- 15. criarPerfilProfissional: 409 perfil_ja_existe (profissional que ja possui perfil cadastrado)
 select throws_ok(
   pg_temp.por((select profissional_ativo from ids), format(
-    $$ select public.criar_perfil_profissional(array[%L::uuid], null, null) $$,
-    (select id from func))),
+    $$ select public.criar_perfil_profissional(array[%L::uuid], '{"latitude":-15.7900,"longitude":-47.8850}'::jsonb) $$,
+    (select garcom from fn))),
   'PGRST',
   pg_temp.erro('perfil_ja_existe'),
   '15. criarPerfilProfissional: 409 perfil_ja_existe quando perfil ja foi cadastrado'
