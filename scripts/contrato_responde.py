@@ -129,6 +129,22 @@ VIGIADAS = {
     ("incluirNaEquipe", "403"): "sem_permissao",
     ("incluirNaEquipe", "404"): "nao_encontrado",
     ("removerDaEquipe", "403"): "sem_permissao",
+    # Lote 4: mais 15 pares críticos por risco (autorização, existência e unicidade)
+    ("criarPerfilProfissional", "403"): "sem_permissao",
+    ("atualizarPerfilProfissional", "403"): "sem_permissao",
+    ("pedirRevisaoDespacho", "403"): "sem_permissao",
+    ("meuEstabelecimento", "403"): "sem_permissao",
+    ("equipeDeConfianca", "403"): "sem_permissao",
+    ("vagasAbertas", "403"): "sem_permissao",
+    ("retirarCandidatura", "403"): "sem_permissao",
+    ("minhasCandidaturas", "403"): "sem_permissao",
+    ("meusTurnos", "403"): "sem_permissao",
+    ("painelEstabelecimento", "403"): "sem_permissao",
+    ("minhaConta", "404"): "nao_encontrado",
+    ("meuPerfilProfissional", "404"): "nao_encontrado",
+    ("atualizarPerfilProfissional", "404"): "nao_encontrado",
+    ("criarConta", "409"): "conta_existente",
+    ("criarPerfilProfissional", "409"): "perfil_ja_existe",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
