@@ -95,7 +95,7 @@ select pg_temp.como((select profissional_ativo from ids), format(
 -- Estabelecimento da casa 1 gerenciada por contratante_dono
 create temp table casa1 as select (
   pg_temp.como((select contratante_dono from ids),
-    $$ select public.cadastrar_estabelecimento('Casa Principal 488','18465529000185','food_service','CLN 108','{"latitude":-15.7905,"longitude":-47.8855}') $$)
+    $$ select public.cadastrar_estabelecimento('Casa Principal 488','04252011000110','food_service','CLN 108','{"latitude":-15.7905,"longitude":-47.8855}') $$)
 )->>'id' as id;
 
 -- 1. criarPerfilProfissional: 403 sem_permissao (profissional suspenso tentando cadastrar perfil)
