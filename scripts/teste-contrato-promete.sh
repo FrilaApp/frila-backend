@@ -86,6 +86,21 @@ OUTRAS_VIGIADAS=$(cat <<'EOF'
 {"op":"promete:incluirNaEquipe:403","corpo":{"status":403,"code":"sem_permissao"}}
 {"op":"promete:incluirNaEquipe:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:removerDaEquipe:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:criarPerfilProfissional:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:atualizarPerfilProfissional:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:pedirRevisaoDespacho:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:meuEstabelecimento:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:equipeDeConfianca:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:vagasAbertas:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:retirarCandidatura:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:minhasCandidaturas:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:meusTurnos:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:painelEstabelecimento:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:minhaConta:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:meuPerfilProfissional:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:atualizarPerfilProfissional:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:criarConta:409","corpo":{"status":409,"code":"conta_existente"}}
+{"op":"promete:criarPerfilProfissional:409","corpo":{"status":409,"code":"perfil_ja_existe"}}
 EOF
 )
 

@@ -737,6 +737,104 @@ select pg_temp.guarda('promete:removerDaEquipe:403',
 
 delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000098';
 
+-- ── Lote 4: 15 pares críticos por risco (autorização, existência e unicidade) ──
+
+-- 51. criarPerfilProfissional: 403 sem_permissao (profissional suspenso tentando cadastrar perfil)
+select pg_temp.guarda('promete:criarPerfilProfissional:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004', format(
+    $$ select public.criar_perfil_profissional(array[%L::uuid], null, null) $$, (select id from f))));
+
+-- 52. atualizarPerfilProfissional: 403 sem_permissao (profissional suspenso tentando atualizar perfil)
+select pg_temp.guarda('promete:atualizarPerfilProfissional:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004', format(
+    $$ select public.atualizar_perfil_profissional(array[%L::uuid], null, null) $$, (select id from f))));
+
+-- 53. pedirRevisaoDespacho: 403 sem_permissao (profissional suspenso tentando pedir revisao)
+select pg_temp.guarda('promete:pedirRevisaoDespacho:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004',
+    $$ select public.pedir_revisao_despacho('Relato detalhado para pedir revisao de despacho com tamanho suficiente.') $$));
+
+-- 54. meuEstabelecimento: 403 sem_permissao (chamador nao e membro do estabelecimento)
+select pg_temp.guarda('promete:meuEstabelecimento:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.meu_estabelecimento(%L::uuid) $$, (select casa_id from ids))));
+
+-- 55. equipeDeConfianca: 403 sem_permissao (chamador nao e membro do estabelecimento)
+select pg_temp.guarda('promete:equipeDeConfianca:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.equipe_de_confianca(%L::uuid) $$, (select casa_id from ids))));
+
+-- 56. vagasAbertas: 403 sem_permissao (profissional suspenso tentando listar vagas)
+select pg_temp.guarda('promete:vagasAbertas:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004',
+    $$ select public.vagas_abertas() $$));
+
+-- 57. retirarCandidatura: 403 sem_permissao (profissional suspenso tentando retirar candidatura)
+select pg_temp.guarda('promete:retirarCandidatura:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004',
+    $$ select public.retirar_candidatura('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+
+-- 58. minhasCandidaturas: 403 sem_permissao (profissional suspenso tentando listar candidaturas)
+select pg_temp.guarda('promete:minhasCandidaturas:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004',
+    $$ select public.minhas_candidaturas() $$));
+
+-- 59. meusTurnos: 403 sem_permissao (chamador nao e membro do estabelecimento informado)
+select pg_temp.guarda('promete:meusTurnos:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.meus_turnos(null, null, %L::uuid) $$, (select casa_id from ids))));
+
+-- 60. painelEstabelecimento: 403 sem_permissao (chamador nao e membro do estabelecimento)
+select pg_temp.guarda('promete:painelEstabelecimento:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.painel_estabelecimento(%L::uuid, '2027-01-11 00:00:00+00'::timestamptz, '2027-01-11 23:59:59+00'::timestamptz) $$,
+    (select casa_id from ids))));
+
+-- Auxiliar para 61: usuario autenticado sem linha em public.usuario
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
+values ('00000000-0000-0000-0000-000000000000', 'ee000000-0000-4000-8000-000000000097'::uuid,
+        'authenticated', 'authenticated', 'sem-usuario@t.test', now(), now(), false, false)
+on conflict do nothing;
+
+-- 61. minhaConta: 404 nao_encontrado (usuario autenticado sem cadastro)
+select pg_temp.guarda('promete:minhaConta:404',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000097',
+    $$ select public.minha_conta() $$));
+
+delete from auth.users where id = 'ee000000-0000-4000-8000-000000000097';
+
+-- 62. meuPerfilProfissional: 404 nao_encontrado (contratante sem linha em public.profissional)
+select pg_temp.guarda('promete:meuPerfilProfissional:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.meu_perfil_profissional() $$));
+
+-- Auxiliar para 63: conta profissional criada, mas ainda sem perfil preenchido
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
+values ('00000000-0000-0000-0000-000000000000', 'ee000000-0000-4000-8000-000000000096'::uuid,
+        'authenticated', 'authenticated', 'sem-perfil-prof@t.test', now(), now(), false, false)
+on conflict do nothing;
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado)
+values ('ee000000-0000-4000-8000-000000000096', 'profissional', 'Sem Perfil', '+5561944440096', 'sem-perfil-prof@t.test', '1995-01-01', '1.0', now(), 'ativa')
+on conflict do nothing;
+
+-- 63. atualizarPerfilProfissional: 404 nao_encontrado (conta profissional sem linha em public.profissional)
+select pg_temp.guarda('promete:atualizarPerfilProfissional:404',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000096', format(
+    $$ select public.atualizar_perfil_profissional(array[%L::uuid], null, null) $$, (select id from f))));
+
+delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000096';
+delete from auth.users where id = 'ee000000-0000-4000-8000-000000000096';
+
+-- 64. criarConta: 409 conta_existente (tentativa de criar com perfil divergente de conta ja cadastrada)
+select pg_temp.guarda('promete:criarConta:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.criar_conta('profissional', 'Outro Nome', '+5561944440009', '1980-05-05', '2026-09-22') $$));
+
+-- 65. criarPerfilProfissional: 409 perfil_ja_existe (profissional que ja possui perfil cadastrado)
+select pg_temp.guarda('promete:criarPerfilProfissional:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.criar_perfil_profissional(array[%L::uuid], null, null) $$, (select id from f))));
+
 
 -- ── As Edge Functions ─────────────────────────────────────────────────────────
 --
