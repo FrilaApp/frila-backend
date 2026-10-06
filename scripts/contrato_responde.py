@@ -145,6 +145,22 @@ VIGIADAS = {
     ("atualizarPerfilProfissional", "404"): "nao_encontrado",
     ("criarConta", "409"): "conta_existente",
     ("criarPerfilProfissional", "409"): "perfil_ja_existe",
+    # Lote 5: mais 15 pares críticos por risco (despacho, suspensão, catálogo e validações de campos)
+    ("pedirRevisaoDespacho", "409"): "contestacao_ja_aberta",
+    ("avaliar", "422"): "campo_obrigatorio",
+    ("criteriosDeNotificacao", "403"): "sem_permissao",
+    ("criteriosDeNotificacao", "404"): "nao_encontrado",
+    ("meusEstabelecimentos", "403"): "sem_permissao",
+    ("registrarDispositivo", "422"): "campo_obrigatorio",
+    ("pedirRevisaoDespacho", "422"): "campo_obrigatorio",
+    ("cadastrarEstabelecimento", "422"): "perfil_incompativel",
+    ("atualizarPerfilProfissional", "422"): "campo_obrigatorio",
+    ("publicarVaga", "422"): "campo_obrigatorio",
+    ("escolherCandidato", "422"): "campo_obrigatorio",
+    ("cancelarVaga", "422"): "campo_obrigatorio",
+    ("cancelarPosicao", "422"): "campo_obrigatorio",
+    ("fazerCheckin", "422"): "campo_obrigatorio",
+    ("fazerCheckout", "422"): "campo_obrigatorio",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não

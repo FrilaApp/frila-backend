@@ -101,6 +101,21 @@ OUTRAS_VIGIADAS=$(cat <<'EOF'
 {"op":"promete:atualizarPerfilProfissional:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:criarConta:409","corpo":{"status":409,"code":"conta_existente"}}
 {"op":"promete:criarPerfilProfissional:409","corpo":{"status":409,"code":"perfil_ja_existe"}}
+{"op":"promete:pedirRevisaoDespacho:409","corpo":{"status":409,"code":"contestacao_ja_aberta"}}
+{"op":"promete:avaliar:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:criteriosDeNotificacao:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:criteriosDeNotificacao:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:meusEstabelecimentos:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:registrarDispositivo:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:pedirRevisaoDespacho:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:cadastrarEstabelecimento:422","corpo":{"status":422,"code":"perfil_incompativel"}}
+{"op":"promete:atualizarPerfilProfissional:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:publicarVaga:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:escolherCandidato:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:cancelarVaga:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:cancelarPosicao:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:fazerCheckin:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:fazerCheckout:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
 EOF
 )
 

@@ -835,6 +835,99 @@ select pg_temp.guarda('promete:criarPerfilProfissional:409',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
     $$ select public.criar_perfil_profissional(array[%L::uuid], null, null) $$, (select id from f))));
 
+-- ── Lote 5: mais 15 pares críticos por risco (despacho, catálogo e validações de campos) ──
+
+-- 66. pedirRevisaoDespacho: 409 contestacao_ja_aberta (segunda contestacao pelo mesmo autor cc...0002, que ja contestou na linha 174)
+select pg_temp.guarda('promete:pedirRevisaoDespacho:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.pedir_revisao_despacho('Segunda tentativa de contestacao de despacho pelo mesmo autor.') $$));
+
+-- 67. avaliar: 422 campo_obrigatorio (turno_id nulo)
+select pg_temp.guarda('promete:avaliar:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.avaliar(null, true) $$));
+
+-- 68. criteriosDeNotificacao: 403 sem_permissao (profissional suspenso tentando ler criterios)
+select pg_temp.guarda('promete:criteriosDeNotificacao:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004',
+    $$ select public.criterios_de_notificacao() $$));
+
+-- Auxiliar para 69: conta profissional ativa sem linha em public.profissional
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
+values ('00000000-0000-0000-0000-000000000000', 'ee000000-0000-4000-8000-000000000095'::uuid,
+        'authenticated', 'authenticated', 'sem-perfil-criterios@t.test', now(), now(), false, false)
+on conflict do nothing;
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado)
+values ('ee000000-0000-4000-8000-000000000095', 'profissional', 'Prof Sem Perfil Criterios', '+5561944440095', 'sem-perfil-criterios@t.test', '1995-01-01', '1.0', now(), 'ativa')
+on conflict do nothing;
+
+-- 69. criteriosDeNotificacao: 404 nao_encontrado (profissional sem linha em public.profissional)
+select pg_temp.guarda('promete:criteriosDeNotificacao:404',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000095',
+    $$ select public.criterios_de_notificacao() $$));
+
+delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000095';
+delete from auth.users where id = 'ee000000-0000-4000-8000-000000000095';
+
+-- 70. meusEstabelecimentos: 403 sem_permissao (conta suspensa tentando ler estabelecimentos)
+select pg_temp.guarda('promete:meusEstabelecimentos:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004',
+    $$ select public.meus_estabelecimentos() $$));
+
+-- 71. registrarDispositivo: 422 campo_obrigatorio (token_fcm nulo)
+select pg_temp.guarda('promete:registrarDispositivo:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.registrar_dispositivo(null, 'ios') $$));
+
+-- 72. pedirRevisaoDespacho: 422 campo_obrigatorio (relato nulo)
+select pg_temp.guarda('promete:pedirRevisaoDespacho:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.pedir_revisao_despacho(null) $$));
+
+-- 73. cadastrarEstabelecimento: 422 perfil_incompativel (profissional tentando cadastrar casa)
+select pg_temp.guarda('promete:cadastrarEstabelecimento:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.cadastrar_estabelecimento('Casa Incompativel', '29979036000140', 'food_service',
+         'CLN 108', '{"latitude":-15.7905,"longitude":-47.8855}'::jsonb) $$));
+
+-- 74. atualizarPerfilProfissional: 422 campo_obrigatorio (funcoes vazias)
+select pg_temp.guarda('promete:atualizarPerfilProfissional:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.atualizar_perfil_profissional(array[]::uuid[], null, null) $$));
+
+-- 75. publicarVaga: 422 campo_obrigatorio (funcao_id nula)
+select pg_temp.guarda('promete:publicarVaga:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.publicar_vaga(%L::uuid, null, '2027-01-22 21:00:00+00'::timestamptz, '2027-01-23 03:00:00+00'::timestamptz,
+         'CLN 108', '{"latitude":-15.7905,"longitude":-47.8855}'::jsonb, 16000::bigint, 1, true, false, false,
+         'Gerente', 'urgencia'::public.modo_preenchimento, gen_random_uuid()) $$,
+    (select casa_id from ids))));
+
+-- 76. escolherCandidato: 422 campo_obrigatorio (candidatura_id nula)
+select pg_temp.guarda('promete:escolherCandidato:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.escolher_candidato(null) $$));
+
+-- 77. cancelarVaga: 422 campo_obrigatorio (vaga_id nula)
+select pg_temp.guarda('promete:cancelarVaga:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.cancelar_vaga(null, 'motivo de teste') $$));
+
+-- 78. cancelarPosicao: 422 campo_obrigatorio (posicao_id nula)
+select pg_temp.guarda('promete:cancelarPosicao:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.cancelar_posicao(null, 'motivo de teste') $$));
+
+-- 79. fazerCheckin: 422 campo_obrigatorio (turno_id nulo)
+select pg_temp.guarda('promete:fazerCheckin:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.fazer_checkin(null, 40, '2027-01-18 20:05:00+00'::timestamptz) $$));
+
+-- 80. fazerCheckout: 422 campo_obrigatorio (turno_id nulo)
+select pg_temp.guarda('promete:fazerCheckout:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.fazer_checkout(null, 40, '2027-01-19 02:00:00+00'::timestamptz) $$));
+
 
 -- ── As Edge Functions ─────────────────────────────────────────────────────────
 --
