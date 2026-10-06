@@ -47,6 +47,7 @@ export interface HandlerDeps {
   supabaseUrl?: string;
   anonKey?: string;
   dbUrl?: string;
+  agoraFn?: () => Date;
 }
 
 function respostaJson(status: number, corpo: unknown, headersExtra?: Record<string, string>): Response {
@@ -401,40 +402,58 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   try {
     corpo = await req.json();
   } catch {
-    return erro(422, "campo_obrigatorio", "de");
+    return erro(422, "campo_obrigatorio", "formato");
   }
 
   if (typeof corpo !== "object" || corpo === null) {
-    return erro(422, "campo_obrigatorio", "de");
+    return erro(422, "campo_obrigatorio", "formato");
   }
 
-  // 1. Validação do campo 'de'
-  if (corpo.de === undefined || corpo.de === null || (typeof corpo.de === "string" && !corpo.de.trim())) {
-    return erro(422, "campo_obrigatorio", "de");
-  }
-  if (typeof corpo.de !== "string" || isNaN(Date.parse(corpo.de))) {
-    return erro(422, "campo_invalido", "de");
-  }
-
-  // 2. Validação do campo 'ate'
-  if (corpo.ate === undefined || corpo.ate === null || (typeof corpo.ate === "string" && !corpo.ate.trim())) {
-    return erro(422, "campo_obrigatorio", "ate");
-  }
-  if (typeof corpo.ate !== "string" || isNaN(Date.parse(corpo.ate))) {
-    return erro(422, "campo_invalido", "ate");
-  }
-
-  // 3. Validação do intervalo de datas (de <= ate)
-  if (new Date(corpo.de) > new Date(corpo.ate)) {
-    return erro(422, "campo_invalido", "de");
-  }
-
-  // 4. Validação do campo 'formato'
+  // 1. Validação do campo 'formato' (obrigatório, RN17, 0.2.37)
   if (corpo.formato === undefined || corpo.formato === null || (typeof corpo.formato === "string" && !corpo.formato.trim())) {
     return erro(422, "campo_obrigatorio", "formato");
   }
   if (corpo.formato !== "csv" && corpo.formato !== "pdf") {
     return erro(422, "campo_invalido", "formato");
+  }
+
+  // 2. Resolução de 'de' e 'ate' (opcionais: default dos últimos 15 dias, 0.2.37)
+  const agora = deps?.agoraFn ? deps.agoraFn() : new Date();
+  let deStr: string;
+  let ateStr: string;
+
+  if (corpo.ate !== undefined && corpo.ate !== null && !(typeof corpo.ate === "string" && !corpo.ate.trim())) {
+    if (typeof corpo.ate !== "string" || isNaN(Date.parse(corpo.ate))) {
+      return erro(422, "campo_invalido", "ate");
+    }
+    ateStr = corpo.ate;
+  } else {
+    ateStr = agora.toISOString();
+  }
+
+  if (corpo.de !== undefined && corpo.de !== null && !(typeof corpo.de === "string" && !corpo.de.trim())) {
+    if (typeof corpo.de !== "string" || isNaN(Date.parse(corpo.de))) {
+      return erro(422, "campo_invalido", "de");
+    }
+    deStr = corpo.de;
+  } else {
+    const dataAte = new Date(ateStr);
+    const dataDe15Dias = new Date(dataAte.getTime() - 15 * 24 * 60 * 60 * 1000);
+    deStr = dataDe15Dias.toISOString();
+  }
+
+  const deTimestamp = new Date(deStr).getTime();
+  const ateTimestamp = new Date(ateStr).getTime();
+
+  // 3. Validação do intervalo de datas (de <= ate)
+  if (deTimestamp > ateTimestamp) {
+    return erro(422, "campo_invalido", "de");
+  }
+
+  // 4. Janela regulamentar máxima permitida: até 30 dias (pd7zOS5P, 0.2.37)
+  const limite30DiasMs = 30 * 24 * 60 * 60 * 1000;
+  if (ateTimestamp - deTimestamp > limite30DiasMs) {
+    return erro(422, "intervalo_maximo_excedido");
   }
 
   // 5. Validação de 'estabelecimento_id' quando fornecido
@@ -476,7 +495,7 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   // 7. Consulta no banco de dados
   let turnos: TurnoExportacao[];
   try {
-    turnos = await sqlClient.turnosExportacao(usuario.id, corpo.de, corpo.ate, estabId);
+    turnos = await sqlClient.turnosExportacao(usuario.id, deStr, ateStr, estabId);
   } catch (err: unknown) {
     return tratarErroBanco(err);
   }
@@ -503,7 +522,7 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
       },
     });
   } else {
-    const pdfBytes = await gerarPdf(turnos, corpo.de, corpo.ate);
+    const pdfBytes = await gerarPdf(turnos, deStr, ateStr);
     return new Response(pdfBytes as unknown as BodyInit, {
       status: 200,
       headers: {

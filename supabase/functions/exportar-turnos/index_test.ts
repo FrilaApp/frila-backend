@@ -178,23 +178,58 @@ Deno.test("recusa resposta de autenticação sem id de usuário com 401", async 
 
 // ── 2. Validação de parâmetros ────────────────────────────────────────────────
 
-Deno.test("recusa payload que não é JSON com 422 campo_obrigatorio (de)", async () => {
+Deno.test("recusa payload que não é JSON com 422 campo_obrigatorio (formato)", async () => {
   const e = criarEspiao();
   const req = requisicao("nao-e-json", "token-valido");
   const res = await chamar(e, req);
   assertEquals(res.status, 422);
   const json = await res.json();
   assertEquals(json.code, "campo_obrigatorio");
-  assertEquals(json.details, "de");
+  assertEquals(json.details, "formato");
 });
 
-Deno.test("recusa parâmetro 'de' ausente com 422 campo_obrigatorio", async () => {
+Deno.test("parâmetro 'de' é opcional e aplica default dos últimos 15 dias quando omitido", async () => {
   const e = criarEspiao();
   const res = await chamar(e, requisicao({ ate: "2026-09-30T00:00:00Z", formato: "csv" }));
-  assertEquals(res.status, 422);
-  const json = await res.json();
-  assertEquals(json.code, "campo_obrigatorio");
-  assertEquals(json.details, "de");
+  assertEquals(res.status, 200);
+  assertEquals(e.pedidos.length, 1);
+  assertEquals(e.pedidos[0].ate, "2026-09-30T00:00:00Z");
+  // 'de' deve ser exatamente 15 dias antes de 'ate'
+  const deEsperado = new Date(new Date("2026-09-30T00:00:00Z").getTime() - 15 * 24 * 60 * 60 * 1000).toISOString();
+  assertEquals(e.pedidos[0].de, deEsperado);
+});
+
+Deno.test("parâmetro 'ate' é opcional e aplica default de agora quando omitido", async () => {
+  const e = criarEspiao();
+  const agoraFixo = new Date("2026-09-20T12:00:00Z");
+  const res = await handler(requisicao({ de: "2026-09-10T12:00:00Z", formato: "csv" }), {
+    fetchFn: e.fetchFn,
+    sqlClient: e.sql,
+    supabaseUrl: URL_BASE,
+    anonKey: ANON,
+    agoraFn: () => agoraFixo,
+  });
+  assertEquals(res.status, 200);
+  assertEquals(e.pedidos.length, 1);
+  assertEquals(e.pedidos[0].de, "2026-09-10T12:00:00Z");
+  assertEquals(e.pedidos[0].ate, agoraFixo.toISOString());
+});
+
+Deno.test("ambos 'de' e 'ate' omitidos aplicam janela dos últimos 15 dias a partir de agora", async () => {
+  const e = criarEspiao();
+  const agoraFixo = new Date("2026-09-25T12:00:00Z");
+  const res = await handler(requisicao({ formato: "csv" }), {
+    fetchFn: e.fetchFn,
+    sqlClient: e.sql,
+    supabaseUrl: URL_BASE,
+    anonKey: ANON,
+    agoraFn: () => agoraFixo,
+  });
+  assertEquals(res.status, 200);
+  assertEquals(e.pedidos.length, 1);
+  assertEquals(e.pedidos[0].ate, agoraFixo.toISOString());
+  const deEsperado = new Date(agoraFixo.getTime() - 15 * 24 * 60 * 60 * 1000).toISOString();
+  assertEquals(e.pedidos[0].de, deEsperado);
 });
 
 Deno.test("recusa parâmetro 'de' com data inválida com 422 campo_invalido", async () => {
@@ -204,15 +239,6 @@ Deno.test("recusa parâmetro 'de' com data inválida com 422 campo_invalido", as
   const json = await res.json();
   assertEquals(json.code, "campo_invalido");
   assertEquals(json.details, "de");
-});
-
-Deno.test("recusa parâmetro 'ate' ausente com 422 campo_obrigatorio", async () => {
-  const e = criarEspiao();
-  const res = await chamar(e, requisicao({ de: "2026-09-01T00:00:00Z", formato: "csv" }));
-  assertEquals(res.status, 422);
-  const json = await res.json();
-  assertEquals(json.code, "campo_obrigatorio");
-  assertEquals(json.details, "ate");
 });
 
 Deno.test("recusa parâmetro 'ate' com data inválida com 422 campo_invalido", async () => {
@@ -234,6 +260,29 @@ Deno.test("recusa período com 'de' posterior a 'ate' com 422 campo_invalido", a
   const json = await res.json();
   assertEquals(json.code, "campo_invalido");
   assertEquals(json.details, "de");
+});
+
+Deno.test("recusa período com intervalo maior que 30 dias com 422 intervalo_maximo_excedido (pd7zOS5P)", async () => {
+  const e = criarEspiao();
+  const res = await chamar(
+    e,
+    requisicao({ de: "2026-08-01T00:00:00Z", ate: "2026-09-05T00:00:00Z", formato: "csv" }),
+  );
+  assertEquals(res.status, 422);
+  const json = await res.json();
+  assertEquals(json.code, "intervalo_maximo_excedido");
+  assertEquals(json.details, null);
+  assertEquals(e.pedidos.length, 0);
+});
+
+Deno.test("aceita período com exatamente 30 dias", async () => {
+  const e = criarEspiao();
+  const res = await chamar(
+    e,
+    requisicao({ de: "2026-09-01T00:00:00Z", ate: "2026-10-01T00:00:00Z", formato: "csv" }),
+  );
+  assertEquals(res.status, 200);
+  assertEquals(e.pedidos.length, 1);
 });
 
 Deno.test("recusa parâmetro 'formato' ausente com 422 campo_obrigatorio", async () => {

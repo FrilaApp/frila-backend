@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.36
+  version: 0.2.37
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -77,9 +77,10 @@ info:
     | 409 | `conta_existente`, `documento_ja_cadastrado` | Cadastro repetido |
     | 409 | `administrador_unico` | Exclusão de conta de quem é o único administrador (UC16) |
     | 409 | `perfil_ja_existe` | `criar_perfil_profissional` numa conta que já tem perfil. Conflito, e não sobrescrita: sobrescrever apagaria a grade de quem tocasse duas vezes no botão |
-    | 409 | `contestacao_ja_aberta` | Já existe contestação para a suspensão em vigor, em análise ou já respondida (RF24) |
+    | 409 | `contestacao_ja_aberta` | Já existe contestação para a suspensão em vigor ou para o despacho, em análise ou já respondida (RF24, RF27) |
     | 422 | `campo_obrigatorio` | Falta campo exigido; `details` diz qual (na vaga, RN02) |
     | 422 | `campo_invalido` | O campo veio, e o valor é recusado pela regra; `details` diz qual campo. Distinto de `campo_obrigatorio`, que é ausência — a tela destaca o mesmo campo, com texto diferente |
+    | 422 | `intervalo_maximo_excedido` | Intervalo entre `de` e `ate` maior que 30 dias na exportação de turnos (pd7zOS5P) |
     | 422 | `menor_de_idade` | Nascimento com menos de 18 anos (RN20) |
     | 422 | `perfil_incompativel` | A ação é do outro perfil: conta de contratante criando perfil de profissional, ou conta de profissional cadastrando estabelecimento (RN25) |
     | 422 | `selecao_sem_antecedencia` | Modo seleção em vaga que começa em menos de 24 h (RN24) |
@@ -95,6 +96,22 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.37, de 06/10/2026.** Ciclo de vida da revisão de despacho no app (decisão de produto
+    sobre a opção B em `pedirRevisaoDespacho` / RF27) e parâmetros de exportação de turnos com janela
+    regulamentar de até 30 dias (cartão pd7zOS5P):
+
+    - **Uma contestação por despacho (opção B, RF27):** O titular pode submeter no máximo uma
+      contestação por despacho através do aplicativo na tela "Por que recebo vagas". Caso tente reenviar
+      com uma contestação em análise ou já respondida pela Equipe Frila, a operação responde com
+      `409 contestacao_ja_aberta`. Qualquer recurso subsequente é tratado exclusivamente por e-mail e não
+      aparece nem pode ser reenviado pelo aplicativo. Adicionada a resposta `409` (`Conflito`) em
+      `/rpc/pedir_revisao_despacho`.
+    - **Janela regulamentar e parâmetros opcionais em `exportarTurnos` (pd7zOS5P):**
+      - Os parâmetros `de` e `ate` tornam-se opcionais na chamada de `/exportar-turnos`. Quando
+        omitidos, o padrão aplicado é o intervalo dos últimos 15 dias.
+      - A janela regulamentar máxima permitida entre `de` e `ate` é de até 30 dias. Solicitações com
+        intervalo superior a 30 dias são recusadas com `422 intervalo_maximo_excedido`.
 
     **Versão 0.2.36, de 05/10/2026.** Ciclo de vida da contestação de suspensão no app (decisão
     de produto de 05/10/2026 sobre a opção B do cartão yoV2Ak4j / suspensão). Clarifica o contrato
@@ -1414,7 +1431,11 @@ paths:
       tags: [Cadastro e perfil]
       operationId: pedirRevisaoDespacho
       summary: Contestar o despacho ("Contestar" na tela "Por que recebo vagas")
-      description: Registra o pedido de revisão; a Equipe Frila responde por e-mail em até 5 dias úteis (RF27).
+      description: |
+        Registra o pedido de revisão; a Equipe Frila responde por e-mail em até 5 dias úteis (RF27).
+
+        Apenas 1 contestação por despacho pelo app (opção B, 0.2.37). Reenvio com contestação em
+        análise ou respondida recebe `409 contestacao_ja_aberta`. Recurso posterior só por e-mail.
       x-requisitos: [RF27]
       requestBody:
         required: true
@@ -1438,6 +1459,8 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           $ref: '#/components/responses/ContaSuspensa'
+        '409':
+          $ref: '#/components/responses/Conflito'
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
@@ -3032,10 +3055,14 @@ paths:
         valor é o acordado e registrado, nunca um pagamento processado pelo Frila (RN09). Turno "não
         verificado" sai marcado como tal.
 
-        Corpo incompleto ou inválido é `422`: `campo_obrigatorio` quando falta `de`, `ate` ou
-        `formato`; `campo_invalido` quando o instante não é ISO-8601, quando `de` vem depois de
-        `ate` (com `details: de`), quando o formato não é `csv` nem `pdf`, ou quando
-        `estabelecimento_id` não é um uuid. Método que não é POST é `405 metodo_nao_permitido`.
+        Os parâmetros `de` e `ate` são opcionais: se omitidos, assume-se o padrão dos últimos 15 dias.
+        O intervalo entre `de` e `ate` não pode exceder 30 dias (janela regulamentar, pd7zOS5P).
+
+        Corpo incompleto ou inválido é `422`: `campo_obrigatorio` quando falta `formato`;
+        `intervalo_maximo_excedido` quando o intervalo entre `de` e `ate` for superior a 30 dias;
+        `campo_invalido` quando o instante não é ISO-8601, quando `de` vem depois de `ate`
+        (com `details: de`), quando o formato não é `csv` nem `pdf`, ou quando `estabelecimento_id`
+        não é um uuid. Método que não é POST é `405 metodo_nao_permitido`.
       x-requisitos: [RF22, RN09, RN17, UC13]
       requestBody:
         required: true
@@ -3043,11 +3070,13 @@ paths:
           application/json:
             schema:
               type: object
-              required: [de, ate, formato]
+              required: [formato]
               properties:
                 de:
+                  description: Início do período (ISO-8601). Opcional; default dos últimos 15 dias se omitido.
                   $ref: '#/components/schemas/Instante'
                 ate:
+                  description: Fim do período (ISO-8601). Opcional; default dos últimos 15 dias se omitido.
                   $ref: '#/components/schemas/Instante'
                 formato:
                   type: string
@@ -3357,6 +3386,12 @@ components:
                 message: administrador_unico
                 details: null
                 hint: null
+            contestacao_ja_aberta:
+              value:
+                code: contestacao_ja_aberta
+                message: contestacao_ja_aberta
+                details: null
+                hint: null
     RegraRecusou:
       description: Uma regra de negócio recusou a operação.
       content:
@@ -3381,6 +3416,12 @@ components:
                 code: campo_invalido
                 message: campo_invalido
                 details: relato
+                hint: null
+            intervalo_maximo_excedido:
+              value:
+                code: intervalo_maximo_excedido
+                message: intervalo_maximo_excedido
+                details: null
                 hint: null
             perfil_incompativel:
               summary: A operação é do outro perfil (RN25)
