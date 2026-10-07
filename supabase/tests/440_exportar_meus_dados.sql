@@ -174,6 +174,7 @@ select is(
 -- O aparelho é fixture deste arquivo, e não sorte do cenário: sem ele, as duas
 -- asserções do token passariam sobre um array vazio, que é o jeito mais convincente de
 -- um teste de RN15 não medir nada.
+delete from public.dispositivo where usuario_id = (select ana from ids);
 insert into public.dispositivo (usuario_id, token_fcm, plataforma)
 values ((select ana from ids), 'token-de-teste-do-440-nao-pode-vazar', 'ios');
 
