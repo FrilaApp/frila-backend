@@ -20,7 +20,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(77);
+select plan(88);
 
 insert into privado.ambiente (id, eh_teste) values (true, true);
 select set_config('frila.agora', '2026-11-02 12:00:00+00', true);
@@ -326,6 +326,18 @@ select is(
   'candidatura recusada traz turno_id nulo (0.2.32)');
 select is(pg_temp.avisos(1, 'confirmacao', (select s1 from vagas)), 1,
   'o escolhido recebe confirmacao');
+select is((select array_agg(k order by k) from public.notificacao n, jsonb_object_keys(n.payload) k
+            where n.usuario_id = pg_temp.p(1) and n.tipo = 'confirmacao'),
+  array['tipo', 'turno_id', 'vaga_id'],
+  'RN15: o aviso confirmacao leva tipo, turno_id e vaga_id');
+select is((select payload->>'vaga_id' from public.notificacao
+            where usuario_id = pg_temp.p(1) and tipo = 'confirmacao'),
+  (select s1 from vagas)::text,
+  'payload de confirmacao referencia a vaga correta');
+select is((select payload->>'turno_id' from public.notificacao
+            where usuario_id = pg_temp.p(1) and tipo = 'confirmacao'),
+  (select r->>'turno_id' from escolha),
+  'payload de confirmacao referencia o turno criado');
 select is(pg_temp.avisos(2, 'candidatura_recusada', (select s1 from vagas))
           + pg_temp.avisos(3, 'candidatura_recusada', (select s1 from vagas))
           + pg_temp.avisos(4, 'candidatura_recusada', (select s1 from vagas)), 2,
@@ -410,6 +422,32 @@ select is(array[pg_temp.estado_cand(4, (select s4 from vagas)), pg_temp.estado_c
   array['expirada', 'expirada'],
   'vaga cancelada expira as candidaturas pendentes');
 
+-- Vaga S5 de duas posições com três candidatos: testa a 2ª escolha recusando os restantes
+create temp table vaga_s5 as select
+  (pg_temp.publicar('selecao', '2026-11-08 12:00+00', '2026-11-08 18:00+00', 2,
+                    'c9000000-0000-4000-8000-00000000b006')->>'vaga_id')::uuid as id;
+
+select pg_temp.candidatar(n, (select id from vaga_s5)) from unnest(array[1, 2, 3]) n;
+
+select is(pg_temp.escolher('c9000000-0000-4000-8000-0000000000d1',
+            pg_temp.cand(1, (select id from vaga_s5)))->>'estado', 'confirmada',
+  '2ª escolha: primeira escolha confirma na vaga de duas posições');
+select is(array[(select estado::text from public.vaga where id = (select id from vaga_s5)),
+                pg_temp.estado_cand(2, (select id from vaga_s5)),
+                pg_temp.estado_cand(3, (select id from vaga_s5))],
+  array['publicada', 'pendente', 'pendente'],
+  '2ª escolha: após a 1ª escolha a vaga segue publicada e os dois outros seguem pendentes');
+
+select is(pg_temp.escolher('c9000000-0000-4000-8000-0000000000d1',
+            pg_temp.cand(2, (select id from vaga_s5)))->>'estado', 'confirmada',
+  '2ª escolha: a segunda escolha confirma e preenche a vaga');
+select is((select estado::text from public.vaga where id = (select id from vaga_s5)), 'preenchida',
+  '2ª escolha: com a segunda posição preenchida, a vaga vai para preenchida');
+select is(pg_temp.estado_cand(3, (select id from vaga_s5)), 'recusada',
+  'RN19: a 2ª escolha recusa os candidatos restantes pendentes');
+select is(pg_temp.avisos(3, 'candidatura_recusada', (select id from vaga_s5)), 1,
+  'o candidato restante não escolhido recebe candidatura_recusada');
+
 -- ── 6. O fechamento automático, 24 h antes ──────────────────────────────────────
 
 select pg_temp.candidatar(5, (select s3 from vagas));
@@ -451,10 +489,20 @@ select is(pg_temp.estado_cand(5, (select s3 from vagas)), 'expirada',
   'o candidato pendente é liberado (expirada)');
 select is(pg_temp.avisos(5, 'selecao_encerrada', (select s3 from vagas)), 1,
   'e avisado com selecao_encerrada');
+select is((select array_agg(k order by k) from public.notificacao n, jsonb_object_keys(n.payload) k
+            where n.usuario_id = pg_temp.p(5) and n.tipo = 'selecao_encerrada'
+              and n.referencia_id = (select s3 from vagas)),
+  array['tipo', 'vaga_id'],
+  'RN15: o aviso selecao_encerrada ao profissional leva tipo e vaga_id');
 select is((select count(*)::int from public.notificacao
             where usuario_id = 'c9000000-0000-4000-8000-0000000000d1'
               and tipo = 'selecao_encerrada' and payload->>'vaga_id' = (select s3 from vagas)::text), 1,
   'a casa também é avisada');
+select is((select array_agg(k order by k) from public.notificacao n, jsonb_object_keys(n.payload) k
+            where n.usuario_id = 'c9000000-0000-4000-8000-0000000000d1' and n.tipo = 'selecao_encerrada'
+              and n.referencia_id = (select s3 from vagas)),
+  array['tipo', 'vaga_id'],
+  'RN15: o aviso selecao_encerrada a casa leva tipo e vaga_id');
 
 select is((select estado::text from public.vaga where id = (select s2 from vagas)), 'preenchida',
   'com uma escolha feita, a vaga fecha como preenchida');
