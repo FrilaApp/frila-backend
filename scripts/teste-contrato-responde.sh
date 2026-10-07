@@ -135,6 +135,21 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:vagasAbertas:422","corpo":{"status":422,"code":"perfil_incompativel"}}
 {"op":"promete:minhasCandidaturas:422","corpo":{"status":422,"code":"perfil_incompativel"}}
 {"op":"promete:meusEstabelecimentos:422","corpo":{"status":422,"code":"perfil_incompativel"}}
+{"op":"promete:criarConta:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:registrarEvento:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:escolherCandidato:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:minhasCandidaturas:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:vagasAbertas:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:detalheVaga:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:republicarVaga:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:meusTurnos:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:contatoDoTurno:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:avisarACaminho:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:painelEstabelecimento:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:meusEstabelecimentos:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:meuEstabelecimento:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:equipeDeConfianca:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:situacaoDaConta:401","corpo":{"status":401,"code":"nao_autenticado"}}
 EOF
 )
 
