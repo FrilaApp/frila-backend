@@ -1008,6 +1008,84 @@ select pg_temp.guarda('promete:candidatosDaVaga:401',
   pg_temp.observado(null,
     $$ select public.candidatos_da_vaga(null) $$));
 
+-- ── Lote 7: mais 15 pares críticos por risco (regras de negócio: 422 validações e perfis) ──
+
+-- 96. painelEstabelecimento: 422 campo_obrigatorio (de nulo)
+select pg_temp.guarda('promete:painelEstabelecimento:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.painel_estabelecimento(%L::uuid, null, '2027-01-11 23:59:59+00'::timestamptz) $$,
+    (select casa_id from ids))));
+
+-- 97. candidatar: 422 campo_obrigatorio (vaga_id nula)
+select pg_temp.guarda('promete:candidatar:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.candidatar(null) $$));
+
+-- 98. retirarCandidatura: 422 campo_obrigatorio (candidatura_id nula)
+select pg_temp.guarda('promete:retirarCandidatura:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.retirar_candidatura(null) $$));
+
+-- 99. reabrirPorAtraso: 422 campo_obrigatorio (posicao_id nula)
+select pg_temp.guarda('promete:reabrirPorAtraso:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.reabrir_por_atraso(null) $$));
+
+-- 100. confirmarCheckinManual: 422 campo_obrigatorio (turno_id nulo)
+select pg_temp.guarda('promete:confirmarCheckinManual:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.confirmar_checkin_manual(null) $$));
+
+-- 101. contatoDoTurno: 422 campo_obrigatorio (turno_id nulo)
+select pg_temp.guarda('promete:contatoDoTurno:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.contato_do_turno(null) $$));
+
+-- 102. detalheVaga: 422 campo_obrigatorio (vaga_id nula)
+select pg_temp.guarda('promete:detalheVaga:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.detalhe_vaga(null) $$));
+
+-- 103. candidatosDaVaga: 422 campo_obrigatorio (vaga_id nula)
+select pg_temp.guarda('promete:candidatosDaVaga:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.candidatos_da_vaga(null) $$));
+
+-- 104. republicarVaga: 422 campo_obrigatorio (vaga_origem_id nula)
+select pg_temp.guarda('promete:republicarVaga:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.republicar_vaga(null, '2027-02-15 21:00:00+00'::timestamptz, '2027-02-16 03:00:00+00'::timestamptz, gen_random_uuid()) $$));
+
+-- 105. avisarACaminho: 422 campo_obrigatorio (turno_id nulo)
+select pg_temp.guarda('promete:avisarACaminho:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.avisar_a_caminho(null) $$));
+
+-- 106. configuracaoDoApp: 422 campo_obrigatorio (plataforma nula)
+select pg_temp.guarda('promete:configuracaoDoApp:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.configuracao_do_app(null) $$));
+
+-- 107. criarPerfilProfissional: 422 perfil_incompativel (contratante tentando criar perfil profissional)
+select pg_temp.guarda('promete:criarPerfilProfissional:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.criar_perfil_profissional(array[%L::uuid], null, null) $$, (select id from f))));
+
+-- 108. vagasAbertas: 422 perfil_incompativel (contratante tentando consultar vagas abertas)
+select pg_temp.guarda('promete:vagasAbertas:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.vagas_abertas() $$));
+
+-- 109. minhasCandidaturas: 422 perfil_incompativel (contratante tentando consultar candidaturas)
+select pg_temp.guarda('promete:minhasCandidaturas:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.minhas_candidaturas() $$));
+
+-- 110. meusEstabelecimentos: 422 perfil_incompativel (profissional tentando consultar estabelecimentos)
+select pg_temp.guarda('promete:meusEstabelecimentos:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.meus_estabelecimentos() $$));
+
 
 -- ── As Edge Functions ─────────────────────────────────────────────────────────
 --

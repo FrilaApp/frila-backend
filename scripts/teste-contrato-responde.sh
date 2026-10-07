@@ -120,6 +120,21 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:contestarSuspensao:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:pedirRevisaoDespacho:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:candidatosDaVaga:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:painelEstabelecimento:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:candidatar:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:retirarCandidatura:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:reabrirPorAtraso:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:confirmarCheckinManual:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:contatoDoTurno:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:detalheVaga:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:candidatosDaVaga:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:republicarVaga:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:avisarACaminho:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:configuracaoDoApp:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:criarPerfilProfissional:422","corpo":{"status":422,"code":"perfil_incompativel"}}
+{"op":"promete:vagasAbertas:422","corpo":{"status":422,"code":"perfil_incompativel"}}
+{"op":"promete:minhasCandidaturas:422","corpo":{"status":422,"code":"perfil_incompativel"}}
+{"op":"promete:meusEstabelecimentos:422","corpo":{"status":422,"code":"perfil_incompativel"}}
 EOF
 )
 

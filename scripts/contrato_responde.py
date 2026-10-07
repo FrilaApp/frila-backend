@@ -177,6 +177,22 @@ VIGIADAS = {
     ("contestarSuspensao", "401"): "nao_autenticado",
     ("pedirRevisaoDespacho", "401"): "nao_autenticado",
     ("candidatosDaVaga", "401"): "nao_autenticado",
+    # Lote 7: mais 15 pares críticos por risco (regras de negócio: 422 validações e perfis)
+    ("painelEstabelecimento", "422"): "campo_obrigatorio",
+    ("candidatar", "422"): "campo_obrigatorio",
+    ("retirarCandidatura", "422"): "campo_obrigatorio",
+    ("reabrirPorAtraso", "422"): "campo_obrigatorio",
+    ("confirmarCheckinManual", "422"): "campo_obrigatorio",
+    ("contatoDoTurno", "422"): "campo_obrigatorio",
+    ("detalheVaga", "422"): "campo_obrigatorio",
+    ("candidatosDaVaga", "422"): "campo_obrigatorio",
+    ("republicarVaga", "422"): "campo_obrigatorio",
+    ("avisarACaminho", "422"): "campo_obrigatorio",
+    ("configuracaoDoApp", "422"): "campo_obrigatorio",
+    ("criarPerfilProfissional", "422"): "perfil_incompativel",
+    ("vagasAbertas", "422"): "perfil_incompativel",
+    ("minhasCandidaturas", "422"): "perfil_incompativel",
+    ("meusEstabelecimentos", "422"): "perfil_incompativel",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
