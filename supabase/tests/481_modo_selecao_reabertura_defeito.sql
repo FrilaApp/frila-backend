@@ -16,7 +16,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(25);
+select plan(29);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -182,21 +182,24 @@ select is(((select r from res_canc_def1)->>'reaberta')::boolean, true,
 -- Guarda o ID da posição reaberta criada
 create temp table pos_reaberta_def1 as select pg_temp.pos_aberta_da_vaga((select id from vaga_def1)) as id;
 
--- O defeito se manifesta:
--- Espera-se que a posição reaberta permaneça aberta e possa ser preenchida para não deixar o turno descoberto.
--- Mas o job fechar_selecoes() a cada minuto a cancela!
+-- D4=C: a vaga é convertida para modo urgência dentro das 24 h
+select is((select modo::text from public.vaga where id = (select id from vaga_def1)), 'urgencia',
+  'caminho 1 (D4=C): a menos de 24h a vaga reaberta passa para o modo urgencia');
+
+-- O job fechar_selecoes() não cancela a posição reaberta em urgência
 select cmp_ok(privado.fechar_selecoes(), '>=', 0, 'caminho 1: executa fechar_selecoes');
 
 select is((select estado::text from public.posicao where id = (select id from pos_reaberta_def1)), 'aberta',
-  'caminho 1: DEFEITO: posição reaberta deveria permanecer aberta (mas fechar_selecoes a cancela)');
+  'caminho 1: posição reaberta permanece aberta (fechar_selecoes não a cancela)');
 select is((select estado::text from public.vaga where id = (select id from vaga_def1)), 'publicada',
-  'caminho 1: DEFEITO: vaga deveria permanecer publicada (mas fechar_selecoes a encerra)');
+  'caminho 1: vaga permanece publicada');
 
--- Tentativa de candidatura na vaga com posição reaberta a <24h:
--- Deveria ser aceita (urgência/reposição), mas atualmente candidatar_na_selecao lança 409 vaga_encerrada
-select lives_ok(
-  format($$ select pg_temp.como(pg_temp.p(4), format($x$ select public.candidatar(%L) $x$)) $$, (select id from vaga_def1)),
-  'caminho 1: DEFEITO: candidato deveria conseguir se candidatar para cobrir o turno reaberto (mas recebe 409 vaga_encerrada)');
+-- Candidatura na vaga com posição reaberta a <24h: primeiro elegível confirma na hora (urgência)
+select is((pg_temp.como(pg_temp.p(4), format($$ select public.candidatar(%L) $$, (select id from vaga_def1)))->>'estado'),
+  'confirmada',
+  'caminho 1 (D4=C): candidato confirma na hora cobrindo o turno em urgência');
+select is((select estado::text from public.vaga where id = (select id from vaga_def1)), 'preenchida',
+  'caminho 1: vaga volta a preenchida após confirmação');
 
 
 -- ════════════════════════════════════════════════════════════════════════════════
@@ -232,21 +235,24 @@ select is(((select r from res_atraso_def2)->>'reaberta')::boolean, true,
 -- Guarda ID da nova posição reaberta por atraso
 create temp table pos_reaberta_def2 as select ((select r from res_atraso_def2)->>'nova_posicao_id')::uuid as id;
 
--- O defeito se manifesta:
--- A nova posição deveria ficar aberta até 1 h antes do fim do turno para permitir substituição.
--- Mas o fechar_selecoes() a cancela imediatamente!
+-- D5=A: a vaga é convertida para modo urgência
+select is((select modo::text from public.vaga where id = (select id from vaga_def2)), 'urgencia',
+  'caminho 2 (D5=A): reabertura por atraso converte a vaga para modo urgencia');
+
+-- O fechar_selecoes() não cancela a posição reaberta por atraso em urgência
 select cmp_ok(privado.fechar_selecoes(), '>=', 0, 'caminho 2: executa fechar_selecoes');
 
 select is((select estado::text from public.posicao where id = (select id from pos_reaberta_def2)), 'aberta',
-  'caminho 2: DEFEITO: posição reaberta por atraso deveria permanecer aberta (mas fechar_selecoes a cancela)');
+  'caminho 2: posição reaberta por atraso permanece aberta (fechar_selecoes não a cancela)');
 select is((select estado::text from public.vaga where id = (select id from vaga_def2)), 'publicada',
-  'caminho 2: DEFEITO: vaga deveria permanecer publicada (mas fechar_selecoes a encerra)');
+  'caminho 2: vaga permanece publicada');
 
--- Tentativa de candidatura na posição reaberta por atraso até 1h antes do fim:
--- Em urgência é permitida, mas em seleção é barrada com 409 vaga_encerrada
-select lives_ok(
-  format($$ select pg_temp.como(pg_temp.p(6), format($x$ select public.candidatar(%L) $x$)) $$, (select id from vaga_def2)),
-  'caminho 2: DEFEITO: candidato substituto deveria conseguir candidatar-se na posição reaberta por atraso (mas recebe 409 vaga_encerrada)');
+-- Candidatura na posição reaberta por atraso: primeiro elegível confirma na hora (urgência)
+select is((pg_temp.como(pg_temp.p(6), format($$ select public.candidatar(%L) $$, (select id from vaga_def2)))->>'estado'),
+  'confirmada',
+  'caminho 2 (D5=A): candidato substituto confirma na hora cobrindo o turno');
+select is((select estado::text from public.vaga where id = (select id from vaga_def2)), 'preenchida',
+  'caminho 2: vaga volta a preenchida após confirmação do substituto');
 
 select * from finish();
 rollback;
