@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.37
+  version: 0.2.38
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -96,6 +96,32 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.38, de 07/10/2026.** Fecha o contrato do modo seleção para o iOS da v1.1 (cartão
+    d3A1WjG3; decisões de produto D1 a D9 aprovadas por João Paulo em 07/10/2026). Duas adições de
+    superfície, ambas compatíveis para quem não as lê, e a escrita das regras de reposição de posição:
+
+    - **`Candidato.da_equipe` (D7):** booleano. `true` quando o profissional está na equipe de
+      confiança do estabelecimento da vaga, e a tela mostra o selo "da sua equipe". **Não reordena**:
+      a lista continua em ordem de chegada (RN06). Campo opcional no esquema nesta versão (fora de
+      `required`), para o app poder ler o contrato antes de o backend preencher; ausente vale
+      `false`. O backend passa a devolvê-lo na entrega seguinte, e o campo vira obrigatório na
+      versão em que isso for medido pelo portão do contrato.
+    - **Aviso `selecao_lembrete` (D6):** um lembrete à casa, **uma vez por vaga**, quando faltarem
+      6 horas ou menos para o prazo de escolha (RN24) e houver ao menos uma candidatura pendente.
+      Sem pendentes, não sai. Vai a cada membro do estabelecimento. Não conta para o teto da RN23,
+      que é só de `vaga` e `vagas_agrupadas`. Payload de sempre (RN15): `tipo` e `vaga_id`.
+    - **Textos finais dos avisos do modo seleção:** definidos na descrição de `TipoNotificacao`
+      (`confirmacao` no modo seleção, `candidatura_recusada`, `selecao_encerrada`, `selecao_lembrete`).
+      Substituem o texto genérico provisório da 0.2.24.
+    - **Reposição de posição dentro das 24 h (D4 e D5):** quando uma posição de vaga em seleção volta
+      a ficar aberta (cancelamento do escolhido, `cancelar_posicao`, ou `reabrir_por_atraso`) e o
+      início está a **24 horas ou menos**, a reposição é em **urgência**: o primeiro elegível que
+      se candidata é confirmado na hora, e o agendador do modo seleção não a fecha. Com **mais de 24
+      horas**, a posição reaberta volta a ser seleção. Isso fecha a lacuna de 0.2.x, em que a posição
+      reaberta dentro das 24 h era cancelada pelo agendador em até um minuto. O campo `reaberta` do
+      aviso `cancelamento` passa a ser verdadeiro só quando a posição de fato voltou à fila. É
+      comportamento, sem mudança de assinatura; a correção no backend vem em PR próprio.
 
     **Versão 0.2.37, de 06/10/2026.** Ciclo de vida da revisão de despacho no app (decisão de produto
     sobre a opção B em `pedirRevisaoDespacho` / RF27) e parâmetros de exportação de turnos com janela
@@ -566,8 +592,9 @@ info:
       chega com o turno em andamento. A tela de reabertura deve dizer isso ao contratante.
     - **Modo seleção.** Na v1.0 toda vaga é de urgência (`modo = selecao` é recusado), e a
       posição reaberta por atraso confirma o primeiro elegível na hora. Como a vaga em seleção
-      fecha 24 h antes do início (RN24), a reabertura por atraso não cabe nela; a regra para a
-      v1.1 fica para quando o modo seleção entrar.
+      fecha 24 h antes do início (RN24), a reabertura por atraso não cabe nela. **Regra
+      da 0.2.38 (decisão D5, 07/10/2026):** em vaga de seleção, a posição reaberta por atraso é
+      sempre reposta em urgência.
 
     ---
 
@@ -2157,7 +2184,9 @@ paths:
       operationId: candidatosDaVaga
       summary: Candidatos de uma vaga no modo seleção
       description: |
-        Com reputação, denominador e taxa de comparecimento de cada um (RN08, UC04). Continua legível
+        Com reputação, denominador e taxa de comparecimento de cada um (RN08, UC04). **Em ordem de
+        chegada, sem outra ordenação** (RN06); `da_equipe` (0.2.38) marca quem está na equipe de
+        confiança da casa e serve só para o selo "da sua equipe", nunca para ordenar. Continua legível
         pela casa quando a vaga foi ocultada pela moderação da Equipe Frila; escolher é que é
         recusado (`escolher_candidato`, `422 vaga_oculta`).
 
@@ -3577,11 +3606,27 @@ components:
         dois na 0.2.24), declarados como enum a partir da 0.2.33 porque `MeusDados.notificacoes`
         os devolve e o cliente precisa gerar o modelo. Só `vaga` e `vagas_agrupadas` contam para o
         teto da RN23.
+
+        **Textos do push do modo seleção (0.2.38, aprovados em 07/10/2026).** O corpo do push é
+        montado no servidor com a vaga e sai sem dado pessoal do candidato (RN15). Quando falta o dado
+        entre `{}`, vale o texto sem ele.
+
+        | Tipo | Quem recebe | Título | Corpo |
+        |---|---|---|---|
+        | `confirmacao` (vaga em seleção) | Profissional escolhido | Você foi escolhido | O estabelecimento escolheu você para o turno. Toque para ver os detalhes e o contato. |
+        | `candidatura_recusada` | Candidato não escolhido, quando a vaga encheu | Vaga preenchida | O estabelecimento escolheu outro profissional para esta vaga. Sua candidatura foi encerrada e você está livre para outras vagas. |
+        | `selecao_encerrada` | Candidato pendente | Vaga fechada sem escolha | O prazo de escolha terminou e sua candidatura foi encerrada. Você está livre para outras vagas. |
+        | `selecao_encerrada` | Membro do estabelecimento | Prazo de escolha encerrado | A vaga de {função} fechou sem todas as posições preenchidas. Toque para republicar em urgência. |
+        | `selecao_lembrete` | Membro do estabelecimento | Candidatos esperando sua escolha | {N} candidato(s) para a vaga de {função}. Escolha até {dd/mm às HH:MM}, quando a vaga fecha. |
+
+        `confirmacao` em vaga de urgência mantém o texto de sempre ("Turno confirmado"). O
+        `selecao_lembrete` sai uma vez por vaga: faltando 6 horas ou menos para o prazo de escolha
+        (RN24) e com ao menos uma candidatura pendente. O horário é o do fuso America/Sao_Paulo (RN18).
       type: string
       enum: [vaga, vagas_agrupadas, vaga_sem_elegiveis, confirmacao, lembrete_24h, lembrete_3h,
              inicio_sem_checkin, atraso_15min, fim_sem_checkout, vaga_vazia, checkin,
              checkin_manual_pendente, cancelamento, avaliacao_disponivel, suspensao, reativacao,
-             candidatura_recusada, selecao_encerrada]
+             candidatura_recusada, selecao_encerrada, selecao_lembrete]
     EventoDeTelemetria:
       description: |
         Dicionário fechado. Acrescentar evento é mudança de contrato, com versão subindo — é o
@@ -4221,6 +4266,12 @@ components:
           $ref: '#/components/schemas/PerfilPublico'
         criada_em:
           $ref: '#/components/schemas/Instante'
+        da_equipe:
+          description: |
+            0.2.38. `true` se o profissional está na equipe de confiança do estabelecimento da vaga;
+            a tela mostra o selo "da sua equipe". Não altera a ordem da lista (RN06). Ausente vale
+            `false`.
+          type: boolean
 
     # ── Turno
 
