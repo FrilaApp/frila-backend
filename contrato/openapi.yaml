@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.38
+  version: 0.2.39
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -96,6 +96,18 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.39, de 08/10/2026.** Corrige dois `403` que o contrato declarava e o sistema nunca
+    devolve. Os dois vieram de cópia de modelo na revisão de 03/10 (a resposta comum
+    `ContaSuspensa` colada em 14 operações), e a Bigorna os provou errados contra os testes
+    pgTAP 130 e 495. Nenhuma outra mudança de superfície:
+
+    - **`candidatar`: sai o `403`.** Conta suspensa que se candidata recebe
+      `422 inelegivel` com `details: perfil_suspenso` (RN13), que o contrato já declarava.
+    - **`registrarDispositivo`: sai o `403`.** Conta suspensa registra o token com `200` (RN15):
+      RN15 não exige conta ativa para registrar o token do aparelho.
+    - Quem tratava esses dois `403` não perde nada: nunca chegavam. O texto da 0.2.x sobre as
+      "14 operações" fica como história; para estas duas, vale o que está acima.
 
     **Versão 0.2.38, de 07/10/2026.** Fecha o contrato do modo seleção para o iOS da v1.1 (cartão
     d3A1WjG3; decisões de produto D1 a D9 aprovadas por João Paulo em 07/10/2026). Duas adições de
@@ -2034,6 +2046,9 @@ paths:
           partir daí a candidatura recebe `409 vaga_encerrada`. Reenviar devolve a mesma candidatura
           pendente, e a retirada volta a `pendente` quando o profissional se candidata de novo.
 
+        **Conta suspensa não recebe `403`:** a candidatura é recusada por elegibilidade, com
+        `422 inelegivel` e `details: perfil_suspenso` (RN13).
+
         As três respostas são normais: `200` (entrou), `409 posicao_ja_preenchida` (alguém chegou
         antes — a tela diz "que pena, foi rápido", não "algo deu errado") e `422 inelegivel`
         (`turno_sobreposto`, `perfil_suspenso` ou `funcao_incompativel`). Reenviar para a mesma vaga
@@ -2091,8 +2106,6 @@ paths:
                     contato: null
         '401':
           $ref: '#/components/responses/NaoAutenticado'
-        '403':
-          $ref: '#/components/responses/ContaSuspensa'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
         '409':
@@ -2937,6 +2950,9 @@ paths:
         app e sempre que o token mudar. O mesmo token reenviado só atualiza a data. Quem recusou a
         permissão de notificação não registra token e, para o despacho, não é alcançável.
 
+        **Conta suspensa registra normalmente** (`200`): RN15 não exige conta ativa para registrar o
+        token do aparelho. Esta operação não responde `403`.
+
         A resposta traz o `vinculo_id` deste token com a conta que chama. O mesmo id vem em todo
         push mandado a este aparelho para esta conta, e é por ele que o app sabe que o aviso é de
         quem está no aparelho: o token que era de outra conta passa para quem chama com um
@@ -2964,8 +2980,6 @@ paths:
                 $ref: '#/components/schemas/Dispositivo'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
-        '403':
-          $ref: '#/components/responses/ContaSuspensa'
         '422':
           $ref: '#/components/responses/RegraRecusou'
 

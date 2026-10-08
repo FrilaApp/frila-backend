@@ -239,9 +239,6 @@ ISENTAS = {
     ("renovarSessao", "401"): "renovação de sessão é executada pelo Supabase Auth (GoTrue), fora do Postgres",
     # PostgREST direto em tabela, fora do harness de RPC
     ("listarFuncoes", "401"): "leitura direta de tabela via PostgREST, fora do harness de RPC",
-    # Divergências de regra de negócio do produto
-    ("candidatar", "403"): "candidatura de conta suspensa devolve 422 inelegivel (RN13), e não 403",
-    ("registrarDispositivo", "403"): "conta suspensa tem permissão de registrar dispositivo para receber notificações (RN15)",
     # Edge Functions (testadas em Deno pelo job de Edge Functions da CI)
     ("entrarDemonstracao", "404"): "código ou e-mail de demonstração inexistente é recusado pela Edge Function entrar-demonstracao",
     ("exportarMeusDados", "401"): "ausência de credencial JWT é tratada pela Edge Function exportar-meus-dados",
