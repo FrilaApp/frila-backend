@@ -209,6 +209,22 @@ VIGIADAS = {
     ("meuEstabelecimento", "401"): "nao_autenticado",
     ("equipeDeConfianca", "401"): "nao_autenticado",
     ("situacaoDaConta", "401"): "nao_autenticado",
+    # Lote 9: mais 15 pares críticos por risco (regras de negócio 422 e perímetro 401)
+    ("criteriosDeNotificacao", "422"): "perfil_incompativel",
+    ("incluirNaEquipe", "422"): "perfil_incompativel",
+    ("removerDaEquipe", "422"): "perfil_incompativel",
+    ("minhaConta", "401"): "nao_autenticado",
+    ("meuPerfilProfissional", "401"): "nao_autenticado",
+    ("atualizarPerfilProfissional", "401"): "nao_autenticado",
+    ("criarPerfilProfissional", "401"): "nao_autenticado",
+    ("cadastrarEstabelecimento", "401"): "nao_autenticado",
+    ("criteriosDeNotificacao", "401"): "nao_autenticado",
+    ("incluirNaEquipe", "401"): "nao_autenticado",
+    ("removerDaEquipe", "401"): "nao_autenticado",
+    ("perfilPublico", "401"): "nao_autenticado",
+    ("registrarDispositivo", "401"): "nao_autenticado",
+    ("removerDispositivo", "401"): "nao_autenticado",
+    ("registrarEvento", "401"): "nao_autenticado",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não

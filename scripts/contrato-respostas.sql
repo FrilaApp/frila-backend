@@ -1171,6 +1171,83 @@ select pg_temp.guarda('promete:situacaoDaConta:401',
   pg_temp.observado(null,
     $$ select public.situacao_da_conta() $$));
 
+-- ── Lote 9: 15 novos pares críticos vigiados do contrato (regras 422 e perímetro 401) ──
+
+-- 126. criteriosDeNotificacao: 422 perfil_incompativel (chamador contratante)
+select pg_temp.guarda('promete:criteriosDeNotificacao:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.criterios_de_notificacao() $$));
+
+-- 127. incluirNaEquipe: 422 perfil_incompativel (chamador profissional)
+select pg_temp.guarda('promete:incluirNaEquipe:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    format($$ select public.incluir_na_equipe(%L::uuid, 'cc000000-0000-4000-8000-000000000002'::uuid) $$, (select casa_id from ids))));
+
+-- 128. removerDaEquipe: 422 perfil_incompativel (chamador profissional)
+select pg_temp.guarda('promete:removerDaEquipe:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    format($$ select public.remover_da_equipe(%L::uuid, 'cc000000-0000-4000-8000-000000000002'::uuid) $$, (select casa_id from ids))));
+
+-- 129. minhaConta: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:minhaConta:401',
+  pg_temp.observado(null,
+    $$ select public.minha_conta() $$));
+
+-- 130. meuPerfilProfissional: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:meuPerfilProfissional:401',
+  pg_temp.observado(null,
+    $$ select public.meu_perfil_profissional() $$));
+
+-- 131. atualizarPerfilProfissional: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:atualizarPerfilProfissional:401',
+  pg_temp.observado(null,
+    $$ select public.atualizar_perfil_profissional(ponto_base => '{"latitude":-15.7901,"longitude":-47.8851}'::jsonb) $$));
+
+-- 132. criarPerfilProfissional: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:criarPerfilProfissional:401',
+  pg_temp.observado(null,
+    format($$ select public.criar_perfil_profissional(array[%L]::uuid[], '{"latitude":-15.7900,"longitude":-47.8850}'::jsonb) $$, (select id from f))));
+
+-- 133. cadastrarEstabelecimento: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:cadastrarEstabelecimento:401',
+  pg_temp.observado(null,
+    $$ select public.cadastrar_estabelecimento('Casa Sem Token','29979036000140','food_service','CLN 108','{"latitude":-15.7905,"longitude":-47.8855}') $$));
+
+-- 134. criteriosDeNotificacao: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:criteriosDeNotificacao:401',
+  pg_temp.observado(null,
+    $$ select public.criterios_de_notificacao() $$));
+
+-- 135. incluirNaEquipe: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:incluirNaEquipe:401',
+  pg_temp.observado(null,
+    format($$ select public.incluir_na_equipe(%L::uuid, 'cc000000-0000-4000-8000-000000000002'::uuid) $$, (select casa_id from ids))));
+
+-- 136. removerDaEquipe: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:removerDaEquipe:401',
+  pg_temp.observado(null,
+    format($$ select public.remover_da_equipe(%L::uuid, 'cc000000-0000-4000-8000-000000000002'::uuid) $$, (select casa_id from ids))));
+
+-- 137. perfilPublico: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:perfilPublico:401',
+  pg_temp.observado(null,
+    $$ select public.perfil_publico('cc000000-0000-4000-8000-000000000002'::uuid) $$));
+
+-- 138. registrarDispositivo: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:registrarDispositivo:401',
+  pg_temp.observado(null,
+    $$ select public.registrar_dispositivo('fcm_token_teste_harness_contrato_anon_1234', 'ios') $$));
+
+-- 139. removerDispositivo: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:removerDispositivo:401',
+  pg_temp.observado(null,
+    $$ select public.remover_dispositivo('fcm_token_teste_harness_contrato_anon_1234') $$));
+
+-- 140. registrarEvento: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:registrarEvento:401',
+  pg_temp.observado(null,
+    $$ select public.registrar_evento('app_aberto') $$));
+
 
 -- ── As Edge Functions ─────────────────────────────────────────────────────────
 --
