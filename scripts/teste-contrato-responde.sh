@@ -264,9 +264,46 @@ caso_flags "--falhar-vazias" "coleção vazia reprova com --falhar-vazias" 1 "$D
 VAGA_COM_POSICAO='{"op":"publicarVaga","corpo":{"vaga_id":"00000000-0000-0000-0000-000000000001","posicoes":["00000000-0000-0000-0000-000000000002"]}}'
 caso_flags "--falhar-vazias" "coleção exercitada passa com --falhar-vazias" 0 "$VAGA_COM_POSICAO" "Toda coleção declarada observada nas respostas foi exercitada"
 
+# Endurecimento do portão: ISENTAS obsoleta reprova, e recusa nova no contrato sem vigia nem isenção reprova.
+TESTE_ISENTA_FANTASMA=$(printf '%s\n' "$DEZESSEIS" | "$PY" -c '
+import sys, scripts.contrato_responde as cr
+cr.ISENTAS[("operacaoInexistente", "400")] = "motivo fantasia"
+res = cr.main()
+sys.exit(res)
+' 2>&1 || true)
+if grep -qF "operacaoInexistente: o contrato não declara mais 400, e o par está em ISENTAS" <<<"$TESTE_ISENTA_FANTASMA"; then
+  echo "  ✓ isenção fantasma em ISENTAS reprova nomeando o par e o contrato"
+else
+  echo "  ✗ isenção fantasma em ISENTAS não reprovou como esperado"
+  falhas=$((falhas + 1))
+fi
+
+TESTE_RECUSA_SOLTA=$(printf '%s\n' "$DEZESSEIS" | "$PY" -c '
+import sys, scripts.contrato_responde as cr
+orig_carrega = cr.carrega_contrato
+def mock_carrega():
+    doc = orig_carrega()
+    doc["paths"]["/rpc/testeSolto"] = {
+        "post": {
+            "operationId": "testeSolto",
+            "responses": {"418": {"description": "bule"}}
+        }
+    }
+    return doc
+cr.carrega_contrato = mock_carrega
+res = cr.main()
+sys.exit(res)
+' 2>&1 || true)
+if grep -qF "testeSolto: o contrato declara recusa 418, mas o par não está vigiado em VIGIADAS nem isento em ISENTAS" <<<"$TESTE_RECUSA_SOLTA"; then
+  echo "  ✓ recusa nova solta no contrato reprova exigindo cobertura ou justificativa"
+else
+  echo "  ✗ recusa nova solta no contrato não reprovou como esperado"
+  falhas=$((falhas + 1))
+fi
+
 echo
 if [ "$falhas" -ne 0 ]; then
   echo "✗ $falhas caso(s) do portão não fecharam."
   exit 1
 fi
-echo "Os 12 casos passaram."
+echo "Os 14 casos passaram."

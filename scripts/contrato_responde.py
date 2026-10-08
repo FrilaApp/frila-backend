@@ -478,8 +478,38 @@ def main():
                 f"mas o código devolveu code {codigos_vistos}"
             )
 
-    vigiadas_ok = len(VIGIADAS) - len(promessas_quebradas)
-    nao_vigiados = sum(len(v) for v in declaradas.values()) - len(VIGIADAS) - len(ISENTAS)
+    # ISENTAS obsoleta deve reprovar: toda entrada de ISENTAS precisa ainda existir no contrato.
+    for par, motivo in sorted(ISENTAS.items()):
+        operacao, esperado = par
+        if esperado not in declaradas.get(operacao, set()):
+            promessas_quebradas.append(
+                f"{operacao}: o contrato não declara mais {esperado}, e o par está em "
+                f"ISENTAS. Tire-o da lista no mesmo PR que mudou o contrato"
+            )
+
+    # Todo par declarado no contrato precisa estar vigiado em VIGIADAS ou isento em ISENTAS.
+    # Operação ou recusa nova solta quebra o portão.
+    todas_declaradas = {(op, st) for op, sts in declaradas.items() for st in sts}
+    nao_vigiados_pares = sorted(todas_declaradas - set(VIGIADAS) - set(ISENTAS))
+    nao_vigiados = len(nao_vigiados_pares)
+    for operacao, esperado in nao_vigiados_pares:
+        promessas_quebradas.append(
+            f"{operacao}: o contrato declara recusa {esperado}, mas o par não está vigiado "
+            f"em VIGIADAS nem isento em ISENTAS. Cubra-o em scripts/contrato-respostas.sql "
+            f"ou justifique em ISENTAS"
+        )
+
+    vigiadas_ok = sum(
+        1
+        for par in VIGIADAS
+        if par[1] in declaradas.get(par[0], set())
+        and observados.get(par) is not None
+        and any(str(st) == par[1] for st, _ in observados[par])
+        and (
+            VIGIADAS[par] is None
+            or any(str(st) == par[1] and cd == VIGIADAS[par] for st, cd in observados[par])
+        )
+    )
 
     # Inventário: operação do contrato que ainda não tem implementação. Não é falha — é o
     # que falta do Sprint 2 em diante —, mas é o número que diz o quanto este portão
