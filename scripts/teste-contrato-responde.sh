@@ -150,6 +150,21 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:meuEstabelecimento:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:equipeDeConfianca:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:situacaoDaConta:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:criteriosDeNotificacao:422","corpo":{"status":422,"code":"perfil_incompativel"}}
+{"op":"promete:incluirNaEquipe:422","corpo":{"status":422,"code":"perfil_incompativel"}}
+{"op":"promete:removerDaEquipe:422","corpo":{"status":422,"code":"perfil_incompativel"}}
+{"op":"promete:minhaConta:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:meuPerfilProfissional:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:atualizarPerfilProfissional:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:criarPerfilProfissional:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:cadastrarEstabelecimento:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:criteriosDeNotificacao:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:incluirNaEquipe:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:removerDaEquipe:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:perfilPublico:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:registrarDispositivo:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:removerDispositivo:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:registrarEvento:401","corpo":{"status":401,"code":"nao_autenticado"}}
 EOF
 )
 
