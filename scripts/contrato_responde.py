@@ -225,14 +225,35 @@ VIGIADAS = {
     ("registrarDispositivo", "401"): "nao_autenticado",
     ("removerDispositivo", "401"): "nao_autenticado",
     ("registrarEvento", "401"): "nao_autenticado",
+    # Lote 10: última RPC vigiada para encerramento do perímetro de autenticação
+    ("criarConta", "401"): "nao_autenticado",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
 # vigiados" porque são coisas diferentes: estes nunca vão entrar pela colheita no banco.
 ISENTAS = {
+    # Supabase Auth (GoTrue), fora do Postgres
     ("entrarDemonstracao", "429"): "limite de tentativas do Supabase Auth, fora do Postgres",
     ("pedirCodigo", "429"): "limite de reenvio do Supabase Auth, fora do Postgres",
+    ("confirmarCodigo", "401"): "validação de código é executada pelo Supabase Auth (GoTrue), fora do Postgres",
+    ("renovarSessao", "401"): "renovação de sessão é executada pelo Supabase Auth (GoTrue), fora do Postgres",
+    # PostgREST direto em tabela, fora do harness de RPC
+    ("listarFuncoes", "401"): "leitura direta de tabela via PostgREST, fora do harness de RPC",
+    # Divergências de regra de negócio do produto
+    ("candidatar", "403"): "candidatura de conta suspensa devolve 422 inelegivel (RN13), e não 403",
+    ("registrarDispositivo", "403"): "conta suspensa tem permissão de registrar dispositivo para receber notificações (RN15)",
+    # Edge Functions (testadas em Deno pelo job de Edge Functions da CI)
+    ("entrarDemonstracao", "404"): "código ou e-mail de demonstração inexistente é recusado pela Edge Function entrar-demonstracao",
+    ("exportarMeusDados", "401"): "ausência de credencial JWT é tratada pela Edge Function exportar-meus-dados",
+    ("exportarMeusDados", "404"): "usuário inexistente é tratado pela Edge Function exportar-meus-dados",
     ("exportarMeusDados", "405"): "método não permitido é decidido pela Edge Function, não pelo banco",
+    ("exportarTurnos", "401"): "ausência de credencial JWT é tratada pela Edge Function exportar-turnos",
+    ("exportarTurnos", "403"): "permissão de membro é tratada pela Edge Function exportar-turnos",
+    ("exportarTurnos", "405"): "método não permitido é decidido pela Edge Function exportar-turnos",
+    ("exportarTurnos", "422"): "validação de parâmetros de exportação é tratada pela Edge Function exportar-turnos",
+    ("excluirConta", "401"): "validação de credencial JWT é feita pela Edge Function excluir-conta",
+    ("excluirConta", "405"): "método não permitido é decidido pela Edge Function excluir-conta",
+    ("excluirConta", "422"): "confirmação explícita no corpo ({ confirmar: true }) é exigida pela Edge Function excluir-conta",
 }
 
 

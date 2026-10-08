@@ -1248,6 +1248,13 @@ select pg_temp.guarda('promete:registrarEvento:401',
   pg_temp.observado(null,
     $$ select public.registrar_evento('app_aberto') $$));
 
+-- ── Lote 10: última recusa crítica vigiada de RPC no banco (encerramento do perímetro 401) ──
+
+-- 141. criarConta: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:criarConta:401',
+  pg_temp.observado(null,
+    $$ select public.criar_conta('profissional','Teste Sem Token','+5561999990001','1990-01-01','1.0') $$));
+
 
 -- ── As Edge Functions ─────────────────────────────────────────────────────────
 --

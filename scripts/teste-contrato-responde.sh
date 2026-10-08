@@ -165,6 +165,7 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:registrarDispositivo:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:removerDispositivo:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:registrarEvento:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:criarConta:401","corpo":{"status":401,"code":"nao_autenticado"}}
 EOF
 )
 
