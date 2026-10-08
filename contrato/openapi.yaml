@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.39
+  version: 0.2.40
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -96,6 +96,22 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.40, de 08/10/2026.** Suporte por e-mail a partir do turno (cartão iOS #21 e
+    NLgx2GCO, US22, RF23, UC14; decisões D1 a D11 aprovadas por João Paulo em 08/10/2026). O
+    backend **não** recebe o e-mail: o app chama `abrir_suporte` antes de abrir o e-mail do
+    aparelho, recebe o `Protocolo` e põe o protocolo curto no assunto. Só superfície nova:
+
+    - **`POST /rpc/abrir_suporte`** (`abrirSuporte`): abre o chamado de suporte de um turno do
+      qual o chamador é parte. Devolve `Protocolo` com o prazo de 5 dias úteis. Idempotente pela
+      `chave`. Recusas: `401`, `403` (conta suspensa), `404`, `422`, `429`.
+    - **`CategoriaSuporte`** (novo): `endereco`, `atraso`, `conduta`, `seguranca`, `outro`
+      (os motivos do UC14).
+    - **`Protocolo.tipo` ganha `suporte`**, e a descrição de `Protocolo` passa a definir o
+      **protocolo curto**: os 8 primeiros caracteres hexadecimais de `ocorrencia_id`, sem hifens,
+      em maiúsculas. É o que vai no assunto do e-mail e o que a Equipe Frila usa para achar o
+      chamado.
+    - Nenhuma mudança em operação existente.
 
     **Versão 0.2.39, de 08/10/2026.** Corrige dois `403` que o contrato declarava e o sistema nunca
     devolve. Os dois vieram de cópia de modelo na revisão de 03/10 (a resposta comum
@@ -2833,6 +2849,73 @@ paths:
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
+  /rpc/abrir_suporte:
+    post:
+      tags: [Confiança e direitos]
+      operationId: abrirSuporte
+      summary: Abrir um chamado de suporte a partir de um turno
+      description: |
+        Registra o chamado e devolve o `Protocolo`, com o prazo de até 5 dias úteis. **Não envia
+        e-mail**: o app chama esta operação e em seguida abre o e-mail do aparelho para
+        `suporte@frila.app`, com o protocolo curto no assunto, no formato
+        `[Frila Suporte #<protocolo curto>]`. O texto da pessoa vai só nesse e-mail, e o Frila não o
+        guarda no banco (RN15). Sem atendimento ao vivo (RF23). Em risco imediato, o app mostra os
+        atalhos para o 190 e o 180 sem esperar a resposta (UC14).
+
+        Quem pode chamar: o profissional do turno, ou um membro do estabelecimento da vaga, com
+        a conta ativa. A conta suspensa recebe `403 sem_permissao` com `details: conta_suspensa`;
+        o canal dela é a contestação (`/rpc/contestar_suspensao`) ou o e-mail direto.
+
+        **Idempotente pela `chave`:** reenviar com a mesma chave devolve o mesmo `Protocolo` e não
+        abre outro chamado, e esse reenvio não conta para o limite diário.
+
+        **Limite diário (0.2.40):** no máximo 5 chamados novos por conta por dia (dia de
+        America/Sao_Paulo). O 5 é um valor inicial, ajustável sem mudar o contrato, a reavaliar com
+        dados do piloto. O seguinte recebe `429 limite_excedido`. O limite por minuto de toda
+        escrita (RNF07) continua valendo à parte.
+
+        Recusas: `campo_obrigatorio` com o campo em `details` (`turno_id`, `categoria` ou `chave`);
+        `campo_invalido` com `details: categoria` quando fora do enum `CategoriaSuporte`; `404
+        nao_encontrado` quando o turno não existe **ou não é do chamador**, sem distinguir os dois
+        casos.
+      x-requisitos: [RF23, RN15, UC14]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [turno_id, categoria, chave]
+              properties:
+                turno_id:
+                  $ref: '#/components/schemas/Uuid'
+                categoria:
+                  $ref: '#/components/schemas/CategoriaSuporte'
+                chave:
+                  $ref: '#/components/schemas/ChaveDeIdempotencia'
+      responses:
+        '200':
+          description: Chamado aberto, ou o mesmo chamado de um reenvio com a mesma `chave`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Protocolo'
+              example:
+                ocorrencia_id: 6f1c2a4e-2b7d-4c5e-9a1f-3d2e1c0b9a88
+                tipo: suporte
+                criada_em: '2026-10-08T14:00:00Z'
+                prazo_resposta_ate: '2026-10-15'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+        '429':
+          $ref: '#/components/responses/LimiteExcedido'
+
   /rpc/bloquear:
     post:
       tags: [Confiança e direitos]
@@ -3604,6 +3687,12 @@ components:
     MotivoDenuncia:
       type: string
       enum: [assedio, discriminacao, risco_seguranca, outro]
+    CategoriaSuporte:
+      description: |
+        O motivo do chamado de suporte, escolhido pela pessoa na tela do turno (UC14). Não é o
+        texto do pedido: esse vai só no e-mail.
+      type: string
+      enum: [endereco, atraso, conduta, seguranca, outro]
     Plataforma:
       type: string
       enum: [ios, android, web]
@@ -4630,13 +4719,18 @@ components:
     Protocolo:
       type: object
       required: [ocorrencia_id, tipo, criada_em, prazo_resposta_ate]
-      description: Registro de algo que a Equipe Frila responde por e-mail em até 5 dias úteis.
+      description: |
+        Registro de algo que a Equipe Frila responde por e-mail em até 5 dias úteis.
+
+        O **protocolo curto** é o que a pessoa vê e cita: os 8 primeiros caracteres hexadecimais de
+        `ocorrencia_id`, sem hifens, em maiúsculas (`6f1c2a4e-…` vira `6F1C2A4E`). O app o calcula
+        desta regra, e a Equipe Frila o usa para achar a ocorrência.
       properties:
         ocorrencia_id:
           $ref: '#/components/schemas/Uuid'
         tipo:
           type: string
-          enum: [denuncia, contestacao, revisao_despacho]
+          enum: [denuncia, contestacao, revisao_despacho, suporte]
         criada_em:
           $ref: '#/components/schemas/Instante'
         prazo_resposta_ate:

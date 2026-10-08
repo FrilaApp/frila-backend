@@ -213,6 +213,11 @@ select pg_temp.guarda('meusTurnos', pg_temp.como('cc000000-0000-4000-8000-000000
 select pg_temp.guarda('contatoDoTurno', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
   $$ select public.contato_do_turno(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
 
+-- ── Suporte a partir do turno (contrato 0.2.40) ────────────────────────────────
+select pg_temp.guarda('abrirSuporte', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
+  $$ select public.abrir_suporte(%L::uuid, 'endereco', 'cc000000-0000-4000-8000-000000000777'::uuid) $$,
+  ((select r from cand)->>'turno_id')::uuid)));
+
 -- ── O modo seleção (contrato 0.2.24) ──────────────────────────────────────────
 --
 -- Uma vaga de seleção a onze dias, entre os turnos das outras duas: os dois profissionais
@@ -1254,6 +1259,47 @@ select pg_temp.guarda('promete:registrarEvento:401',
 select pg_temp.guarda('promete:criarConta:401',
   pg_temp.observado(null,
     $$ select public.criar_conta('profissional','Teste Sem Token','+5561999990001','1990-01-01','1.0') $$));
+
+-- ── Suporte por e-mail a partir do turno (contrato 0.2.40): 5 recusas vigiadas ──
+
+-- 142. abrirSuporte: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:abrirSuporte:401',
+  pg_temp.observado(null, format(
+    $$ select public.abrir_suporte(%L::uuid, 'endereco', gen_random_uuid()) $$,
+    ((select r from cand)->>'turno_id')::uuid)));
+
+-- 143. abrirSuporte: 403 sem_permissao (conta suspensa)
+insert into auth.users (id, email) values ('ee000000-0000-4000-8000-000000000093', 'suspenso_suporte@frila.test') on conflict do nothing;
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado)
+values ('ee000000-0000-4000-8000-000000000093', 'profissional', 'Suspenso Suporte', '+5561999990093', 'suspenso_suporte@frila.test', '1990-01-01', '1.0', now(), 'suspensa')
+on conflict (id) do update set estado = 'suspensa';
+select pg_temp.guarda('promete:abrirSuporte:403',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000093', format(
+    $$ select public.abrir_suporte(%L::uuid, 'endereco', gen_random_uuid()) $$,
+    ((select r from cand)->>'turno_id')::uuid)));
+
+-- 144. abrirSuporte: 404 nao_encontrado (turno inexistente)
+select pg_temp.guarda('promete:abrirSuporte:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.abrir_suporte('c0000000-0000-4000-8000-000000000099'::uuid, 'endereco', gen_random_uuid()) $$));
+
+-- 145. abrirSuporte: 422 campo_obrigatorio (chave nula)
+select pg_temp.guarda('promete:abrirSuporte:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.abrir_suporte(%L::uuid, 'endereco', null::uuid) $$,
+    ((select r from cand)->>'turno_id')::uuid)));
+
+-- 146. abrirSuporte: 429 limite_excedido (teto de 5 chamados por dia atingido)
+-- Semeia 5 chamados anteriores para a conta Pê (...0002) no dia corrente
+set local frila.agora = '2027-02-01 21:25:00+00';
+insert into public.ocorrencia (tipo, origem, turno_id, autor_id, motivo, chave_cliente, criada_em)
+select 'suporte', 'app', ((select r from cand)->>'turno_id')::uuid, 'cc000000-0000-4000-8000-000000000002'::uuid, 'outro', gen_random_uuid(), privado.agora()
+  from generate_series(1, 5);
+
+select pg_temp.guarda('promete:abrirSuporte:429',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.abrir_suporte(%L::uuid, 'endereco', gen_random_uuid()) $$,
+    ((select r from cand)->>'turno_id')::uuid)));
 
 
 -- ── As Edge Functions ─────────────────────────────────────────────────────────
