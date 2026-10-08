@@ -1086,6 +1086,91 @@ select pg_temp.guarda('promete:meusEstabelecimentos:422',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002',
     $$ select public.meus_estabelecimentos() $$));
 
+-- ── Lote 8: mais 15 pares críticos por risco (422 de negócio, 403 e perímetro 401) ──
+
+-- Auxiliar para 111: usuario autenticado sem linha em public.usuario
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
+values ('00000000-0000-0000-0000-000000000000', 'ee000000-0000-4000-8000-000000000094'::uuid,
+        'authenticated', 'authenticated', 'sem-usuario-criar@t.test', now(), now(), false, false)
+on conflict do nothing;
+
+-- 111. criarConta: 422 campo_obrigatorio (nome nulo)
+select pg_temp.guarda('promete:criarConta:422',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000094',
+    $$ select public.criar_conta('profissional', null, '+5561999990001', '1990-01-01', '1.0') $$));
+
+delete from auth.users where id = 'ee000000-0000-4000-8000-000000000094';
+
+-- 112. registrarEvento: 422 campo_obrigatorio (evento nulo)
+select pg_temp.guarda('promete:registrarEvento:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.registrar_evento(null) $$));
+
+-- 113. escolherCandidato: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:escolherCandidato:401',
+  pg_temp.observado(null,
+    $$ select public.escolher_candidato('c0000000-0000-4000-8000-000000000001'::uuid) $$));
+
+-- 114. minhasCandidaturas: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:minhasCandidaturas:401',
+  pg_temp.observado(null,
+    $$ select public.minhas_candidaturas() $$));
+
+-- 115. vagasAbertas: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:vagasAbertas:401',
+  pg_temp.observado(null,
+    $$ select public.vagas_abertas() $$));
+
+-- 116. detalheVaga: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:detalheVaga:401',
+  pg_temp.observado(null,
+    $$ select public.detalhe_vaga('c0000000-0000-4000-8000-000000000001'::uuid) $$));
+
+-- 117. republicarVaga: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:republicarVaga:401',
+  pg_temp.observado(null,
+    $$ select public.republicar_vaga('c0000000-0000-4000-8000-000000000001'::uuid, now(), now(), gen_random_uuid()) $$));
+
+-- 118. meusTurnos: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:meusTurnos:401',
+  pg_temp.observado(null,
+    $$ select public.meus_turnos() $$));
+
+-- 119. contatoDoTurno: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:contatoDoTurno:401',
+  pg_temp.observado(null,
+    $$ select public.contato_do_turno('c0000000-0000-4000-8000-000000000001'::uuid) $$));
+
+-- 120. avisarACaminho: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:avisarACaminho:401',
+  pg_temp.observado(null,
+    $$ select public.avisar_a_caminho('c0000000-0000-4000-8000-000000000001'::uuid) $$));
+
+-- 121. painelEstabelecimento: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:painelEstabelecimento:401',
+  pg_temp.observado(null,
+    $$ select public.painel_estabelecimento('c0000000-0000-4000-8000-000000000001'::uuid, now(), now()) $$));
+
+-- 122. meusEstabelecimentos: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:meusEstabelecimentos:401',
+  pg_temp.observado(null,
+    $$ select public.meus_estabelecimentos() $$));
+
+-- 123. meuEstabelecimento: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:meuEstabelecimento:401',
+  pg_temp.observado(null,
+    $$ select public.meu_estabelecimento('c0000000-0000-4000-8000-000000000001'::uuid) $$));
+
+-- 124. equipeDeConfianca: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:equipeDeConfianca:401',
+  pg_temp.observado(null,
+    $$ select public.equipe_de_confianca('c0000000-0000-4000-8000-000000000001'::uuid) $$));
+
+-- 125. situacaoDaConta: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:situacaoDaConta:401',
+  pg_temp.observado(null,
+    $$ select public.situacao_da_conta() $$));
+
 
 -- ── As Edge Functions ─────────────────────────────────────────────────────────
 --
