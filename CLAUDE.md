@@ -18,6 +18,17 @@ Trabalhamos em **português-BR**, inclusive commits, nomes de função e colunas
 
 ---
 
+## Protocolo de conclusão do worker (AO)
+
+- Tarefa só está pronta depois de rodar `ao report --done` (ou `ao report --stuck` com o
+  motivo) e mostrar a saída. É o último passo de toda revisão, implementação de cartão ou
+  auditoria, mesmo com o PR já verde.
+- Se o limite de uso ou uma ordem de parada estiver perto: commit do WIP, push da branch,
+  liberar o lock do banco e só então `ao report` com um resumo de checkpoint, ANTES de
+  qualquer outra coisa.
+
+---
+
 ## Quatro Claudes no mesmo quadro
 
 Este projeto é tocado por quatro pessoas com Claude Code ao lado, ao mesmo tempo:
@@ -212,6 +223,18 @@ end $$;
   `contrato/openapi.yaml`.
 - Nenhum PR entra com teste vermelho. Se o teste é difícil de escrever, o desenho está
   errado.
+
+#### Lock do banco compartilhado e ambiente
+
+- O Supabase local é compartilhado entre as sessões de worker por um lock. Antes de uma
+  bateria longa no banco, veja quem segura o lock. Enquanto espera, faça o trabalho que não
+  usa banco (análise estática, descrição do PR, diff de contrato). Sempre libere o lock ao
+  sair, parar ou errar.
+- Scripts que vigiam o lock devem usar padrões de `pgrep -f` que não casem com a própria
+  linha de comando.
+- Rode `caffeinate -dims &` no início da sessão para o Mac não dormir no meio.
+- Falha no portão de contrato quase sempre é o espelho do contrato atrás do `frila-docs`.
+  Compare as versões (ex.: 0.2.17 vs. o espelho) antes de depurar código.
 
 ---
 
