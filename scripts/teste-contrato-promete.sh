@@ -177,6 +177,11 @@ OUTRAS_VIGIADAS=$(cat <<'EOF'
 {"op":"promete:removerDispositivo:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:registrarEvento:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:criarConta:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:abrirSuporte:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:abrirSuporte:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:abrirSuporte:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:abrirSuporte:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:abrirSuporte:429","corpo":{"status":429,"code":"limite_excedido"}}
 EOF
 )
 

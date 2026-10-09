@@ -227,6 +227,12 @@ VIGIADAS = {
     ("registrarEvento", "401"): "nao_autenticado",
     # Lote 10: última RPC vigiada para encerramento do perímetro de autenticação
     ("criarConta", "401"): "nao_autenticado",
+    # Suporte por e-mail a partir do turno (contrato 0.2.40)
+    ("abrirSuporte", "401"): "nao_autenticado",
+    ("abrirSuporte", "403"): "sem_permissao",
+    ("abrirSuporte", "404"): "nao_encontrado",
+    ("abrirSuporte", "422"): "campo_obrigatorio",
+    ("abrirSuporte", "429"): "limite_excedido",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
