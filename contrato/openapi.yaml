@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.40
+  version: 0.2.41
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -84,6 +84,7 @@ info:
     | 422 | `menor_de_idade` | Nascimento com menos de 18 anos (RN20) |
     | 422 | `perfil_incompativel` | A ação é do outro perfil: conta de contratante criando perfil de profissional, ou conta de profissional cadastrando estabelecimento (RN25) |
     | 422 | `selecao_sem_antecedencia` | Modo seleção em vaga que começa em menos de 24 h (RN24) |
+    | 422 | `republicacao_indisponivel` | `republicar_posicoes_restantes` não pode republicar; `details` diz o motivo: `nao_e_selecao`, `selecao_em_curso`, `vaga_cancelada`, `ja_comecou`, `sem_posicoes_restantes` ou `ja_republicada` (0.2.41) |
     | 422 | `vaga_oculta` | A vaga foi ocultada pela moderação da Equipe Frila (diretriz 1.2): não se escolhe candidato nela nem se republica a partir dela até ser reexibida |
     | 422 | `horario_invalido` | Fim antes do início, ou turno no passado |
     | 422 | `inelegivel` | `details`: `turno_sobreposto` (RN21), `perfil_suspenso` (RN13) ou `funcao_incompativel` (RN05) |
@@ -96,6 +97,20 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.41, de 09/10/2026.** Republicar as posições restantes do modo seleção em
+    urgência, com um toque (decisão D1-C de 07/10/2026 e R1 a R4 de 09/10/2026, aprovadas por João Paulo; cartão d3A1WjG3). Só superfície nova:
+
+    - **`POST /rpc/republicar_posicoes_restantes`** (`republicarPosicoesRestantes`): `vaga_id` e
+      `chave`. Publica uma vaga de **urgência**, para o **mesmo turno** e o **mesmo valor** da vaga
+      de seleção que fechou, só com as posições que sobraram. Devolve `VagaPublicada`.
+    - **`422 republicacao_indisponivel`** (código novo), com o motivo em `details`:
+      `nao_e_selecao`, `selecao_em_curso`, `vaga_cancelada`, `ja_comecou`, `sem_posicoes_restantes`
+      e `ja_republicada`.
+    - **`VagaNoPainel.republicavel_em_urgencia`** (campo novo, opcional): quantas posições o toque
+      republicaria, ou nulo quando a vaga não é republicável. Fora de `required` nesta versão, para o
+      app poder ler o contrato antes de o servidor preenchê-lo; ausente vale nulo.
+    - Nenhuma mudança em `republicar_vaga` nem em `publicar_vaga`.
 
     **Versão 0.2.40, de 08/10/2026.** Suporte por e-mail a partir do turno (cartão iOS #21 e
     NLgx2GCO, US22, RF23, UC14; decisões D1 a D11 aprovadas por João Paulo em 08/10/2026). O
@@ -1798,6 +1813,66 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           $ref: '#/components/responses/SemPermissao'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/republicar_posicoes_restantes:
+    post:
+      tags: [Vagas]
+      operationId: republicarPosicoesRestantes
+      summary: Republicar em urgência as posições que o modo seleção deixou vazias
+      description: |
+        O toque do aviso `selecao_encerrada` (D1-C). Quando a vaga de seleção fecha, 24 horas antes do
+        início (RN24), as posições sem escolha são canceladas. Esta operação publica uma **vaga nova de
+        urgência** com só essas posições, para o **mesmo turno** (mesmo início e fim) e o **mesmo valor**
+        (RN01). O servidor decide modo, horário, valor e quantidade: não há campo para mudá-los. Quem
+        quer outro horário usa `republicar_vaga`.
+
+        As posições restantes são as da vaga de origem menos as já escolhidas (confirmadas ou
+        cumpridas). O despacho da vaga nova é o de qualquer vaga (RN23). Quem foi escolhido na origem
+        não se candidata à nova, porque o turno se cruza (RN21).
+
+        Quem pode: membro do estabelecimento da vaga de origem, com perfil de contratante e conta
+        ativa. Profissional recebe `422 perfil_incompativel` antes de qualquer leitura; vaga de outra
+        casa, `403 sem_permissao`; origem inexistente, `404 nao_encontrado`; conta suspensa,
+        `403 sem_permissao` com `details: conta_suspensa`; vaga de origem ocultada pela moderação,
+        `422 vaga_oculta`, como em `republicar_vaga`.
+
+        **Idempotente pela `chave`:** reenviar com a mesma chave devolve a mesma vaga nova. Enquanto
+        houver uma republicação **ativa** da mesma origem (vaga nova `publicada` ou `preenchida`),
+        outra é recusada com `republicacao_indisponivel` e `details: ja_republicada`. O limite geral de escrita por minuto
+        vale, como em toda operação, e não é declarado aqui.
+
+        Recusas por regra: `422 republicacao_indisponivel`, com o motivo em `details`:
+        `nao_e_selecao` (a origem é de urgência), `selecao_em_curso` (ainda `publicada`),
+        `vaga_cancelada`, `ja_comecou` (o início já passou), `sem_posicoes_restantes` e
+        `ja_republicada`.
+      x-requisitos: [RF05, RF09, RN24, UC01]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vaga_id, chave]
+              properties:
+                vaga_id:
+                  $ref: '#/components/schemas/Uuid'
+                chave:
+                  $ref: '#/components/schemas/ChaveDeIdempotencia'
+      responses:
+        '200':
+          description: Vaga de urgência publicada com as posições restantes, ou a mesma de um reenvio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VagaPublicada'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
@@ -4588,6 +4663,16 @@ components:
       properties:
         vaga:
           $ref: '#/components/schemas/VagaResumo'
+        republicavel_em_urgencia:
+          description: |
+            0.2.41. Quantas posições `republicar_posicoes_restantes` republicaria agora, ou nulo
+            quando a vaga não é republicável por esse caminho. A tela mostra "Republicar N posições
+            em urgência" só quando é maior que zero. O servidor calcula com a mesma regra da
+            operação, para o botão e a recusa nunca discordarem. Ausente vale nulo.
+          oneOf:
+            - type: integer
+              minimum: 1
+            - type: 'null'
         modo:
           $ref: '#/components/schemas/ModoPreenchimento'
         estado:
