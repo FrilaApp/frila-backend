@@ -7,6 +7,12 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Não lançado]
 
+### Adicionado
+- **Operação do suporte por e-mail a partir do turno (P6, contrato 0.2.40, RF23, UC14):**
+  - Ajuste do script operacional `consultar-ocorrencias.sql` para exibir `protocolo_curto` (8 hexadecimais em maiúsculas), `origem`, categoria (`motivo`) e `turno_id`, mantendo join interno em `usuario` autor.
+  - Script operacional `fechar-chamado-sem-email.sql` para fechamento manual pela Equipe Frila com resultado `sem_email_recebido` após expiração do prazo regulamentar (D16, SU-RN10).
+  - Atualização do manual de procedimentos em `supabase/operacao/equipe-frila.md` documentando o fluxo completo com endereço oficial `suporte@frila.app`, SLA de 5 dias úteis, busca por protocolo curto, critérios de encerramento manual e política rigorosa de retenção e expurgo de e-mails em conformidade com a LGPD (D9, SU-RN11).
+
 ### Planejado
 - Correções das versões 1.0.x decorrentes dos testes do TestFlight e feedback do piloto no DF (cartão `RzllRo3o`).
 
