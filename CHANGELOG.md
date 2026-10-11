@@ -9,9 +9,9 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ### Adicionado
 - **Republicação de posições restantes em urgência (D1-C, contrato 0.2.41, PR #170):**
-  - RPC `public.republicar_posicoes_restantes(vaga_id)` permitindo ao contratante reabrir posições não preenchidas ou canceladas de vaga fechada sem candidatos em seleção ativa. Cria nova vaga em modo urgência com posições clonadas, mantendo rastreabilidade via `vaga.republicada_de_id` e `posicao.republicada_de_posicao_id`.
+  - RPC `public.republicar_posicoes_restantes(vaga_id, chave)` permitindo ao contratante reabrir posições não preenchidas ou canceladas de vaga fechada sem candidatos em seleção ativa. Cria nova vaga em modo urgência com posições clonadas, mantendo rastreabilidade via `vaga.republicada_de`.
   - Migrações `20261009100000_vaga_republicada_de_e_republicacao_da_selecao.sql` e `20261009110000_republicar_posicoes_restantes_e_painel.sql`.
-  - Suíte pgTAP `630_republicar_posicoes_restantes.sql` (55 asserções), corrida de concorrência Cenário 11 (`corrida-republicar-posicoes.sh`) e recusas contratuais vigiadas `409` (`posicao_nao_cancelavel`) e `422` (`republicacao_indisponivel`).
+  - Suíte pgTAP `630_republicar_posicoes_restantes.sql` (55 asserções), teste de concorrência Cenário 11 em `scripts/corrida-ciclo.sh` e recusas contratuais vigiadas `401` (`nao_autenticado`), `403` (`sem_permissao`), `404` (`nao_encontrado`) e `422` (`republicacao_indisponivel`).
 - **Suporte por e-mail a partir do turno (Opção C, contrato 0.2.40, RF23, UC14, PR #169):**
   - RPC `public.abrir_suporte(turno_id, motivo)` para abertura de chamados vinculados ao turno com tipo `'suporte'`, `origem = 'app'`, categoria predefinida e sem texto livre (`relato` nulo, LGPD/RN15), gerando `protocolo` (UUID) e `protocolo_curto` (8 caracteres hexadecimais em maiúsculas).
   - Migrações `20261008100000_categoria_suporte_e_origem_ocorrencia.sql` e `20261008110000_abrir_suporte.sql`.

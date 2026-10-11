@@ -62,7 +62,8 @@ de carga e não teste de regra. O número da CI, e o da tabela, é **100 arquivo
 > 3. **Bloqueio em `perfil_publico` (cartão `1aGJPQK2`):** Implementado no PR **#104** com
 >    a migração `20261001140000_perfil_publico_bloqueio.sql` e teste `550_perfil_publico_bloqueio.sql`.
 > 4. **Cenário 11 (republicação de posições restantes concorrente):** Validado no PR **#170**
->    com `scripts/corrida-republicar-posicoes.sh` garantindo unicidade na reabertura sob concorrência.
+>    pelo Cenário 11 de `scripts/corrida-ciclo.sh`, garantindo que dois toques simultâneos de
+>    `republicar_posicoes_restantes` com chaves diferentes resultem em apenas uma vaga republicada.
 
 ---
 
@@ -79,7 +80,7 @@ O repositório ultrapassou **150 PRs mergeados**, com cobertura integral do cont
 3. **PR #169 (Suporte por e-mail a partir do turno / Contrato 0.2.40 · merge em 09/10):**
    Implementação da RPC `abrir_suporte` (Opção C, cartão `vN1yH4d3`, RF23, UC14), permitindo ao contratante ou profissional abrir chamado com categoria predefinida e sem texto livre (LGPD/RN15). Retorna `protocolo` (UUID) e `protocolo_curto` (8 caracteres hexadecimais em maiúsculas). Migrações `20261008100000_categoria_suporte_e_origem_ocorrencia.sql` e `20261008110000_abrir_suporte.sql`. Suíte pgTAP `620_abrir_suporte.sql` (26 testes) e par vigiado `abrirSuporte:422`.
 4. **PR #170 (Republicar Posições Restantes / Contrato 0.2.41 · merge em 10/10):**
-   Implementação da RPC `republicar_posicoes_restantes` (cartão `D1-C`), permitindo ao contratante reabrir posições remanescentes de vaga fechada sem candidatos em seleção, clonando a vaga em modo urgência com rastreabilidade `republicada_de_id` e exibição consolidada no painel. Migrações `20261009100000_vaga_republicada_de_e_republicacao_da_selecao.sql` e `20261009110000_republicar_posicoes_restantes_e_painel.sql`. Suíte pgTAP `630_republicar_posicoes_restantes.sql` (55 testes), corrida 11 (`corrida-republicar-posicoes.sh`) e pares vigiados `republicarPosicoesRestantes:409/422`.
+   Implementação da RPC `republicar_posicoes_restantes(vaga_id, chave)` (cartão `D1-C`), permitindo ao contratante reabrir posições remanescentes de vaga fechada sem candidatos em seleção, clonando a vaga em modo urgência com rastreabilidade pela coluna `vaga.republicada_de` e exibição consolidada no painel. Migrações `20261009100000_vaga_republicada_de_e_republicacao_da_selecao.sql` e `20261009110000_republicar_posicoes_restantes_e_painel.sql`. Suíte pgTAP `630_republicar_posicoes_restantes.sql` (55 testes), Cenário 11 em `scripts/corrida-ciclo.sh` e pares vigiados `republicarPosicoesRestantes:401/403/404/422`.
 5. **PR #171 (Operação do Suporte por E-mail P6 · merge em 10/10):**
    Ajuste operacional de `consultar-ocorrencias.sql` com join interno no autor e exibição de protocolo curto de 8 caracteres; criação do script `fechar-chamado-sem-email.sql` para encerramento manual com resultado `sem_email_recebido` após o prazo regulamentar de 5 dias úteis (D16, SU-RN10); e documentação completa de procedimentos e expurgo seguro LGPD na caixa `suporte@frila.app` em `supabase/operacao/equipe-frila.md` (D9, SU-RN11).
 
@@ -248,12 +249,11 @@ Colunas do esquema com funções de negócio específicas que complementam a Mod
 | `despacho.rodada` | unicidade do despacho por `(vaga_id, profissional_id, rodada)` |
 | `notificacao.rodada` | marca de envio de vaga por rodada para não suprimir push da rodada nova |
 | `turno.a_caminho_em` | aviso "estou a caminho" (h53CJVP7, contrato 0.2.25) |
-| `vaga.republicada_de_id` | rastreabilidade da republicação de posições restantes (cartão D1-C, contrato 0.2.41) |
-| `posicao.republicada_de_posicao_id` | rastreabilidade da posição de origem clonada na republicação |
+| `vaga.republicada_de` | referência à vaga de origem na republicação de posições restantes (cartão D1-C, contrato 0.2.41) |
 
 E alinhamentos consolidados de negócio:
 - **Suporte por e-mail a partir do turno (Opção C, contrato 0.2.40, PR #169 e P6 no PR #171):** Chamados abertos via RPC `abrir_suporte` gravam ocorrência com `tipo = 'suporte'`, `origem = 'app'`, `turno_id`, categoria e sem texto livre (`relato` nulo, LGPD/RN15). A fila de operação (`consultar-ocorrencias.sql`) expõe `protocolo_curto` (8 hexadecimais), `origem`, `turno_id` e prazo legal de 5 dias úteis. Chamados sem envio de e-mail pelo usuário são encerrados manualmente pela Equipe via `fechar-chamado-sem-email.sql` com `resultado = 'sem_email_recebido'` (D16, SU-RN10). E-mails tratados são expurgados da caixa `suporte@frila.app` e lixeira conforme diretriz de retenção da LGPD (D9, SU-RN11).
-- **Republicação de posições restantes (D1-C, contrato 0.2.41, PR #170):** Permite ao contratante reabrir posições restantes de vaga fechada sem candidatos em seleção ativa. Cria nova vaga em modo urgência com posições clonadas, mantendo o histórico na vaga original.
+- **Republicação de posições restantes (D1-C, contrato 0.2.41, PR #170):** Permite ao contratante reabrir posições restantes de vaga fechada sem candidatos em seleção ativa via RPC `republicar_posicoes_restantes(vaga_id, chave)`. Cria nova vaga em modo urgência com posições clonadas vinculadas por `vaga.republicada_de`, validando recusas `401` (`nao_autenticado`), `403` (`sem_permissao`), `404` (`nao_encontrado`) e `422` (`republicacao_indisponivel`), e mantendo o histórico na vaga original.
 - **Avaliação:** Um voto por lado do turno (`unique (turno_id, alvo_tipo)` e `unique (turno_id, autor_id)`). Reenvio do mesmo valor recebe 200; valor divergente recebe `409 avaliacao_ja_registrada`.
 - **Filtro de Bloqueio em `perfil_publico`:** Totalmente implementado e protegido com 404 em caso de bloqueio bidirecional (PR #104, teste 550).
 - **Check-out fora da janela:** Recusado com `422 fora_da_janela`. O alerta cron `alertar_fim_sem_checkout` monitora turnos encerrados sem check-out.
