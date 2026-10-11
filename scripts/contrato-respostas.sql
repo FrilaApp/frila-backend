@@ -246,6 +246,25 @@ select pg_temp.guarda('retirarCandidatura', pg_temp.como('cc000000-0000-4000-800
 select pg_temp.guarda('escolherCandidato', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.escolher_candidato(%L::uuid) $$, ((select r from cand_sel)->>'candidatura_id')::uuid)));
 
+-- ── Republicar posições restantes em urgência (contrato 0.2.41) ────────────────
+-- Vaga de seleção fechada com sobras: 2 posições, nenhuma escolhida -> sobram 2 posições.
+create temp table vaga_sel_rep as
+  select pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.publicar_vaga(%L::uuid, %L::uuid,
+         '2027-01-23 21:00:00+00'::timestamptz, '2027-01-24 03:00:00+00'::timestamptz,
+         'CLN 108','{"latitude":-15.7905,"longitude":-47.8855}'::jsonb,
+         16000::bigint, 2, true, false, false, 'Gerente', 'selecao'::public.modo_preenchimento,
+         %L::uuid) $$,
+    (select casa_id from ids), (select id from f), gen_random_uuid())) as r;
+
+-- Simula o fechamento automático da seleção levando as posições abertas a canceladas e a vaga a encerrada
+update public.posicao set estado = 'cancelada' where vaga_id = ((select r from vaga_sel_rep)->>'vaga_id')::uuid;
+update public.vaga set estado = 'encerrada' where id = ((select r from vaga_sel_rep)->>'vaga_id')::uuid;
+
+select pg_temp.guarda('republicarPosicoesRestantes', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.republicar_posicoes_restantes(%L::uuid, %L::uuid) $$,
+  ((select r from vaga_sel_rep)->>'vaga_id')::uuid, 'cc000000-0000-4000-8000-000000000888'::uuid)));
+
 -- ── Estou a caminho, de 3 h antes até 15 min depois do início (0.2.25) ────────
 set local frila.agora = '2027-01-18 17:59:59+00';
 select pg_temp.guarda('erro:a_caminho_fora_da_janela',
@@ -1300,6 +1319,43 @@ select pg_temp.guarda('promete:abrirSuporte:429',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
     $$ select public.abrir_suporte(%L::uuid, 'endereco', gen_random_uuid()) $$,
     ((select r from cand)->>'turno_id')::uuid)));
+
+
+-- ── Republicar posições restantes do modo seleção (contrato 0.2.41): 4 recusas vigiadas ──
+
+-- 147. republicarPosicoesRestantes: 401 nao_autenticado (chamador sem sessão / anonimo)
+select pg_temp.guarda('promete:republicarPosicoesRestantes:401',
+  pg_temp.observado(null, format(
+    $$ select public.republicar_posicoes_restantes(%L::uuid, gen_random_uuid()) $$,
+    ((select r from vaga_sel_rep)->>'vaga_id')::uuid)));
+
+-- 148. republicarPosicoesRestantes: 403 sem_permissao (chamador é contratante mas não é membro do estabelecimento da vaga)
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
+values ('00000000-0000-0000-0000-000000000000', 'ee000000-0000-4000-8000-000000000088'::uuid,
+        'authenticated', 'authenticated', 'aux-rep-403@t.test', now(), now(), false, false)
+on conflict do nothing;
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado)
+values ('ee000000-0000-4000-8000-000000000088', 'contratante', 'Aux Rep 403', '+5561999990088', 'aux-rep-403@t.test', '1990-01-01', '1.0', now(), 'ativa')
+on conflict (id) do update set estado = 'ativa';
+
+select pg_temp.guarda('promete:republicarPosicoesRestantes:403',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000088', format(
+    $$ select public.republicar_posicoes_restantes(%L::uuid, gen_random_uuid()) $$,
+    ((select r from vaga_sel_rep)->>'vaga_id')::uuid)));
+
+delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000088';
+delete from auth.users where id = 'ee000000-0000-4000-8000-000000000088';
+
+-- 149. republicarPosicoesRestantes: 404 nao_encontrado (origem inexistente)
+select pg_temp.guarda('promete:republicarPosicoesRestantes:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.republicar_posicoes_restantes('c0000000-0000-4000-8000-000000000099'::uuid, gen_random_uuid()) $$));
+
+-- 150. republicarPosicoesRestantes: 422 republicacao_indisponivel (origem de modo urgência, recusa com nao_e_selecao)
+select pg_temp.guarda('promete:republicarPosicoesRestantes:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.republicar_posicoes_restantes(%L::uuid, gen_random_uuid()) $$,
+    ((select r from vaga1)->>'vaga_id')::uuid)));
 
 
 -- ── As Edge Functions ─────────────────────────────────────────────────────────

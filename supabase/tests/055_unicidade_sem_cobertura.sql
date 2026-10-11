@@ -25,7 +25,7 @@
 --     uma passa pela outra, e a única asserção honesta sobre ela é a de catálogo.
 
 begin;
-select plan(8);
+select plan(9);
 
 create function pg_temp.conta(p_id uuid, p_perfil public.perfil_conta)
 returns uuid language sql as $$
@@ -164,6 +164,42 @@ select throws_ok(
   '23505',
   null,
   'posicao_uma_reabertura_por_falta: uma falta reabre uma posição, não duas');
+
+-- ── vaga: uma republicacao de selecao ativa por vez ───────────────────────────
+--
+-- `republicar_posicoes_restantes` tem retorno antecipado por consulta em software e não
+-- chega a inserir a segunda vaga republicada sequencialmente: nenhum teste de caixa preta
+-- alcançava este índice diretamente no pgTAP. Ele é parcial — vale só onde `republicada_de`
+-- não é nulo e `estado` in ('publicada', 'preenchida') — e é a trava de última instância
+-- contra corridas onde duas republicações ativas da mesma origem nasceriam juntas.
+create temp table vaga_origem as
+  select pg_temp.vaga() as id;
+
+insert into public.vaga (estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+                         valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+                         exige_material_proprio, responsavel_local, modo, chave_cliente, publicado_por,
+                         republicada_de, estado)
+select estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+       valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+       exige_material_proprio, responsavel_local, modo, gen_random_uuid(), publicado_por,
+       (select id from vaga_origem), 'publicada'
+  from public.vaga
+ where id = (select id from vaga_origem);
+
+select throws_ok(
+  $$ insert into public.vaga (estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+                              valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+                              exige_material_proprio, responsavel_local, modo, chave_cliente, publicado_por,
+                              republicada_de, estado)
+     select estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+            valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+            exige_material_proprio, responsavel_local, modo, gen_random_uuid(), publicado_por,
+            (select id from vaga_origem), 'publicada'
+       from public.vaga
+      where id = (select id from vaga_origem) $$,
+  '23505',
+  null,
+  'vaga_uma_republicacao_ativa_idx: uma mesma origem só pode ter uma republicação ativa por vez');
 
 -- ── avaliacao: a chave por autor, que o lado já subsume ────────────────────────
 --

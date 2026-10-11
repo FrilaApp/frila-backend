@@ -50,6 +50,10 @@
 #      seleção. Só uma confirma; a outra recebe 409 posicao_ja_preenchida (RN19). A vaga
 #      termina preenchida, com uma posição confirmada, uma candidatura aceita e a outra
 #      recusada.
+#  11. republicar_posicoes_restantes × republicar_posicoes_restantes (republicar, D1-C, 0.2.41) —
+#      dois toques simultâneos com chaves diferentes para republicar a mesma vaga de seleção fechada.
+#      Exatamente uma republicação tem sucesso (ok, gerando a nova vaga de urgência com as posições restantes);
+#      a outra recebe 422 republicacao_indisponivel com details: ja_republicada (RR-RN05).
 #
 # Os de candidatura (vinte para duas posições, profissional em dobro) seguem em
 # `corrida-candidatar.sh`.
@@ -63,7 +67,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 RODADAS=${RODADAS:-50}
-CENARIOS=${CENARIOS:-checkin cancelar teto posicao impasse janela rollback atraso excluir escolher}
+CENARIOS=${CENARIOS:-checkin cancelar teto posicao impasse janela rollback atraso excluir escolher republicar}
 
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -1314,6 +1318,76 @@ SQL
     ok "$RODADAS rodadas: uma escolha confirmou, a outra recebeu posicao_ja_preenchida; vaga preenchida com um turno só (RN19)"
   else
     falhou "rodadas fora da regra (rodada, ok, posicao_ja_preenchida, outros códigos, vaga, confirmadas, turnos, candidaturas):"
+    printf '%s\n' "$ruins" | sed 's/^/      /' >&2
+  fi
+}
+
+# ── 11. republicar_posicoes_restantes × republicar_posicoes_restantes ──────────
+cenario_republicar() {
+  echo
+  echo "▸ Cenário 11: dois toques simultâneos de republicar_posicoes_restantes com chaves diferentes ($RODADAS rodadas)"
+
+  psql >/dev/null <<SQL || { falhou "não consegui montar as vagas de seleção para republicar"; return; }
+create table corrida_ciclo.republicar (n int, vaga uuid, k1 uuid, k2 uuid);
+
+insert into corrida_ciclo.republicar (n, vaga, k1, k2)
+select r.n,
+       gen_random_uuid(),
+       gen_random_uuid(), gen_random_uuid()
+  from generate_series(1, $RODADAS) r(n);
+
+-- Cria vagas de seleção já encerradas com início futuro (D1-C, RR-RN01):
+-- publicado_em há 48 horas, início daqui a 12 horas (>24h após publicação e > agora)
+insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+                         valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+                         exige_material_proprio, responsavel_local, modo, estado, publicado_em, chave_cliente,
+                         publicado_por)
+select c.vaga, e.id, (select id from public.funcao where nome = 'garçom'),
+       now() + interval '12 hours' + c.n * interval '2 hours',
+       now() + interval '18 hours' + c.n * interval '2 hours',
+       'corrida-ciclo-$MARCA', 'POINT(-47.8860 -15.7910)'::extensions.geography,
+       18000, 2, true, true, false, 'Seu Zé', 'selecao', 'encerrada',
+       now() - interval '48 hours', gen_random_uuid(), '$DONA'
+  from corrida_ciclo.republicar c,
+       (select m.estabelecimento_id as id from public.membro_estabelecimento m
+         where m.usuario_id = '$DONA' limit 1) e;
+
+-- As posições canceladas no fechamento
+insert into public.posicao (vaga_id, inicio_em, fim_em, estado)
+select v.id, v.inicio_em, v.fim_em, 'cancelada'
+  from public.vaga v join corrida_ciclo.republicar c on c.vaga = v.id
+ cross join generate_series(1, 2);
+SQL
+
+  psql -tA -F' ' -c "select n, vaga, k1, k2 from corrida_ciclo.republicar order by n" >"$TMP/republicar"
+  while read -r n vaga k1 k2; do
+    lado republicar "$n" 1 "$DONA" "select public.republicar_posicoes_restantes('$vaga', '$k1')"
+    lado republicar "$n" 2 "$DONA" "select public.republicar_posicoes_restantes('$vaga', '$k2')"
+    wait
+  done <"$TMP/republicar"
+
+  psql -tA -F' ' >"$TMP/republicar.res" <<'SQL'
+select c.n,
+       (select count(*) from corrida_ciclo.placar p
+         where p.cenario = 'republicar' and p.rodada = c.n and p.code = 'ok'),
+       (select count(*) from corrida_ciclo.placar p
+         where p.cenario = 'republicar' and p.rodada = c.n and p.code = 'republicacao_indisponivel'),
+       coalesce((select string_agg(distinct p.code, ',') from corrida_ciclo.placar p
+                  where p.cenario = 'republicar' and p.rodada = c.n
+                    and p.code not in ('ok', 'republicacao_indisponivel')), '-'),
+       (select count(*) from public.vaga v
+         where v.republicada_de = c.vaga and v.estado in ('publicada', 'preenchida'))
+  from corrida_ciclo.republicar c
+ order by c.n;
+SQL
+
+  local ruins
+  ruins=$(awk '!($2 == 1 && $3 == 1 && $4 == "-" && $5 == 1)' "$TMP/republicar.res")
+
+  if [ -z "$ruins" ] && [ "$(grep -c . "$TMP/republicar.res")" -eq "$RODADAS" ]; then
+    ok "$RODADAS rodadas: um toque republicou com sucesso e o outro recebeu republicacao_indisponivel (ja_republicada); exatamente uma vaga ativa criada"
+  else
+    falhou "rodadas fora da regra (rodada, ok, republicacao_indisponivel, outros códigos, vagas ativas criadas):"
     printf '%s\n' "$ruins" | sed 's/^/      /' >&2
   fi
 }

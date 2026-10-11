@@ -171,6 +171,10 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:abrirSuporte:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:abrirSuporte:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
 {"op":"promete:abrirSuporte:429","corpo":{"status":429,"code":"limite_excedido"}}
+{"op":"promete:republicarPosicoesRestantes:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:republicarPosicoesRestantes:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:republicarPosicoesRestantes:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:republicarPosicoesRestantes:422","corpo":{"status":422,"code":"republicacao_indisponivel"}}
 EOF
 )
 

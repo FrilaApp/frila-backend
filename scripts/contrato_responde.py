@@ -233,6 +233,11 @@ VIGIADAS = {
     ("abrirSuporte", "404"): "nao_encontrado",
     ("abrirSuporte", "422"): "campo_obrigatorio",
     ("abrirSuporte", "429"): "limite_excedido",
+    # Republicar posições restantes do modo seleção em urgência (contrato 0.2.41)
+    ("republicarPosicoesRestantes", "401"): "nao_autenticado",
+    ("republicarPosicoesRestantes", "403"): "sem_permissao",
+    ("republicarPosicoesRestantes", "404"): "nao_encontrado",
+    ("republicarPosicoesRestantes", "422"): "republicacao_indisponivel",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
