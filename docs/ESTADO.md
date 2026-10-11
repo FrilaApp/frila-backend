@@ -1,4 +1,4 @@
-# Estado do backend — 06/10/2026
+# Estado do backend — 10/10/2026
 
 Onde o trabalho parou e o que a próxima sessão precisa saber. As regras duráveis estão
 no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
@@ -7,45 +7,46 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-**A `develop` é o tronco e está 368 commits à frente do `main`, que não se move desde
+**A `develop` é o tronco e está 382 commits à frente do `main`, que não se move desde
 28/09.** O `main` continua inteiramente contido na `develop` (`git log
-origin/develop..origin/main` sai vazio) e parado em `c190836`. A `develop` possui **98 migrações**
-e **92 arquivos de pgTAP** (com **2.536 asserções** verdes, 100% PASS).
+origin/develop..origin/main` sai vazio) e parado em `c190836`. A `develop` possui **102 migrações**
+e **100 arquivos de pgTAP** (com **2.723 asserções** verdes, 100% PASS).
 
-Os números abaixo foram consolidados e remedidos em 06/10, com a `develop` em `c1b838e` — conferidos
-diretamente com a execução das ferramentas do repositório.
+Os números abaixo foram consolidados e remedidos em 10/10, com a `develop` em `f73020b` — conferidos
+diretamente com a execução das ferramentas do repositório e da CI.
 
 | | | Comando |
 |---|---|---|
-| Commits à frente do `main` | **368** | `git rev-list --count origin/main..origin/develop` |
-| Migrações na `develop` | **98** | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
-| pgTAP | **92 arquivos, 2.536 asserções**, verde | `Files=92, Tests=2536 … Result: PASS`, medido com `supabase test db` |
-| Portão `contrato-responde.sh` | **81 recusas vigiadas**, verde | 81 de 81 vigiados e alcançados (Lotes 1 a 5), 44 respostas 200, 36 coleções |
-| Testes em Deno das Edge Functions | **171** (178 na suíte), verde | `ok \| 178 passed \| 0 failed`, medido com `deno test --allow-all --no-check` |
+| Commits à frente do `main` | **382** | `git rev-list --count origin/main..origin/develop` |
+| Migrações na `develop` | **102** | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
+| pgTAP | **100 arquivos, 2.723 asserções**, verde | `Files=100, Tests=2723 … Result: PASS`, medido na CI e com `supabase test db` |
+| Portão `contrato-responde.sh` | **151 recusas vigiadas e alcançadas**, verde | 151 de 151 vigiados e alcançados (100% de cobertura; 16 isentas, 0 não vigiadas de 167 declaradas), 46 de 50 respostas 200 validadas, 37 de 37 coleções |
+| Testes em Deno das Edge Functions | **178** na suíte, verde | `ok \| 178 passed \| 0 failed`, medido com `deno test --allow-all --no-check` |
 | Edge Functions | **9** | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
 | Testes unitários em `exportar-turnos` | **31**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
-| Scripts em `scripts/` | **38** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` — 40 arquivos no total, incluindo `.py` e `.sql` |
-| Contrato espelhado | **0.2.37** | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
+| Scripts em `scripts/` | **38** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` — 41 arquivos no total, incluindo `.py` e `.sql` |
+| Contrato espelhado | **0.2.41** | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
-Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **91** arquivos de teste de regras,
-e o `prove` conta **92** porque alcança também `supabase/tests/carga/gerar_df.sql`, que é gerador
-de carga e não teste de regra. O número da CI, e o da tabela, é **92 arquivos e 2.536 testes**.
+Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **99** arquivos de teste de regras,
+e o `prove` conta **100** porque alcança também `supabase/tests/carga/gerar_df.sql`, que é gerador
+de carga e não teste de regra. O número da CI, e o da tabela, é **100 arquivos e 2.723 testes**.
 
-> ## 🟢 O espelho do contrato está em dia (0.2.37) e alinhado ao original
+> ## 🟢 O espelho do contrato está em dia (0.2.41) e alinhado ao original
 >
-> O contrato **0.2.37** está em vigor na raiz de `develop` e alinhado ao `FrilaApp/frila-docs · api/openapi.yaml`.
-> Ele consolida o ciclo de vida da revisão de despacho no app (Opção B em `pedirRevisaoDespacho` / RF27)
-> e os parâmetros da exportação de turnos com janela regulamentar de até 30 dias (cartão `pd7zOS5P`),
-> além das entregas de cancelamento idempotente (0.2.35) e contestação de suspensão (Opção B, 0.2.36).
+> O contrato **0.2.41** está em vigor na raiz de `develop` e alinhado ao `FrilaApp/frila-docs · api/openapi.yaml`.
+> Ele consolida o modo de seleção com menos de 24h em urgência (0.2.38), a remoção de 403 não documentado
+> em rotas sem barreira de perfil (0.2.39), o suporte por e-mail a partir do turno (RPC `abrir_suporte` / Opção C,
+> 0.2.40, PR #169 e operação P6 no PR #171) e a republicação de posições restantes (RPC `republicar_posicoes_restantes`,
+> 0.2.41, PR #170).
 >
-> A `develop` recebeu o espelho idêntico (`e190ab1f294cc72e1f557834c5f6ed6e2fe9980ec31d55460b80976e3287f786`)
-> e todas as implementações, migrações e testes correspondentes (#149, #150, #153, #154, #155 e #156).
+> A `develop` recebeu o espelho idêntico (`31d91467aac0369669c73c251993eafa65528e4964f4051242be10594b3f27ce`)
+> e todas as implementações, migrações e testes correspondentes (#161, #169, #170 e #171).
 > O portão `./scripts/contrato-em-dia.sh` confirma integridade com sha256 exato.
 >
 > | | Versão | sha256 | bytes |
 > |---|---|---|---|
-> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.37** | `e190ab1f294cc72e1f557834c5f6ed6e2fe9980ec31d55460b80976e3287f786` | 228 491 |
-> | original, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.37** | `e190ab1f294cc72e1f557834c5f6ed6e2fe9980ec31d55460b80976e3287f786` | 228 491 |
+> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.41** | `31d91467aac0369669c73c251993eafa65528e4964f4051242be10594b3f27ce` | 243 887 |
+> | original, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.41** | `31d91467aac0369669c73c251993eafa65528e4964f4051242be10594b3f27ce` | 243 887 |
 
 > ## 🟢 Instabilidades de concorrência em `Corridas do ciclo` sanadas na raiz
 >
@@ -60,39 +61,36 @@ de carga e não teste de regra. O número da CI, e o da tabela, é **92 arquivos
 >    do agendador por profissional livre.
 > 3. **Bloqueio em `perfil_publico` (cartão `1aGJPQK2`):** Implementado no PR **#104** com
 >    a migração `20261001140000_perfil_publico_bloqueio.sql` e teste `550_perfil_publico_bloqueio.sql`.
+> 4. **Cenário 11 (republicação de posições restantes concorrente):** Validado no PR **#170**
+>    pelo Cenário 11 de `scripts/corrida-ciclo.sh`, garantindo que dois toques simultâneos de
+>    `republicar_posicoes_restantes` com chaves diferentes resultem em apenas uma vaga republicada.
 
 ---
 
 ## Onde cada coisa parou
 
-### Entregas Recentes e Marcos Consolidados (até 06/10)
+### Entregas Recentes e Marcos Consolidados (até 10/10)
 
-O repositório ultrapassou **140 PRs mergeados**, com forte aceleração na cobertura de regras e segurança:
+O repositório ultrapassou **150 PRs mergeados**, com cobertura integral do contrato, novas RPCs e endurecimento da esteira:
 
-1. **PR #81 (SMTP frila-dev / Cauê · merge em 06/10):**
-   Registra o SMTP próprio do `frila-dev` e o código no lugar do link mágico (`c0c5607`). Desbloqueia a validação de entrada sem depender de link de confirmação no app.
-2. **PR #149 (Cancelamento Idempotente 0.2.35 · merge em 05/10):**
-   Implementa reenvio idempotente de `cancelar_posicao` e `cancelar_vaga` (cartão `pVvubZJy`), sincronizando o contrato 0.2.35. Evita erros espúrios em retentativas de rede pelo app.
-3. **PR #150 (Lote 3 de Recusas Críticas · merge em 05/10):**
-   Adiciona 15 recusas críticas do contrato vigiadas pelo `contrato-responde.sh` com asserção estrita de `code` e suíte pgTAP `487_recusas_criticas_contrato_lote3.sql`.
-4. **PR #153 (Opção B em Situação da Conta 0.2.36 · merge em 06/10):**
-   Ciclo de vida da contestação de suspensão no app (decisão de produto de 05/10/2026 sobre a opção B do cartão `yoV2Ak4j`). No app só cabe 1 contestação por suspensão; reenvio recebe `409 contestacao_ja_aberta` mesmo após resposta. Recurso posterior exclusivamente por e-mail. Acompanha suíte pgTAP `604_situacao_da_conta_contestacao_respondida.sql`.
-5. **PR #154 (Lote 4 de Recusas Críticas · merge em 06/10):**
-   Mais 15 recusas críticas com asserção de `code`, elevando a cobertura para 66 pares vigiados no `contrato-responde.sh` e suíte pgTAP `488_recusas_criticas_contrato_lote4.sql`.
-6. **PR #155 (Opção B na Revisão de Despacho e Janela de 30 dias na Exportação 0.2.37 · merge em 06/10):**
-   - **Opção B em `pedir_revisao_despacho` (RF27, 0.2.37):** Trava de unicidade no app recusando reenvio com `409 contestacao_ja_aberta` caso já exista ocorrência de `revisao_despacho` para o autor (em análise ou já respondida). Recurso posterior exclusivamente por e-mail. Migração `20261006160000_revisao_despacho_opcao_b.sql` e suíte pgTAP `605_revisao_despacho_opcao_b.sql`.
-   - **Edge Function `exportar-turnos` (pd7zOS5P, 0.2.37):** Parâmetros `de` e `ate` tornam-se opcionais com padrão dos últimos 15 dias quando omitidos. Parâmetro `formato` estritamente obrigatório (`422 campo_obrigatorio`). Janela regulamentar máxima permitida de até 30 dias: recusa intervalo > 30 dias com `422 intervalo_maximo_excedido`. 31 testes unitários Deno passando.
-   - Sincronização do Contrato 0.2.37 e sha256 (`e190ab1f…`).
-7. **PR #156 (Lote 5 de Recusas Críticas · merge em 06/10):**
-   Expande a cobertura de recusas vigiadas de 66 para 81 pares no portão `contrato-responde.sh`, incluindo `pedirRevisaoDespacho:409`, `avaliar:422`, `criteriosDeNotificacao:403/404`, `meusEstabelecimentos:403`, `registrarDispositivo:422`, etc. Acompanha fixtures em `contrato-respostas.sql` e nova suíte pgTAP `489_recusas_criticas_contrato_lote5.sql` (15/15 testes).
+1. **Lotes 6 a 10 de Recusas Críticas e Endurecimento do Portão (#157, #159, #163, #164, #165, #167):**
+   Expansão completa das recusas críticas no `contrato-responde.sh`, saltando de 81 para 151 pares vigiados e alcançados, cobrindo 100% dos pares possíveis do banco (com 16 isenções técnicas justificadas em `contrato_responde.py` e 0 não vigiados). O portão passou a falhar estritamente na CI caso surjam novas recusas sem cobertura ou sem isenção justificada. Acompanhado pelas suítes pgTAP `490` a `494`.
+2. **PR #161 (Modo Seleção em Urgência · merge em 07/10):**
+   Publicação de vagas e reabertura com menos de 24h para o início do turno são forçadas para o modo urgência (`D4=C`, `D5=A`), recusando seleção manual com `422 modo_indisponivel`. Migração `20261007110000_modo_selecao_reabertura_urgencia.sql`.
+3. **PR #169 (Suporte por e-mail a partir do turno / Contrato 0.2.40 · merge em 09/10):**
+   Implementação da RPC `abrir_suporte` (Opção C, cartão `vN1yH4d3`, RF23, UC14), permitindo ao contratante ou profissional abrir chamado com categoria predefinida e sem texto livre (LGPD/RN15). Retorna `protocolo` (UUID) e `protocolo_curto` (8 caracteres hexadecimais em maiúsculas). Migrações `20261008100000_categoria_suporte_e_origem_ocorrencia.sql` e `20261008110000_abrir_suporte.sql`. Suíte pgTAP `620_abrir_suporte.sql` (26 testes) e par vigiado `abrirSuporte:422`.
+4. **PR #170 (Republicar Posições Restantes / Contrato 0.2.41 · merge em 10/10):**
+   Implementação da RPC `republicar_posicoes_restantes(vaga_id, chave)` (cartão `D1-C`), permitindo ao contratante reabrir posições remanescentes de vaga fechada sem candidatos em seleção, clonando a vaga em modo urgência com rastreabilidade pela coluna `vaga.republicada_de` e exibição consolidada no painel. Migrações `20261009100000_vaga_republicada_de_e_republicacao_da_selecao.sql` e `20261009110000_republicar_posicoes_restantes_e_painel.sql`. Suíte pgTAP `630_republicar_posicoes_restantes.sql` (55 testes), Cenário 11 em `scripts/corrida-ciclo.sh` e pares vigiados `republicarPosicoesRestantes:401/403/404/422`.
+5. **PR #171 (Operação do Suporte por E-mail P6 · merge em 10/10):**
+   Ajuste operacional de `consultar-ocorrencias.sql` com join interno no autor e exibição de protocolo curto de 8 caracteres; criação do script `fechar-chamado-sem-email.sql` para encerramento manual com resultado `sem_email_recebido` após o prazo regulamentar de 5 dias úteis (D16, SU-RN10); e documentação completa de procedimentos e expurgo seguro LGPD na caixa `suporte@frila.app` em `supabase/operacao/equipe-frila.md` (D9, SU-RN11).
 
-### A fila de PRs aberta em 06/10
+### A fila de PRs aberta em 10/10
 
-Medida com `gh pr list --state open` em 06/10:
+Medida com `gh pr list --state open` em 10/10:
 
 | PR | Ramo | Título / Escopo |
 |---|---|---|
-| **#157** | `feat/lote6-recusas-contrato` | `feat(contrato): vigia lote 6 com 15 recusas criticas` (em andamento pelo Time A) |
+| **#168** | `docs/estado-08-10` | `docs(estado): fotografia de 08/10, contrato 0.2.38, 111 de 111 recusas` (obsoleto; superado pela consolidação de 10/10) |
 
 ---
 
@@ -100,7 +98,7 @@ Medida com `gh pr list --state open` em 06/10:
 
 | | |
 |---|---|
-| local | `supabase start` · Postgres 17 · **98** migrações na `develop`, **47** no `main` (em 06/10) |
+| local | `supabase start` · Postgres 17 · **102** migrações na `develop`, **47** no `main` (em 10/10) |
 | `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · SMTP próprio ativo (`smtp.gmail.com:465`, código de 6 dígitos) |
 | `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **vazio**: aguarda esteira de deploy por tag |
 
@@ -113,8 +111,8 @@ Medida com `gh pr list --state open` em 06/10:
 
 ## O contrato em detalhes
 
-Versão vigente: **0.2.37**, espelhada em `contrato/openapi.yaml` e **em dia com o original**,
-conferido em 06/10 com o portão: *"Espelho em dia com FrilaApp/frila-docs"*.
+Versão vigente: **0.2.41**, espelhada em `contrato/openapi.yaml` e **em dia com o original**,
+conferido em 10/10 com o portão: *"Espelho em dia com FrilaApp/frila-docs"*.
 
 Histórico das versões recentes integradas no backend:
 
@@ -130,12 +128,16 @@ Histórico das versões recentes integradas no backend:
 | **0.2.35** | reenvio idempotente de `cancelar_posicao` e `cancelar_vaga` | #149 |
 | **0.2.36** | Opção B em situação da conta / suspensão (`409 contestacao_ja_aberta`) | #153 |
 | **0.2.37** | Opção B em revisão de despacho (`409`) e janela de 30 dias na exportação (`422`) | #155 |
+| **0.2.38** | modo seleção da v1.1 com menos de 24h forçado em urgência (`422 modo_indisponivel`) | #161, #162 |
+| **0.2.39** | remoção de status 403 não documentado em operações sem barreira de perfil | #166 |
+| **0.2.40** | suporte por e-mail a partir do turno (RPC `abrir_suporte` / Opção C, RF23, UC14) | #169, #171 |
+| **0.2.41** | republicação de posições restantes (RPC `republicar_posicoes_restantes`, D1-C) | #170 |
 
 ---
 
 ## O que existe no banco
 
-Medido no banco de desenvolvimento com a `develop` em `c1b838e`:
+Medido no banco de desenvolvimento com a `develop` em `f73020b`:
 
 - **22 tabelas** em `public`:
   ```
@@ -144,15 +146,15 @@ Medido no banco de desenvolvimento com a `develop` em `c1b838e`:
   funcao · membro_estabelecimento · notificacao · ocorrencia · pedido_de_exclusao
   posicao · profissional · profissional_funcao · turno · usuario · vaga
   ```
-- **98 migrações** aplicadas sequencialmente sem colisão.
+- **102 migrações** aplicadas sequencialmente sem colisão.
 - RLS ativado em todas as tabelas; escrita exclusivamente através de funções `security definer`.
-- **42 RPCs expostas a `authenticated`**:
+- **44 RPCs expostas a `authenticated`** (+ 1 pública `configuracao_do_app`):
   ```
   conta        criar_conta · minha_conta · situacao_da_conta · contestar_suspensao
   perfil       criar_perfil_profissional · meu_perfil_profissional · atualizar_perfil_profissional
   casa         cadastrar_estabelecimento · painel_estabelecimento · meus_estabelecimentos · meu_estabelecimento
   equipe       equipe_de_confianca · incluir_na_equipe · remover_da_equipe
-  vaga         publicar_vaga · republicar_vaga · vagas_abertas · detalhe_vaga · cancelar_vaga
+  vaga         publicar_vaga · republicar_vaga · vagas_abertas · detalhe_vaga · cancelar_vaga · republicar_posicoes_restantes
   seleção      candidatos_da_vaga · escolher_candidato · retirar_candidatura
   turno        candidatar · minhas_candidaturas · meus_turnos · contato_do_turno · cancelar_posicao · avisar_a_caminho
   presença     fazer_checkin · fazer_checkout · confirmar_checkin_manual
@@ -161,6 +163,7 @@ Medido no banco de desenvolvimento com a `develop` em `c1b838e`:
   moderação    denunciar · bloquear
   telemetria   registrar_evento
   despacho     pedir_revisao_despacho · reabrir_por_atraso
+  suporte      abrir_suporte
   app          configuracao_do_app (pública para anon)
   ```
 - **Treze jobs ativos em `pg_cron`**:
@@ -177,20 +180,45 @@ Medido no banco de desenvolvimento com a `develop` em `c1b838e`:
 
 ## Os portões
 
-Medição consolidada da bateria em 06/10 com a `develop` em `c1b838e`:
+Medição consolidada da bateria em 10/10 com a `develop` em `f73020b`:
 
-| Comando | O que garante | Medida em 06/10 |
+| Comando | O que garante | Medida em 10/10 |
 |---|---|---|
-| `supabase test db` | pgTAP | **92** arquivos, **2.536** asserções verdes (100% PASS) |
-| `./scripts/contrato-responde.sh` | respostas casam com o contrato | **44** respostas 200 validadas, **81** recusas vigiadas e alcançadas, **36** coleções exercitadas |
+| `supabase test db` | pgTAP | **100** arquivos, **2.723** asserções verdes (100% PASS) |
+| `./scripts/contrato-responde.sh` | respostas casam com o contrato | **46 de 50** respostas 200 validadas, **151 de 151** recusas vigiadas e alcançadas, **37 de 37** coleções exercitadas |
 | `deno test --allow-all --no-check` | Edge Functions em Deno | **178** testes verdes (0 falhas), incluindo 31 em `exportar-turnos` |
 | `./scripts/teste-contrato-promete.sh` | autoteste da direção contrato-à-frente | 9 de 9 casos verdes |
-| `./scripts/teste-contrato-responde.sh` | autoteste de schemas do contrato | 12 de 12 casos verdes |
+| `./scripts/teste-contrato-responde.sh` | autoteste de schemas do contrato | 14 de 14 casos verdes |
 | `./scripts/teste-contrato-acompanha.sh` | PR que altera `public` acompanha contrato | 19 de 19 casos verdes |
-| `./scripts/relogio-em-testes.sh` | imunidade contra bombas-relógio de relógio | **91** arquivos pgTAP imunizados |
-| `./scripts/migracoes-sem-colisao.sh` | carimbos de migração únicos | **97** carimbos distintos sem colisão |
+| `./scripts/relogio-em-testes.sh` | imunidade contra bombas-relógio de relógio | **99** arquivos pgTAP imunizados |
+| `./scripts/migracoes-sem-colisao.sh` | carimbos de migração únicos | **102** carimbos distintos sem colisão |
 | `./scripts/migracoes-imutaveis.sh` | migrações passadas não foram alteradas | verde |
 | `./scripts/planos-com-carga.sh` | caminho quente sob volume sintético do DF | verde na CI (p95 elegíveis 27 ms, vagas 28 ms) |
+
+### O portão do contrato, medido em 10/10
+
+Medido na `develop` em `f73020b`, com `supabase db reset` aplicado e `frila.agendador_secret`
+configurado antes da execução, por `./scripts/contrato-responde.sh` — **exit code 0**:
+
+| | Medida em 10/10 | Linha da saída do portão |
+|---|---|---|
+| respostas 200 validadas com corpo real | **46 de 50** | `Validadas com corpo real:               46` |
+| pares (operação, status) de recusa declarados no contrato | **167** | `declarados no contrato: 167` |
+| pares vigiados e alcançados | **151 de 151** | `vigiados e alcançados:  151 de 151` |
+| pares isentos, com motivo documentado | **16** | `isentos, com motivo:    16` |
+| pares ainda não vigiados | **0** | `ainda não vigiados:     0` |
+| coleções exercitadas com itens | **37 de 37**, 0 vazias | `exercitadas com itens:     37 de 37` |
+
+A conta fecha perfeitamente: **151 vigiados + 16 isentos + 0 não vigiados = 167 declarados** (100% de cobertura).
+
+As quatro operações com resposta 200 fora do alcance do portão, com o motivo documentado na própria ferramenta:
+`confirmarCodigo` e `renovarSessao` (a `Sessao` é emitida pelo Supabase Auth, não por código deste repositório),
+`entrarDemonstracao` (a Edge Function repassa a `Sessao` do Auth) e `listarFuncoes` (leitura de tabela direta pelo PostgREST).
+
+Os 16 pares isentos documentados em `ISENTAS` em `scripts/contrato_responde.py`:
+- **Supabase Auth (4):** `entrarDemonstracao:429`, `pedirCodigo:429`, `confirmarCodigo:401`, `renovarSessao:401`.
+- **PostgREST (1):** `listarFuncoes:401`.
+- **Edge Functions (11):** `entrarDemonstracao:404`, `exportarMeusDados:401/404/405`, `exportarTurnos:401/403/405/422`, `excluirConta:401/405/422` (testadas pela suíte Deno na CI).
 
 ---
 
@@ -202,6 +230,7 @@ Medição consolidada da bateria em 06/10 com a `develop` em `c1b838e`:
 - **Uma recusa tem três eixos:** `sqlstate`, `code` e status HTTP.
 - **Rótulo de volatilidade mentiroso passa despercebido:** `plpgsql_check` e linter garantem que funções que chamam `erro` sejam marcadas como VOLATILE.
 - **Dois branches podem escolher a mesma hora redonda:** `scripts/migracoes-sem-colisao.sh` evita colisão de migrações antes do merge.
+- **Recusa contratual sem teste vira débito acumulado:** o portão `contrato-responde.sh` agora bloqueia a CI se qualquer novo par de erro for adicionado ao OpenAPI sem teste ou justificativa explícita.
 
 ---
 
@@ -220,13 +249,15 @@ Colunas do esquema com funções de negócio específicas que complementam a Mod
 | `despacho.rodada` | unicidade do despacho por `(vaga_id, profissional_id, rodada)` |
 | `notificacao.rodada` | marca de envio de vaga por rodada para não suprimir push da rodada nova |
 | `turno.a_caminho_em` | aviso "estou a caminho" (h53CJVP7, contrato 0.2.25) |
+| `vaga.republicada_de` | referência à vaga de origem na republicação de posições restantes (cartão D1-C, contrato 0.2.41) |
 
 E alinhamentos consolidados de negócio:
-- **Suporte por e-mail a partir do turno (Opção C, contrato 0.2.40, PR #169 e P6):** Chamados abertos via RPC `abrir_suporte` gravam ocorrência com `tipo = 'suporte'`, `origem = 'app'`, `turno_id`, categoria e sem texto livre (`relato` nulo, LGPD/RN15). A fila de operação (`consultar-ocorrencias.sql`) expõe `protocolo_curto` (8 hexadecimais), `origem`, `turno_id` e prazo legal de 5 dias úteis. Chamados sem envio de e-mail pelo usuário são encerrados manualmente pela Equipe via `fechar-chamado-sem-email.sql` com `resultado = 'sem_email_recebido'` (D16, SU-RN10). E-mails tratados são expurgados da caixa `suporte@frila.app` e lixeira conforme diretriz de retenção da LGPD (D9, SU-RN11).
+- **Suporte por e-mail a partir do turno (Opção C, contrato 0.2.40, PR #169 e P6 no PR #171):** Chamados abertos via RPC `abrir_suporte` gravam ocorrência com `tipo = 'suporte'`, `origem = 'app'`, `turno_id`, categoria e sem texto livre (`relato` nulo, LGPD/RN15). A fila de operação (`consultar-ocorrencias.sql`) expõe `protocolo_curto` (8 hexadecimais), `origem`, `turno_id` e prazo legal de 5 dias úteis. Chamados sem envio de e-mail pelo usuário são encerrados manualmente pela Equipe via `fechar-chamado-sem-email.sql` com `resultado = 'sem_email_recebido'` (D16, SU-RN10). E-mails tratados são expurgados da caixa `suporte@frila.app` e lixeira conforme diretriz de retenção da LGPD (D9, SU-RN11).
+- **Republicação de posições restantes (D1-C, contrato 0.2.41, PR #170):** Permite ao contratante reabrir posições restantes de vaga fechada sem candidatos em seleção ativa via RPC `republicar_posicoes_restantes(vaga_id, chave)`. Cria nova vaga em modo urgência com posições clonadas vinculadas por `vaga.republicada_de`, validando recusas `401` (`nao_autenticado`), `403` (`sem_permissao`), `404` (`nao_encontrado`) e `422` (`republicacao_indisponivel`), e mantendo o histórico na vaga original.
 - **Avaliação:** Um voto por lado do turno (`unique (turno_id, alvo_tipo)` e `unique (turno_id, autor_id)`). Reenvio do mesmo valor recebe 200; valor divergente recebe `409 avaliacao_ja_registrada`.
 - **Filtro de Bloqueio em `perfil_publico`:** Totalmente implementado e protegido com 404 em caso de bloqueio bidirecional (PR #104, teste 550).
 - **Check-out fora da janela:** Recusado com `422 fora_da_janela`. O alerta cron `alertar_fim_sem_checkout` monitora turnos encerrados sem check-out.
-- **Apenas quatro operações sem RPC própria:** `confirmarCodigo`, `entrarDemonstracao` e `renovarSessao` (gerenciadas pelo Supabase Auth) e `listarFuncoes` (leitura direta via PostgREST). Todas as 44 operações com corpo 200 possuem RPC dedicada no banco.
+- **Apenas quatro operações sem RPC própria nem Edge Function:** `pedirCodigo` (`/otp`), `confirmarCodigo` (`/verify`) e `renovarSessao` (`/token`), que são endpoints nativos do Supabase Auth, e `listarFuncoes` (`/funcao`), que é leitura direta por PostgREST. `entrarDemonstracao` possui Edge Function própria em `supabase/functions/entrar-demonstracao/index.ts`. Todas as 46 operações com corpo 200 ao alcance do portão possuem RPC dedicada no banco.
 
 ---
 
@@ -240,7 +271,7 @@ E alinhamentos consolidados de negócio:
 
 ## Por onde continuar
 
-1. **Acompanhar a conclusão do Lote 6 (PR #157):** Finalização da expansão das recusas críticas pelo Time A e revisão cruzada independente pelo Time B.
-2. **Homologação e Deploy no `frila-dev`:** Com a `develop` avançada e o SMTP próprio funcional, sincronizar as migrações no projeto remoto `jcobftbhbqdikratzizz`.
-3. **Frontend e Clientes Mobile:** As telas de contestação (suspensão e revisão de despacho com Opção B) e a tela de exportação de turnos (com janela regulamentar de 30 dias) estão com contratos 0.2.37 e backends 100% disponíveis.
+1. **Homologação e Deploy no `frila-dev`:** Com a `develop` consolidada em 10/10 (contrato 0.2.41, 102 migrações, suporte e republicação), sincronizar as migrações no projeto remoto `jcobftbhbqdikratzizz`.
+2. **Frontend e Clientes Mobile:** As novas funcionalidades (suporte por e-mail a partir do turno, encerramento de chamado e republicação de posições restantes em modo urgência) estão com contratos 0.2.41 e backends 100% disponíveis para consumo.
+3. **Fechamento do PR #168:** O PR #168 de 08/10 está obsoleto perante a consolidação em 10/10 e pode ser fechado sem merge.
 
