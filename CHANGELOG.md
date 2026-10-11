@@ -8,12 +8,36 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 ## [Não lançado]
 
 ### Adicionado
-- **Operação do suporte por e-mail a partir do turno (P6, contrato 0.2.40, RF23, UC14):**
+- **Republicação de posições restantes em urgência (D1-C, contrato 0.2.41, PR #170):**
+  - RPC `public.republicar_posicoes_restantes(vaga_id, chave)` permitindo ao contratante reabrir posições não preenchidas ou canceladas de vaga fechada sem candidatos em seleção ativa. Cria nova vaga em modo urgência com posições clonadas, mantendo rastreabilidade via `vaga.republicada_de`.
+  - Migrações `20261009100000_vaga_republicada_de_e_republicacao_da_selecao.sql` e `20261009110000_republicar_posicoes_restantes_e_painel.sql`.
+  - Suíte pgTAP `630_republicar_posicoes_restantes.sql` (55 asserções), teste de concorrência Cenário 11 em `scripts/corrida-ciclo.sh` e recusas contratuais vigiadas `401` (`nao_autenticado`), `403` (`sem_permissao`), `404` (`nao_encontrado`) e `422` (`republicacao_indisponivel`).
+- **Suporte por e-mail a partir do turno (Opção C, contrato 0.2.40, RF23, UC14, PR #169):**
+  - RPC `public.abrir_suporte(turno_id, motivo)` para abertura de chamados vinculados ao turno com tipo `'suporte'`, `origem = 'app'`, categoria predefinida e sem texto livre (`relato` nulo, LGPD/RN15), gerando `protocolo` (UUID) e `protocolo_curto` (8 caracteres hexadecimais em maiúsculas).
+  - Migrações `20261008100000_categoria_suporte_e_origem_ocorrencia.sql` e `20261008110000_abrir_suporte.sql`.
+  - Suíte pgTAP `620_abrir_suporte.sql` (26 asserções) e recusa contratual vigiada `abrirSuporte:422` (`motivo_obrigatorio`).
+- **Operação do suporte por e-mail a partir do turno (P6, contrato 0.2.40, PR #171):**
   - Ajuste do script operacional `consultar-ocorrencias.sql` para exibir `protocolo_curto` (8 hexadecimais em maiúsculas), `origem`, categoria (`motivo`) e `turno_id`, mantendo join interno em `usuario` autor.
-  - Script operacional `fechar-chamado-sem-email.sql` para fechamento manual pela Equipe Frila com resultado `sem_email_recebido` após expiração do prazo regulamentar (D16, SU-RN10).
+  - Script operacional `fechar-chamado-sem-email.sql` para fechamento manual pela Equipe Frila com resultado `sem_email_recebido` após expiração do prazo regulamentar de 5 dias úteis (D16, SU-RN10).
   - Atualização do manual de procedimentos em `supabase/operacao/equipe-frila.md` documentando o fluxo completo com endereço oficial `suporte@frila.app`, SLA de 5 dias úteis, busca por protocolo curto, critérios de encerramento manual e política rigorosa de retenção e expurgo de e-mails em conformidade com a LGPD (D9, SU-RN11).
+- **Modo de seleção e reposição dentro de 24h (D4=C, D5=A, contrato 0.2.38, PR #161):**
+  - Publicação de novas vagas e reabertura de posições com menos de 24h para o início forçadas para o modo urgência, recusando seleção manual com `422 modo_indisponivel`.
+  - Migração `20261007110000_modo_selecao_reabertura_urgencia.sql`.
+- **Revisão de Despacho (Opção B) e Exportação de Turnos (contrato 0.2.37, PR #155):**
+  - Trava de unicidade no app em `pedir_revisao_despacho` recusando reenvio com `409 contestacao_ja_aberta`. Migração `20261006160000_revisao_despacho_opcao_b.sql` e suíte pgTAP `605_revisao_despacho_opcao_b.sql`.
+  - Edge Function `exportar-turnos` com janela máxima regulamentar de 30 dias (`422 intervalo_maximo_excedido`) e parâmetros opcionais `de`/`ate`.
+- **Contestação de Suspensão com Opção B (contrato 0.2.36, PR #153):**
+  - Unicidade da contestação de suspensão no app com `409 contestacao_ja_aberta`. Migração `20261005190000_situacao_da_conta_contestacao_respondida.sql` e suíte pgTAP `604_situacao_da_conta_contestacao_respondida.sql`.
+- **Cancelamento Idempotente (contrato 0.2.35, PR #149):**
+  - Resposta 200 idempotente para reenvios de `cancelar_posicao` e `cancelar_vaga`. Migração `20261005090000_cancelamento_idempotente.sql` e suíte pgTAP `603_cancelamento_idempotente_reenvio.sql`.
+- **Endurecimento do Portão do Contrato e Cobertura Integral de Recusas (PRs #150, #154, #156, #157, #159, #163, #164, #165, #167):**
+  - Expansão dos Lotes 3 a 10 de recusas críticas no `contrato-responde.sh`, alcançando 100% de cobertura das 167 recusas declaradas pelo contrato OpenAPI (151 vigiadas e alcançadas no banco, 16 isentas com justificativa documentada em `ISENTAS` e 0 não vigiadas).
+  - Suítes pgTAP `487` a `494` e garantia de bloqueio na CI caso novos pares de recusa sejam adicionados sem teste ou justificativa explícita.
+  - Autotestes do portão expandidos para 14 casos verdes (`teste-contrato-responde.sh`).
 
-### Planejado
+### Alterado
+- **Remoção de status 403 não documentado (contrato 0.2.39, PR #166):**
+  - Limpeza de declarações de 403 em operações sem restrição de papel ou perfil.
 - Correções das versões 1.0.x decorrentes dos testes do TestFlight e feedback do piloto no DF (cartão `RzllRo3o`).
 
 ## [1.0.0] - 2026-10-04
