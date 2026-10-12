@@ -4,7 +4,7 @@ Passo a passo operacional para configuração e homologação do SMTP próprio n
 
 O envio embutido do Supabase entrega cerca de 2 e-mails por hora e apenas para endereços autorizados do time. Com o SMTP próprio, o limite sobe para a cota do provedor (~500 por dia no Gmail) e permite entregar o código de seis dígitos a qualquer pessoa, em qualquer provedor.
 
-> ⚠️ **Atenção:** Nunca faça commit de senhas de aplicativo, tokens de acesso ou credenciais. A senha de aplicativo do Gmail para o ambiente de desenvolvimento fica guardada localmente em `~/.config/frila/smtp-gmail` com permissão restrita (`chmod 600`), fora de qualquer repositório.
+> ⚠️ **Atenção:** Nunca faça commit de senhas de aplicativo, tokens de acesso ou credenciais. A senha de aplicativo do Gmail para o ambiente de desenvolvimento fica guardada em cofre local fora de qualquer repositório.
 
 ---
 
@@ -32,13 +32,13 @@ Preencha os campos com os valores abaixo:
 
 | Campo no Supabase | Valor a preencher | Observações |
 |---|---|---|
-| **Sender email** | `frilaverificacao@gmail.com` | Endereço da conta de envio (ou `@frila.app` quando houver domínio próprio) |
+| **Sender email** | `<conta-de-envio-do-frila>` | Endereço da conta de envio (ou `@frila.app` quando houver domínio próprio) |
 | **Sender name** | `Frila` | Nome de exibição que aparece para o usuário na caixa de entrada |
 | **Host** | `smtp.gmail.com` | Servidor SMTP |
 | **Port number** | `465` (ou `587`) | `465` com SSL/TLS implícito; se usar STARTTLS, selecione `587` |
 | **Minimum interval between emails** | `60` | Intervalo mínimo em segundos entre envios para o mesmo endereço |
-| **Username** | `frilaverificacao@gmail.com` | Usuário de autenticação SMTP |
-| **Password** | *(senha de app)* | Senha de 16 caracteres gerada na Conta Google (armazenada em `~/.config/frila/smtp-gmail`) |
+| **Username** | `<conta-de-envio-do-frila>` | Usuário de autenticação SMTP |
+| **Password** | *(senha de app)* | Senha de 16 caracteres gerada na Conta Google e mantida fora do repositório |
 
 5. Clique em **Save changes** no rodapé do formulário.
 
@@ -86,13 +86,13 @@ Critérios de aceite do cartão:
 
 ### 4.1. Como disparar o código de teste
 
-Pelo terminal ou via HTTP (substitua `<PROJECT_REF>`, `<ANON_KEY>` e o endereço de destino):
+Pelo terminal ou via HTTP (substitua `<PROJECT_REF>`, `<ANON_KEY>` e `<caixa-de-teste>`):
 
 ```bash
 curl -i -X POST 'https://<PROJECT_REF>.supabase.co/auth/v1/otp' \
   -H "apikey: <ANON_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"email":"teste-externo@gmail.com"}'
+  -d '{"email":"<caixa-de-teste>"}'
 ```
 
 Ou diretamente pelo fluxo de entrada do aplicativo iOS.
@@ -112,7 +112,7 @@ Para cada um dos 3 provedores, cronometre e inspecione:
 1. **Tempo de entrega:** O e-mail chegou em menos de 60 segundos?
 2. **Localização:** Chegou na caixa de entrada principal? (Reprovado se cair em Spam/Lixo Eletrônico).
 3. **Visualização:** O código de 6 dígitos aparece nítido e com fonte legível.
-4. **Remetente:** Exibe "Frila" `<frilaverificacao@gmail.com>`.
+4. **Remetente:** Exibe "Frila" `<conta-de-envio-do-frila>`.
 5. **Inspeção de cabeçalhos (SPF / DKIM / DMARC):**
    - No Gmail: abra a mensagem > menu de três pontos > **Mostrar original**.
    - No Outlook: abra a mensagem > menu de três pontos > **Exibir detalhes da mensagem** ou **Exibir fonte da mensagem**.
