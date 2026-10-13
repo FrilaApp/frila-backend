@@ -62,6 +62,7 @@ discordar do documento, **o documento ganha** — ou o documento muda primeiro.
 | **Decisões técnicas** | mesmo vault, `Pendências Técnicas Para Codar.md` — D1 a D13 |
 | **Escopo e sprints** | `FrilaApp/frila-docs · Documentos/MD/05-ESCOPO-DO-MVP.md` |
 | **Requisitos (RN, RF, RNF, UC)** | `FrilaApp/frila-docs · Documentos/Diagramas:Documentos/Frila_Documento_de_Requisitos.docx` |
+| **Termos bloqueados e moderação** | `supabase/operacao/lista-de-termos.md` — Processo de governança, adição, remoção e revisão trimestral da lista de termos bloqueados (J6, cartão `ggEzge6h`) |
 | **O quadro** | https://trello.com/b/0eyqvbRJ/frila — 221 cartões, 60 com etiqueta Backend |
 
 > O cartão `S0 · Infra · Criar o projeto no Supabase` diz que o código mora em
