@@ -3064,8 +3064,8 @@ paths:
         Vai à Equipe Frila, com resposta em até 5 dias úteis. Se a contestação for aceita, a conta volta
         na hora (RN13). Sem suspensão em vigor: `422 sem_suspensao_ativa`.
 
-        Relato vazio é `422 campo_obrigatorio`; relato com menos de 10 caracteres é `422 campo_invalido`,
-        os dois com `details: relato`.
+        Relato vazio é `422 campo_obrigatorio`; relato com menos de 10 caracteres, ou que o filtro
+        da diretriz 1.2 recusa, é `422 campo_invalido`, os dois com `details: relato`.
 
         Uma contestação por suspensão (opção B, 0.2.36): quem já contestou a suspensão em vigor,
         com a contestação em análise ou já respondida, recebe `409 contestacao_ja_aberta`. Depois de
