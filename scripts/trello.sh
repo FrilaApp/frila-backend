@@ -142,9 +142,11 @@ except Exception as e:
     print(f"Erro ao parsear resposta da API: {e}", file=sys.stderr)
     sys.exit(1)
 if isinstance(c, dict) and "id" in c:
-    short_link = c.get("shortUrl", "").split("/")[-1]
-    print(f"Criado: {c.get(\"name\")}")
-    print(f"URL: {c.get(\"shortUrl\")}")
+    short_url = c.get('shortUrl', '')
+    short_link = short_url.split('/')[-1] if short_url else c.get('shortLink', '')
+    name = c.get('name', '')
+    print(f"Criado: {name}")
+    print(f"URL: {short_url}")
     print(f"shortLink: {short_link}")
 else:
     print("Erro ao criar cartão:", json.dumps(c, ensure_ascii=False) if isinstance(c, dict) else c, file=sys.stderr)
