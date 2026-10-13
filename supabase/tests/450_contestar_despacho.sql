@@ -61,7 +61,8 @@ select ok(not has_function_privilege('anon', 'public.pedir_revisao_despacho(text
 insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado) values
   ('c7000000-0000-4000-8000-000000000001', 'profissional', 'Paula', '+5561998880001', 'paula@c7.test', '1996-01-01', '2026-09-22', now(), 'ativa'),
   ('c7000000-0000-4000-8000-000000000002', 'contratante',  'Tiago', '+5561998880002', 'tiago@c7.test', '1985-01-01', '2026-09-22', now(), 'ativa'),
-  ('c7000000-0000-4000-8000-000000000003', 'profissional', 'Sara',  '+5561998880003', 'sara@c7.test',  '1997-01-01', '2026-09-22', now(), 'suspensa');
+  ('c7000000-0000-4000-8000-000000000003', 'profissional', 'Sara',  '+5561998880003', 'sara@c7.test',  '1997-01-01', '2026-09-22', now(), 'suspensa'),
+  ('c7000000-0000-4000-8000-000000000004', 'profissional', 'Lucas', '+5561998880004', 'lucas@c7.test', '1998-01-01', '2026-09-22', now(), 'ativa');
 
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto) values
   ('c7000000-0000-4000-8000-000000000010', 'Restaurante do Tiago', '52141555000190', 'food_service', 'CLS 302',
@@ -72,7 +73,8 @@ insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel
 
 insert into public.profissional (id, usuario_id, ponto_base) values
   ('c7000000-0000-4000-8000-000000000014', 'c7000000-0000-4000-8000-000000000001', 'POINT(-47.8800 -15.7900)'::extensions.geography),
-  ('c7000000-0000-4000-8000-000000000015', 'c7000000-0000-4000-8000-000000000003', 'POINT(-47.8800 -15.7900)'::extensions.geography);
+  ('c7000000-0000-4000-8000-000000000015', 'c7000000-0000-4000-8000-000000000003', 'POINT(-47.8800 -15.7900)'::extensions.geography),
+  ('c7000000-0000-4000-8000-000000000016', 'c7000000-0000-4000-8000-000000000004', 'POINT(-47.8800 -15.7900)'::extensions.geography);
 
 -- Funções da Paula: garçom e bartender (ativas), e sommelier (inativa)
 insert into public.funcao (id, nome, categoria, ativo) values
@@ -153,12 +155,14 @@ select throws_ok(
   'PGRST', pg_temp.erro('campo_invalido', 'relato'),
   'relato com menos de 10 caracteres é 422 campo_invalido');
 
--- Texto ofensivo (Diretriz 1.2 da App Store)
-select throws_ok(
-  $$ select pg_temp.como('c7000000-0000-4000-8000-000000000001',
-     'select public.pedir_revisao_despacho(''Texto longo o suficiente mas com babaca nele'')') $$,
-  'PGRST', pg_temp.erro('campo_invalido', 'relato'),
-  'relato com termo ofensivo é 422 campo_invalido');
+-- J1=B (13/10/2026, ggEzge6h): relato de contestação é lido apenas pela Equipe Frila e não passa pelo filtro
+create temp table res_ofensivo as select
+  pg_temp.como('c7000000-0000-4000-8000-000000000004',
+               'select public.pedir_revisao_despacho(''Texto longo o suficiente mas com babaca nele'')') as p;
+select is(
+  ((select p from res_ofensivo)->>'tipo'),
+  'revisao_despacho',
+  'J1=B: relato com termo ofensivo é aceito na contestação');
 
 -- ── 3. Caminho feliz: criterios_de_notificacao ──────────────────────────────────
 
