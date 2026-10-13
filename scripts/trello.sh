@@ -8,6 +8,7 @@
 #   ./scripts/trello.sh revisao <shortLink> <url-do-pr>  só p/ PR que espera outra pessoa: move p/ Revisão
 #   ./scripts/trello.sh concluir <shortLink>             marca a checklist e move p/ Concluído
 #   ./scripts/trello.sh comentar <shortLink> <texto>
+#   ./scripts/trello.sh criar <lista> <titulo> <arquivo-corpo> cria cartão na lista
 #
 # Listas: leia-primeiro historias s0 s1 s2 s3 s4 v1.1 v1.2 andamento revisao teste concluido
 set -euo pipefail
@@ -119,6 +120,36 @@ for cl in c.get("checklists",[]):
   comentar)
     curl -s -X POST "$API/cards/${2:?}/actions/comments?$K" \
       --data-urlencode "text=${3:?}" >/dev/null && echo "comentado"
+    ;;
+
+  criar)
+    lista="${2:?uso: trello.sh criar <lista> <titulo> <arquivo-corpo>}"
+    titulo="${3:?uso: trello.sh criar <lista> <titulo> <arquivo-corpo>}"
+    corpo_arq="${4:?uso: trello.sh criar <lista> <titulo> <arquivo-corpo>}"
+    if [ ! -f "$corpo_arq" ]; then
+      echo "arquivo de corpo não encontrado: $corpo_arq" >&2
+      exit 1
+    fi
+    curl -s -X POST "$API/cards?$K" \
+      -d "idList=$(lista_id "$lista")" \
+      --data-urlencode "name=$titulo" \
+      --data-urlencode "desc@$corpo_arq" \
+      | python3 -c '
+import json, sys
+try:
+    c = json.load(sys.stdin)
+except Exception as e:
+    print(f"Erro ao parsear resposta da API: {e}", file=sys.stderr)
+    sys.exit(1)
+if isinstance(c, dict) and "id" in c:
+    short_link = c.get("shortUrl", "").split("/")[-1]
+    print(f"Criado: {c.get(\"name\")}")
+    print(f"URL: {c.get(\"shortUrl\")}")
+    print(f"shortLink: {short_link}")
+else:
+    print("Erro ao criar cartão:", json.dumps(c, ensure_ascii=False) if isinstance(c, dict) else c, file=sys.stderr)
+    sys.exit(1)
+'
     ;;
 
   *) sed -n '2,20p' "$0"; exit 2 ;;
