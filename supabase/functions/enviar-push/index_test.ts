@@ -102,6 +102,7 @@ async function gerarContaDeServicoTeste(): Promise<FcmServiceAccount> {
 Deno.test("FCM client: obtém access token com JWT assinado e envia mensagem com sucesso (200)", async () => {
   const sa = await gerarContaDeServicoTeste();
 
+  let corpoFCM: any = null;
   const mockFetch: typeof fetch = (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = input.toString();
 
@@ -119,6 +120,7 @@ Deno.test("FCM client: obtém access token com JWT assinado e envia mensagem com
     }
 
     if (url.includes("/messages:send")) {
+      corpoFCM = JSON.parse(String(_init?.body ?? "{}"));
       return Promise.resolve(
         new Response(
           JSON.stringify({
@@ -149,6 +151,9 @@ Deno.test("FCM client: obtém access token com JWT assinado e envia mensagem com
   assertEquals(sendRes.ok, true);
   assertEquals(sendRes.status, 200);
   assertEquals(sendRes.messageId, "projects/frila-test-project/messages/msg_987654321");
+  assertEquals(corpoFCM?.message?.apns?.payload?.aps?.["mutable-content"], 1);
+  assertEquals(corpoFCM?.message?.apns?.payload?.aps?.sound, "default");
+  assertEquals(corpoFCM?.message?.apns?.payload?.aps?.badge, 1);
 });
 
 // ── Bloqueio 1: Autenticação estrita do agendador ─────────────────────────────
@@ -1998,7 +2003,7 @@ Deno.test("kT7NhMGV / B3: processarEnvioPush exige SUPABASE_URL e SUPABASE_SERVI
 
 Deno.test("Contrato 0.2.30 (FmgMnRx4): FCM message.data inclui vinculo_id do aparelho correspondente", async () => {
   const sa = await gerarContaDeServicoTeste();
-  const mensagensEnviadas: Array<{ token: string; data?: Record<string, string> }> = [];
+  const mensagensEnviadas: Array<{ token: string; data?: Record<string, string>; apns?: any }> = [];
   const urlsDispositivoChamadas: string[] = [];
 
   const mockFetch: typeof fetch = (input: string | URL | Request, init?: RequestInit) => {
@@ -2066,6 +2071,7 @@ Deno.test("Contrato 0.2.30 (FmgMnRx4): FCM message.data inclui vinculo_id do apa
       mensagensEnviadas.push({
         token: parsed.message.token,
         data: parsed.message.data,
+        apns: parsed.message.apns,
       });
       return Promise.resolve(
         new Response(
@@ -2110,11 +2116,126 @@ Deno.test("Contrato 0.2.30 (FmgMnRx4): FCM message.data inclui vinculo_id do apa
   assertEquals(mensagensEnviadas[0].data?.vinculo_id, "11111111-1111-4000-8000-000000000001");
   assertEquals(mensagensEnviadas[0].data?.tipo, "vaga");
   assertEquals(mensagensEnviadas[0].data?.vaga_id, "d0000000-0000-4000-8000-000000000001");
+  assertEquals(mensagensEnviadas[0].apns?.payload?.aps?.["mutable-content"], 1);
+  assertEquals(mensagensEnviadas[0].apns?.payload?.aps?.sound, "default");
+  assertEquals(mensagensEnviadas[0].apns?.payload?.aps?.badge, 1);
 
   assertEquals(mensagensEnviadas[1].token, "fcm_token_ipad_2");
   assertEquals(mensagensEnviadas[1].data?.vinculo_id, "22222222-2222-4000-8000-000000000002");
   assertEquals(mensagensEnviadas[1].data?.tipo, "vaga");
   assertEquals(mensagensEnviadas[1].data?.vaga_id, "d0000000-0000-4000-8000-000000000001");
+  assertEquals(mensagensEnviadas[1].apns?.payload?.aps?.["mutable-content"], 1);
+  assertEquals(mensagensEnviadas[1].apns?.payload?.aps?.sound, "default");
+  assertEquals(mensagensEnviadas[1].apns?.payload?.aps?.badge, 1);
+});
+
+Deno.test("Cartão h6RoObK6: corpo enviado ao FCM traz apns.payload.aps['mutable-content'] === 1, sound/badge e vinculo_id intactos sem dados pessoais", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  let corpoEnviado: any = null;
+
+  const mockFetch: typeof fetch = (input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+
+    if (url.includes("/token")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ access_token: "mock_fcm_token", expires_in: 3600, token_type: "Bearer" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "a3000000-0000-4000-8000-000000000099",
+              usuario_id: "c3000000-0000-4000-8000-000000000001",
+              tipo: "vaga",
+              referencia_id: "d0000000-0000-4000-8000-000000000001",
+              payload: {
+                vaga_id: "d0000000-0000-4000-8000-000000000001",
+              },
+              tentativas: 0,
+              estado_entrega: "pendente",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "disp-1",
+              token_fcm: "fcm_token_iphone_1",
+              plataforma: "ios",
+              vinculo_id: "11111111-1111-4000-8000-000000000001",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/messages:send") && init?.body) {
+      corpoEnviado = JSON.parse(init.body as string);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ name: "projects/frila-test/messages/msg-mutable" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    return Promise.reject(new Error(`URL não tratada no mock: ${url}`));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+    body: JSON.stringify({ notificacao_id: "a3000000-0000-4000-8000-000000000099" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient: criarMockSqlClient(),
+  });
+
+  assertEquals(res.status, 200);
+  assert(corpoEnviado !== null, "mensagem FCM deve ter sido enviada");
+
+  // 1. apns.payload.aps traz mutable-content: 1
+  assertEquals(corpoEnviado.message.apns?.payload?.aps?.["mutable-content"], 1);
+
+  // 2. sound e badge intactos
+  assertEquals(corpoEnviado.message.apns?.payload?.aps?.sound, "default");
+  assertEquals(corpoEnviado.message.apns?.payload?.aps?.badge, 1);
+
+  // 3. data (incluindo vinculo_id) intactos
+  assertEquals(corpoEnviado.message.data?.vinculo_id, "11111111-1111-4000-8000-000000000001");
+  assertEquals(corpoEnviado.message.data?.tipo, "vaga");
+  assertEquals(corpoEnviado.message.data?.vaga_id, "d0000000-0000-4000-8000-000000000001");
+
+  // 4. Nenhum dado pessoal novo no payload
+  const apsChaves = Object.keys(corpoEnviado.message.apns.payload.aps).sort();
+  assertEquals(apsChaves, ["badge", "mutable-content", "sound"]);
+
+  const dadosPessoaisProibidos = [
+    "nome", "cpf", "rg", "telefone", "email", "endereco", "chave_pix",
+    "usuario_id", "profissional_id", "senha", "token", "token_fcm",
+  ];
+  for (const dado of dadosPessoaisProibidos) {
+    assertEquals(corpoEnviado.message.data[dado], undefined, `Dado pessoal '${dado}' não deve vazar em message.data`);
+    assertEquals(corpoEnviado.message.apns.payload[dado], undefined, `Dado pessoal '${dado}' não deve vazar em apns.payload`);
+    assertEquals(corpoEnviado.message.apns.payload.aps[dado], undefined, `Dado pessoal '${dado}' não deve vazar em apns.payload.aps`);
+  }
 });
 
 Deno.test("Contrato 0.2.30: vinculo_id não entra em notificacao.payload e filtrarDataPayloadFcm não aceita vinculo_id do payload", () => {

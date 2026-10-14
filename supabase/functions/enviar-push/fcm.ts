@@ -141,6 +141,7 @@ export async function sendFcmMessage(
           aps: {
             sound: "default",
             badge: 1,
+            "mutable-content": 1,
           },
         },
       },
