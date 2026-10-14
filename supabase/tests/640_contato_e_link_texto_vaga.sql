@@ -19,7 +19,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(66);
+select plan(74);
 
 -- ── 1. Testes unitários de privado.contem_contato_ou_link ───────────────────
 
@@ -42,6 +42,10 @@ select ok(privado.contem_contato_ou_link('+55 (61) 98765-4321'), 'com DDI e más
 select ok(privado.contem_contato_ou_link('chama no zap: 61-99999-8888'), 'texto com zap e hífen');
 select ok(privado.contem_contato_ou_link('meu cel 6 1 9 8 7 6 5 4 3 2 1'), 'burlar com dígitos espaçados');
 select ok(privado.contem_contato_ou_link('61.98765.4321'), 'separado por pontos');
+select ok(privado.contem_contato_ou_link('61-98-7654321'), 'burla: telefone camuflado com múltiplos traços');
+select ok(privado.contem_contato_ou_link('61-9-8765-4321'), 'burla: celular com traços fragmentados');
+select ok(privado.contem_contato_ou_link('61 98 7654 321'), 'burla: celular com blocos espaçados');
+select ok(privado.contem_contato_ou_link('61.98.7654.321'), 'burla: celular com blocos pontuados');
 
 -- E-mails (devem ser detectados)
 select ok(privado.contem_contato_ou_link('contato@empresa.com'), 'e-mail padrão');
@@ -65,6 +69,9 @@ select ok(privado.contem_contato_ou_link('clube.app/vagas'), 'domínio com .app 
 -- Falsos positivos que DEVEM PASSAR (devem retornar false)
 select ok(not privado.contem_contato_ou_link('14:00'), 'horário simples');
 select ok(not privado.contem_contato_ou_link('18h30'), 'horário com h');
+select ok(not privado.contem_contato_ou_link('18h30 às 23h30'), 'intervalo de horários com h e às');
+select ok(not privado.contem_contato_ou_link('18:30 às 23:30'), 'intervalo de horários com : e às');
+select ok(not privado.contem_contato_ou_link('18h às 22h'), 'intervalo de horários simples com h e às');
 select ok(not privado.contem_contato_ou_link('das 14:00 às 22:00'), 'intervalo de horários às');
 select ok(not privado.contem_contato_ou_link('18:00 - 02:00'), 'intervalo de horários com hífen');
 select ok(not privado.contem_contato_ou_link('R$ 1.200,00'), 'valor em reais com milhar');
@@ -82,6 +89,7 @@ select ok(not privado.contem_contato_ou_link('15/10/2026'), 'data DD/MM/AAAA');
 select ok(not privado.contem_contato_ou_link('15-10-2026'), 'data com hífen');
 select ok(not privado.contem_contato_ou_link('15.10.2026'), 'data com ponto');
 select ok(not privado.contem_contato_ou_link('2026-10-15'), 'data no formato ISO');
+select ok(not privado.contem_contato_ou_link('15/10/26'), 'data DD/MM/AA');
 select ok(not privado.contem_contato_ou_link('corrida-ciclo-4ffd2bd3-3c19-4a1a-bc7d-4f7256348732'), 'UUID/ID de sistema com dígitos e hífens');
 select ok(not privado.contem_contato_ou_link('Camisa preta e avental limpo'), 'traje legítimo');
 select ok(not privado.contem_contato_ou_link('Entrar pelos fundos e procurar o gerente'), 'observações legítimas');

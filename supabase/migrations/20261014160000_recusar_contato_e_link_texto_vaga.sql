@@ -40,17 +40,20 @@ begin
   -- 3. Telefone / WhatsApp: sequências de 8 ou mais dígitos (mesmo com espaços, pontos, barras e hífens).
   -- Mascara falsos positivos legítimos antes da contagem de dígitos:
   -- - UUIDs / IDs de sistema (ex: 4ffd2bd3-3c19-4a1a-bc7d-4f7256348732)
-  -- - Datas (ex: 15/10/2026, 15-10-2026, 15.10.2026, 2026-10-15)
+  -- - Datas com barra (ex: 15/10/2026, 15/10/26)
+  -- - Datas com hífen ou ponto com ano 4 dígitos (ex: 15-10-2026, 15.10.2026)
+  -- - Datas formato ISO (ex: 2026-10-15)
   -- - CEP (ex: CEP 70000-000, 70000-000, CEP 70000000)
   -- - Valores monetários (ex: R$ 1.200,00, R$ 80,00, 150 reais)
-  -- - Horários e períodos (ex: 14:00, das 14:00 às 22:00, 14:00-22:00)
+  -- - Horários e períodos (ex: 14:00, 18h30, 18h, das 14:00 às 22:00, 18h30 às 23h30)
   v_limpo := regexp_replace(t, '\y[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\y', ' ', 'gi');
-  v_limpo := regexp_replace(v_limpo, '\y\d{1,2}[/\.-]\d{1,2}[/\.-]\d{2,4}\y', ' ', 'g');
-  v_limpo := regexp_replace(v_limpo, '\y\d{4}[/\.-]\d{1,2}[/\.-]\d{1,2}\y', ' ', 'g');
+  v_limpo := regexp_replace(v_limpo, '\y(0?[1-9]|[12]\d|3[01])/(0?[1-9]|1[0-2])/(19\d{2}|20\d{2}|\d{2})\y', ' ', 'g');
+  v_limpo := regexp_replace(v_limpo, '\y(0?[1-9]|[12]\d|3[01])[-.](0?[1-9]|1[0-2])[-.](19\d{2}|20\d{2})\y', ' ', 'g');
+  v_limpo := regexp_replace(v_limpo, '\y(19\d{2}|20\d{2})[/\.-](0?[1-9]|1[0-2])[/\.-](0?[1-9]|[12]\d|3[01])\y', ' ', 'g');
   v_limpo := regexp_replace(v_limpo, '\y(CEP\s*:?\s*\d{5}[-.]?\d{3}|\d{5}[-.]\d{3})\y', ' ', 'gi');
   v_limpo := regexp_replace(v_limpo, 'R\$\s*\d+([.,]\d+)*', ' ', 'gi');
   v_limpo := regexp_replace(v_limpo, '\y\d+([.,]\d+)*\s*reais\y', ' ', 'gi');
-  v_limpo := regexp_replace(v_limpo, '\y\d{1,2}:\d{2}(\s*([–\-\/]|às|a)\s*\d{1,2}:\d{2})?\y', ' ', 'gi');
+  v_limpo := regexp_replace(v_limpo, '\y\d{1,2}(:\d{2}|h(\d{2})?)(\s*([–\-\/]|às|a)\s*\d{1,2}(:\d{2}|h(\d{2})?))?\y', ' ', 'gi');
 
   if v_limpo ~ '(\d[[:space:].\-/()]*){8}' then
     return true;
