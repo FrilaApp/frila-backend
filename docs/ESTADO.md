@@ -258,6 +258,8 @@ E alinhamentos consolidados de negócio:
 - **Filtro de Bloqueio em `perfil_publico`:** Totalmente implementado e protegido com 404 em caso de bloqueio bidirecional (PR #104, teste 550).
 - **Check-out fora da janela:** Recusado com `422 fora_da_janela`. O alerta cron `alertar_fim_sem_checkout` monitora turnos encerrados sem check-out.
 - **Apenas quatro operações sem RPC própria nem Edge Function:** `pedirCodigo` (`/otp`), `confirmarCodigo` (`/verify`) e `renovarSessao` (`/token`), que são endpoints nativos do Supabase Auth, e `listarFuncoes` (`/funcao`), que é leitura direta por PostgREST. `entrarDemonstracao` possui Edge Function própria em `supabase/functions/entrar-demonstracao/index.ts`. Todas as 46 operações com corpo 200 ao alcance do portão possuem RPC dedicada no banco.
+- **Avisos push mutáveis no iOS (h6RoObK6, contrato 0.2.30):** O payload APNs enviado via FCM inclui `"mutable-content": 1` em `apns.payload.aps` junto de `sound` e `badge`.
+  Isso permite à Notification Service Extension do iOS interceptar e tratar o aviso antes da exibição para validação de `vinculo_id` sem expor dados pessoais (RN15).
 
 ---
 
