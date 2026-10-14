@@ -8,7 +8,7 @@
 #   ./scripts/trello.sh revisao <shortLink> <url-do-pr>  só p/ PR que espera outra pessoa: move p/ Revisão
 #   ./scripts/trello.sh concluir <shortLink>             marca a checklist e move p/ Concluído
 #   ./scripts/trello.sh comentar <shortLink> <texto>
-#   ./scripts/trello.sh criar <lista> <titulo> <arquivo-corpo> cria cartão na lista
+#   ./scripts/trello.sh criar <lista> <titulo> <arquivo-corpo> [--forcar]  cria cartão na lista (evita duplicatas por padrão)
 #
 # Listas: leia-primeiro historias s0 s1 s2 s3 s4 v1.1 v1.2 andamento revisao teste concluido
 set -euo pipefail
@@ -123,35 +123,60 @@ for cl in c.get("checklists",[]):
     ;;
 
   criar)
-    lista="${2:?uso: trello.sh criar <lista> <titulo> <arquivo-corpo>}"
-    titulo="${3:?uso: trello.sh criar <lista> <titulo> <arquivo-corpo>}"
-    corpo_arq="${4:?uso: trello.sh criar <lista> <titulo> <arquivo-corpo>}"
+    forcar=0
+    args=()
+    for arg in "${@:2}"; do
+      if [ "$arg" = "--forcar" ]; then
+        forcar=1
+      else
+        args+=("$arg")
+      fi
+    done
+
+    if [ "${#args[@]}" -lt 3 ]; then
+      echo "uso: trello.sh criar <lista> <titulo> <arquivo-corpo> [--forcar]" >&2
+      exit 2
+    fi
+
+    lista="${args[0]}"
+    titulo="${args[1]}"
+    corpo_arq="${args[2]}"
     if [ ! -f "$corpo_arq" ]; then
       echo "arquivo de corpo não encontrado: $corpo_arq" >&2
       exit 1
     fi
-    curl -s -X POST "$API/cards?$K" \
-      -d "idList=$(lista_id "$lista")" \
+
+    id_da_lista="$(lista_id "$lista")"
+
+    if [ "$forcar" -eq 0 ]; then
+      existente="$(curl -s "$API/lists/$id_da_lista/cards?$K&fields=name,shortUrl" \
+        | jq -r --arg t "$titulo" 'if type == "array" then (first(.[] | select(.name == $t)) | if . then "\(.shortUrl | split("/") | last)|\(.shortUrl)" else empty end) else empty end')"
+      if [ -n "$existente" ]; then
+        short_link="${existente%%|*}"
+        short_url="${existente##*|}"
+        echo "Aviso: Já existe cartão com o título \"$titulo\" na lista $lista ($short_url, shortLink: $short_link)." >&2
+        echo "Use --forcar se desejar criar duplicata." >&2
+        exit 1
+      fi
+    fi
+
+    resp=$(curl -s -X POST "$API/cards?$K" \
+      -d "idList=$id_da_lista" \
       --data-urlencode "name=$titulo" \
-      --data-urlencode "desc@$corpo_arq" \
-      | python3 -c '
-import json, sys
-try:
-    c = json.load(sys.stdin)
-except Exception as e:
-    print(f"Erro ao parsear resposta da API: {e}", file=sys.stderr)
-    sys.exit(1)
-if isinstance(c, dict) and "id" in c:
-    short_url = c.get('shortUrl', '')
-    short_link = short_url.split('/')[-1] if short_url else c.get('shortLink', '')
-    name = c.get('name', '')
-    print(f"Criado: {name}")
-    print(f"URL: {short_url}")
-    print(f"shortLink: {short_link}")
-else:
-    print("Erro ao criar cartão:", json.dumps(c, ensure_ascii=False) if isinstance(c, dict) else c, file=sys.stderr)
-    sys.exit(1)
-'
+      --data-urlencode "desc@$corpo_arq")
+
+    if ! echo "$resp" | jq -e '.id' >/dev/null 2>&1; then
+      echo "Erro ao criar cartão: $resp" >&2
+      exit 1
+    fi
+
+    card_name=$(echo "$resp" | jq -r '.name')
+    card_url=$(echo "$resp" | jq -r '.shortUrl')
+    card_shortlink=$(echo "$resp" | jq -r '.shortLink // (.shortUrl | split("/") | last)')
+
+    echo "Criado: $card_name"
+    echo "URL: $card_url"
+    echo "shortLink: $card_shortlink"
     ;;
 
   *) sed -n '2,20p' "$0"; exit 2 ;;
