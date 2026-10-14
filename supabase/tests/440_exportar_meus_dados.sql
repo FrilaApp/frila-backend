@@ -19,6 +19,9 @@
 begin;
 select plan(58);
 
+insert into privado.ambiente (id, eh_teste) values (true, true)
+on conflict (id) do update set eh_teste = true;
+
 select set_config('frila.agora', '2026-09-29 11:00:00-03', true);
 
 create temp table ids as select
