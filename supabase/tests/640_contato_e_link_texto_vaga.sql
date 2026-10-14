@@ -19,7 +19,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(65);
+select plan(66);
 
 -- ── 1. Testes unitários de privado.contem_contato_ou_link ───────────────────
 
@@ -82,6 +82,7 @@ select ok(not privado.contem_contato_ou_link('15/10/2026'), 'data DD/MM/AAAA');
 select ok(not privado.contem_contato_ou_link('15-10-2026'), 'data com hífen');
 select ok(not privado.contem_contato_ou_link('15.10.2026'), 'data com ponto');
 select ok(not privado.contem_contato_ou_link('2026-10-15'), 'data no formato ISO');
+select ok(not privado.contem_contato_ou_link('corrida-ciclo-4ffd2bd3-3c19-4a1a-bc7d-4f7256348732'), 'UUID/ID de sistema com dígitos e hífens');
 select ok(not privado.contem_contato_ou_link('Camisa preta e avental limpo'), 'traje legítimo');
 select ok(not privado.contem_contato_ou_link('Entrar pelos fundos e procurar o gerente'), 'observações legítimas');
 
