@@ -1,28 +1,30 @@
 -- privado.elegiveis: recorte do raio GiST antes do join com usuario (RNF11, RNF12).
 -- Recomendação 1 do relatório de carga 10x (backend#195).
 --
--- O problema: na modelagem anterior, a CTE `candidatos` juntava pf, p e u na mesma
--- cláusula FROM. O relatório de carga 10x (PR #195) apontou que, conforme o volume e as
--- estatísticas de distribuição crescem, o planejador PostgreSQL tende a inverter a junção
--- para uma varredura sequencial (`Seq Scan`) com `Hash Join` em `usuario`. Em escala 2x
--- (260.018 usuários), isso provocava instabilidade no plano, alternando entre Index Scan
--- (31 ms) e Seq Scan (69,7 ms), estourando o teto de 50 ms. Em escala 10x (1.300.018
--- usuários), o Seq Scan em usuario tornava-se persistente (mediana ~454 ms).
+-- O contexto: a Recomendação 1 do relatório de carga 10x (PR #195) sugeriu isolar a
+-- filtragem espacial (ST_DWithin 15 km) e de catálogo (pf.funcao_id) em uma subquery antes
+-- do join com public.usuario, visando evitar o Seq Scan em usuario observado sob carga.
 --
--- A correção: reordena a CTE de candidatos para aplicar o filtro de função e o recorte
--- geográfico GiST (ST_DWithin 15 km ou equipe de confiança) antes de consultar
--- public.usuario.
+-- A reordenação: a CTE `candidatos` foi reestruturada para isolar o join entre
+-- profissional_funcao e profissional com o filtro geográfico em uma subquery derivada `p`,
+-- juntando com public.usuario em seguida.
 --
--- O que foi medido de fato (planos-com-carga.sh):
---   - Em escala 2x: a reordenação consolida o filtro geográfico antes de usuario,
---     eliminando o Seq Scan em usuario e garantindo Index Scan na PK (usuario_pkey) sobre
---     apenas ~749 candidatos remanescentes da função/raio. A latência estabiliza em
---     mediana 29,5 ms (teto 50 ms) e p95 32,4 ms (teto 100 ms).
---   - Em escala 10x: a medição real revelou que o Seq Scan em usuario CONTINUA (1.302.514
---     linhas lidas no Hash Join) e o ganho é modesto (~10%, mediana de 454,3 ms para 411,8 ms).
---     Ou seja: a reordenação da CTE melhora a estabilidade em 2x, mas isoladamente NÃO
---     elimina o Seq Scan nem resolve o gargalo de escala 10x (que demandará índices
---     adicionais ou outras intervenções estruturais fora do escopo desta tarefa).
+-- Achado técnico de EXPLAIN (2x e 10x):
+--   - O PostgreSQL realiza achatamento de subqueries simples sem barreira de materialização
+--     (subquery pull-up). Desta forma, o planejador achata a subquery interna `p` e
+--     produz uma árvore de execução rigorosamente IDÊNTICA à versão anterior (nó por nó,
+--     custo por custo e contagem de loops/linhas).
+--   - Em escala 2x: tanto ANTES quanto DEPOIS operam via Nested Loop com Index Scan na PK de
+--     usuario (usuario_pkey), sem nenhum Seq Scan em usuario em ambos os casos. A variação
+--     observada no benchmark (36,7 ms vs 29,5 ms) decorre de ruído e jitter amostral.
+--   - Em escala 10x: tanto ANTES quanto DEPOIS caem no mesmo Hash Join com Seq Scan em
+--     usuario (1.302.514 linhas lidas), pois sob 1,3M linhas o otimizador estima o custo da
+--     varredura sequencial como inferior a ~62k lookups individuais no índice da PK.
+--   - Conclusão: a reordenação sintática expressa o isolamento da regra espacial, mas, por
+--     causa do subquery pull-up, não altera o plano físico nem elimina o Seq Scan a 10x
+--     (o que demandará abordagem por índice cobridor ou barreira de otimização em tarefa
+--     futura). O PR serve como refatoração semântica com validação de equivalência estrita
+--     via pgTAP (10/10 testes cobrindo 100% das vagas).
 --
 -- contrato: corpo-sem-mudanca-de-superficie privado.elegiveis 0.2.42
 

@@ -8,10 +8,9 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 ## [Não lançado]
 
 ### Performance
-- **Otimização de `privado.elegiveis` via recorte espacial antes do join com `usuario` (RNF11, RNF12, Recomendação 1 do backend#195):**
-  - Reordenação da CTE `candidatos` para aplicar o filtro de catálogo (`pf.funcao_id`) e o raio geográfico GiST (`ST_DWithin 15 km` ou equipe de confiança) antes de consultar `public.usuario`.
-  - Em `--escala 2`, elimina o `Seq Scan` em `usuario` e sustenta a latência estável em 29,5 ms (mediana) e 32,4 ms (p95), dentro dos tetos do portão `scripts/planos-com-carga.sh` (50 ms / 100 ms).
-  - Em `--escala 10`, o `Seq Scan` em `usuario` permanece (1.302.514 linhas lidas no Hash Join) com ganho modesto de ~10% (mediana de 454,3 ms para 411,8 ms), confirmando que a reordenação isolada da CTE não sana o gargalo a 10x.
+- **Refatoração de `privado.elegiveis` via isolamento da regra espacial na CTE `candidatos` (RNF11, RNF12, Recomendação 1 do backend#195):**
+  - Reordenação da CTE `candidatos` para isolar o filtro de catálogo (`pf.funcao_id`) e o raio geográfico GiST (`ST_DWithin 15 km` ou equipe de confiança) em subquery derivada antes do join com `public.usuario`.
+  - Análise comparativa de EXPLAIN confirma que o PostgreSQL achata a subquery (`subquery pull-up`), gerando plano de execução idêntico à versão anterior em escala 2x (Nested Loop com Index Scan na PK de usuario, mediana de ~30 ms, sem Seq Scan) e em escala 10x (Hash Join com Seq Scan em usuario). A variação observada entre medições (36,7 → 29,5 ms em 2x) reflete jitter/ruído amostral.
   - Sem alteração na assinatura da RPC nem na semântica de elegibilidade (marcador de superfície `corpo-sem-mudanca-de-superficie privado.elegiveis 0.2.42`).
   - Migração `20261015190000_perf_elegiveis_recorte_antes_do_join.sql` e suíte pgTAP `680_elegiveis_recorte_antes_do_join.sql` (10 asserções validando paridade exata de conjuntos antes e depois em fixtures e em todas as vagas cadastradas).
 
