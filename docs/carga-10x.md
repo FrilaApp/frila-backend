@@ -24,7 +24,7 @@ A carga foi parametrizada dinamicamente via variável de configuração de sess�
 
 | Métrica / Consulta | Volume DF (1x) | Escala 2x | Escala 10x | Teto Padrão Local (1x) | Status em 10x |
 |---|---|---|---|---|---|
-| **Contas de Usuário (`usuario`)** | 130.018 | 260.023 | **1.300.018** | — | Base povoada |
+| **Contas de Usuário (`usuario`)** | 130.018 | 260.018 | **1.300.018** | — | Base povoada |
 | **Profissionais (`profissional`)** | 100.013 | 200.013 | **1.000.013** | — | 1 Milhão no DF |
 | **Vagas Publicadas (`vaga`)** | 20.010 | 40.010 | **200.010** | — | 200 Mil no DF |
 | **Janelas de Grade (`disponibilidade`)** | 200.018 | 400.018 | **2.000.018** | — | 2 Milhões no DF |
@@ -35,8 +35,8 @@ A carga foi parametrizada dinamicamente via variável de configuração de sess�
 | **`public.vagas_abertas` (p90)** | **15,2 ms** | 32,3 ms | **271,2 ms** | — | Elevação |
 | **`public.vagas_abertas` (p95)** | **15,2 – 17,9 ms** | 32,7 ms | **285,3 ms** | 300,0 ms | 🟡 Dentro do teto local |
 | **`fechar_turnos_e_vagas` (Laço 7 dias)** | — | — | **30,9 ms** | — | 🟢 Estável |
-| **`fechar_turnos_e_vagas` (Canc. Posições)** | — | — | **287,5 ms** | — | 🟡 Seq Scan + Triggers |
-| **`fechar_turnos_e_vagas` (Enc. Vagas)** | — | — | **969,9 ms** | — | ⚠️ Seq Scan + Triggers |
+| **`fechar_turnos_e_vagas` (Canc. Posições)** | — | — | **287,5 ms** | — | 🟡 Seq Scan + tempo residual |
+| **`fechar_turnos_e_vagas` (Enc. Vagas)** | — | — | **969,9 ms** | — | ⚠️ Seq Scan + tempo residual |
 
 *Notas:*  
 ¹ **Ponto de Inflexão em Escala 2x:** A medição de 2x varia sensivelmente com o estado das estatísticas do planejador PostgreSQL. Em ambiente com estatísticas atualizadas pós-migrações 15/10, o planejador PostgreSQL já inverte o plano para `Seq Scan` em `usuario` (260.023 linhas) com mediana de **69,7 ms** (p95 **78,2 ms**), reprovando o teto do script local (50 ms). Quando o planejador ainda seleciona `Index Scan` na PK de `usuario`, a mediana se sustenta em 31,2 ms (p95 33,2 ms). Esse achado demonstra que o ponto de inflexão e instabilidade do planejador ocorre precocemente entre 1x e 2x.  
@@ -62,8 +62,8 @@ Sob volume de 1.000.000 de profissionais (1.300.018 contas de usuário no DF), o
 - **Diagnóstico da Decomposição do Tempo:**
   - O nó `Seq Scan on usuario u` custa **113,1 ms** lendo sequencialmente 1.300.018 linhas (1.300.015 aceitas e 3 descartadas pelo filtro `estado = 'ativa' AND NOT demonstracao`).
   - O nó `Hash` associado eleva o tempo acumulado para **189,3 ms**, exigindo 16 batches e ~5,8 MB de memória de trabalho.
-  - O tempo restante até atingir a mediana de **1.154,8 ms** (e p95 de **1.878,5 ms**) decorre da cascata estrutural subsequente: como o hash table é construído com toda a massa de usuários ativos do sistema antes do recorte espacial, os passos posteriores de cruzamento com as categorias/funções e aplicação do raio de proximidade geográfica (`ST_DWithin` na CTE) passam a processar dezenas de milhares de junções intermediárias.
-- **Causa Raiz:** O planejador inverte a ordem de junção porque o filtro de função/categoria retorna ~62.500 candidatos potenciais, e ele avalia que 62.500 lookups individuais na PK (`usuario_pkey`) seriam mais custosos que varrer a tabela sequencialmente via Hash Join. Como demonstrado na medição de 2x (onde 260.023 linhas já foram varridas com 69,7 ms), essa inversão se torna instável já a partir de 2x.
+  - O tempo restante até atingir a mediana de **1.154,8 ms** (e p95 de **1.878,5 ms**) não está decomposto neste relatório (o plano dos nós superiores de cruzamento na CTE não foi capturado individualmente com buffers e contagem de linhas).
+- **Causa Raiz:** O planejador inverte a estratégia para `Seq Scan` em `usuario`. A avaliação de que lookups individuais na PK (`usuario_pkey`) seriam mais custosos que varrer a tabela sequencialmente via Hash Join é uma estimativa de custo interna do planejador (não uma medição direta de nós). Como demonstrado na medição de 2x (onde 260.023 linhas lidas já foram observadas com 69,7 ms de mediana), a escolha do plano se torna instável já a partir de 2x.
 
 ---
 
@@ -86,7 +86,7 @@ Limit (actual rows=30 loops=1)
 ```
 
 - **Diagnóstico:** O índice `vaga_ponto_publicada` é estritamente espacial (`USING gist (ponto) WHERE estado = 'publicada'`). O operador k-NN `<->` percorre os vizinhos mais próximos no espaço geográfico bidimensional. Como a consulta filtra apenas as vagas do dia (`inicio_em::date = dia_critico`), 397 vagas próximas no espaço, mas agendadas para outras datas da grade de 14 dias, foram lidas e descartadas pelo filtro pós-varredura.
-- **Impacto:** Em 200.000 vagas espalhadas na grade, o volume de nós descartados antes de preencher `LIMIT 30` elevou a latência mediana de 15,1 ms para **202,0 ms** (p95 de **285,3 ms**). Embora ainda esteja dentro do teto local (300 ms) e da CI (600 ms), o crescimento é linear com a densidade de vagas no tempo.
+- **Impacto:** Em 200.000 vagas espalhadas na grade, o volume de nós descartados antes de preencher `LIMIT 30` elevou a latência mediana de 15,1 ms para **202,0 ms** (p95 de **285,3 ms**). Embora ainda esteja dentro do teto local (300 ms) e da CI (600 ms), a latência cresce de 15 para 202 ms entre 1x e 10x com o aumento da densidade de vagas.
 
 ---
 
@@ -117,7 +117,7 @@ Execution Time: 287.548 ms
 ```
 - **Diagnóstico da Decomposição do Tempo:**
   - O nó `Seq Scan on posicao p` leva **20,5 ms** varrendo as posições para filtrar `fim_em <= agora`. O nó `Update on posicao p` leva **38,6 ms**.
-  - O tempo residual de **~228 ms** (totalizando 287,5 ms de `Execution Time`) é consumido pela execução de gatilhos pós-update (como triggers de integridade, histórico e auditoria) e pela atualização de índices para os registros alterados.
+  - Há um resíduo de **~228 ms** fora dos nós mostrados (totalizando 287,5 ms de `Execution Time`). A atribuição desse tempo residual a gatilhos pós-update (como triggers de integridade, histórico e auditoria) e atualização de índices é uma hipótese explicativa, já que os planos colados não trazem linhas `Trigger ...: time=`.
   - A tabela `posicao` possui índice `posicao_abertas (vaga_id) WHERE estado = 'aberta'`, mas ele não inclui `fim_em`, forçando a leitura sequencial na etapa de seleção.
 
 #### 3.3.3. Encerramento de Vagas Expiradas
@@ -130,7 +130,7 @@ Execution Time: 969.952 ms
 ```
 - **Diagnóstico da Decomposição do Tempo:**
   - O nó `Update on vaga v` consome **158,4 ms** aplicando as modificações.
-  - O tempo residual de **~811 ms** (totalizando 969,9 ms de `Execution Time`) é absorvido pela execução de triggers em cascata nas vagas modificadas e pela manutenção de índices pesados (em especial o índice espacial GiST `vaga_ponto_publicada`).
+  - Há um resíduo de **~811 ms** fora dos nós mostrados (totalizando 969,9 ms de `Execution Time`). A atribuição desse tempo à execução de gatilhos em cascata nas vagas modificadas e à manutenção de índices pesados (em especial o índice espacial GiST `vaga_ponto_publicada`) é uma hipótese explicativa, pois o plano colado não traz linhas `Trigger ...: time=`.
   - O `Seq Scan` em `vaga` ocorre porque não há índice que cubra `fim_em` para vagas ativas (`estado IN ('publicada', 'preenchida')`), resultando na leitura sequencial de todas as 200.000 vagas na fase de seleção.
 
 ---
@@ -168,4 +168,4 @@ Execution Time: 969.952 ms
   ```
 - **Hipótese de Ganho e Ressalva de Escopo:**
   - O ganho desses índices é restrito à fase de **seleção/leitura** (`Seq Scan`), tornando a identificação das linhas expiradas praticamente instantânea ($O(\log N)$).
-  - Ressalva importante: o tempo consumido por disparos de gatilhos pós-update (~228 ms em posições e ~811 ms em vagas na carga em lote) é proporcional ao volume de registros alterados de uma só vez e não é eliminado por índices de leitura. Na rotina normal de produção a cada 5 minutos, o número de vagas expiradas por rodada é reduzido (5 a 20 vagas), de modo que o tempo total esperado deverá ser reduzido substancialmente. Essas medições devem ser aferidas antes e depois em PR separado.
+  - Ressalva importante: o resíduo de tempo fora dos nós de leitura (~228 ms em posições e ~811 ms em vagas na carga em lote) decorre de operações subsequentes à seleção e é proporcional ao volume de registros alterados de uma só vez, não sendo eliminado por índices de seleção. Na rotina normal de produção a cada 5 minutos, o número de vagas expiradas por rodada tende a ser consideravelmente menor do que na massa sintética de um teste de carga em lote, de modo que o tempo total esperado deverá ser reduzido. Essas medições devem ser aferidas antes e depois em PR separado.
