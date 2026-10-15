@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.41
+  version: 0.2.42
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -97,6 +97,19 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.42, de 15/10/2026.** Documenta o comportamento do bloqueio mútuo no modo seleção e a
+    resposta indistinguível de segurança (frila-backend#184, RF26, RN10):
+
+    - **`candidatosDaVaga`**: Candidatos com bloqueio mútuo com o estabelecimento não aparecem na
+      listagem, alinhando a RPC à política RLS `candidatura_leitura` e impedindo a exposição de dados
+      de profissionais bloqueados.
+    - **`escolherCandidato`**: Tentativa de escolher candidatura inexistente, de outra casa ou de
+      candidato com bloqueio mútuo com o estabelecimento responde indistintamente com `403 sem_permissao`
+      sem `details` (diferente de conta suspensa, que traz `details: conta_suspensa`), sem vazar a
+      existência da candidatura ou do bloqueio mútuo. A validação de bloqueio tem precedência sobre os
+      conflitos `409` (candidatura já escolhida cujo profissional bloqueou a casa depois responde `403`,
+      e não `409 candidatura_indisponivel`), preservando o sigilo e prevenindo vazamento de contato telefônico.
 
     **Versão 0.2.41, de 09/10/2026.** Republicar as posições restantes do modo seleção em
     urgência, com um toque (decisão D1-C de 07/10/2026 e R1 a R4 de 09/10/2026, aprovadas por João Paulo; cartão d3A1WjG3). Só superfície nova:
@@ -2296,7 +2309,8 @@ paths:
 
         É do contratante: conta de profissional recebe `422 perfil_incompativel` (RN25). `vaga_id`
         nulo responde `422 campo_obrigatorio`, com `details: vaga_id` (declarados na 0.2.32).
-      x-requisitos: [RF09, RF16, RN08, RN25, UC04]
+        Candidatos com bloqueio mútuo com o estabelecimento não aparecem na listagem (RF26, RN10, frila-backend#184).
+      x-requisitos: [RF09, RF16, RF26, RN08, RN10, RN25, UC04]
       parameters:
         - name: vaga_id
           in: query
@@ -2335,12 +2349,17 @@ paths:
         ocultada pela moderação da Equipe Frila — a candidatura segue pendente, e a escolha volta a
         valer se a Equipe reexibir a vaga (0.2.23).
 
-        Só membro do estabelecimento escolhe (`403 sem_permissao`). Candidatura já escolhida responde
-        `409 candidatura_indisponivel`; vaga fechada pelas 24 horas (RN24), cancelada ou encerrada,
+        Só membro do estabelecimento escolhe (`403 sem_permissao`). Tentativa de escolher candidatura
+        inexistente, de outra casa ou de candidato com bloqueio mútuo com o estabelecimento responde
+        indistintamente com `403 sem_permissao` sem `details` (frila-backend#184, RF26, RN10), sem
+        revelar a existência da candidatura ou do bloqueio. Essa checagem tem precedência sobre os
+        conflitos `409`: uma candidatura já escolhida cujo profissional bloqueou a casa posteriormente
+        responde `403 sem_permissao`, e não `409 candidatura_indisponivel`. Candidatura já escolhida
+        responde `409 candidatura_indisponivel`; vaga fechada pelas 24 horas (RN24), cancelada ou encerrada,
         `409 vaga_encerrada`. O escolhido recebe o aviso `confirmacao`; quando a escolha ocupa a
         última posição, as candidaturas ainda pendentes passam a `recusada`, com o aviso
         `candidatura_recusada`.
-      x-requisitos: [RF09, RF10, RF11, RN10, RN19, RN21, UC04]
+      x-requisitos: [RF09, RF10, RF11, RF26, RN10, RN19, RN21, UC04]
       requestBody:
         required: true
         content:
