@@ -11,6 +11,9 @@
 -- Achado 4 (Baixa): Revoga `ALL` em `public.pedido_de_exclusao` explicitamente de `public`,
 -- fechando a assimetria com a intenção documentada na criação da tabela.
 
+-- contrato: corpo-sem-mudanca-de-superficie public.candidatos_da_vaga 0.2.41
+-- contrato: corpo-sem-mudanca-de-superficie public.escolher_candidato 0.2.41
+
 -- ── 1. candidatos_da_vaga ─────────────────────────────────────────────────────
 
 create or replace function public.candidatos_da_vaga(vaga_id uuid)
