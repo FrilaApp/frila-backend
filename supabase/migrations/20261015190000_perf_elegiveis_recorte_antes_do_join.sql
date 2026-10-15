@@ -1,16 +1,28 @@
 -- privado.elegiveis: recorte do raio GiST antes do join com usuario (RNF11, RNF12).
 -- Recomendação 1 do relatório de carga 10x (backend#195).
 --
--- O problema: sob volume massivo de profissionais (escala 10x do DF, 1.000.000 de
--- profissionais e 1.300.000 de usuários), a CTE `candidatos` juntava pf, p e u na mesma
--- cláusula FROM. O planejador PostgreSQL considerava que ~62.500 buscas individuais no
--- índice PK (usuario_pkey) seriam mais custosas do que ler a tabela usuario inteira
--- sequencialmente (Seq Scan), degradando a mediana de 13,8 ms para mais de 400 ms.
+-- O problema: na modelagem anterior, a CTE `candidatos` juntava pf, p e u na mesma
+-- cláusula FROM. O relatório de carga 10x (PR #195) apontou que, conforme o volume e as
+-- estatísticas de distribuição crescem, o planejador PostgreSQL tende a inverter a junção
+-- para uma varredura sequencial (`Seq Scan`) com `Hash Join` em `usuario`. Em escala 2x
+-- (260.018 usuários), isso provocava instabilidade no plano, alternando entre Index Scan
+-- (31 ms) e Seq Scan (69,7 ms), estourando o teto de 50 ms. Em escala 10x (1.300.018
+-- usuários), o Seq Scan em usuario tornava-se persistente (mediana ~454 ms).
 --
--- A correção: reordena a CTE de candidatos para aplicar o filtro de função e o raio
+-- A correção: reordena a CTE de candidatos para aplicar o filtro de função e o recorte
 -- geográfico GiST (ST_DWithin 15 km ou equipe de confiança) antes de consultar
--- public.usuario. Desta forma, a junção com usuario opera sobre o conjunto já reduzido
--- localmente, garantindo o uso de Index Scan na PK de usuario sem varredura sequencial.
+-- public.usuario.
+--
+-- O que foi medido de fato (planos-com-carga.sh):
+--   - Em escala 2x: a reordenação consolida o filtro geográfico antes de usuario,
+--     eliminando o Seq Scan em usuario e garantindo Index Scan na PK (usuario_pkey) sobre
+--     apenas ~749 candidatos remanescentes da função/raio. A latência estabiliza em
+--     mediana 29,5 ms (teto 50 ms) e p95 32,4 ms (teto 100 ms).
+--   - Em escala 10x: a medição real revelou que o Seq Scan em usuario CONTINUA (1.302.514
+--     linhas lidas no Hash Join) e o ganho é modesto (~10%, mediana de 454,3 ms para 411,8 ms).
+--     Ou seja: a reordenação da CTE melhora a estabilidade em 2x, mas isoladamente NÃO
+--     elimina o Seq Scan nem resolve o gargalo de escala 10x (que demandará índices
+--     adicionais ou outras intervenções estruturais fora do escopo desta tarefa).
 --
 -- contrato: corpo-sem-mudanca-de-superficie privado.elegiveis 0.2.42
 
