@@ -1,4 +1,4 @@
-# Estado do backend — 10/10/2026
+# Estado do backend — 15/10/2026
 
 Onde o trabalho parou e o que a próxima sessão precisa saber. As regras duráveis estão
 no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
@@ -16,7 +16,7 @@ Os números abaixo foram consolidados e remedidos em 15/10:
 
 | | | Comando |
 |---|---|---|
-| Commits à frente do `main` | **386+** | `git rev-list --count origin/main..origin/develop` |
+| Commits à frente do `main` | **398** | `git rev-list --count origin/main..origin/develop` |
 | Migrações na `develop` | **105** | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
 | pgTAP | **101 arquivos**, verde | `Files=102 … Result: PASS`, medido na CI e com `supabase test db` |
 | Portão `contrato-responde.sh` | **151 recusas vigiadas e alcançadas**, verde | 151 de 151 vigiados e alcançados (100% de cobertura; 16 isentas, 0 não vigiadas de 167 declaradas), 46 de 50 respostas 200 validadas, 37 de 37 coleções |
@@ -68,9 +68,9 @@ de carga e não teste de regra. O número da CI, e o da tabela, é **102 arquivo
 
 ## Onde cada coisa parou
 
-### Entregas Recentes e Marcos Consolidados (até 10/10)
+### Entregas Recentes e Marcos Consolidados (até 15/10)
 
-O repositório ultrapassou **150 PRs mergeados**, com cobertura integral do contrato, novas RPCs e endurecimento da esteira:
+O repositório ultrapassou **180 PRs mergeados**, com cobertura integral do contrato, novas RPCs e endurecimento da esteira:
 
 1. **Lotes 6 a 10 de Recusas Críticas e Endurecimento do Portão (#157, #159, #163, #164, #165, #167):**
    Expansão completa das recusas críticas no `contrato-responde.sh`, saltando de 81 para 151 pares vigiados e alcançados, cobrindo 100% dos pares possíveis do banco (com 16 isenções técnicas justificadas em `contrato_responde.py` e 0 não vigiados). O portão passou a falhar estritamente na CI caso surjam novas recusas sem cobertura ou sem isenção justificada. Acompanhado pelas suítes pgTAP `490` a `494`.
@@ -82,20 +82,20 @@ O repositório ultrapassou **150 PRs mergeados**, com cobertura integral do cont
    Implementação da RPC `republicar_posicoes_restantes(vaga_id, chave)` (cartão `D1-C`), permitindo ao contratante reabrir posições remanescentes de vaga fechada sem candidatos em seleção, clonando a vaga em modo urgência com rastreabilidade pela coluna `vaga.republicada_de` e exibição consolidada no painel. Migrações `20261009100000_vaga_republicada_de_e_republicacao_da_selecao.sql` e `20261009110000_republicar_posicoes_restantes_e_painel.sql`. Suíte pgTAP `630_republicar_posicoes_restantes.sql` (55 testes), Cenário 11 em `scripts/corrida-ciclo.sh` e pares vigiados `republicarPosicoesRestantes:401/403/404/422`.
 5. **PR #171 (Operação do Suporte por E-mail P6 · merge em 10/10):**
    Ajuste operacional de `consultar-ocorrencias.sql` com join interno no autor e exibição de protocolo curto de 8 caracteres; criação do script `fechar-chamado-sem-email.sql` para encerramento manual com resultado `sem_email_recebido` após o prazo regulamentar de 5 dias úteis (D16, SU-RN10); e documentação completa de procedimentos e expurgo seguro LGPD na caixa `suporte@frila.app` em `supabase/operacao/equipe-frila.md` (D9, SU-RN11).
-6. **PR #179 (Recusa de Contato e Link no Texto da Vaga J5 · merge em 14/10):**
+6. **PR #178 (Push com mutable-content no iOS / h6RoObK6 · merge em 14/10):**
+   Envio de `"mutable-content": 1` em `apns.payload.aps` no payload APNs via FCM v1 no motor de despacho (`supabase/functions/despachar/index.ts` e testes Deno), permitindo à Notification Service Extension do iOS interceptar e tratar o aviso antes da exibição para validação de `vinculo_id` sem expor dados pessoais (RN15).
+7. **PR #179 (Recusa de Contato e Link no Texto da Vaga J5 / pBXTS4vv · merge em 15/10):**
    Validação sintática em `privado.contem_contato_ou_link` integrada a `publicar_vaga`/`republicar_vaga` recusando telefones, e-mails e URLs em texto livre com `422 campo_invalido` (RN10, RN15). Migração `20261014160000_recusar_contato_e_link_texto_vaga.sql` e teste pgTAP `640_contato_e_link_texto_vaga.sql`.
-7. **PR #180 (Robustez do Portão de Plano e Correção de Carga · merge em 14/10):**
-   Correção de datas da carga sintética (`gerar_df.sql`) com datas relativas a `privado.agora()` para restaurar short-circuit e reduzir latência de 9.360 ms para 15.0 ms local (38.2 ms na CI); autoteste com 11 casos em `teste-planos-com-carga.sh` e aferição robusta com mediana (p50), p90 e p95 descartando aquecimento.
-8. **Fechamento de Vagas Expiradas sem Processo (D654gdGQ):**
+8. **PR #180 (Robustez do Portão de Plano e Correção de Carga / mhHuBOeG · merge em 15/10):**
+   Correção de datas da carga sintética (`gerar_df.sql`) com datas relativas a `privado.agora()` para restaurar short-circuit e reduzir latência de 9.360 ms para 15.0 ms local (38.2 ms na CI); autoteste com 11 casos em `teste-planos-com-carga.sh` e aferição robusta com descarte de warm-up, 5 iterações e cálculo de mediana (p50), p90 e p95.
+9. **PR #181 (Fechamento de Vagas Expiradas sem Processo / D654gdGQ · merge em 15/10):**
    Correção em `privado.fechar_turnos_e_vagas()` para cancelar posições remanescentes que permaneceram em `estado = 'aberta'` após o término do turno (`fim_em <= privado.agora()`) e encerrar as vagas correspondentes (`estado = 'encerrada'`), eliminando resíduos perpétuos de vagas expiradas no índice GiST `vaga_ponto_publicada`. Migração `20261015100000_fechar_vagas_expiradas_sem_processo.sql` e teste pgTAP `650_fechamento_vaga_expirada_sem_processo.sql`.
 
-### A fila de PRs aberta em 10/10
+### A fila de PRs aberta em 15/10
 
-Medida com `gh pr list --state open` em 10/10:
+Medida com `gh pr list --state open` em 15/10:
 
-| PR | Ramo | Título / Escopo |
-|---|---|---|
-| **#168** | `docs/estado-08-10` | `docs(estado): fotografia de 08/10, contrato 0.2.38, 111 de 111 recusas` (obsoleto; superado pela consolidação de 10/10) |
+*Nenhum pull request aberto no momento (fila limpa após o merge dos PRs #178 a #181).*
 
 ---
 
@@ -103,14 +103,27 @@ Medida com `gh pr list --state open` em 10/10:
 
 | | |
 |---|---|
-| local | `supabase start` · Postgres 17 · **102** migrações na `develop`, **47** no `main` (em 10/10) |
-| `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · SMTP próprio ativo (`smtp.gmail.com:465`, código de 6 dígitos) |
+| local | `supabase start` · Postgres 17 · **105** migrações na `develop`, **47** no `main` (em 15/10) |
+| `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · SMTP próprio ativo (`smtp.gmail.com:465`, código de 6 dígitos) · **Entrega bloqueada** por `frila.agendador_secret` (vide abaixo) |
 | `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **vazio**: aguarda esteira de deploy por tag |
 
 **Desde 29/09 o `frila-dev` manda e-mail por SMTP próprio** (PR #81):
 - Envio: `smtp.gmail.com:465`, conta `frilaverificacao@gmail.com`, remetente "Frila".
 - Conteúdo: código de seis dígitos (`{{ .Token }}`).
 - Validade: 15 minutos.
+
+> ### ⚠️ Bloqueio da entrega contínua no `frila-dev`: `frila.agendador_secret`
+>
+> A aplicação das migrações e entrega no ambiente remoto `frila-dev` via `./scripts/aplicar-remoto.sh` está **bloqueada**.
+>
+> O script verifica previamente a existência de `frila.agendador_secret` em `pg_db_role_setting` antes de autorizar as migrações (para garantir que `publicar_vaga` não falhe no enfileiramento pós-commit). Porém, no Supabase hospedado, o usuário `postgres` não possui permissões de superusuário (`superuser`), e a tentativa de configurar parâmetros GUC em nível de banco via `ALTER DATABASE postgres SET frila.agendador_secret = ...` falha com:
+> ```
+> ERROR: 42501: permission denied to set parameter "frila.agendador_secret"
+> ```
+> Como consequência, as migrações não podem avançar no `frila-dev` enquanto o segredo depender de GUC.
+>
+> **Solução proposta:** Foi redigida a proposta técnica em [`docs/proposta-vault-agendador-secret.md`](proposta-vault-agendador-secret.md) para migrar a leitura do segredo compartilhado para a extensão nativa **Supabase Vault** (`vault.decrypted_secrets`), com fallback de compatibilidade para os testes locais. O item aguarda decisão/aprovação do dono (registrado em `DECISOES.md`).
+> *(Nota de segurança: nenhum valor de segredo real é registrado em arquivos de documentação ou histórico).*
 
 ---
 
@@ -185,20 +198,20 @@ Medido no banco de desenvolvimento com a `develop` em `f73020b`:
 
 ## Os portões
 
-Medição consolidada da bateria em 10/10 com a `develop` em `f73020b`:
+Medição consolidada da bateria em 15/10:
 
-| Comando | O que garante | Medida em 10/10 |
+| Comando | O que garante | Medida em 15/10 |
 |---|---|---|
-| `supabase test db` | pgTAP | **100** arquivos, **2.723** asserções verdes (100% PASS) |
+| `supabase test db` | pgTAP | **101** arquivos (102 no prove), **2.700+** asserções verdes (100% PASS) |
 | `./scripts/contrato-responde.sh` | respostas casam com o contrato | **46 de 50** respostas 200 validadas, **151 de 151** recusas vigiadas e alcançadas, **37 de 37** coleções exercitadas |
-| `deno test --allow-all --no-check` | Edge Functions em Deno | **178** testes verdes (0 falhas), incluindo 31 em `exportar-turnos` |
+| `deno test --allow-all --no-check` | Edge Functions em Deno | **179** testes verdes (0 falhas), incluindo 31 em `exportar-turnos` |
 | `./scripts/teste-contrato-promete.sh` | autoteste da direção contrato-à-frente | 9 de 9 casos verdes |
 | `./scripts/teste-contrato-responde.sh` | autoteste de schemas do contrato | 14 de 14 casos verdes |
 | `./scripts/teste-contrato-acompanha.sh` | PR que altera `public` acompanha contrato | 19 de 19 casos verdes |
-| `./scripts/relogio-em-testes.sh` | imunidade contra bombas-relógio de relógio | **99** arquivos pgTAP imunizados |
-| `./scripts/migracoes-sem-colisao.sh` | carimbos de migração únicos | **102** carimbos distintos sem colisão |
+| `./scripts/relogio-em-testes.sh` | imunidade contra bombas-relógio de relógio | **100** arquivos pgTAP imunizados |
+| `./scripts/migracoes-sem-colisao.sh` | carimbos de migração únicos | **105** carimbos distintos sem colisão |
 | `./scripts/migracoes-imutaveis.sh` | migrações passadas não foram alteradas | verde |
-| `./scripts/planos-com-carga.sh` | caminho quente sob volume sintético do DF | verde na CI (p95 elegíveis 27 ms, vagas 28 ms) |
+| `./scripts/planos-com-carga.sh` | caminho quente sob volume sintético do DF (PR #180) | verde na CI (autoteste de 11 casos em `teste-planos-com-carga.sh`, p50 15 ms local / 38 ms CI) |
 
 ### O portão do contrato, medido em 10/10
 
@@ -270,15 +283,17 @@ E alinhamentos consolidados de negócio:
 
 ## Pendências fora do código
 
-1. **Credenciais para Deploy Remoto:** Execução no ambiente remoto `frila-dev` e `frila-prod` depende de `SUPABASE_ACCESS_TOKEN` válido configurado no ambiente.
-2. **Revisão da Júlia:** Revisão da lista de termos bloqueados do filtro de texto ofensivo (`ggEzge6h`).
-3. **Publicação da Bancada:** Push de notas no repositório `FrilaApp/Bancada` requer autenticação local.
+1. **Desbloqueio de Deploy no `frila-dev` (Decisão do dono):** Aval da proposta técnica em [`docs/proposta-vault-agendador-secret.md`](proposta-vault-agendador-secret.md) para migração da leitura do segredo de GUC para Supabase Vault (`vault.decrypted_secrets`), resolvendo o erro 42501 no Postgres hospedado e liberando a execução do script `scripts/aplicar-remoto.sh` (registrado em `DECISOES.md`).
+2. **Push com mutable-content no iOS (`h6RoObK6`):** O backend foi entregue e mergeado no PR #178 (`mutable-content: 1`). A conclusão depende da esteira de iOS (criação do target Notification Service Extension, App Group e aprovação de design para o texto neutro sem dados pessoais).
+3. **Credenciais para Deploy Remoto:** Execução no ambiente remoto `frila-dev` e `frila-prod` depende de `SUPABASE_ACCESS_TOKEN` válido configurado no ambiente.
+4. **Revisão da Júlia:** Revisão da lista de termos bloqueados do filtro de texto ofensivo (`ggEzge6h`).
+5. **Publicação da Bancada:** Push de notas no repositório `FrilaApp/Bancada` requer autenticação local.
 
 ---
 
 ## Por onde continuar
 
-1. **Homologação e Deploy no `frila-dev`:** Com a `develop` consolidada em 10/10 (contrato 0.2.41, 102 migrações, suporte e republicação), sincronizar as migrações no projeto remoto `jcobftbhbqdikratzizz`.
-2. **Frontend e Clientes Mobile:** As novas funcionalidades (suporte por e-mail a partir do turno, encerramento de chamado e republicação de posições restantes em modo urgência) estão com contratos 0.2.41 e backends 100% disponíveis para consumo.
-3. **Fechamento do PR #168:** O PR #168 de 08/10 está obsoleto perante a consolidação em 10/10 e pode ser fechado sem merge.
+1. **Homologação e Deploy no `frila-dev`:** Com a aprovação da proposta do Vault e o desbloqueio do erro 42501, aplicar as 105 migrações no projeto remoto `jcobftbhbqdikratzizz` via `scripts/aplicar-remoto.sh`.
+2. **Frontend e Clientes Mobile:** As novas funcionalidades (recusa de dados de contato e links em texto livre no PR #179, fechamento automático de vagas expiradas no PR #181, e suporte a push mutável no PR #178) estão 100% disponíveis na `develop`.
+3. **Backlog de Tarefas Backend sem Decisão do Dono:** Seguir com a execução contínua de tarefas que independem de decisões de negócio/infraestrutura externa.
 
