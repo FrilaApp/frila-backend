@@ -250,6 +250,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # O portão é testado antes de julgar a base: um portão com furo aprova calado.
+      - name: O portão do caminho quente fecha nos casos conhecidos
+        run: ./scripts/teste-planos-com-carga.sh
+
       - uses: supabase/setup-cli@v1
         with:
           version: latest
@@ -268,12 +272,15 @@ jobs:
       # Os tetos são folgados de propósito. O runner do Actions é mais lento e mais
       # variável que a máquina, e um portão que fica amarelo por hardware é um portão que
       # o time aprende a reexecutar sem ler. O que reprova de verdade aqui é o Seq Scan,
-      # que é determinístico; o tempo é rede de proteção contra regressão grosseira.
+      # que é determinístico; a mediana e o p95 (com aquecimento descartado) são a rede
+      # de proteção contra regressão grosseira.
       # Medido na máquina em 29/09: p95 de 17,8 a 39,4 ms com a reescrita, 182,7 ms com a
       # regressão de 26/09 reproduzida (MUTAR=cte).
       - name: Nenhuma varredura sequencial no caminho quente
         env:
+          MED_MAX_ELEGIVEIS: 100
           P95_MAX_ELEGIVEIS: 400
+          MED_MAX_VAGAS: 200
           P95_MAX_VAGAS: 600
         run: ./scripts/planos-com-carga.sh --plano
 

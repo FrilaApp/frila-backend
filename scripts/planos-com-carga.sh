@@ -23,6 +23,7 @@
 # Uso:
 #   ./scripts/planos-com-carga.sh              mede e reprova
 #   ./scripts/planos-com-carga.sh --plano      imprime os planos inteiros
+#   ./scripts/planos-com-carga.sh --julgar <f> avalia saída pré-gravada (para autoteste)
 #   MUTAR=cte ./scripts/planos-com-carga.sh    prova que o portão reprova (ver abaixo)
 #
 # Saída:
@@ -35,11 +36,25 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 DB="${DB_CONTAINER:-supabase_db_frila-backend}"
 CARGA="supabase/tests/carga/gerar_df.sql"
+MED_MAX_ELEGIVEIS="${MED_MAX_ELEGIVEIS:-50}"
 P95_MAX_ELEGIVEIS="${P95_MAX_ELEGIVEIS:-100}"
+MED_MAX_VAGAS="${MED_MAX_VAGAS:-100}"
 P95_MAX_VAGAS="${P95_MAX_VAGAS:-300}"
 MUTAR="${MUTAR:-}"
 mostrar_plano=false
-[ "${1:-}" = "--plano" ] && mostrar_plano=true
+arquivo_julgar=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --plano) mostrar_plano=true; shift ;;
+    --julgar)
+      [ -n "${2:-}" ] || { printf '✗ NÃO MEDI: --julgar exige um arquivo\n' >&2; exit 2; }
+      arquivo_julgar="$2"
+      shift 2
+      ;;
+    *) shift ;;
+  esac
+done
 
 # As tabelas em que uma varredura sequencial é inaceitável com o volume do DF. As pequenas
 # de catálogo (funcao, equipe_confianca, bloqueio) ficam de fora de propósito: varrer 33
@@ -48,43 +63,46 @@ GRANDES='usuario|profissional|profissional_funcao|disponibilidade|vaga|posicao|d
 
 nao_medi() { printf '✗ NÃO MEDI: %s\n' "$1" >&2; exit 2; }
 reprovou() { printf '✗ %s\n' "$1" >&2; }
-
-# ── Pré-condições. Cada uma sai 2, não 0 ────────────────────────────────────────
-command -v docker >/dev/null 2>&1 || nao_medi "docker não está no PATH"
-[ -f "$CARGA" ] || nao_medi "$CARGA não existe"
-
-docker inspect -f '{{.State.Running}}' "$DB" 2>/dev/null | grep -q true \
-  || nao_medi "o contêiner $DB não está de pé (supabase start)"
-
-psql_() { docker exec -e PGPASSWORD=postgres -i "$DB" psql -U postgres -d postgres -X -q "$@"; }
-
-psql_ -At -c 'select 1' >/dev/null 2>&1 || nao_medi "o Postgres em $DB não respondeu"
-
-# As contagens entram numa comparação numérica, então precisam ser dígitos. Sem esta
-# checagem, uma saída inesperada do psql faria `[ texto -gt 200 ]` errar e, como o script
-# roda sem `set -e` de propósito, o `if` seria tratado como falso e o portão seguiria como
-# se tivesse medido. É a armadilha do portão verde que não mediu, de novo.
 numero() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 
-n_funcoes=$(psql_ -At -c 'select count(*) from public.funcao' 2>/dev/null)
-numero "$n_funcoes" || nao_medi "não consegui contar public.funcao (psql devolveu: '${n_funcoes:-vazio}')"
-[ "$n_funcoes" -gt 0 ] \
-  || nao_medi "public.funcao está vazia: aplique o seed antes (supabase db reset)"
+if [ -n "$arquivo_julgar" ]; then
+  [ -f "$arquivo_julgar" ] || nao_medi "arquivo para julgar não existe: $arquivo_julgar"
+  saida="$arquivo_julgar"
+else
+  # ── Pré-condições. Cada uma sai 2, não 0 ────────────────────────────────────────
+  command -v docker >/dev/null 2>&1 || nao_medi "docker não está no PATH"
+  [ -f "$CARGA" ] || nao_medi "$CARGA não existe"
 
-n_usuarios=$(psql_ -At -c 'select count(*) from public.usuario' 2>/dev/null)
-numero "$n_usuarios" || nao_medi "não consegui contar public.usuario (psql devolveu: '${n_usuarios:-vazio}')"
-if [ "$n_usuarios" -gt 200 ]; then
-  nao_medi "o banco já tem $n_usuarios usuários; a carga se recusa a rodar sobre base povoada. Rode supabase db reset primeiro (e regrave o frila.agendador_secret depois)."
-fi
+  docker inspect -f '{{.State.Running}}' "$DB" 2>/dev/null | grep -q true \
+    || nao_medi "o contêiner $DB não está de pé (supabase start)"
 
-case "$MUTAR" in
-  ''|cte|indice) : ;;
-  *) nao_medi "MUTAR aceita 'cte' ou 'indice', recebi '$MUTAR'" ;;
-esac
+  psql_() { docker exec -e PGPASSWORD=postgres -i "$DB" psql -U postgres -d postgres -X -q "$@"; }
 
-printf '▸ Medindo o plano com o volume do DF, planejador livre'
-[ -n "$MUTAR" ] && printf ' · MUTAÇÃO=%s' "$MUTAR"
-printf '\n'
+  psql_ -At -c 'select 1' >/dev/null 2>&1 || nao_medi "o Postgres em $DB não respondeu"
+
+  # As contagens entram numa comparação numérica, então precisam ser dígitos. Sem esta
+  # checagem, uma saída inesperada do psql faria `[ texto -gt 200 ]` errar e, como o script
+  # roda sem `set -e` de propósito, o `if` seria tratado como falso e o portão seguiria como
+  # se tivesse medido. É a armadilha do portão verde que não mediu, de novo.
+  n_funcoes=$(psql_ -At -c 'select count(*) from public.funcao' 2>/dev/null)
+  numero "$n_funcoes" || nao_medi "não consegui contar public.funcao (psql devolveu: '${n_funcoes:-vazio}')"
+  [ "$n_funcoes" -gt 0 ] \
+    || nao_medi "public.funcao está vazia: aplique o seed antes (supabase db reset)"
+
+  n_usuarios=$(psql_ -At -c 'select count(*) from public.usuario' 2>/dev/null)
+  numero "$n_usuarios" || nao_medi "não consegui contar public.usuario (psql devolveu: '${n_usuarios:-vazio}')"
+  if [ "$n_usuarios" -gt 200 ]; then
+    nao_medi "o banco já tem $n_usuarios usuários; a carga se recusa a rodar sobre base povoada. Rode supabase db reset primeiro (e regrave o frila.agendador_secret depois)."
+  fi
+
+  case "$MUTAR" in
+    ''|cte|indice) : ;;
+    *) nao_medi "MUTAR aceita 'cte' ou 'indice', recebi '$MUTAR'" ;;
+  esac
+
+  printf '▸ Medindo o plano com o volume do DF, planejador livre'
+  [ -n "$MUTAR" ] && printf ' · MUTAÇÃO=%s' "$MUTAR"
+  printf '\n'
 
 # ── A mutação, para provar que o portão reprova ─────────────────────────────────
 # `cte` desfaz a barreira de otimização de privado.elegiveis, reproduzindo a forma de
@@ -288,6 +306,10 @@ begin
   select array_agg(id order by id) into vs from (
     select id from public.vaga where estado = 'publicada'
        and id >= 'c0000000-0000-0000-0000-000000000001'::uuid order by id limit 12) s;
+  -- Aquecimento descartado: 1 rodada sobre as vagas de amostra
+  foreach v in array vs loop
+    select count(*) into n from privado.elegiveis(v);
+  end loop;
   for i in 1..3 loop
     foreach v in array vs loop
       t0 := clock_timestamp();
@@ -297,6 +319,10 @@ begin
   end loop;
   perform set_config('request.jwt.claims',
     json_build_object('sub', prof, 'role', 'authenticated')::text, true);
+  -- Aquecimento descartado: 2 chamadas de vagas_abertas
+  for i in 1..2 loop
+    select public.vagas_abertas(-15.7900, -47.8850, null, null, null, 30, 0) into r;
+  end loop;
   for i in 1..25 loop
     t0 := clock_timestamp();
     select public.vagas_abertas(-15.7900, -47.8850, null, null, null, 30, 0) into r;
@@ -308,6 +334,10 @@ begin
     round((select percentile_cont(0.50) within group (order by x) from unnest(a) x)::numeric, 1);
   raise notice 'P95_VAGAS_ABERTAS=%',
     round((select percentile_cont(0.95) within group (order by x) from unnest(b) x)::numeric, 1);
+  raise notice 'P90_VAGAS_ABERTAS=%',
+    round((select percentile_cont(0.90) within group (order by x) from unnest(b) x)::numeric, 1);
+  raise notice 'MEDIANA_VAGAS_ABERTAS=%',
+    round((select percentile_cont(0.50) within group (order by x) from unnest(b) x)::numeric, 1);
 end $MED$;
 
 \echo '--- VOLUME ---'
@@ -318,6 +348,7 @@ select 'VOL usuario='||(select count(*) from public.usuario)
 SQL
   printf '%s\n' 'rollback;'
 } | psql_ -f - > "$saida" 2>&1
+fi
 
 if grep -q "^ERROR" "$saida" || grep -q "SEM_VAGA_QUENTE" "$saida"; then
   sed -n '1,25p' "$saida" >&2
@@ -376,18 +407,26 @@ le() { # le <valor> <teto> -> 0 se valor <= teto
 p95e=$(grep -o 'P95_ELEGIVEIS=[0-9.]*' "$saida" | head -1 | cut -d= -f2)
 mede=$(grep -o 'MEDIANA_ELEGIVEIS=[0-9.]*' "$saida" | head -1 | cut -d= -f2)
 p95v=$(grep -o 'P95_VAGAS_ABERTAS=[0-9.]*' "$saida" | head -1 | cut -d= -f2)
+p90v=$(grep -o 'P90_VAGAS_ABERTAS=[0-9.]*' "$saida" | head -1 | cut -d= -f2)
+medv=$(grep -o 'MEDIANA_VAGAS_ABERTAS=[0-9.]*' "$saida" | head -1 | cut -d= -f2)
 
-[ -n "$p95e" ] && [ -n "$p95v" ] || nao_medi "não achei os tempos na saída da medição"
+[ -n "$p95e" ] && [ -n "$mede" ] && [ -n "$p95v" ] && [ -n "$medv" ] || nao_medi "não achei os tempos na saída da medição"
 
-printf '  privado.elegiveis: mediana %s ms · p95 %s ms (teto %s ms)\n' "$mede" "$p95e" "$P95_MAX_ELEGIVEIS"
-printf '  vagas_abertas:     p95 %s ms (teto %s ms)\n' "$p95v" "$P95_MAX_VAGAS"
+printf '  privado.elegiveis: mediana %s ms (teto %s ms) · p95 %s ms (teto %s ms)\n' "$mede" "$MED_MAX_ELEGIVEIS" "$p95e" "$P95_MAX_ELEGIVEIS"
+if [ -n "$p90v" ]; then
+  printf '  vagas_abertas:     mediana %s ms (teto %s ms) · p90 %s ms · p95 %s ms (teto %s ms)\n' "$medv" "$MED_MAX_VAGAS" "$p90v" "$p95v" "$P95_MAX_VAGAS"
+else
+  printf '  vagas_abertas:     mediana %s ms (teto %s ms) · p95 %s ms (teto %s ms)\n' "$medv" "$MED_MAX_VAGAS" "$p95v" "$P95_MAX_VAGAS"
+fi
 
+le "$mede" "$MED_MAX_ELEGIVEIS" || { reprovou "mediana de privado.elegiveis em $mede ms, acima do teto de $MED_MAX_ELEGIVEIS ms"; falhou=1; }
 le "$p95e" "$P95_MAX_ELEGIVEIS" || { reprovou "p95 de privado.elegiveis em $p95e ms, acima do teto de $P95_MAX_ELEGIVEIS ms"; falhou=1; }
-le "$p95v" "$P95_MAX_VAGAS"     || { reprovou "p95 de vagas_abertas em $p95v ms, acima do teto de $P95_MAX_VAGAS ms";     falhou=1; }
+le "$medv" "$MED_MAX_VAGAS"     || { reprovou "mediana de vagas_abertas em $medv ms, acima do teto de $MED_MAX_VAGAS ms";     falhou=1; }
+le "$p95v" "$P95_MAX_VAGAS"     || { reprovou "p95 de vagas_abertas em $p95v ms, acima do teto de $P95_MAX_VAGAS ms";         falhou=1; }
 
 if [ "$falhou" -ne 0 ]; then
   printf '\n✗ O caminho quente regrediu com o volume do DF.\n' >&2
   exit 1
 fi
 
-printf '\n✓ Caminho quente medido com o volume do DF: nenhum Seq Scan em tabela grande, e os dois p95 dentro do teto.\n'
+printf '\n✓ Caminho quente medido com o volume do DF: nenhum Seq Scan em tabela grande, e medianas/p95 dentro do teto.\n'
