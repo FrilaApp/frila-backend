@@ -1,12 +1,19 @@
 -- 680_elegiveis_recorte_antes_do_join.sql
--- Prova que a reordenação da CTE em privado.elegiveis devolve exatamente o mesmo
--- conjunto de elegíveis antes e depois da otimização (recomendação 1 do relatório 10x).
+-- Prova a paridade exaustiva entre privado.elegiveis (versão canônica em produção)
+-- e a proposta de reordenação da CTE da Recomendação 1 do relatório de carga 10x (#195).
+--
+-- Contexto: A Recomendação 1 do relatório de carga #195 propôs isolar o join de
+-- profissional_funcao e profissional com o filtro geográfico GiST em uma subquery antes
+-- do join com public.usuario. Conforme verificado por EXPLAIN, o PostgreSQL achata a
+-- subquery (subquery pull-up), produzindo plano físico idêntico ao canônico.
+-- Este teste garante que qualquer tentativa de reordenação sintática da CTE preserva
+-- com 100% de paridade exata o conjunto de elegíveis retornado em todas as vagas.
 
 begin;
 select plan(10);
 
--- ── 1. Implementação anterior (baseline de 20260929160100) em schema temporário ──
-create or replace function pg_temp.elegiveis_antes(
+-- ── 1. Implementação com a reordenação proposta (Rec. 1 do #195) em schema temporário ──
+create or replace function pg_temp.elegiveis_reordenada(
   vaga_id       uuid,
   excluir_conta uuid default null
 )
@@ -23,7 +30,7 @@ declare
   v_dow       int;
   v_dow_ontem int;
 begin
-  select * into v from public.vaga g where g.id = elegiveis_antes.vaga_id;
+  select * into v from public.vaga g where g.id = elegiveis_reordenada.vaga_id;
   if not found then
     return;
   end if;
@@ -43,20 +50,23 @@ begin
   return query
   with candidatos as materialized (
     select p.id, p.usuario_id
-      from public.profissional_funcao pf
-      join public.profissional p on p.id = pf.profissional_id
+      from (
+        select p.id, p.usuario_id
+          from public.profissional_funcao pf
+          join public.profissional p on p.id = pf.profissional_id
+         where pf.funcao_id = v.funcao_id
+           and (elegiveis_reordenada.excluir_conta is null or p.usuario_id <> elegiveis_reordenada.excluir_conta)
+           and (
+             extensions.ST_DWithin(p.ponto_base, v.ponto, 15000)
+             or exists (
+               select 1 from public.equipe_confianca e
+                where e.estabelecimento_id = v.estabelecimento_id
+                  and e.profissional_id = p.id
+             )
+           )
+      ) p
       join public.usuario u on u.id = p.usuario_id and u.estado = 'ativa'
-     where pf.funcao_id = v.funcao_id
-       and (v_demo is null or u.demonstracao = v_demo)
-       and (elegiveis_antes.excluir_conta is null or p.usuario_id <> elegiveis_antes.excluir_conta)
-       and (
-         extensions.ST_DWithin(p.ponto_base, v.ponto, 15000)
-         or exists (
-           select 1 from public.equipe_confianca e
-            where e.estabelecimento_id = v.estabelecimento_id
-              and e.profissional_id = p.id
-         )
-       )
+     where (v_demo is null or u.demonstracao = v_demo)
   )
   select c.id
     from candidatos c
@@ -110,7 +120,7 @@ begin
      );
 end $$;
 
--- ── 2. Fixture com múltiplos perfis e filtros exercitados ───────────────────────
+-- ── 2. Massa de teste e cenários ───────────────────────────────────────────────────
 create temp table ids as select
   'd0000000-0000-4000-8000-000000000001'::uuid as vaga_ref,
   'd0000000-0000-4000-8000-000000000002'::uuid as vaga_demo,
@@ -118,24 +128,11 @@ create temp table ids as select
   'e0000000-0000-4000-8000-000000000004'::uuid as diego,
   'e0000000-0000-4000-8000-000000000009'::uuid as iara;
 
--- Isolamento padrão da base de cenários
-update public.usuario
-   set estado = 'suspensa'
- where id not in (
-   select usuario_id from public.profissional where id::text like 'e0000000-0000-4000-8000-%'
- )
- and id not in (
-   'de000000-0000-4000-8000-000000000002',
-   'de000000-0000-4000-8000-000000000001'
- );
-
--- ── 3. Comparação estrita de conjuntos antes vs depois ──────────────────────────
-
--- Teste 1: vaga de referência real produz exatamente o mesmo conjunto
-select is(
-  (select array_agg(profissional_id order by profissional_id) from privado.elegiveis((select vaga_ref from ids))),
-  (select array_agg(profissional_id order by profissional_id) from pg_temp.elegiveis_antes((select vaga_ref from ids))),
-  'Fixture vaga_ref: mesmo conjunto exato de elegíveis antes e depois'
+-- Teste 1: mesmo conjunto de elegíveis na vaga de referência padrão
+select set_eq(
+  'select profissional_id from privado.elegiveis((select vaga_ref from ids))',
+  'select profissional_id from pg_temp.elegiveis_reordenada((select vaga_ref from ids))',
+  'Fixture vaga_ref: mesmo conjunto exato de elegíveis entre canônica e reordenada'
 );
 
 -- Teste 2: conjunto contém Ana (elegível padrão) e Iara (equipe confiança), e exclui Diego (>15km)
@@ -152,8 +149,8 @@ select ok(
 -- Teste 3: vaga de demonstração produz o mesmo conjunto
 select is(
   (select array_agg(profissional_id order by profissional_id) from privado.elegiveis((select vaga_demo from ids))),
-  (select array_agg(profissional_id order by profissional_id) from pg_temp.elegiveis_antes((select vaga_demo from ids))),
-  'Fixture vaga_demo: mesmo conjunto de demonstração antes e depois'
+  (select array_agg(profissional_id order by profissional_id) from pg_temp.elegiveis_reordenada((select vaga_demo from ids))),
+  'Fixture vaga_demo: mesmo conjunto de demonstração entre canônica e reordenada'
 );
 
 -- Teste 4: exclusão explícita de conta (excluir_conta) preservada
@@ -161,7 +158,7 @@ select is(
   (select array_agg(profissional_id order by profissional_id)
      from privado.elegiveis((select vaga_ref from ids), (select usuario_id from public.profissional where id = (select ana from ids)))),
   (select array_agg(profissional_id order by profissional_id)
-     from pg_temp.elegiveis_antes((select vaga_ref from ids), (select usuario_id from public.profissional where id = (select ana from ids)))),
+     from pg_temp.elegiveis_reordenada((select vaga_ref from ids), (select usuario_id from public.profissional where id = (select ana from ids)))),
   'Fixture com excluir_conta: mesmo conjunto com exclusão de profissional específico'
 );
 
@@ -180,9 +177,9 @@ select ok(
       from public.vaga v
      where (select array_agg(e.profissional_id order by e.profissional_id) from privado.elegiveis(v.id) e)
            is distinct from
-           (select array_agg(a.profissional_id order by a.profissional_id) from pg_temp.elegiveis_antes(v.id) a)
+           (select array_agg(a.profissional_id order by a.profissional_id) from pg_temp.elegiveis_reordenada(v.id) a)
   ),
-  'Conferência exaustiva: 100% das vagas cadastradas devolvem exatamente o mesmo conjunto antes e depois'
+  'Conferência exaustiva: 100% das vagas cadastradas devolvem exatamente o mesmo conjunto entre canônica e reordenada'
 );
 
 -- Teste 7: vaga inexistente

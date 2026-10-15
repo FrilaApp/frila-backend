@@ -7,12 +7,10 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Não lançado]
 
-### Performance
-- **Refatoração de `privado.elegiveis` via isolamento da regra espacial na CTE `candidatos` (RNF11, RNF12, Recomendação 1 do backend#195):**
-  - Reordenação da CTE `candidatos` para isolar o filtro de catálogo (`pf.funcao_id`) e o raio geográfico GiST (`ST_DWithin 15 km` ou equipe de confiança) em subquery derivada antes do join com `public.usuario`.
-  - Análise comparativa de EXPLAIN confirma que o PostgreSQL achata a subquery (`subquery pull-up`), gerando plano de execução idêntico à versão anterior em escala 2x (Nested Loop com Index Scan na PK de usuario, mediana de ~30 ms, sem Seq Scan) e em escala 10x (Hash Join com Seq Scan em usuario). A variação observada entre medições (36,7 → 29,5 ms em 2x) reflete jitter/ruído amostral.
-  - Sem alteração na assinatura da RPC nem na semântica de elegibilidade (marcador de superfície `corpo-sem-mudanca-de-superficie privado.elegiveis 0.2.42`).
-  - Migração `20261015190000_perf_elegiveis_recorte_antes_do_join.sql` e suíte pgTAP `680_elegiveis_recorte_antes_do_join.sql` (10 asserções validando paridade exata de conjuntos antes e depois em fixtures e em todas as vagas cadastradas).
+### Adicionado
+- **Suíte de paridade exaustiva de `privado.elegiveis` (RNF11, RNF12):**
+  - Teste pgTAP `supabase/tests/680_elegiveis_recorte_antes_do_join.sql` comprovando a equivalência estrita de elegíveis (10/10 asserções cobrindo 100% das vagas cadastradas, fixtures de demonstração e `excluir_conta`).
+  - Documentação técnica e comprovação experimental refutando a Recomendação 1 do relatório #195: a reordenação interna da CTE sofre *subquery pull-up* pelo planejador PostgreSQL, gerando plano físico idêntico ao canônico, enquanto a extração de `usuario` para a consulta externa dispara varredura sequencial em `disponibilidade` e `usuario`.
 
 ### Modificado
 - **Espelho do contrato 0.2.43 do frila-docs (PR frila-docs#89):**
