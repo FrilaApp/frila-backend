@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.42
+  version: 0.2.43
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -97,6 +97,19 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.43, de 15/10/2026.** Só texto: nenhuma operação, campo, código de erro ou status
+    muda. Alinha a descrição ao que o backend faz desde a migração `20261013110000` (decisão J1=B da
+    revisão da lista de termos bloqueados, 13/10/2026): o `relato` das contestações não passa pelo
+    filtro de termos da diretriz 1.2, porque é lido só pela Equipe Frila e é onde a pessoa cita o que
+    ouviu ao se defender.
+
+    - **`contestarSuspensao`**: o texto dizia que o `relato` recusado pelo filtro da diretriz 1.2 era
+      `422 campo_invalido`. Não é mais: só relato vazio (`422 campo_obrigatorio`) e com menos de 10
+      caracteres (`422 campo_invalido`), os dois com `details: relato`.
+    - **`pedirRevisaoDespacho`**: passa a declarar as mesmas duas recusas do `relato`, que o backend
+      já devolvia, e que o texto também não passa pelo filtro.
+    - O filtro de termos segue em nome, endereço, texto da vaga e motivo de cancelamento.
 
     **Versão 0.2.42, de 15/10/2026.** Documenta o comportamento do bloqueio mútuo no modo seleção e a
     resposta indistinguível de segurança (frila-backend#184, RF26, RN10):
@@ -1519,6 +1532,10 @@ paths:
 
         Apenas 1 contestação por despacho pelo app (opção B, 0.2.37). Reenvio com contestação em
         análise ou respondida recebe `409 contestacao_ja_aberta`. Recurso posterior só por e-mail.
+
+        Relato vazio é `422 campo_obrigatorio`; com menos de 10 caracteres, `422 campo_invalido`, os
+        dois com `details: relato`. O relato não passa pelo filtro de termos da diretriz 1.2
+        (decisão J1=B, 13/10/2026), como em `contestarSuspensao`.
       x-requisitos: [RF27]
       requestBody:
         required: true
@@ -3083,8 +3100,10 @@ paths:
         Vai à Equipe Frila, com resposta em até 5 dias úteis. Se a contestação for aceita, a conta volta
         na hora (RN13). Sem suspensão em vigor: `422 sem_suspensao_ativa`.
 
-        Relato vazio é `422 campo_obrigatorio`; relato com menos de 10 caracteres, ou que o filtro
-        da diretriz 1.2 recusa, é `422 campo_invalido`, os dois com `details: relato`.
+        Relato vazio é `422 campo_obrigatorio`; relato com menos de 10 caracteres é
+        `422 campo_invalido`, os dois com `details: relato`. O relato **não** passa pelo filtro de
+        termos da diretriz 1.2 (decisão J1=B, 13/10/2026): quem contesta cita o que ouviu, e só a
+        Equipe Frila lê.
 
         Uma contestação por suspensão (opção B, 0.2.36): quem já contestou a suspensão em vigor,
         com a contestação em análise ou já respondida, recebe `409 contestacao_ja_aberta`. Depois de
