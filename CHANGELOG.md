@@ -7,6 +7,12 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Não lançado]
 
+### Testes
+- **Follow-up de bloqueio mútuo e recusas indistinguíveis no modo seleção (RF26, RN10, RN19, PR #184):**
+  - Prova estrita de equivalência entre tentativa de escolher candidatura inexistente e candidatura de profissional com bloqueio mútuo ativo: ambas retornam `403 sem_permissao` com payloads de erro indistinguíveis, nos dois sentidos de bloqueio (profissional bloqueia casa e casa bloqueia profissional), preservando o sigilo sem vazar a existência do bloqueio.
+  - Validação do fluxo legítimo no modo seleção: confirmação com sucesso, geração de `turno_id`, retorno do contato do profissional em `escolher_candidato` e retorno do contato do estabelecimento ao profissional confirmado em `contato_do_turno`.
+  - Suíte pgTAP `671_bloqueio_escolher_candidato_recusa_e_contato.sql` (9 asserções).
+
 ### Segurança
 - **Bloqueio mútuo no modo seleção e concessão mínima de privilégios (Auditoria 15/10/2026, Achados 1 a 4, RF26, RN10, RN15, LGPD):**
   - **Achado 1 (Alta):** Filtro de bloqueio mútuo (`not privado.bloqueado_com_estabelecimento(...)`) adicionado a `public.candidatos_da_vaga` e validação em `public.escolher_candidato`. Candidatos com bloqueio mútuo não aparecem para o contratante e tentativas de confirmação são recusadas com `403 sem_permissao` (resposta idêntica a candidatura inexistente ou de outra casa, sem vazar a existência do bloqueio), impedindo vazamento de contatos telefônicos de profissionais com bloqueio mútuo com o contratante ou estabelecimento.
