@@ -11,6 +11,7 @@ select plan(7);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
+set local frila.agendador_secret = 'segredo-de-teste';
 select set_config('frila.agora', '2027-06-01 12:00:00+00', true);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
