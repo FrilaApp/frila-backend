@@ -34,7 +34,8 @@ jobs:
 
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.121.0
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # Mesmo motivo do `ci.yml`: pull anônimo do ghcr.io divide a cota com o Actions inteiro.
       - name: Autenticar no ghcr.io

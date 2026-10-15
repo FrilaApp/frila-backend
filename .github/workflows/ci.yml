@@ -22,7 +22,8 @@ jobs:
 
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.121.0
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # As imagens do Supabase vêm do ghcr.io, e um `docker pull` anônimo divide a cota
       # com o GitHub Actions inteiro. Em 23/09 isso derrubou quatro execuções seguidas
@@ -256,7 +257,8 @@ jobs:
 
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.121.0
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Autenticar no ghcr.io, para o pull não cair na cota anônima
         uses: docker/login-action@v3
