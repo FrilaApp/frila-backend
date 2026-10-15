@@ -7,6 +7,12 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Não lançado]
 
+### Corrigido
+- **Encerramento de vagas publicadas e cancelamento de posições abertas após fim_em (D654gdGQ):**
+  - Correção na rotina `privado.fechar_turnos_e_vagas()` para cancelar posições remanescentes que permaneceram em `estado = 'aberta'` após o término do turno (`fim_em <= privado.agora()`) e encerrar as vagas correspondentes (`estado = 'encerrada'`).
+  - Previne acúmulo perpétuo de vagas expiradas com `estado = 'publicada'` no índice espacial GiST (`vaga_ponto_publicada`), eliminando degradação progressiva de latência na busca geográfica de `public.vagas_abertas()`.
+  - Migração `20261015100000_fechar_vagas_expiradas_sem_processo.sql` e suíte pgTAP `650_fechamento_vaga_expirada_sem_processo.sql` (12 asserções cobrindo vaga sem confirmações, vaga com confirmação parcial e sobras abertas, vagas futuras intocadas e idempotência).
+
 ### Adicionado
 - **Recusa de telefone, e-mail e link no texto livre da vaga (J5, pBXTS4vv, RN10):**
   - Validação em `privado.contem_contato_ou_link` integrada a `privado.exigir_texto_aceitavel` recusando telefones (8+ dígitos mesmo com separadores ou camuflagem por hífens/espaços/pontos, ex: `61-98-7654321`, `61-9-8765-4321`, `61 98 7654 321`, `61.98.7654.321`), e-mails (@ + domínio) e links/URLs (`http://`, `https://`, `www.`, domínios com TLDs comuns e encurtadores `wa.me`, `bit.ly`, `t.me`, `linktr.ee`) nos campos de texto livre (`local`, `responsavel_local`, `traje`, `observacoes` em `publicar_vaga`/`republicar_vaga` e `nome`/`endereco` em `cadastrar_estabelecimento`) com `422 campo_invalido` e nome do campo em `details`.

@@ -7,29 +7,28 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-**A `develop` é o tronco e está 382 commits à frente do `main`, que não se move desde
+**A `develop` é o tronco e está à frente do `main`, que não se move desde
 28/09.** O `main` continua inteiramente contido na `develop` (`git log
-origin/develop..origin/main` sai vazio) e parado em `c190836`. A `develop` possui **102 migrações**
-e **100 arquivos de pgTAP** (com **2.723 asserções** verdes, 100% PASS).
+origin/develop..origin/main` sai vazio) e parado em `c190836`. A `develop` possui **105 migrações**
+e **101 arquivos de pgTAP** (100% PASS).
 
-Os números abaixo foram consolidados e remedidos em 10/10, com a `develop` em `f73020b` — conferidos
-diretamente com a execução das ferramentas do repositório e da CI.
+Os números abaixo foram consolidados e remedidos em 15/10:
 
 | | | Comando |
 |---|---|---|
-| Commits à frente do `main` | **382** | `git rev-list --count origin/main..origin/develop` |
-| Migrações na `develop` | **102** | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
-| pgTAP | **100 arquivos, 2.723 asserções**, verde | `Files=100, Tests=2723 … Result: PASS`, medido na CI e com `supabase test db` |
+| Commits à frente do `main` | **386+** | `git rev-list --count origin/main..origin/develop` |
+| Migrações na `develop` | **105** | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
+| pgTAP | **101 arquivos**, verde | `Files=102 … Result: PASS`, medido na CI e com `supabase test db` |
 | Portão `contrato-responde.sh` | **151 recusas vigiadas e alcançadas**, verde | 151 de 151 vigiados e alcançados (100% de cobertura; 16 isentas, 0 não vigiadas de 167 declaradas), 46 de 50 respostas 200 validadas, 37 de 37 coleções |
-| Testes em Deno das Edge Functions | **178** na suíte, verde | `ok \| 178 passed \| 0 failed`, medido com `deno test --allow-all --no-check` |
+| Testes em Deno das Edge Functions | **179** na suíte, verde | `ok \| 179 passed \| 0 failed`, medido com `deno test --allow-all --no-check` |
 | Edge Functions | **9** | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
 | Testes unitários em `exportar-turnos` | **31**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
-| Scripts em `scripts/` | **38** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` — 41 arquivos no total, incluindo `.py` e `.sql` |
+| Scripts em `scripts/` | **39** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
 | Contrato espelhado | **0.2.41** | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
-Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **99** arquivos de teste de regras,
-e o `prove` conta **100** porque alcança também `supabase/tests/carga/gerar_df.sql`, que é gerador
-de carga e não teste de regra. O número da CI, e o da tabela, é **100 arquivos e 2.723 testes**.
+Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **101** arquivos de teste de regras,
+e o `prove` conta **102** porque alcança também `supabase/tests/carga/gerar_df.sql`, que é gerador
+de carga e não teste de regra. O número da CI, e o da tabela, é **102 arquivos**.
 
 > ## 🟢 O espelho do contrato está em dia (0.2.41) e alinhado ao original
 >
@@ -83,6 +82,12 @@ O repositório ultrapassou **150 PRs mergeados**, com cobertura integral do cont
    Implementação da RPC `republicar_posicoes_restantes(vaga_id, chave)` (cartão `D1-C`), permitindo ao contratante reabrir posições remanescentes de vaga fechada sem candidatos em seleção, clonando a vaga em modo urgência com rastreabilidade pela coluna `vaga.republicada_de` e exibição consolidada no painel. Migrações `20261009100000_vaga_republicada_de_e_republicacao_da_selecao.sql` e `20261009110000_republicar_posicoes_restantes_e_painel.sql`. Suíte pgTAP `630_republicar_posicoes_restantes.sql` (55 testes), Cenário 11 em `scripts/corrida-ciclo.sh` e pares vigiados `republicarPosicoesRestantes:401/403/404/422`.
 5. **PR #171 (Operação do Suporte por E-mail P6 · merge em 10/10):**
    Ajuste operacional de `consultar-ocorrencias.sql` com join interno no autor e exibição de protocolo curto de 8 caracteres; criação do script `fechar-chamado-sem-email.sql` para encerramento manual com resultado `sem_email_recebido` após o prazo regulamentar de 5 dias úteis (D16, SU-RN10); e documentação completa de procedimentos e expurgo seguro LGPD na caixa `suporte@frila.app` em `supabase/operacao/equipe-frila.md` (D9, SU-RN11).
+6. **PR #179 (Recusa de Contato e Link no Texto da Vaga J5 · merge em 14/10):**
+   Validação sintática em `privado.contem_contato_ou_link` integrada a `publicar_vaga`/`republicar_vaga` recusando telefones, e-mails e URLs em texto livre com `422 campo_invalido` (RN10, RN15). Migração `20261014160000_recusar_contato_e_link_texto_vaga.sql` e teste pgTAP `640_contato_e_link_texto_vaga.sql`.
+7. **PR #180 (Robustez do Portão de Plano e Correção de Carga · merge em 14/10):**
+   Correção de datas da carga sintética (`gerar_df.sql`) com datas relativas a `privado.agora()` para restaurar short-circuit e reduzir latência de 9.360 ms para 15.0 ms local (38.2 ms na CI); autoteste com 11 casos em `teste-planos-com-carga.sh` e aferição robusta com mediana (p50), p90 e p95 descartando aquecimento.
+8. **Fechamento de Vagas Expiradas sem Processo (D654gdGQ):**
+   Correção em `privado.fechar_turnos_e_vagas()` para cancelar posições remanescentes que permaneceram em `estado = 'aberta'` após o término do turno (`fim_em <= privado.agora()`) e encerrar as vagas correspondentes (`estado = 'encerrada'`), eliminando resíduos perpétuos de vagas expiradas no índice GiST `vaga_ponto_publicada`. Migração `20261015100000_fechar_vagas_expiradas_sem_processo.sql` e teste pgTAP `650_fechamento_vaga_expirada_sem_processo.sql`.
 
 ### A fila de PRs aberta em 10/10
 
