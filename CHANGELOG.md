@@ -12,6 +12,13 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Documentação do comportamento de bloqueio mútuo no modo seleção para `candidatosDaVaga` (ocultação de profissionais bloqueados) e `escolherCandidato` (recusa `403 sem_permissao` sem `details` indistinguível de inexistente e com precedência sobre `409`).
   - Atualização dos arquivos `contrato/openapi.yaml` e `contrato/openapi.yaml.sha256`.
 
+### Documentação
+- **Relatório de desempenho e planos sob carga em escala 10x do DF (RNF11, RNF12):**
+  - Aferição do comportamento sob volume de 1,3 milhão de usuários, 1 milhão de profissionais, 200 mil vagas e 2 milhões de disponibilidades no DF.
+  - Parametrização dinâmica do gerador de carga (`supabase/tests/carga/gerar_df.sql` via `frila.carga_escala`) e do portão (`scripts/planos-com-carga.sh --escala <N>`), preservando o padrão 1x da CI.
+  - Mapeamento detalhado de planos `EXPLAIN (ANALYZE, BUFFERS)` e identificação de gargalos de escalabilidade em `privado.elegiveis` (varredura de 1,3M de linhas em `usuario`), `public.vagas_abertas` (filtro de data pós-GiST) e `privado.fechar_turnos_e_vagas` (ausência de índices em `fim_em` para posições e vagas expiradas).
+  - Recomendações técnicas documentadas em `docs/carga-10x.md` para futuros PRs dedicados de otimização e índices com pgTAP.
+
 ### Testes
 - **Follow-up de bloqueio mútuo e recusas indistinguíveis no modo seleção (RF26, RN10, RN19, PR #184):**
   - Prova estrita de equivalência entre tentativa de escolher candidatura inexistente e candidatura de profissional com bloqueio mútuo ativo: ambas retornam `403 sem_permissao` com payloads de erro indistinguíveis, nos dois sentidos de bloqueio (profissional bloqueia casa e casa bloqueia profissional), preservando o sigilo sem vazar a existência do bloqueio.
