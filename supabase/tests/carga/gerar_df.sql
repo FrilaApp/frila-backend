@@ -25,6 +25,7 @@ declare
   v_funcoes uuid[];
   v_usuarios_existentes bigint;
   v_server_ip inet;
+  v_base_data timestamptz := date_trunc('day', privado.agora()) + interval '1 day';
 begin
   -- ── Proteção estrita contra execução fora do ambiente local ──────────────────
   v_server_ip := inet_server_addr();
@@ -180,8 +181,8 @@ begin
   select ('c0000000-0000-0000-0000-' || lpad(to_hex(i::bigint), 12, '0'))::uuid,
          ('e0000000-0000-0000-0000-' || lpad(to_hex((((i - 1) % 30000) + 1)::bigint), 12, '0'))::uuid,
          v_funcoes[(i % cardinality(v_funcoes)) + 1],
-         '2026-10-01 18:00:00+00'::timestamptz + ((i % 14) || ' days')::interval + ((i % 5) || ' hours')::interval,
-         '2026-10-01 18:00:00+00'::timestamptz + ((i % 14) || ' days')::interval + ((i % 5) || ' hours')::interval + interval '6 hours',
+         v_base_data + ((i % 14) || ' days')::interval + ((18 + (i % 5)) || ' hours')::interval,
+         v_base_data + ((i % 14) || ' days')::interval + ((18 + (i % 5)) || ' hours')::interval + interval '6 hours',
          'Local DF ' || i,
          extensions.ST_SetSRID(
            extensions.ST_MakePoint(
