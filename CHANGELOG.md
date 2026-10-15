@@ -9,7 +9,7 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ### Adicionado
 - **Suíte de paridade exaustiva de `privado.elegiveis` (RNF11, RNF12):**
-  - Teste pgTAP `supabase/tests/680_elegiveis_recorte_antes_do_join.sql` comprovando a equivalência estrita de elegíveis (10/10 asserções cobrindo 100% das vagas cadastradas, fixtures de demonstração e `excluir_conta`).
+  - Teste pgTAP `supabase/tests/680_elegiveis_paridade_e_comportamento.sql` comprovando a equivalência estrita de elegíveis (10/10 asserções cobrindo 100% das vagas cadastradas, fixtures de demonstração e `excluir_conta`).
   - Documentação técnica e comprovação experimental refutando a Recomendação 1 do relatório #195: a reordenação interna da CTE sofre *subquery pull-up* pelo planejador PostgreSQL, gerando plano físico idêntico ao canônico, enquanto a extração de `usuario` para a consulta externa dispara varredura sequencial em `disponibilidade` e `usuario`.
 
 ### Modificado

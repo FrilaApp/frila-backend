@@ -1,13 +1,22 @@
--- 680_elegiveis_recorte_antes_do_join.sql
--- Prova a paridade exaustiva entre privado.elegiveis (versão canônica em produção)
--- e a proposta de reordenação da CTE da Recomendação 1 do relatório de carga 10x (#195).
+-- 680_elegiveis_paridade_e_comportamento.sql
+-- Testes de paridade e comportamento de privado.elegiveis (RNF11, RNF12).
 --
--- Contexto: A Recomendação 1 do relatório de carga #195 propôs isolar o join de
--- profissional_funcao e profissional com o filtro geográfico GiST em uma subquery antes
--- do join com public.usuario. Conforme verificado por EXPLAIN, o PostgreSQL achata a
--- subquery (subquery pull-up), produzindo plano físico idêntico ao canônico.
--- Este teste garante que qualquer tentativa de reordenação sintática da CTE preserva
--- com 100% de paridade exata o conjunto de elegíveis retornado em todas as vagas.
+-- Valor duradouro:
+--   Garante de forma exaustiva o comportamento da função canônica de produção:
+--   - Critérios positivos (Ana elegível padrão, Iara na equipe de confiança);
+--   - Critérios negativos (Diego excluído por distância >15 km);
+--   - Isolamento de contas de demonstração (vaga_demo só vê usuários de demo);
+--   - Respeito ao parâmetro excluir_conta (ex: remoção exata do cancelador);
+--   - Casos de borda (vaga inexistente e vaga não publicada devolvendo 0 linhas);
+--   - Volatilidade preservada (STABLE);
+--   - Privilégios restritos exclusivamente a service_role (RN06).
+--
+-- Registro histórico (Refutação da Recomendação 1 do #195):
+--   A comparação contra pg_temp.elegiveis_reordenada documenta a prova de equivalência
+--   exata da variante de CTE proposta na Rec. 1 do relatório #195, cujo plano foi
+--   demonstrado idêntico via EXPLAIN devido ao subquery pull-up do PostgreSQL.
+--   A conferência exaustiva (teste 6) atesta que 100% das vagas cadastradas no banco
+--   produzem o mesmo resultado.
 
 begin;
 select plan(10);
