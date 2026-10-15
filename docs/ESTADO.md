@@ -18,7 +18,7 @@ Os números abaixo foram consolidados e remedidos em 15/10:
 |---|---|---|
 | Commits à frente do `main` | **402** (em 15/10) | `git rev-list --count origin/main..origin/develop` |
 | Migrações na `develop` | **106** (veja `scripts/migracoes-sem-colisao.sh`) | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
-| pgTAP | **102 arquivos de regras** (103 totais com carga), verde | `Files=103 … Result: PASS`, medido na CI e com `supabase test db` (veja `scripts/testar.sh`) |
+| pgTAP | **102 arquivos de regras** (103 totais com carga), verde | `Files=103 … Result: PASS`, medido na CI e localmente com `supabase test db` |
 | Portão `contrato-responde.sh` | **151 recusas vigiadas e alcançadas**, verde | 151 de 151 vigiados e alcançados (100% de cobertura; 16 isentas, 0 não vigiadas de 167 declaradas), 46 de 50 respostas 200 validadas, 37 de 37 coleções |
 | Testes em Deno das Edge Functions | **179** na suíte, verde | `ok \| 179 passed \| 0 failed`, medido com `deno test --allow-all --no-check` |
 | Edge Functions | **9** | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
@@ -93,7 +93,7 @@ O repositório ultrapassou **180 PRs mergeados**, com cobertura integral do cont
 10. **PR #182 (Atualização de Estado e Proposta do Vault · merge em 15/10):**
     Atualização de métricas e estado do backend em `docs/ESTADO.md` e formalização da proposta técnica em `docs/proposta-vault-agendador-secret.md` para migração do segredo `frila.agendador_secret` do GUC para o Supabase Vault, eliminando o erro de permissão 42501 no banco gerenciado.
 11. **PR #183 (Otimização de Ciclo e Filtro de Despacho / Achados 2 e 3 · merge em 15/10):**
-    Correção do laço de pós-turno em `privado.avaliar_turnos_candidatos()` para buscar apenas turnos com profissionais sem avaliação mútua e filtro em `privado.alertar_vagas_em_risco()` para limitar o aviso de despacho a vagas ativas (`aberta` ou `preenchida`). Migração `20261015140000_correcao_ciclo_de_vida_achados_2_e_3.sql` e suíte pgTAP `660_ciclo_de_vida_achados.sql`.
+    Correção do laço de avaliação em `privado.fechar_turnos_e_vagas()` para evitar renotificação de `avaliacao_disponivel` com filtro de 7 dias e `not exists`, e filtro em `privado.verificar_saude()` para limitar a checagem de despachos retidos além do teto a vagas ativas e futuras (`publicada` com `inicio_em > agora`). Migração `20261015140000_correcao_ciclo_de_vida_achados_2_e_3.sql` e suíte pgTAP `660_ciclo_de_vida_achados.sql`.
 
 ### A fila de PRs aberta em 15/10
 
