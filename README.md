@@ -116,7 +116,7 @@ migrações constroem do zero: tabelas, colunas, restrições, índices, funçõ
 quem pode executar cada uma, privilégios, políticas de RLS, gatilhos, visões e os jobs do
 pg_cron. O que foi mudado pelo painel aparece como `+` (só no remoto) ou `-` (só no
 repositório) e falha o workflow. Não usa `supabase db diff --linked` porque ele pede a
-senha do banco. Para rodar na máquina: `supabase db start` e depois o script, com o token
+senha do banco. Para rodar na máquina: `supabase start` e depois o script, com o token
 no `.env`.
 
 **O que continua manual**, uma vez por projeto: o `frila.agendador_secret` no banco e os
@@ -216,7 +216,7 @@ entram como passos novos desse workflow, e a política registra que as cópias s
 | Documentos de produto, contrato da API, requisitos | [`FrilaApp/frila-docs`](https://github.com/FrilaApp/frila-docs) |
 | Modelagem de banco, diagramas, decisões técnicas | [`FrilaApp/Bancada`](https://github.com/FrilaApp/Bancada) · `doc-harness/07 - Arquitetura/` |
 | Registro do processo, para os mentores | https://bancada-buu.pages.dev |
-| App iOS | `FrilaApp/frila-docs` · `ios/` |
+| App iOS | [`FrilaApp/frila-frontend`](https://github.com/FrilaApp/frila-frontend) · `iOS/` |
 
 > O cartão `S0 · Infra · Criar o projeto no Supabase` diz que o backend fica em
 > `Frila/supabase/`. Mudou em 22/09: o código do backend vive aqui. O contrato continua
