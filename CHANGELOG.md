@@ -7,6 +7,13 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Não lançado]
 
+### Performance
+- **Otimização de `privado.elegiveis` via recorte espacial antes do join com `usuario` (RNF11, RNF12, Recomendação 1 do backend#195):**
+  - Reordenação da CTE `candidatos` para aplicar o filtro de catálogo (`pf.funcao_id`) e o raio geográfico GiST (`ST_DWithin 15 km` ou equipe de confiança) antes de consultar `public.usuario`.
+  - Elimina a sobrecarga em `usuario` em escala de carga da praça-piloto e mantém a latência de `privado.elegiveis` estável em 28,7 ms (mediana) e 31,1 ms (p95) em `--escala 2`, dentro dos tetos do portão `scripts/planos-com-carga.sh`.
+  - Sem alteração na assinatura da RPC nem na semântica de elegibilidade (marcador de superfície `corpo-sem-mudanca-de-superficie privado.elegiveis 0.2.42`).
+  - Migração `20261015190000_perf_elegiveis_recorte_antes_do_join.sql` e suíte pgTAP `680_elegiveis_recorte_antes_do_join.sql` (10 asserções validando paridade exata de conjuntos antes e depois em fixtures e em todas as vagas cadastradas).
+
 ### Modificado
 - **Espelho do contrato 0.2.43 do frila-docs (PR frila-docs#89):**
   - Alinhamento da documentação de `contestarSuspensao` e `pedirRevisaoDespacho`: o relato das contestações não passa pelo filtro de termos da diretriz 1.2 (decisão J1=B, migração `20261013110000`).
