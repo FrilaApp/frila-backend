@@ -2,7 +2,7 @@
 
 **Cartão Trello:** `6mi66YDp` (v1.2 · Backend + Web · Escala de evento em lote)  
 **História / Requisitos:** US06 (8 pt) · RF19 · RN02, RN10, RN18, RN19, RN21, RN23, RN24  
-**Data:** 15/10/2026 (Revisão 2 — saneamento das pendências apontadas pelo Claude Code #2)  
+**Data:** 15/10/2026 (Revisão 3 — saneamento das pendências apontadas na re-revisão do Claude Code #2)  
 **Autor:** Faísca (Backend / Antigravity)  
 **Status:** Proposta técnica preliminar (aguarda deliberação do dono do produto)
 
@@ -45,15 +45,16 @@ create table public.evento (
 ```
 
 ### 2.2 Evolução Incremental do Modelo (DDL Proposto)
-A tabela `public.evento` encontra-se sem linhas ativas em produção (RF19 não implementado na v1.0). Para viabilizar a escala em lote, a tabela é enriquecida preservando convenções de autoria e integridade:
+O código atual do repositório não grava dados na tabela `public.evento` (confirmar no banco antes de aplicar; a DDL abaixo é idempotente e tolera dados legados). Para viabilizar a escala em lote, a tabela é enriquecida preservando convenções de autoria, integridade e georreferenciamento:
 
 1. `chave_cliente uuid not null`: chave de idempotência da escala inteira (fornecida pelo cliente);
 2. `publicado_por uuid not null references public.usuario(id)`: autoria alinhada à convenção `vaga.publicado_por`;
 3. `criado_em timestamptz not null default privado.agora()`: relógio do produto;
 4. `estado text not null default 'ativo' check (estado in ('ativo', 'cancelado', 'concluido'))`: ciclo de vida do evento;
 5. `observacoes text`: observações operacionais da escala;
-6. `ponto extensions.geography(Point, 4326)`: geolocalização do local do evento.
-   *(Nota: A região administrativa **não** é duplicada em coluna de texto; ela é derivada dinamicamente via `privado.determinar_regiao_administrativa(ponto)` como já ocorre em `public.vaga`).*
+6. `local text not null`: endereço textual obrigatório do evento (preexistente na tabela; fornece o valor herdado por padrão pelas vagas filhas para satisfazer a restrição `vaga.local not null`);
+7. `ponto extensions.geography(Point, 4326) not null`: coordenada geográfica obrigatória do evento na escala (fornece o ponto herdado por padrão pelas vagas filhas para satisfazer a restrição `vaga.ponto not null`);
+8. `regiao_administrativa text`: região administrativa do evento, informada na criação ou herdada de `estabelecimento.regiao_administrativa` (conforme convenção estabelecida em `20260928230000_regiao_administrativa.sql`).
 
 ```sql
 -- DDL incremental seguro para public.evento (tratando preexistência)
@@ -63,6 +64,7 @@ alter table public.evento
   add column if not exists criado_em timestamptz not null default privado.agora(),
   add column if not exists estado text not null default 'ativo' check (estado in ('ativo', 'cancelado', 'concluido')),
   add column if not exists ponto extensions.geography(Point, 4326),
+  add column if not exists regiao_administrativa text,
   add column if not exists observacoes text;
 
 -- Garante preenchimento antes da restrição not null caso existam linhas legadas de teste
@@ -94,19 +96,22 @@ Executa em **uma única transação atômica** a criação do `evento` e de toda
 
 #### Parâmetros Recebidos (Compatíveis com PostgREST):
 - `estabelecimento_id`: UUID do estabelecimento contratante.
-- `evento`: objeto JSON `{ nome: text, data: date, local: text, ponto?: text, observacoes?: text }`.
+- `evento`: objeto JSON `{ nome: text, data: date, local: text, ponto: jsonb, observacoes?: text, regiao_administrativa?: text }`.
+  - `local` e `ponto` são **obrigatórios** no objeto do evento. As vagas filhas herdam obrigatoriamente `local` e `ponto` do evento caso não informem valores específicos por posto/setor, garantindo conformidade com a restrição `not null` de `public.vaga(local, ponto)`.
 - `vagas`: array JSON de itens de vaga. Cada item contém:
   - `chave_cliente`: UUID exclusivo daquela vaga (evitando colisão na restrição `unique (estabelecimento_id, chave_cliente)`);
   - `funcao_id`: UUID da função cadastrada no catálogo;
   - `inicio_em`: timestamp com timezone de início do turno;
   - `fim_em`: timestamp com timezone de término do turno;
-  - `posicoes`: inteiro entre 1 e 50 (limite específico da escala para proteção contra tempestades de despacho);
+  - `posicoes`: inteiro entre 1 e 50 (limite específico proposto para lote para proteção contra rajadas; sob decisão do dono, ver §6.2);
   - `valor_centavos`: valor total em centavos por profissional (RN18);
   - `inclui_refeicao`: booleano (RN02);
   - `inclui_transporte`: booleano (RN02);
   - `exige_material_proprio`: booleano (RN02);
   - `responsavel_local`: nome do contato no turno (RN02);
-  - `modo`: `'urgencia'` ou `'selecao'`.
+  - `modo`: `'urgencia'` ou `'selecao'`;
+  - `local?`: texto opcional (se omitido, herda `evento.local`);
+  - `ponto?`: jsonb opcional (se omitido, herda `evento.ponto`).
 - `chave`: UUID da escala inteira para idempotência no nível do evento.
 
 #### Regras de Negócio e Validações:
@@ -114,15 +119,15 @@ Executa em **uma única transação atômica** a criação do `evento` e de toda
    - Se já existir `public.evento` com `(estabelecimento_id, chave)`, a RPC recupera o evento e retorna o resumo das vagas já associadas, sem duplicar registros.
 2. **Autorização e Estado da Conta:**
    - O autor autenticado (`auth.uid()`) deve pertencer ao estabelecimento (`privado.eh_membro(estabelecimento_id)`).
-   - A conta do autor não pode estar suspensa (recusa canônica **403 `conta_suspensa`**).
+   - A conta do autor não pode estar suspensa (recusa canônica **403 `sem_permissao`** com `details: conta_suspensa`, conforme resposta contratual `ContaSuspensa`).
 3. **Limites da Escala (Circuit Breaker contra Rajadas de Despacho):**
    - Mínimo de 1 vaga e máximo de **10 vagas** por escala.
-   - Máximo de **100 posições consolidadas** no total da escala.
-     *(Justificativa técnica real: O limite de posições existe porque cada posição aberta gera mensagens e varreduras de elegíveis pelo motor de despacho; o comentário oficial em `vaga.posicoes` define que limites existem para conter a rajada de notificações em runners e push gateways).*
+   - Máximo de **100 posições consolidadas** no total da escala (e até 50 posições por vaga filha).
+   - *Justificativa técnica real:* O comentário oficial da migração `supabase/migrations/20260922150400_vaga_e_posicao.sql` registra que o teto contratual de 200 posições por vaga existe para que um erro de digitação na publicação não gere duzentas mil posições e, com elas, duzentas mil notificações. Nesta proposta de escala em lote, onde múltiplas vagas são criadas simultaneamente, sugerem-se limites mais conservadores (10 vagas filhas, até 50 posições por vaga e máximo de 100 posições consolidadas por chamada) para conter o volume pontual de notificações e despachos gerados na publicação. Esses parâmetros são propostas preliminares submetidas à deliberação do dono do produto (§6.2).
 4. **Validações das Vagas Filhas (Alinhadas a `publicar_vaga`):**
-   - Função deve existir no catálogo (`funcao_inexistente`).
+   - Função deve existir no catálogo (se inexistente, recusa **422 `campo_invalido`** com `details: funcao_id`, idêntica a `publicar_vaga`).
    - Horários coerentes: `fim_em > inicio_em` e `inicio_em > privado.agora()` (recusa 422 `horario_invalido`).
-   - Se `modo = 'selecao'`, exige antecedência mínima de 24 horas (`inicio_em >= privado.agora() + interval '24 hours'`, **RN24** / recusa 422 `selecao_sem_antecedencia`).
+   - Se `modo = 'selecao'`, exige antecedência estrita maior que 24 horas (`inicio_em > privado.agora() + interval '24 hours'`, alinhado a `publicar_vaga` / **RN24** / recusa 422 `selecao_sem_antecedencia`).
    - Valor inteiro positivo em centavos (**RN18**).
    - Campos obrigatórios de acomodação presentes (**RN02**).
    - Higienização de texto livre (**RN10** / Diretriz 1.2): textos em `local`, `responsavel_local` e `observacoes` passam por `privado.contem_contato_ou_link` recusando telefones, e-mails e links com **422 `campo_invalido`**.
@@ -146,7 +151,7 @@ Executa o cancelamento coordenado de uma escala futura sem reinventar regras de 
 - **Garantias Herdadas:**
   1. Cancela posições abertas;
   2. Cancela posições confirmadas cujo turno ainda não iniciou, com emissão de notificações de cancelamento aos profissionais já alocados (RF12 / RN12);
-  3. Resolução automática de corridas com `candidatar`: herda o gatilho `vaga_cancelada_recolhe_confirmadas` (`20260929120000_vaga_cancelada_recolhe_confirmadas.sql`), garantindo que nenhuma candidatura em voo seja confirmada concorrentemente com o cancelamento da escala (RNF14).
+  3. Resolução automática de corridas com `candidatar`: herda o gatilho `vaga_cancelada_recolhe_confirmadas` da migração `supabase/migrations/20260929120000_cancelar_vaga_sem_corrida.sql`, garantindo que nenhuma candidatura em voo seja confirmada concorrentemente com o cancelamento da escala (RNF14).
 
 ---
 
@@ -205,6 +210,6 @@ No contrato OpenAPI (`FrilaApp/frila-docs · api/openapi.yaml`, espelhado em `co
 
 ## 6. Questões em Aberto para Decisão do Dono (Registradas em DECISOES.md)
 
-1. **Geração de Chaves das Vagas Filhas:** O cliente móvel/web deve gerar os UUIDs de cada vaga filha no array, ou o backend deve calcular deterministicamente `uuid_generate_v5` a partir da chave do evento concatenada com o índice ordinal do item?
+1. **Geração de Chaves das Vagas Filhas:** O cliente móvel/web deve gerar os UUIDs de cada vaga filha no array, ou o backend deve calcular deterministicamente `uuid_generate_v5` a partir da chave do evento concatenada com o ID da função?
    - *Recomendação:* Exigir que o cliente envie `chave_cliente` explícita por vaga no array `vagas`, garantindo rastreabilidade e idempotência por item sem risco de colisões em turnos duplos.
-2. **Teto de Posições da Escala:** Manter limite de 100 posições no total da escala para a v1.2 (mesmo com o contrato permitindo até 200 posições em vagas individuais avulsas), avaliando aumento na v1.3 conforme a telemetria do motor de despacho.
+2. **Teto de Posições e Vagas da Escala:** Fixar para a v1.2 os limites propostos de até 10 vagas por escala, até 50 posições por vaga e máximo de 100 posições consolidadas por chamada RPC (conforme alinhamento em `DECISOES.md`), avaliando ampliação na v1.3 conforme a telemetria do motor de despacho e volume de notificações.
