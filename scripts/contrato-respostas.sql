@@ -97,7 +97,8 @@ select '00000000-0000-0000-0000-000000000000', c.id, 'authenticated','authentica
     ('cc000000-0000-4000-8000-000000000001'::uuid,'contrato-casa@t.test'),
     ('cc000000-0000-4000-8000-000000000002'::uuid,'contrato-prof@t.test'),
     ('cc000000-0000-4000-8000-000000000003'::uuid,'contrato-prof2@t.test'),
-    ('cc000000-0000-4000-8000-000000000004'::uuid,'contrato-suspenso@t.test')
+    ('cc000000-0000-4000-8000-000000000004'::uuid,'contrato-suspenso@t.test'),
+    ('cc000000-0000-4000-8000-000000000005'::uuid,'contrato-prof3@t.test')
   ) as c(id, email);
 
 select pg_temp.guarda('criarConta', pg_temp.como('cc000000-0000-4000-8000-000000000001',
@@ -108,6 +109,8 @@ select pg_temp.como('cc000000-0000-4000-8000-000000000003',
   $$ select public.criar_conta('profissional','Pê Dois','+5561944440003','1994-05-05','2026-09-22') $$);
 select pg_temp.como('cc000000-0000-4000-8000-000000000004',
   $$ select public.criar_conta('profissional','Pê Suspenso','+5561944440004','1993-05-05','2026-09-22') $$);
+select pg_temp.como('cc000000-0000-4000-8000-000000000005',
+  $$ select public.criar_conta('profissional','Pê Três','+5561944440005','1992-05-05','2026-09-22') $$);
 
 select pg_temp.guarda('minhaConta', pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.minha_conta() $$));
@@ -132,6 +135,9 @@ select pg_temp.guarda('criarPerfilProfissional', pg_temp.como('cc000000-0000-400
        '{"latitude":-15.7900,"longitude":-47.8850}'::jsonb,
        '[{"dia_semana":1,"hora_inicio":"08:00","hora_fim":"23:59"}]'::jsonb) $$, (select id from f))));
 select pg_temp.como('cc000000-0000-4000-8000-000000000003', format(
+  $$ select public.criar_perfil_profissional(array[%L]::uuid[],
+       '{"latitude":-15.7900,"longitude":-47.8850}'::jsonb) $$, (select id from f)));
+select pg_temp.como('cc000000-0000-4000-8000-000000000005', format(
   $$ select public.criar_perfil_profissional(array[%L]::uuid[],
        '{"latitude":-15.7900,"longitude":-47.8850}'::jsonb) $$, (select id from f)));
 
@@ -234,14 +240,14 @@ create temp table cand_sel as
   select pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
     $$ select public.candidatar(%L::uuid) $$, ((select r from vaga_sel)->>'vaga_id')::uuid)) as r;
 create temp table cand_sel2 as
-  select pg_temp.como('cc000000-0000-4000-8000-000000000003', format(
+  select pg_temp.como('cc000000-0000-4000-8000-000000000005', format(
     $$ select public.candidatar(%L::uuid) $$, ((select r from vaga_sel)->>'vaga_id')::uuid)) as r;
 
 select pg_temp.guarda('candidatosDaVaga', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.candidatos_da_vaga(%L::uuid) $$, ((select r from vaga_sel)->>'vaga_id')::uuid)));
 select pg_temp.guarda('minhasCandidaturas', pg_temp.como('cc000000-0000-4000-8000-000000000003',
   $$ select public.minhas_candidaturas() $$));
-select pg_temp.guarda('retirarCandidatura', pg_temp.como('cc000000-0000-4000-8000-000000000003', format(
+select pg_temp.guarda('retirarCandidatura', pg_temp.como('cc000000-0000-4000-8000-000000000005', format(
   $$ select public.retirar_candidatura(%L::uuid) $$, ((select r from cand_sel2)->>'candidatura_id')::uuid)));
 select pg_temp.guarda('escolherCandidato', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.escolher_candidato(%L::uuid) $$, ((select r from cand_sel)->>'candidatura_id')::uuid)));

@@ -7,6 +7,14 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Não lançado]
 
+### Segurança
+- **Bloqueio mútuo no modo seleção e concessão mínima de privilégios (Auditoria 15/10/2026, Achados 1 a 4, RF26, RN10, RN15, LGPD):**
+  - **Achado 1 (Alta):** Filtro de bloqueio mútuo (`not privado.bloqueado_com_estabelecimento(...)`) adicionado a `public.candidatos_da_vaga` e validação em `public.escolher_candidato`. Candidatos com bloqueio mútuo não aparecem para o contratante e tentativas de confirmação são recusadas com `403 sem_permissao` (resposta idêntica a candidatura inexistente ou de outra casa, sem vazar a existência do bloqueio), impedindo vazamento de contatos telefônicos de profissionais com bloqueio mútuo com o contratante ou estabelecimento.
+  - **Achado 2 (Média):** Adicionado bloco de configuração `[functions.enviar-push]` em `supabase/config.toml` com `verify_jwt = false`, alinhando o gateway do Supabase Edge Runtime à autenticação interna da Edge Function via `AGENDADOR_SECRET` (`x-agendador-secret` ou `Bearer <AGENDADOR_SECRET>`) e prevenindo rejeição indevida com 401 Unauthorized em produção/homologação.
+  - **Achado 3 (Baixa):** Revogada permissão de `EXECUTE` em `privado.taxa_aceite_notificacoes_7d()` para `authenticated` e `anon`, mantendo concessão estrita para `service_role`.
+  - **Achado 4 (Baixa):** Revogado `ALL` em `public.pedido_de_exclusao` explicitamente de `public`, alinhando o DDL à documentação de privilégios da tabela.
+  - Migração `20261015150000_seguranca_bloqueio_e_privilegios.sql` e suíte pgTAP `670_seguranca_bloqueio_e_privilegios.sql` (7 asserções cobrindo bloqueio nos dois sentidos, ocultação na listagem, recusa em escolher_candidato e privilégios de função e tabela).
+
 ### Corrigido
 - **Otimização do laço de avaliacao_disponivel em fechar_turnos_e_vagas (Achado 2):**
   - Adicionado filtro com `not exists` em `public.notificacao` (tipo `'avaliacao_disponivel'`) e janela retroativa de 7 dias na consulta de turnos cumpridos e verificados em `privado.fechar_turnos_e_vagas()`.
