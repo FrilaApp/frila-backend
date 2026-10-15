@@ -146,6 +146,13 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - **Achado 4 (Baixa):** Revogado `ALL` em `public.pedido_de_exclusao` explicitamente de `public`, alinhando o DDL à documentação de privilégios da tabela.
   - Migração `20261015150000_seguranca_bloqueio_e_privilegios.sql` e suíte pgTAP `670_seguranca_bloqueio_e_privilegios.sql` (7 asserções cobrindo bloqueio nos dois sentidos, ocultação na listagem, recusa em escolher_candidato e privilégios de função e tabela).
 
+### Operação
+- **Retenção e purga periódica em higienizar_tabelas (Achados 5 e 6 da caçada):**
+  - Adicionada purga de tentativas na porta de demonstração da App Store (`public.entrada_demonstracao`) com mais de 30 dias na rotina periódica `privado.higienizar_tabelas()`, evitando retenção perpétua de registros não cadastrais (Achado 5).
+  - Adicionada purga de falhas operacionais registradas (`privado.falha_execucao`) com mais de 60 dias em `privado.higienizar_tabelas()`, estabelecendo janela temporal de retenção para diagnóstico sem acúmulo descontrolado (Achado 6).
+  - Prazos propostos como recomendação operacional, aguardando decisão final do dono da plataforma.
+  - Migração `20261015160000_retencao_demonstracao_e_falhas.sql` e suíte pgTAP `680_retencao_demonstracao_e_falhas.sql` (4 asserções cobrindo expurgo temporal e preservação de registros recentes).
+
 ### Corrigido
 - **Otimização do laço de avaliacao_disponivel em fechar_turnos_e_vagas (Achado 2):**
   - Adicionado filtro com `not exists` em `public.notificacao` (tipo `'avaliacao_disponivel'`) e janela retroativa de 7 dias na consulta de turnos cumpridos e verificados em `privado.fechar_turnos_e_vagas()`.
