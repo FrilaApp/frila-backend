@@ -19,20 +19,29 @@
 # Não deixa resíduo. A carga roda dentro de uma transação que termina em `rollback`, o que
 # foi medido: 130.018 usuários dentro, 18 depois. Sem `db reset`, e portanto sem apagar o
 # `frila.agendador_secret` que a bateria seguinte precisa.
+# Robustez de medição e amostragem (cartão p95/amostras):
+# Com apenas 25 amostras e aquecimento tímido de 2 chamadas, p95 correspondia praticamente
+# ao valor máximo amostral (amostra 24 de 25). Embora a série histórica de elevação de
+# vagas_abertas (142→780→1.370 ms) coincida com o acúmulo de vagas expiradas corrigido
+# pela migração 20261015100000_fechar_vagas_expiradas_sem_processo.sql (e sua causa
+# exata seja não determinada), uma amostragem tão estreita deixava a medição frágil a
+# flutuações e ruídos pontuais de ambiente em runners compartilhados.
 #
-# Robustez de medição e jitter de virtualização (cartão p95/amostras):
-# Com apenas 25 amostras e aquecimento tímido, p95 correspondia praticamente ao valor
-# máximo amostral (amostra 24 de 25), tornando a medição suscetível a soluços de CPU e
-# contenção de I/O em runners compartilhados da CI (onde vagas_abertas chegou a oscilar
-# de 142 para 1.380 ms sem qualquer alteração de schema).
-# Para eliminar falsos vermelhos mantendo a rede de proteção estrita contra regressões:
-#   1. Aquecimento robusto prévio descartado (2 rodadas completas em elegiveis e 10
-#      chamadas de vagas_abertas) para povoar buffers e cache do índice espacial;
+# Para assegurar robustez estatística em regime quente:
+#   1. Aquecimento robusto prévio descartado (2 voltas em elegiveis e 10 chamadas de
+#      vagas_abertas) para povoar buffers e cache do índice espacial;
 #   2. Amostras ampliadas (50 chamadas de vagas_abertas e 36 de elegiveis por bateria);
-#   3. Julgamento pelo melhor de 3 baterias consecutivas (mínimo de mediana e p95 entre
-#      as 3 baterias), descartando anomalias e pausas transitórias de virtualização;
+#   3. Julgamento pelo melhor de 3 baterias consecutivas: cada métrica (mediana e p95)
+#      toma o mínimo independente entre as baterias, absorvendo anomalias pontuais
+#      (sem mascarar elevações sistemáticas, que reprovam nos tetos);
 #   4. Garantias inalteradas: reprovação categórica se houver Seq Scan em tabelas grandes
-#      ou se mediana/p95 excederem os tetos (os casos MUTAR do autoteste continuam reprovando).
+#      ou se mediana/p95 excederem os tetos.
+#
+# Nota sobre testes: o autoteste scripts/teste-planos-com-carga.sh (11 casos via --julgar)
+# afere as regras de decisão sobre saídas sintéticas pré-gravadas (não exercita o bloco de
+# medição SQL). As mutações reais contra o banco são exercitadas via MUTAR=cte (reprova
+# de verdade com Seq Scan) e MUTAR=indice (sai 0, recaindo na chave única, como já era
+# antes deste PR e detalhado abaixo).
 #
 # Uso:
 #   ./scripts/planos-com-carga.sh              mede e reprova
