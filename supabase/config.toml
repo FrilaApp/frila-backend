@@ -453,6 +453,14 @@ verify_jwt = true
 enabled = true
 verify_jwt = false
 
+# Envio de notificações push pelo FCM HTTP v1 (cartão 36fU0CEO).
+# verify_jwt fica desligado porque a proteção é feita pelo segredo do agendador
+# no cabeçalho x-agendador-secret ou Bearer (validado na própria Edge Function).
+[functions.enviar-push]
+enabled = true
+verify_jwt = false
+
+
 
 [analytics]
 enabled = true
