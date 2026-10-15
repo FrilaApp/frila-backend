@@ -7,6 +7,11 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Não lançado]
 
+### Modificado
+- **Espelho do contrato 0.2.42 do frila-docs (PR frila-docs#88):**
+  - Documentação do comportamento de bloqueio mútuo no modo seleção para `candidatosDaVaga` (ocultação de profissionais bloqueados) e `escolherCandidato` (recusa `403 sem_permissao` sem `details` indistinguível de inexistente e com precedência sobre `409`).
+  - Atualização dos arquivos `contrato/openapi.yaml` e `contrato/openapi.yaml.sha256`.
+
 ### Testes
 - **Follow-up de bloqueio mútuo e recusas indistinguíveis no modo seleção (RF26, RN10, RN19, PR #184):**
   - Prova estrita de equivalência entre tentativa de escolher candidatura inexistente e candidatura de profissional com bloqueio mútuo ativo: ambas retornam `403 sem_permissao` com payloads de erro indistinguíveis, nos dois sentidos de bloqueio (profissional bloqueia casa e casa bloqueia profissional), preservando o sigilo sem vazar a existência do bloqueio.
