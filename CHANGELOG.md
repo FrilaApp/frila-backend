@@ -8,6 +8,14 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 ## [Não lançado]
 
 ### Corrigido
+- **Otimização do laço de avaliacao_disponivel em fechar_turnos_e_vagas (Achado 2):**
+  - Adicionado filtro com `not exists` em `public.notificacao` (tipo `'avaliacao_disponivel'`) e janela retroativa de 7 dias na consulta de turnos cumpridos e verificados em `privado.fechar_turnos_e_vagas()`.
+  - Elimina a varredura e renotificação O(N) de todo o histórico da plataforma a cada 5 minutos, mantendo estrita idempotência e zero overhead acumulativo.
+  - Aferido pelo portão de caminho quente sob carga do DF (`scripts/planos-com-carga.sh`), com latências de 13.9 ms e 15.2 ms, bem abaixo dos tetos.
+- **Filtro de vagas ativas no alarme de despachos travados de verificar_saude (Achado 3):**
+  - Ajuste na contagem de despachos retidos sob a regra do teto (RN23) em `privado.verificar_saude()`, adicionando join com `public.vaga` para considerar apenas vagas que continuam com `estado = 'publicada'` e no futuro (`inicio_em > agora`).
+  - Previne falso positivo perpétuo de infraestrutura (`despacho_esperando_alem_do_teto`) quando vagas são canceladas, encerradas, preenchidas ou iniciadas naturalmente antes do fim da janela do teto, preservando a imutabilidade estrita da tabela `public.despacho`.
+  - Migração `20261015140000_correcao_ciclo_de_vida_achados_2_e_3.sql` e suíte pgTAP `660_ciclo_de_vida_achados.sql` (5 asserções cobrindo Achados 1, 2 e 3).
 - **Encerramento de vagas publicadas e cancelamento de posições abertas após fim_em (D654gdGQ):**
   - Correção na rotina `privado.fechar_turnos_e_vagas()` para cancelar posições remanescentes que permaneceram em `estado = 'aberta'` após o término do turno (`fim_em <= privado.agora()`) e encerrar as vagas correspondentes (`estado = 'encerrada'`).
   - Previne acúmulo perpétuo de vagas expiradas com `estado = 'publicada'` no índice espacial GiST (`vaga_ponto_publicada`), eliminando degradação progressiva de latência na busca geográfica de `public.vagas_abertas()`.
