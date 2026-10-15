@@ -297,7 +297,7 @@ delete from privado.token_convite_transitorio
 
 ## 8. Governança do Contrato OpenAPI
 
-A inclusão dos novos endpoints segue a diretriz **contract-first** em `FrilaApp/frila-docs` (hoje na versão 0.2.41):
+A inclusão dos novos endpoints segue a diretriz **contract-first** em `FrilaApp/frila-docs` (hoje na versão 0.2.42):
 1. Novas operações:
    - `POST /rpc/convidar_membro` (tag `Estabelecimento`)
    - `POST /rpc/aceitar_convite_membro` (tag `Estabelecimento`)
