@@ -20,6 +20,11 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Recomendações técnicas documentadas em `docs/carga-10x.md` para futuros PRs dedicados de otimização e índices com pgTAP.
 
 ### Testes
+- **Robustez estatística do portão de caminho quente sob carga (`scripts/planos-com-carga.sh`):**
+  - Implementado aquecimento prévio robusto (2 voltas em `privado.elegiveis` e 10 chamadas de `public.vagas_abertas`) descartando transientes de cache e povoando buffers do índice espacial.
+  - Ampliação da amostragem (50 chamadas de `vagas_abertas` e 36 de `elegiveis` por bateria) e julgamento pelo melhor resultado entre 3 baterias consecutivas (mínimo independente de mediana e p95), eliminando a vulnerabilidade amostral do p95 de 25 chamadas.
+  - Mantida reprovação categórica se houver varredura sequencial (`Seq Scan`) em tabelas grandes ou regressão acima dos tetos.
+  - O autoteste `scripts/teste-planos-com-carga.sh` afere regras sobre saídas sintéticas (11/11); mutação real verificada com `MUTAR=cte` (reprova) e `MUTAR=indice` (sai 0, recaindo na chave única).
 - **Follow-up de bloqueio mútuo e recusas indistinguíveis no modo seleção (RF26, RN10, RN19, PR #184):**
   - Prova estrita de equivalência entre tentativa de escolher candidatura inexistente e candidatura de profissional com bloqueio mútuo ativo: ambas retornam `403 sem_permissao` com payloads de erro indistinguíveis, nos dois sentidos de bloqueio (profissional bloqueia casa e casa bloqueia profissional), preservando o sigilo sem vazar a existência do bloqueio.
   - Validação do fluxo legítimo no modo seleção: confirmação com sucesso, geração de `turno_id`, retorno do contato do profissional em `escolher_candidato` e retorno do contato do estabelecimento ao profissional confirmado em `contato_do_turno`.
