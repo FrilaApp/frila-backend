@@ -8,6 +8,12 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 ## [Não lançado]
 
 ### Adicionado
+- **Recusa de telefone, e-mail e link no texto livre da vaga (J5, pBXTS4vv, RN10):**
+  - Validação em `privado.contem_contato_ou_link` integrada a `privado.exigir_texto_aceitavel` recusando telefones (8+ dígitos mesmo com separadores ou camuflagem por hífens/espaços/pontos, ex: `61-98-7654321`, `61-9-8765-4321`, `61 98 7654 321`, `61.98.7654.321`), e-mails (@ + domínio) e links/URLs (`http://`, `https://`, `www.`, domínios com TLDs comuns e encurtadores `wa.me`, `bit.ly`, `t.me`, `linktr.ee`) nos campos de texto livre (`local`, `responsavel_local`, `traje`, `observacoes` em `publicar_vaga`/`republicar_vaga` e `nome`/`endereco` em `cadastrar_estabelecimento`) com `422 campo_invalido` e nome do campo em `details`.
+  - Tratamento de falsos positivos legítimos com máscaras estritas: datas de calendário válidas (dia 01-31, mês 01-12, anos 19xx/20xx ou 2 dígitos com barra), horários (como `18h30`, `18h às 22h`, `14:00 às 22:00`, `18:30 às 23:30`), valores monetários (`R$ 1.200,00`, `150 reais`), CEPs com e sem formatação, numeração de endereços de Brasília e UUIDs de sistema.
+  - Limitação conhecida documentada: números digitados por extenso ("seis um nove oito...") estão fora do escopo desta validação sintática via expressões regulares (demandariam moderação semântica/LLM).
+  - Em conformidade com RN15 e LGPD, dados de contato ou links rejeitados não são gravados em logs nem em `public.ocorrencia`.
+  - Migração `20261014160000_recusar_contato_e_link_texto_vaga.sql` e suíte pgTAP `640_contato_e_link_texto_vaga.sql` (74 asserções cobrindo casos positivos, negativos, camuflagens de contato, falsos positivos legítimos, idempotência, republicação e ausência de rastro).
 - **Republicação de posições restantes em urgência (D1-C, contrato 0.2.41, PR #170):**
   - RPC `public.republicar_posicoes_restantes(vaga_id, chave)` permitindo ao contratante reabrir posições não preenchidas ou canceladas de vaga fechada sem candidatos em seleção ativa. Cria nova vaga em modo urgência com posições clonadas, mantendo rastreabilidade via `vaga.republicada_de`.
   - Migrações `20261009100000_vaga_republicada_de_e_republicacao_da_selecao.sql` e `20261009110000_republicar_posicoes_restantes_e_painel.sql`.
