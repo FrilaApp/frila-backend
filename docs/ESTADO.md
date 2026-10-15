@@ -9,16 +9,16 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 **A `develop` é o tronco e está à frente do `main`, que não se move desde
 28/09.** O `main` continua inteiramente contido na `develop` (`git log
-origin/develop..origin/main` sai vazio) e parado em `c190836`. A `develop` possui **105 migrações**
-e **101 arquivos de pgTAP** (100% PASS).
+origin/develop..origin/main` sai vazio) e parado em `c190836`. A `develop` possui **106 migrações**
+e **102 arquivos de regras pgTAP** (103 na suíte com carga, 100% PASS).
 
 Os números abaixo foram consolidados e remedidos em 15/10:
 
 | | | Comando |
 |---|---|---|
-| Commits à frente do `main` | **398** | `git rev-list --count origin/main..origin/develop` |
-| Migrações na `develop` | **105** | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
-| pgTAP | **101 arquivos**, verde | `Files=102 … Result: PASS`, medido na CI e com `supabase test db` |
+| Commits à frente do `main` | **402** (em 15/10) | `git rev-list --count origin/main..origin/develop` |
+| Migrações na `develop` | **106** (veja `scripts/migracoes-sem-colisao.sh`) | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
+| pgTAP | **102 arquivos de regras** (103 totais com carga), verde | `Files=103 … Result: PASS`, medido na CI e localmente com `supabase test db` |
 | Portão `contrato-responde.sh` | **151 recusas vigiadas e alcançadas**, verde | 151 de 151 vigiados e alcançados (100% de cobertura; 16 isentas, 0 não vigiadas de 167 declaradas), 46 de 50 respostas 200 validadas, 37 de 37 coleções |
 | Testes em Deno das Edge Functions | **179** na suíte, verde | `ok \| 179 passed \| 0 failed`, medido com `deno test --allow-all --no-check` |
 | Edge Functions | **9** | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
@@ -26,9 +26,9 @@ Os números abaixo foram consolidados e remedidos em 15/10:
 | Scripts em `scripts/` | **39** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
 | Contrato espelhado | **0.2.41** | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
-Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **101** arquivos de teste de regras,
-e o `prove` conta **102** porque alcança também `supabase/tests/carga/gerar_df.sql`, que é gerador
-de carga e não teste de regra. O número da CI, e o da tabela, é **102 arquivos**.
+Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **102** arquivos de teste de regras,
+e o `prove` conta **103** porque alcança também `supabase/tests/carga/gerar_df.sql`, que é gerador
+de carga e não teste de regra. O número da CI, e o da tabela, é **103 arquivos**.
 
 > ## 🟢 O espelho do contrato está em dia (0.2.41) e alinhado ao original
 >
@@ -90,12 +90,21 @@ O repositório ultrapassou **180 PRs mergeados**, com cobertura integral do cont
    Correção de datas da carga sintética (`gerar_df.sql`) com datas relativas a `privado.agora()` para restaurar short-circuit e reduzir latência de 9.360 ms para 15.0 ms local (38.2 ms na CI); autoteste com 11 casos em `teste-planos-com-carga.sh` e aferição robusta com descarte de warm-up, 5 iterações e cálculo de mediana (p50), p90 e p95.
 9. **PR #181 (Fechamento de Vagas Expiradas sem Processo / D654gdGQ · merge em 15/10):**
    Correção em `privado.fechar_turnos_e_vagas()` para cancelar posições remanescentes que permaneceram em `estado = 'aberta'` após o término do turno (`fim_em <= privado.agora()`) e encerrar as vagas correspondentes (`estado = 'encerrada'`), eliminando resíduos perpétuos de vagas expiradas no índice GiST `vaga_ponto_publicada`. Migração `20261015100000_fechar_vagas_expiradas_sem_processo.sql` e teste pgTAP `650_fechamento_vaga_expirada_sem_processo.sql`.
+10. **PR #182 (Atualização de Estado e Proposta do Vault · merge em 15/10):**
+    Atualização de métricas e estado do backend em `docs/ESTADO.md` e formalização da proposta técnica em `docs/proposta-vault-agendador-secret.md` para migração do segredo `frila.agendador_secret` do GUC para o Supabase Vault, eliminando o erro de permissão 42501 no banco gerenciado.
+11. **PR #183 (Otimização de Ciclo e Filtro de Despacho / Achados 2 e 3 · merge em 15/10):**
+    Correção do laço de avaliação em `privado.fechar_turnos_e_vagas()` para evitar renotificação de `avaliacao_disponivel` com filtro de 7 dias e `not exists`, e filtro em `privado.verificar_saude()` para limitar a checagem de despachos retidos além do teto a vagas ativas e futuras (`publicada` com `inicio_em > agora`). Migração `20261015140000_correcao_ciclo_de_vida_achados_2_e_3.sql` e suíte pgTAP `660_ciclo_de_vida_achados.sql`.
 
 ### A fila de PRs aberta em 15/10
 
 Medida com `gh pr list --state open` em 15/10:
 
-*Nenhum pull request aberto no momento (fila limpa após o merge dos PRs #178 a #181).*
+- **PR #184** (`fix/seguranca-bloqueio-e-privilegios`): Bloqueio mútuo e restrição de privilégios para segurança (Achados 1 e 4 da Caçada).
+- **PR #185** (`chore/retencao-demonstracao-e-falhas` · Draft): Retenção de demonstração e limpeza de falhas [AGUARDA DECISÃO DO DONO].
+- **PR #186** (`docs/proposta-escala-linear-pgtap`): Proposta técnica de escala linear da suíte pgTAP.
+- **PR #187** (`feat/vault-agendador-secret` · Draft): Implementação do segredo do agendador via Supabase Vault [AGUARDA DECISÃO DO DONO].
+- **PR #188** (`docs/proposta-multiplas-instancias-agendador`): Proposta de múltiplas instâncias concorrentes do agendador.
+- **PR #189** (`docs/desenho-verificacao-regras-rls`): Desenho técnico de verificação contínua de integridade de regras RLS.
 
 ---
 
@@ -103,7 +112,7 @@ Medida com `gh pr list --state open` em 15/10:
 
 | | |
 |---|---|
-| local | `supabase start` · Postgres 17 · **105** migrações na `develop`, **47** no `main` (em 15/10) |
+| local | `supabase start` · Postgres 17 · **106** migrações na `develop` (veja `scripts/migracoes-sem-colisao.sh`), **47** no `main` (em 15/10) |
 | `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · SMTP próprio ativo (`smtp.gmail.com:465`, código de 6 dígitos) · **Entrega bloqueada** por `frila.agendador_secret` (vide abaixo) |
 | `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **vazio**: aguarda esteira de deploy por tag |
 
@@ -293,7 +302,7 @@ E alinhamentos consolidados de negócio:
 
 ## Por onde continuar
 
-1. **Homologação e Deploy no `frila-dev`:** Com a aprovação da proposta do Vault e o desbloqueio do erro 42501, aplicar as 105 migrações no projeto remoto `jcobftbhbqdikratzizz` via `scripts/aplicar-remoto.sh`.
+1. **Homologação e Deploy no `frila-dev`:** Com a aprovação da proposta do Vault e o desbloqueio do erro 42501, aplicar as 106 migrações no projeto remoto `jcobftbhbqdikratzizz` via `scripts/aplicar-remoto.sh`.
 2. **Frontend e Clientes Mobile:** As novas funcionalidades (recusa de dados de contato e links em texto livre no PR #179, fechamento automático de vagas expiradas no PR #181, e suporte a push mutável no PR #178) estão 100% disponíveis na `develop`.
 3. **Backlog de Tarefas Backend sem Decisão do Dono:** Seguir com a execução contínua de tarefas que independem de decisões de negócio/infraestrutura externa.
 
