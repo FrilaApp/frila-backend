@@ -41,12 +41,18 @@ P95_MAX_ELEGIVEIS="${P95_MAX_ELEGIVEIS:-100}"
 MED_MAX_VAGAS="${MED_MAX_VAGAS:-100}"
 P95_MAX_VAGAS="${P95_MAX_VAGAS:-300}"
 MUTAR="${MUTAR:-}"
+ESCALA="${ESCALA:-1}"
 mostrar_plano=false
 arquivo_julgar=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --plano) mostrar_plano=true; shift ;;
+    --escala)
+      [ -n "${2:-}" ] || { printf '✗ NÃO MEDI: --escala exige um número inteiro\n' >&2; exit 2; }
+      ESCALA="$2"
+      shift 2
+      ;;
     --julgar)
       [ -n "${2:-}" ] || { printf '✗ NÃO MEDI: --julgar exige um arquivo\n' >&2; exit 2; }
       arquivo_julgar="$2"
@@ -252,7 +258,7 @@ saida=$(mktemp)
 trap 'rm -f "$saida"' EXIT
 
 {
-  printf '%s\n' '\set ON_ERROR_STOP on' '\set carga 1' 'begin;'
+  printf '%s\n' '\set ON_ERROR_STOP on' '\set carga 1' "set frila.carga_escala = '$ESCALA';" 'begin;'
   cat "$CARGA"
   [ -n "$mutacao_sql" ] && printf '%s\n' "$mutacao_sql"
   cat <<'SQL'
