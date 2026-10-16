@@ -23,7 +23,7 @@ O gatilho `trg_despacho_enfileirado` em `pgmq.q_despacho` executa `privado.trg_d
 ### Diagnóstico (Somente Leitura)
 1. **Verificar se o parâmetro de banco está preenchido na sessão (sem expor o segredo):**
    ```sql
-   select length(current_setting('frila.agendador_secret', true)) > 0 as preenchido;
+   select coalesce(length(current_setting('frila.agendador_secret', true)) > 0, false) as preenchido;
    ```
    *Resultado esperado:* `true`. A query afere a presença sem imprimir o conteúdo do segredo no histórico do SQL Editor ou em logs.
 
@@ -213,9 +213,9 @@ O banco possui 13 jobs ativos agendados no `pg_cron` (`supabase/tests/390_agenda
    );
    ```
 2. Se a falha for provocada por erro interno na procedure (ex: `fora_da_janela`, violação de FK, deadlock transitório), analisar o `return_message` e corrigir o registro inconsistente ou a procedure através de nova migração corretiva.
-3. Para reexecutar imediatamente em homologação/produção e aferir o retorno:
+3. Para reexecutar imediatamente em homologação/produção e aferir o retorno (**atenção: operação que altera estado** ao fechar vagas e turnos expirados):
    ```sql
-   -- Exemplo de execução pontual controlada (somente via service_role/postgres):
+   -- [DONO] Execução pontual controlada (altera estado no banco; somente via service_role/postgres):
    select privado.fechar_turnos_e_vagas();
    ```
 
@@ -262,10 +262,10 @@ Se a chamada ao Passo 4 sofrer timeout de rede (`AbortSignal.timeout(10000)`) ou
     limit 10;
    ```
 
-2. **Cruzar com a tabela de credenciais do Auth (`auth.users`) para confirmar o estado híbrido:**
+2. **Cruzar com a tabela de credenciais do Auth (`auth.users`) para confirmar o estado híbrido (e-mail mascarado por proteção de dados):**
    ```sql
    select a.id,
-          a.email,
+          left(a.email, 3) || '***' as email_mascarado,
           a.created_at,
           u.estado as estado_usuario_banco,
           u.nome as nome_usuario_banco
@@ -303,7 +303,7 @@ Se a chamada ao Passo 4 sofrer timeout de rede (`AbortSignal.timeout(10000)`) ou
 ### Roteiro de Diagnóstico e Validação Local (Sem `supabase db reset`)
 
 > [!WARNING]
-> Nunca execute `supabase db reset` localmente sob restrição severa de espaço em disco no host de desenvolvimento (~800 MiB livres) e nunca ligue o daemon Docker local caso ele esteja parado. Utilize scripts focados e verifique os logs do GitHub Actions.
+> Nunca execute `supabase db reset` localmente sob restrição severa de espaço em disco no host de desenvolvimento (pouco espaço em disco) e nunca ligue o daemon Docker local caso ele esteja parado. Utilize scripts focados e verifique os logs do GitHub Actions.
 
 #### A. Falha em `Migrações sem colisão de versão`
 - **Causa comum:** Duas branches criaram migrações com o mesmo carimbo de data/hora ou um teste novo usou `now()` sem congelar `frila.agora`.
