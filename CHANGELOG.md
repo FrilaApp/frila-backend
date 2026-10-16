@@ -8,6 +8,10 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 ## [Não lançado]
 
 ### Adicionado
+- **Suíte de privilégios mínimos nas tabelas do schema `privado` (Defesa em profundidade):**
+  - Teste pgTAP `supabase/tests/681_privilegios_tabelas_privado.sql` (30/30 asserções) cobrindo a recomendação da auditoria de segurança da develop (16/10, Oráculo).
+  - Garante que nem `authenticated`, nem `anon`, nem `public` possuem privilégios de dados (`SELECT`, `INSERT`, `UPDATE`, `DELETE`) ou DDL/manutenção (`REFERENCES`, `TRIGGER`, `TRUNCATE`, `MAINTAIN`) em qualquer tabela de `privado`, com verificação explícita das 9 tabelas sem RLS (`ambiente`, `auditoria_ciclo`, `conta_equipe`, `divergencia_reputacao`, `parametro_notificacao`, `termo_bloqueado`, `texto_da_vaga_ocultado`, `tipo_no_teto`, `vaga_ocultada`).
+  - Assegura que `authenticated` possui apenas `USAGE` em `privado` (necessário para RPCs/tipos) sem `CREATE`, que `anon`/`public` não possuem `USAGE` nem `CREATE`, que tabelas futuras não herdam privilégios indevidos e que qualquer concessão acidental quebra o teste imediatamente.
 - **Suíte de paridade exaustiva de `privado.elegiveis` (RNF11, RNF12):**
   - Teste pgTAP `supabase/tests/680_elegiveis_paridade_e_comportamento.sql` comprovando a equivalência estrita de elegíveis (10/10 asserções cobrindo 100% das vagas cadastradas, fixtures de demonstração e `excluir_conta`).
   - Documentação técnica e comprovação experimental refutando a Recomendação 1 do relatório #195: a reordenação interna da CTE sofre *subquery pull-up* pelo planejador PostgreSQL, gerando plano físico idêntico ao canônico, enquanto a extração de `usuario` para a consulta externa dispara varredura sequencial em `disponibilidade` e `usuario`.
