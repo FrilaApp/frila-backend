@@ -17,8 +17,8 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ### Documentação
 - **Medição de triggers e decisão sobre índices parciais em `fechar_turnos_e_vagas` (P3, carga 2x):**
-  - Aferição empírica com `EXPLAIN (ANALYZE, BUFFERS)` dos comandos `UPDATE public.posicao` e `UPDATE public.vaga` na carga 2x do DF (40.000 vagas/posições, 2.000 expiradas), comprovando que 80% a 88% do tempo total decorre da execução de gatilhos por linha (`audita_ciclo`, `vaga_fechada_expira_candidaturas`, `posicao_recalcula_comparecimento` e FKs), e não de leitura sequencial.
-  - Avaliação experimental comprovando que índices parciais em `fim_em` reduzem a leitura mas não impactam significativamente o tempo total, recomendando a não criação desses índices no schema.
+  - Aferição empírica com `EXPLAIN (ANALYZE, BUFFERS)` dos comandos `UPDATE public.posicao` e `UPDATE public.vaga` na carga 2x do DF (40.000 vagas/posições, 2.000 expiradas): medição a 2x demonstra que 79% a 88% do tempo total decorre de gatilhos por linha (`audita_ciclo`, `vaga_fechada_expira_candidaturas`, `posicao_recalcula_comparecimento` e FKs), sendo consistente com a hipótese para o resíduo a 10x (26,6 µs/posição a 2x contra 28,7 µs a 10x).
+  - Avaliação experimental indicando que índices parciais em `fim_em` reduzem a leitura mas não justificam o acréscimo no schema (ganho ≤ 3,1 ms por rodada; custo de escrita não medido; diferenças no tempo total não distinguíveis entre execuções únicas).
   - Seção 3.4 e Recomendação 3 atualizadas em `docs/carga-10x.md`.
 - **Relatório de desempenho e planos sob carga em escala 10x do DF (RNF11, RNF12):**
   - Aferição do comportamento sob volume de 1,3 milhão de usuários, 1 milhão de profissionais, 200 mil vagas e 2 milhões de disponibilidades no DF.
