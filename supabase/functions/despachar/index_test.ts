@@ -409,3 +409,87 @@ Deno.test("despachar: preserva campo origem customizado no disparo pontual", asy
   assertEquals(json.despachos, 4);
 });
 
+Deno.test("despachar: clamp de limite e vt protege a drenagem contra valores abusivos ou negativos", async () => {
+  let limiteRecebido = 0;
+  let vtRecebido = 0;
+
+  const mockSql = criarMockSqlClient({
+    processarFilaDespacho: (limite, vt) => {
+      limiteRecebido = limite;
+      vtRecebido = vt;
+      return Promise.resolve([]);
+    },
+  });
+
+  // Caso 1: Valores acima do teto máximo são limitados
+  const reqMax = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ limite: 99999, vt: 99999 }),
+  });
+  const resMax = await handler(reqMax, {
+    agendadorSecret: SEGREDO_TESTE,
+    sqlClient: mockSql,
+  });
+  assertEquals(resMax.status, 200);
+  assertEquals(limiteRecebido, 100);
+  assertEquals(vtRecebido, 300);
+
+  // Caso 2: Valores negativos ou zero são elevados ao piso mínimo de 1
+  const reqMin = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ limite: -10, vt: 0 }),
+  });
+  const resMin = await handler(reqMin, {
+    agendadorSecret: SEGREDO_TESTE,
+    sqlClient: mockSql,
+  });
+  assertEquals(resMin.status, 200);
+  assertEquals(limiteRecebido, 1);
+  assertEquals(vtRecebido, 1);
+});
+
+Deno.test("despachar: erro ao processar loga mensagem tipada e não objeto bruto no console.error", async () => {
+  const mockSql = criarMockSqlClient({
+    despacharVaga: () => Promise.reject(new TypeError("falha de tipo na operacao")),
+  });
+
+  const logs: unknown[] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logs.push(args);
+  };
+
+  try {
+    const req = new Request("http://localhost/functions/v1/despachar", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-agendador-secret": SEGREDO_TESTE,
+      },
+      body: JSON.stringify({ vaga_id: "a1000000-0000-4000-8000-000000000001" }),
+    });
+
+    const res = await handler(req, {
+      agendadorSecret: SEGREDO_TESTE,
+      sqlClient: mockSql,
+    });
+    assertEquals(res.status, 500);
+
+    assertEquals(logs.length, 1);
+    const [prefixo, errArg] = logs[0] as [string, unknown];
+    assertEquals(prefixo, "despachar: falha no processamento:");
+    assertEquals(typeof errArg, "string");
+    assertEquals(errArg, "TypeError: falha de tipo na operacao");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+

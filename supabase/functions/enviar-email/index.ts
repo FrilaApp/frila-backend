@@ -34,6 +34,10 @@ import {
 } from "./modelos.ts";
 
 export const TETO_DE_LEITURAS = 5;
+export const LIMITE_PADRAO_EMAIL = 20;
+export const LIMITE_MAXIMO_EMAIL = 200;
+export const VT_PADRAO_EMAIL = 60;
+export const VT_MAXIMO_EMAIL = 300;
 
 export interface PedidoDaFila {
   msg_id: number;
@@ -335,8 +339,14 @@ export async function processarEnvioEmail(
   } catch {
     corpo = {};
   }
-  const limite = typeof corpo.limite === "number" && corpo.limite > 0 ? corpo.limite : 20;
-  const vt = typeof corpo.vt === "number" && corpo.vt > 0 ? corpo.vt : 60;
+  const limite =
+    typeof corpo.limite === "number" && Number.isFinite(corpo.limite)
+      ? Math.max(1, Math.min(Math.floor(corpo.limite), LIMITE_MAXIMO_EMAIL))
+      : LIMITE_PADRAO_EMAIL;
+  const vt =
+    typeof corpo.vt === "number" && Number.isFinite(corpo.vt)
+      ? Math.max(1, Math.min(Math.floor(corpo.vt), VT_MAXIMO_EMAIL))
+      : VT_PADRAO_EMAIL;
 
   const sql = criarSqlClient(deps);
   const equipe = caixaDaEquipe(deps.caixaDaEquipe);

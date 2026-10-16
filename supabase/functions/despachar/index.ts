@@ -14,6 +14,11 @@ import postgres from "npm:postgres@3.4.4";
 export const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export const LIMITE_PADRAO_DESPACHO = 10;
+export const LIMITE_MAXIMO_DESPACHO = 100;
+export const VT_PADRAO_DESPACHO = 30;
+export const VT_MAXIMO_DESPACHO = 300;
+
 function igualEmTempoConstante(a: string, b: string): boolean {
   const x = new TextEncoder().encode(a);
   const y = new TextEncoder().encode(b);
@@ -160,7 +165,8 @@ export async function handler(
   try {
     sqlClient = criarSqlClient(deps);
   } catch (err) {
-    console.error("despachar: erro ao conectar ao banco:", err);
+    const errMensagem = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    console.error("despachar: erro ao conectar ao banco:", errMensagem);
     return new Response(
       JSON.stringify({ ok: false, erro: "erro_conexao_banco" }),
       { status: 500, headers: { "Content-Type": "application/json" } },
@@ -182,8 +188,14 @@ export async function handler(
       );
     } else {
       // 2. Drenagem / reprocessamento da fila pgmq
-      const limite = typeof corpo?.limite === "number" ? corpo.limite : 10;
-      const vt = typeof corpo?.vt === "number" ? corpo.vt : 30;
+      const limite =
+        typeof corpo?.limite === "number" && Number.isFinite(corpo.limite)
+          ? Math.max(1, Math.min(Math.floor(corpo.limite), LIMITE_MAXIMO_DESPACHO))
+          : LIMITE_PADRAO_DESPACHO;
+      const vt =
+        typeof corpo?.vt === "number" && Number.isFinite(corpo.vt)
+          ? Math.max(1, Math.min(Math.floor(corpo.vt), VT_MAXIMO_DESPACHO))
+          : VT_PADRAO_DESPACHO;
 
       const lotes = await sqlClient.processarFilaDespacho(limite, vt);
       const totalDespachos = lotes.reduce(
@@ -202,7 +214,8 @@ export async function handler(
       );
     }
   } catch (err) {
-    console.error("despachar: falha no processamento:", err);
+    const errMensagem = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    console.error("despachar: falha no processamento:", errMensagem);
     return new Response(
       JSON.stringify({ ok: false, erro: "falha_processamento" }),
       { status: 500, headers: { "Content-Type": "application/json" } },

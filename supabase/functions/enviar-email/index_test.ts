@@ -617,3 +617,48 @@ Deno.test("RN15 / LGPD: modelos de e-mail nunca vazam relato, telefone ou CPF, e
   );
 });
 
+Deno.test("enviar-email: clamp de limite e vt protege contra valores abusivos ou negativos", async () => {
+  let limiteCapturado = 0;
+  let vtCapturado = 0;
+
+  const mockSql: SqlClient = {
+    lerFilaEmail: (limite, vt) => {
+      limiteCapturado = limite;
+      vtCapturado = vt;
+      return Promise.resolve([]);
+    },
+    dadosDoEmail: () => Promise.resolve(null),
+    registrarEnviado: () => Promise.resolve(),
+    registrarFalha: () => Promise.resolve(0),
+    concluir: () => Promise.resolve(),
+  };
+
+  // Caso 1: Valores acima do teto máximo são limitados
+  const resMax = await processarEnvioEmail(
+    requisicao({ limite: 99999, vt: 99999 }),
+    {
+      agendadorSecret: SEGREDO,
+      sqlClient: mockSql,
+      enviar: () => Promise.resolve({ ok: true, mensagemId: "ok" }),
+      caixaDaEquipe: EQUIPE,
+    },
+  );
+  assertEquals(resMax.status, 200);
+  assertEquals(limiteCapturado, 200);
+  assertEquals(vtCapturado, 300);
+
+  // Caso 2: Valores negativos ou zero são elevados ao piso mínimo de 1
+  const resMin = await processarEnvioEmail(
+    requisicao({ limite: -10, vt: 0 }),
+    {
+      agendadorSecret: SEGREDO,
+      sqlClient: mockSql,
+      enviar: () => Promise.resolve({ ok: true, mensagemId: "ok" }),
+      caixaDaEquipe: EQUIPE,
+    },
+  );
+  assertEquals(resMin.status, 200);
+  assertEquals(limiteCapturado, 1);
+  assertEquals(vtCapturado, 1);
+});
+
