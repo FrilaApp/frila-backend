@@ -69,8 +69,8 @@ select ok(
 insert into public.usuario (
   id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado
 ) values
-  ('70600000-0000-4000-8000-000000000001', 'contratante',  'Contratante 706',  '+5561970600001', 'c706@test.com', '1987-04-04', '2026-09-22', now(), 'ativa'),
-  ('70600000-0000-4000-8000-000000000002', 'profissional', 'Profissional 706', '+5561970600002', 'p706@test.com', '1994-08-08', '2026-09-22', now(), 'ativa');
+  ('70600000-0000-4000-8000-000000000001', 'contratante',  'Contratante 706',  '+5561970600001', 'c706@test.com', '1987-04-04', '2026-09-22', '2026-10-16 12:00:00-03', 'ativa'),
+  ('70600000-0000-4000-8000-000000000002', 'profissional', 'Profissional 706', '+5561970600002', 'p706@test.com', '1994-08-08', '2026-09-22', '2026-10-16 12:00:00-03', 'ativa');
 
 insert into public.estabelecimento (
   id, nome, documento, tipo, endereco, ponto, regiao_administrativa
@@ -97,13 +97,15 @@ values (
 insert into public.vaga (
   id, estabelecimento_id, funcao_id, ponto, local, valor_centavos, posicoes,
   inclui_refeicao, inclui_transporte, exige_material_proprio, responsavel_local,
-  inicio_em, fim_em, modo, estado, regiao_administrativa, chave_cliente, publicado_por
+  inicio_em, fim_em, modo, estado, regiao_administrativa, chave_cliente, publicado_por,
+  publicado_em
 ) values
   ('70600000-0000-4000-8000-000000000030', '70600000-0000-4000-8000-000000000010',
    (select id from public.funcao limit 1), 'POINT(-47.8850 -15.7750)'::extensions.geography,
    'Cozinha', 16000, 2, true, false, false, 'Chefe 706',
    '2026-10-18 18:00:00-03', '2026-10-19 02:00:00-03', 'selecao', 'publicada',
-   'Plano Piloto', '70600000-0000-4000-8000-0000000000c1', '70600000-0000-4000-8000-000000000001');
+   'Plano Piloto', '70600000-0000-4000-8000-0000000000c1', '70600000-0000-4000-8000-000000000001',
+   '2026-10-16 12:00:00-03');
 
 -- Posição 1: cancelada (com falta registrada)
 -- Posição 2: confirmada (profissional alocado)
@@ -113,7 +115,7 @@ insert into public.posicao (
   ('70600000-0000-4000-8000-0000000000a1', '70600000-0000-4000-8000-000000000030',
    'cancelada', null, null, true, '2026-10-18 18:00:00-03', '2026-10-19 02:00:00-03'),
   ('70600000-0000-4000-8000-0000000000a2', '70600000-0000-4000-8000-000000000030',
-   'confirmada', '70600000-0000-4000-8000-000000000020', now(), false, '2026-10-18 18:00:00-03', '2026-10-19 02:00:00-03');
+   'confirmada', '70600000-0000-4000-8000-000000000020', '2026-10-16 14:00:00-03', false, '2026-10-18 18:00:00-03', '2026-10-19 02:00:00-03');
 
 -- Turno 1 na posição cancelada: simula o cenário canônico medido em 30/09:
 -- check-in manual pendente já existia antes da desistência/cancelamento da posição.
@@ -127,11 +129,11 @@ values
 
 -- ── 3. Testes de Bloqueio em Posição Cancelada (RN22/RN07) ──────────────────────
 
--- 1. Tentativa de confirmar check-in manual (verificacao = 'verificado', checkin_confirmado_em = now())
+-- 1. Tentativa de confirmar check-in manual (verificacao = 'verificado', checkin_confirmado_em explícito)
 -- em posição cancelada deve ser bloqueada estritamente pelo trigger de verificação com 409 vaga_encerrada.
 -- (checkin_em já estava preenchido, logo turno_checkin_nunca_em_posicao_cancelada NÃO interfere).
 select throws_ok(
-  $$update public.turno set verificacao = 'verificado', checkin_confirmado_em = now() where id = '70600000-0000-4000-8000-0000000000b1'$$,
+  $$update public.turno set verificacao = 'verificado', checkin_confirmado_em = '2026-10-18 18:10:00-03' where id = '70600000-0000-4000-8000-0000000000b1'$$,
   'PGRST',
   '{"code" : "vaga_encerrada", "message" : "vaga_encerrada", "details" : "posicao_cancelada", "hint" : null}',
   'UPDATE alterando verificacao para verificado em turno de posicao cancelada levanta 409 vaga_encerrada (RN22/RN07)'
@@ -145,7 +147,7 @@ select lives_ok(
 
 -- 3. UPDATE em posição confirmada (ativa) alterando para 'verificado' é permitido
 select lives_ok(
-  $$update public.turno set verificacao = 'verificado', checkin_tipo = 'geolocalizado', checkin_distancia_m = 50, checkin_em = now() where id = '70600000-0000-4000-8000-0000000000b2'$$,
+  $$update public.turno set verificacao = 'verificado', checkin_tipo = 'geolocalizado', checkin_distancia_m = 50, checkin_em = '2026-10-18 18:00:00-03' where id = '70600000-0000-4000-8000-0000000000b2'$$,
   'UPDATE alterando verificacao para verificado em turno de posicao confirmada é permitido'
 );
 
@@ -163,7 +165,7 @@ select lives_ok(
 
 -- 5. UPDATE em outras colunas (a_caminho_em) no turno da posição cancelada é permitido
 select lives_ok(
-  $$update public.turno set a_caminho_em = now() where id = '70600000-0000-4000-8000-0000000000b1'$$,
+  $$update public.turno set a_caminho_em = '2026-10-18 17:30:00-03' where id = '70600000-0000-4000-8000-0000000000b1'$$,
   'UPDATE em outras colunas (a_caminho_em) em turno de posicao cancelada é permitido'
 );
 
