@@ -15,13 +15,16 @@
 --    - Trigger registrado em public.vaga com tipo AFTER UPDATE OF estado.
 --    - privado.vaga_fechada_expira_candidaturas() com search_path="" vazio fixado.
 --    - Privilégios: service_role permitido; authenticated, anon e public negados.
--- 2. Exercício e Borda da Cláusula WHEN:
---    - Transição de aberta -> cancelada expira candidaturas pendentes da vaga.
---    - Transição de aberta -> encerrada expira candidaturas pendentes da vaga.
---    - Candidaturas já recusadas ou aceitas são preservadas sem alteração de estado.
---    - Candidaturas de outras vagas abertas permanecem intactas (isolamento por vaga).
---    - Update em outras colunas mantendo estado aberta não dispara o trigger.
--- 3. Prova de Mutação:
+-- 2. Exercício Positivo:
+--    - Transição de publicada -> cancelada expira candidaturas pendentes da vaga.
+--    - Transição de publicada -> encerrada expira candidaturas pendentes da vaga.
+--    - Candidaturas já recusadas são preservadas intactas sem alteração de estado.
+--    - Candidaturas de outras vagas permanecem intactas (isolamento por vaga).
+-- 3. Exercício e Borda da Cláusula WHEN (com estado no SET):
+--    - Caso 3a: Transição publicada -> preenchida (fora do conjunto cancelada/encerrada) mantém candidatura pendente.
+--    - Caso 3b: Update com estado = 'cancelada' em vaga já cancelada (old = new) mantém candidatura pendente.
+--    - Update em colunas normais (local) sem alterar estado não aciona o gatilho.
+-- 4. Prova de Mutação:
 --    - Sem o trigger (DROP TRIGGER), a transição para cancelada deixa a candidatura pendente.
 
 begin;
@@ -32,7 +35,7 @@ on conflict (id) do update set eh_teste = true;
 set local timezone = 'UTC';
 set local frila.agora = '2026-10-20 12:00:00+00';
 
-select plan(15);
+select plan(17);
 
 -- ── 1. Metadados e Privilégios Mínimos ───────────────────────────────────────
 
@@ -115,40 +118,48 @@ insert into public.profissional (id, usuario_id, ponto_base) values
   ('70800000-0000-4000-8000-000000000021', '70800000-0000-4000-8000-000000000002', 'POINT(-47.8825 -15.7942)'::extensions.geography),
   ('70800000-0000-4000-8000-000000000022', '70800000-0000-4000-8000-000000000003', 'POINT(-47.8825 -15.7942)'::extensions.geography);
 
--- Vaga 1 (cancelamento) e Vaga 2 (encerramento) em modo seleção:
+-- Vagas em modo seleção com publicado_em explícito e estado válido 'publicada':
 insert into public.vaga (
   id, estabelecimento_id, funcao_id, ponto, local, valor_centavos, posicoes,
   inclui_refeicao, inclui_transporte, exige_material_proprio, responsavel_local,
-  inicio_em, fim_em, modo, estado, regiao_administrativa, chave_cliente, publicado_por
+  inicio_em, fim_em, modo, estado, regiao_administrativa, chave_cliente, publicado_por, publicado_em
 ) values
   ('70800000-0000-4000-8000-000000000031', '70800000-0000-4000-8000-000000000010',
    (select id from public.funcao limit 1), 'POINT(-47.8825 -15.7942)'::extensions.geography,
-   'Restaurante 708', 15000, 1, true, false, false, 'Gerente',
-   '2026-10-25 18:00:00+00', '2026-10-25 23:00:00+00', 'selecao', 'aberta', 'Plano Piloto',
-   '70800000-0000-4000-8000-000000000031', '70800000-0000-4000-8000-000000000001'),
+   'Restaurante 708', 15000, 2, true, false, false, 'Gerente',
+   '2026-10-25 18:00:00+00', '2026-10-25 23:00:00+00', 'selecao', 'publicada', 'Plano Piloto',
+   '70800000-0000-4000-8000-000000000031', '70800000-0000-4000-8000-000000000001', '2026-10-19 12:00:00+00'),
   ('70800000-0000-4000-8000-000000000032', '70800000-0000-4000-8000-000000000010',
    (select id from public.funcao limit 1), 'POINT(-47.8825 -15.7942)'::extensions.geography,
    'Restaurante 708', 15000, 1, true, false, false, 'Gerente',
-   '2026-10-26 18:00:00+00', '2026-10-26 23:00:00+00', 'selecao', 'aberta', 'Plano Piloto',
-   '70800000-0000-4000-8000-000000000032', '70800000-0000-4000-8000-000000000001'),
+   '2026-10-26 18:00:00+00', '2026-10-26 23:00:00+00', 'selecao', 'publicada', 'Plano Piloto',
+   '70800000-0000-4000-8000-000000000032', '70800000-0000-4000-8000-000000000001', '2026-10-19 12:00:00+00'),
   ('70800000-0000-4000-8000-000000000033', '70800000-0000-4000-8000-000000000010',
    (select id from public.funcao limit 1), 'POINT(-47.8825 -15.7942)'::extensions.geography,
    'Restaurante 708', 15000, 1, true, false, false, 'Gerente',
-   '2026-10-27 18:00:00+00', '2026-10-27 23:00:00+00', 'selecao', 'aberta', 'Plano Piloto',
-   '70800000-0000-4000-8000-000000000033', '70800000-0000-4000-8000-000000000001');
+   '2026-10-27 18:00:00+00', '2026-10-27 23:00:00+00', 'selecao', 'publicada', 'Plano Piloto',
+   '70800000-0000-4000-8000-000000000033', '70800000-0000-4000-8000-000000000001', '2026-10-19 12:00:00+00'),
+  ('70800000-0000-4000-8000-000000000034', '70800000-0000-4000-8000-000000000010',
+   (select id from public.funcao limit 1), 'POINT(-47.8825 -15.7942)'::extensions.geography,
+   'Restaurante 708', 15000, 1, true, false, false, 'Gerente',
+   '2026-10-28 18:00:00+00', '2026-10-28 23:00:00+00', 'selecao', 'publicada', 'Plano Piloto',
+   '70800000-0000-4000-8000-000000000034', '70800000-0000-4000-8000-000000000001', '2026-10-19 12:00:00+00');
 
 -- Posições das vagas:
 insert into public.posicao (id, vaga_id, estado, inicio_em, fim_em) values
   ('70800000-0000-4000-8000-000000000041', '70800000-0000-4000-8000-000000000031', 'aberta', '2026-10-25 18:00:00+00', '2026-10-25 23:00:00+00'),
   ('70800000-0000-4000-8000-000000000042', '70800000-0000-4000-8000-000000000032', 'aberta', '2026-10-26 18:00:00+00', '2026-10-26 23:00:00+00'),
-  ('70800000-0000-4000-8000-000000000043', '70800000-0000-4000-8000-000000000033', 'aberta', '2026-10-27 18:00:00+00', '2026-10-27 23:00:00+00');
+  ('70800000-0000-4000-8000-000000000043', '70800000-0000-4000-8000-000000000033', 'aberta', '2026-10-27 18:00:00+00', '2026-10-27 23:00:00+00'),
+  ('70800000-0000-4000-8000-000000000044', '70800000-0000-4000-8000-000000000031', 'aberta', '2026-10-25 18:00:00+00', '2026-10-25 23:00:00+00'),
+  ('70800000-0000-4000-8000-000000000045', '70800000-0000-4000-8000-000000000034', 'aberta', '2026-10-28 18:00:00+00', '2026-10-28 23:00:00+00');
 
 -- Candidaturas em estados heterogêneos:
 insert into public.candidatura (id, posicao_id, profissional_id, estado, criada_em) values
   ('70800000-0000-4000-8000-000000000051', '70800000-0000-4000-8000-000000000041', '70800000-0000-4000-8000-000000000021', 'pendente', '2026-10-20 12:00:00+00'),
   ('70800000-0000-4000-8000-000000000052', '70800000-0000-4000-8000-000000000041', '70800000-0000-4000-8000-000000000022', 'recusada', '2026-10-20 12:00:00+00'),
   ('70800000-0000-4000-8000-000000000053', '70800000-0000-4000-8000-000000000042', '70800000-0000-4000-8000-000000000021', 'pendente', '2026-10-20 12:00:00+00'),
-  ('70800000-0000-4000-8000-000000000054', '70800000-0000-4000-8000-000000000043', '70800000-0000-4000-8000-000000000022', 'pendente', '2026-10-20 12:00:00+00');
+  ('70800000-0000-4000-8000-000000000054', '70800000-0000-4000-8000-000000000043', '70800000-0000-4000-8000-000000000022', 'pendente', '2026-10-20 12:00:00+00'),
+  ('70800000-0000-4000-8000-000000000056', '70800000-0000-4000-8000-000000000045', '70800000-0000-4000-8000-000000000021', 'pendente', '2026-10-20 12:00:00+00');
 
 -- ── 3. Disparo Positivo: Cancelamento da Vaga 1 ───────────────────────────────
 
@@ -186,17 +197,44 @@ select is(
   'trigger expira candidatura pendente quando vaga passa para encerrada'
 );
 
--- ── 5. Disparo Negativo: Cláusula WHEN do Gatilho ─────────────────────────────
+-- ── 5. Disparo Negativo: Cláusula WHEN do Gatilho com estado no SET ──────────
 
--- Update em coluna que não altera o estado da vaga (permanece aberta):
+-- Caso 5a: Transição publicada -> preenchida (fora de cancelada/encerrada):
+-- O estado aparece no SET acionando avaliação do gatilho, mas o WHEN rejeita por new.estado
 update public.vaga
-   set local = 'Restaurante 708 - Salão Superior'
+   set estado = 'preenchida'
  where id = '70800000-0000-4000-8000-000000000033';
 
 select is(
   (select estado from public.candidatura where id = '70800000-0000-4000-8000-000000000054'),
   'pendente'::public.estado_candidatura,
-  'update em vaga aberta sem mudar estado nao dispara trigger e candidatura segue pendente'
+  'clausula WHEN: transicao para preenchida nao dispara trigger e candidatura segue pendente'
+);
+
+-- Caso 5b: Vaga já cancelada (Vaga 1), inserção de nova candidatura e update mantendo cancelada:
+-- O estado aparece no SET, mas o WHEN rejeita por old.estado is distinct from new.estado
+insert into public.candidatura (id, posicao_id, profissional_id, estado, criada_em) values
+  ('70800000-0000-4000-8000-000000000055', '70800000-0000-4000-8000-000000000044', '70800000-0000-4000-8000-000000000021', 'pendente', '2026-10-20 12:00:00+00');
+
+update public.vaga
+   set estado = 'cancelada'
+ where id = '70800000-0000-4000-8000-000000000031';
+
+select is(
+  (select estado from public.candidatura where id = '70800000-0000-4000-8000-000000000055'),
+  'pendente'::public.estado_candidatura,
+  'clausula WHEN: update com estado = cancelada em vaga ja cancelada nao dispara trigger (old = new)'
+);
+
+-- Caso 5c: Update em coluna que não altera o estado da vaga (sem estado no SET):
+update public.vaga
+   set local = 'Restaurante 708 - Salão Superior'
+ where id = '70800000-0000-4000-8000-000000000034';
+
+select is(
+  (select estado from public.candidatura where id = '70800000-0000-4000-8000-000000000056'),
+  'pendente'::public.estado_candidatura,
+  'update em colunas normais sem alterar estado mantem candidatura pendente'
 );
 
 -- ── 6. Prova de Mutação (Sem o Gatilho Ativo) ─────────────────────────────────
@@ -204,13 +242,13 @@ select is(
 -- Remove temporariamente o trigger da sessão de teste:
 drop trigger vaga_fechada_expira_candidaturas on public.vaga;
 
--- Atualiza a Vaga 3 para cancelada:
+-- Atualiza a Vaga 4 para cancelada:
 update public.vaga
    set estado = 'cancelada'
- where id = '70800000-0000-4000-8000-000000000033';
+ where id = '70800000-0000-4000-8000-000000000034';
 
 select is(
-  (select estado from public.candidatura where id = '70800000-0000-4000-8000-000000000054'),
+  (select estado from public.candidatura where id = '70800000-0000-4000-8000-000000000056'),
   'pendente'::public.estado_candidatura,
   'prova de mutacao: sem o trigger vaga_fechada_expira_candidaturas, vaga cancelada deixa candidatura pendente'
 );
