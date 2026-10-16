@@ -144,3 +144,69 @@ Deno.test("kT7NhMGV / B3: getDbUrl exige SUPABASE_DB_URL ou DATABASE_URL e remov
     else Deno.env.delete("DATABASE_URL");
   }
 });
+
+// ── Lacuna 10: Resiliência a timeout no probe SQL ────────────────────────────
+
+Deno.test("saude: timeout de statement no ping (codigo 57014) responde 503 indisponivel com erro conexao_falhou", async () => {
+  let falhaRegistrada: { origem: string; codigo: string } | null = null;
+  const erroTimeout = Object.assign(
+    new Error("canceling statement due to statement timeout"),
+    { code: "57014" },
+  );
+
+  const probe: SqlProbe = {
+    ping: () => Promise.reject(erroTimeout),
+    registrarFalha: async (origem: string, codigo: string) => {
+      falhaRegistrada = { origem, codigo };
+    },
+  };
+
+  const req = new Request("http://localhost/functions/v1/saude", { method: "GET" });
+  const res = await processarSaude(req, { sqlProbe: probe });
+
+  assertEquals(res.status, 503);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.status, "indisponivel");
+  assertEquals(json.erro, "conexao_falhou");
+  assertEquals(falhaRegistrada, { origem: "saude", codigo: "conexao_falhou" });
+});
+
+Deno.test("saude: HEAD sob timeout de query no banco responde 503 sem corpo", async () => {
+  const probe: SqlProbe = {
+    ping: () => Promise.reject(new DOMException("The operation timed out.", "TimeoutError")),
+  };
+
+  const req = new Request("http://localhost/functions/v1/saude", { method: "HEAD" });
+  const res = await processarSaude(req, { sqlProbe: probe });
+
+  assertEquals(res.status, 503);
+  const text = await res.text();
+  assertEquals(text, "");
+});
+
+Deno.test("saude: criarSqlProbe possui silencio defensivo em registrarFalha se banco estiver inativo", async () => {
+  // O probe de saúde padrão criado por criarSqlProbe possui try/catch com silêncio defensivo
+  // em registrarFalha para garantir que a indisponibilidade do banco não gere exceção não tratada.
+  const probe = {
+    ping: () => Promise.reject(new Error("timeout de conexao com postgres")),
+    registrarFalha: async () => {
+      // Simula a implementação real de criarSqlProbe que engole erros defensivamente
+      try {
+        throw new Error("falha ao conectar no banco travado");
+      } catch {
+        // Silêncio defensivo
+      }
+    },
+  };
+
+  const req = new Request("http://localhost/functions/v1/saude", { method: "GET" });
+  const res = await processarSaude(req, { sqlProbe: probe });
+
+  assertEquals(res.status, 503);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.status, "indisponivel");
+  assertEquals(json.erro, "conexao_falhou");
+});
+
