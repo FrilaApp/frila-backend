@@ -2369,6 +2369,120 @@ Deno.test("RN15 / LGPD: filtrarDataPayloadFcm remove estritamente quaisquer camp
   assertEquals((filtrado as Record<string, string>).token_fcm, undefined);
 });
 
+Deno.test("enviar-push: clamp de limite protege a consulta de pendentes contra valores abusivos ou negativos", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  let urlChamada = "";
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
+    urlChamada = input.toString();
+    return Promise.resolve(
+      new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  };
+
+  // Caso 1: Valores acima do teto máximo são limitados a 200
+  const reqMax = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ limite: 99999 }),
+  });
+
+  const resMax = await processarEnvioPush(reqMax, {
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    sqlClient: criarMockSqlClient(),
+    agendadorSecret: SEGREDO_TESTE,
+  });
+  assertEquals(resMax.status, 200);
+  assert(urlChamada.includes("limit=200"), `URL deveria conter limit=200, mas foi: ${urlChamada}`);
+
+  // Caso 2: Valores negativos são limitados ao piso mínimo de 1
+  const reqMin = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ limite: -50 }),
+  });
+
+  const resMin = await processarEnvioPush(reqMin, {
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    sqlClient: criarMockSqlClient(),
+    agendadorSecret: SEGREDO_TESTE,
+  });
+  assertEquals(resMin.status, 200);
+  assert(urlChamada.includes("limit=1"), `URL deveria conter limit=1, mas foi: ${urlChamada}`);
+});
+
+Deno.test("enviar-push: falha ao autenticar no Google OAuth loga mensagem tipada e não objeto bruto no console.error", async () => {
+  const sa = await gerarContaDeServicoTeste();
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
+    const url = input.toString();
+    if (url.includes("/rest/v1/notificacao")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "b1000000-0000-4000-8000-000000000001",
+              usuario_id: "u1000000-0000-4000-8000-000000000001",
+              tipo: "confirmacao_vaga",
+              referencia_id: "r1000000-0000-4000-8000-000000000001",
+              payload: {},
+              tentativas: 0,
+              estado_entrega: "pendente",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    // Falha simulada no OAuth
+    return Promise.reject(new TypeError("rede indisponivel"));
+  };
+
+  const logs: unknown[] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logs.push(args);
+  };
+
+  try {
+    const req = new Request("http://localhost/functions/v1/enviar-push", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-agendador-secret": SEGREDO_TESTE,
+      },
+      body: JSON.stringify({ notificacao_id: "b1000000-0000-4000-8000-000000000001" }),
+    });
+
+    const res = await processarEnvioPush(req, {
+      serviceAccount: sa,
+      fetchFn: mockFetch,
+      sqlClient: criarMockSqlClient(),
+      agendadorSecret: SEGREDO_TESTE,
+    });
+    assertEquals(res.status, 500);
+
+    assertEquals(logs.length, 1);
+    const [prefixo, errArg] = logs[0] as [string, unknown];
+    assertEquals(prefixo, "Erro ao autenticar no Google OAuth:");
+    assertEquals(typeof errArg, "string");
+    assertEquals(errArg, "TypeError: rede indisponivel");
+  } finally {
+    console.error = originalConsoleError;
+  }
+});
+
 
 
 

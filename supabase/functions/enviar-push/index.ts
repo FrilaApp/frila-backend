@@ -112,6 +112,9 @@ export function carregarContaDeServico(): FcmServiceAccount | null {
 export const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export const LIMITE_PADRAO_PUSH = 50;
+export const LIMITE_MAXIMO_PUSH = 200;
+
 const CHAVES_UUID_PERMITIDAS = [
   "vaga_id",
   "posicao_id",
@@ -579,7 +582,10 @@ export async function processarEnvioPush(
 
   const notificacaoId =
     typeof corpo?.notificacao_id === "string" ? corpo.notificacao_id : null;
-  const limite = typeof corpo?.limite === "number" ? corpo.limite : 50;
+  const limite =
+    typeof corpo?.limite === "number" && Number.isFinite(corpo.limite)
+      ? Math.max(1, Math.min(Math.floor(corpo.limite), LIMITE_MAXIMO_PUSH))
+      : LIMITE_PADRAO_PUSH;
 
   if (notificacaoId && !UUID_REGEX.test(notificacaoId)) {
     return new Response(
@@ -663,7 +669,8 @@ export async function processarEnvioPush(
   try {
     accessToken = await getAccessToken(sa, fetchFn);
   } catch (err) {
-    console.error("Erro ao autenticar no Google OAuth:", err);
+    const errMensagem = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    console.error("Erro ao autenticar no Google OAuth:", errMensagem);
     return new Response(
       JSON.stringify({ ok: false, erro: "falha_oauth_google" }),
       { status: 500, headers: { "Content-Type": "application/json" } },
