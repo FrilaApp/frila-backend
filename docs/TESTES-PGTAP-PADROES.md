@@ -97,6 +97,23 @@ A função canônica de relógio do banco, `privado.agora()` (`20260922200000_au
   2. **60 dias + 1 segundo (`60d 00h 01s`):** PURGADO.
   3. **Dentro da janela (`59d 23h 59s`):** PRESERVADO.
 
+### Imunidade a Bomba-Relógio: `publicado_em` Explícito em Vagas de Seleção
+- Na tabela `public.vaga`, a constraint de integridade temporal `selecao_com_antecedencia` estabelece:
+  ```sql
+  CONSTRAINT selecao_com_antecedencia CHECK (modo <> 'selecao'::modo_preenchimento OR inicio_em > (publicado_em + '24:00:00'::interval))
+  ```
+- **A Armadilha:** A coluna `publicado_em` possui como valor padrão `now()`. Se a fixture do teste omitir `publicado_em` ao inserir uma vaga com `modo = 'selecao'` e fixar uma data no futuro para `inicio_em` (ex.: 24 horas e 30 minutos após a data de criação do teste), o teste funcionará inicialmente. Porém, à medida que os dias reais passarem, o `now()` real avançará e a diferença em relação a `inicio_em` cairá abaixo de 24 horas, fazendo o `INSERT` explodir com violação da constraint `selecao_com_antecedencia` sem que nenhuma linha de código tenha sido modificada.
+- **Padrão Obrigatório:** Sempre forneça explicitamente `publicado_em` determinístico e alinhado com `frila.agora` em vagas de seleção (lembrando que `public.vaga` não possui `criada_em`), garantindo folga temporal perene (> 24h) matematicamente imune ao relógio da máquina ou do runner da CI:
+  ```sql
+  insert into public.vaga (
+    id, estabelecimento_id, modo, inicio_em, fim_em, estado, publicado_em
+  ) values (
+    '70800000-0000-4000-8000-000000000001', v_est, 'selecao',
+    '2026-10-25 18:00:00+00', '2026-10-25 22:00:00+00', 'publicada',
+    '2026-10-19 12:00:00+00'
+  );
+  ```
+
 ---
 
 ## 4. Testes de Jobs do pg_cron
@@ -141,6 +158,22 @@ Ao criar contas fictícias de usuário nos testes de integração:
   );
   ```
 
+### Enums Canônicos do Domínio: Segregação Estrita de Entidades
+O modelo de dados do Frila possui tipos enumerados com escopos rigorosamente separados:
+1. **`public.estado_vaga`:** valores válidos são exclusivamente `'publicada'`, `'preenchida'`, `'encerrada'`, `'cancelada'`.
+   - *Atenção:* O estado `'aberta'` **NÃO** existe em `vaga`; ele pertence exclusivamente a `posicao`.
+2. **`public.estado_posicao`:** valores válidos são `'aberta'`, `'confirmada'`, `'cumprida'`, `'cancelada'`.
+3. **`public.modo_preenchimento`:** valores válidos são exclusivamente `'urgencia'` e `'selecao'`.
+   - *Atenção:* O valor `'direto'` **NÃO** existe no enum e gera erro `22P02: invalid input value for enum modo_preenchimento`.
+
+### Gatilhos com `UPDATE OF col` vs Cláusula `WHEN`: A Armadilha do Caso Negativo
+Quando um gatilho é declarado com a cláusula `OF col` (ex.: `BEFORE UPDATE OF estado ON public.vaga`):
+- O PostgreSQL realiza uma otimização na engine: **se a coluna especificada em `OF` não constar explicitamente na cláusula `SET` do comando `UPDATE`, o gatilho é sumariamente descartado**, e a cláusula `WHEN` **nunca é avaliada**.
+- **A Armadilha do Falso-Teste:** Ao testar o caso negativo da cláusula `WHEN` (por exemplo, provar que quando `new.estado` não é `'cancelada'` o gatilho não é executado), fazer `UPDATE public.vaga SET local = 'Novo Local'` testa apenas o filtro de coluna do PostgreSQL, e **não** a condição lógica do `WHEN`. Uma mutação que altere ou remova o `WHEN` continuaria passando verde nesse teste.
+- **Padrão Canônico para Casos Negativos de `WHEN`:**
+  1. **Negativo Real do `WHEN`:** O comando `UPDATE` **deve** incluir a coluna vigiada no `SET` com um valor que viole a cláusula `WHEN` (ex.: `SET estado = 'preenchida'` quando o WHEN exige `'cancelada'`, ou `SET estado = old_estado` para exercitar `new.estado is distinct from old.estado`).
+  2. **Teste de Coluna Vizinha:** Atualizações em outras colunas sem a coluna vigiada no `SET` devem ser rotuladas explicitamente como teste de descarte pelo `UPDATE OF col`, e não como prova de eficácia da cláusula `WHEN`.
+
 ---
 
 ## 6. Prevenção de Falso-Verde e Testes de Mutação
@@ -164,3 +197,7 @@ Um teste falso-verde passa com sucesso mesmo quando o comportamento sob teste es
 ### Política de `CHANGELOG.md`: Proposta Operacional
 - A retenção ou não edição de `CHANGELOG.md` em PRs concorrentes de testes ou correções menores é uma **proposta operacional** da equipe para evitar sucessivas rodadas de rebase e conflitos em série (`CONFLICTING`), e não uma regra vigente formal da esteira de CI.
 - A decisão final sobre consolidar notas de versão em lote em PR único vs adotar fragmentos de changelog é uma decisão técnica de arquitetura de processo reservada ao dono do projeto (`[DONO]`).
+
+### Execução Local e Evidência no PR
+- Todo PR que introduzir ou modificar testes pgTAP (`supabase/tests/*.sql`) deve ser executado localmente antes da submissão.
+- A saída integral do teste (com `plan(N)`, todas as asserções `ok` e `looks like you planned N tests and ran N`) deve ser colada no corpo da descrição do PR (`gh pr create --body-file` ou `gh pr edit`), servindo como prova empírica reproduzível para revisão do Oráculo e garantia de zero falhas na esteira de CI.
