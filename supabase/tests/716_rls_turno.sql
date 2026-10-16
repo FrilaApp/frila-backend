@@ -188,7 +188,7 @@ select ok(
 select throws_ok(
   $$ select pg_temp.como('anon', 'select count(*) from public.turno') $$,
   '42501',
-  null,
+  'permission denied for table turno',
   'papel anon recebe 42501 em SELECT direto em public.turno'
 );
 

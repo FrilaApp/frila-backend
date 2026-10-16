@@ -20,7 +20,7 @@
 --      - Restauracao com revoke e revalidacao completa de bloqueio.
 
 begin;
-select plan(26);
+select plan(28);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
   on conflict (id) do update set eh_teste = true;
@@ -215,6 +215,13 @@ select throws_ok(
 -- Mutacao: conceder SELECT indevidamente para anon
 grant select on public.funcao to anon;
 
+select is(
+  (select count(*)::int from information_schema.role_table_grants
+    where grantee = 'anon' and table_schema = 'public'),
+  1,
+  'mutante com grant select reflete exatamente 1 concessao no catalogo'
+);
+
 select lives_ok(
   $$ select pg_temp.como('anon', 'select count(*) from public.funcao') $$,
   'mutante com grant select: comprova que anon passaria e que throws_ok discrimina'
@@ -222,6 +229,13 @@ select lives_ok(
 
 -- Restauracao: revogar e revalidar bloqueio
 revoke select on public.funcao from anon;
+
+select is(
+  (select count(*)::int from information_schema.role_table_grants
+    where grantee = 'anon' and table_schema = 'public'),
+  0,
+  'restauracao: apos REVOKE, role_table_grants volta a ser exatamente zero'
+);
 
 select throws_ok(
   $$ select pg_temp.como('anon', 'select count(*) from public.funcao') $$,

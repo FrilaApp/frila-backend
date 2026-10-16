@@ -47,7 +47,11 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(32);
+select plan(33);
+
+-- Snapshot da definição original da RPC para conferência da restauração canônica
+create temp table _def_orig as
+select pg_get_functiondef('public.reabrir_por_atraso(uuid)'::regprocedure) as def;
 
 -- Ambiente de teste e relógio congelado
 insert into privado.ambiente (id, eh_teste) values (true, true)
@@ -700,6 +704,12 @@ begin
     'if v_t.checkin_em is not null then'
   );
 end $$;
+
+select is(
+  pg_get_functiondef('public.reabrir_por_atraso(uuid)'::regprocedure),
+  (select def from _def_orig),
+  'função reabrir_por_atraso restaurada idêntica à definição original'
+);
 
 select * from finish();
 rollback;
