@@ -15,6 +15,7 @@ function mockDeps(opcoes: {
   onAdminDelete?: () => void;
   ordem?: string[];
   erroAoRegistrar?: { code: string; message: string };
+  timeoutMs?: number;
 }): HandlerDeps {
   const authOk = opcoes.authOk ?? true;
   const adminOk = opcoes.adminOk ?? true;
@@ -76,6 +77,7 @@ function mockDeps(opcoes: {
     anonKey: MOCK_ANON,
     serviceRoleKey: MOCK_SERVICE_ROLE,
     dbUrl: MOCK_DB_URL,
+    timeoutMs: opcoes.timeoutMs,
   };
 }
 
@@ -260,6 +262,88 @@ Deno.test("idempotência: segunda chamada após falha 502 no Admin API apaga cre
   assertEquals(adminTentativas, 1);
 });
 
+Deno.test("idempotência: segunda chamada após TIMEOUT na Admin API apaga credencial em auth.users e retorna 202", async () => {
+  let adminTentativas = 0;
+  let apagouNoAuth = false;
+
+  // Primeira chamada: banco ok (anonimiza), mas Admin API sofre timeout real via AbortSignal
+  const deps1 = mockDeps({
+    timeoutMs: 20,
+    dbRetorno: {
+      perfil_removido_em: "2026-09-26T12:00:00Z",
+      dados_apagados_ate: "2026-10-11",
+      turnos_cancelados: 1,
+    },
+  });
+  const fetchOriginal1 = deps1.fetchFn!;
+  deps1.fetchFn = (input, init) => {
+    const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (urlStr.includes(`/auth/v1/admin/users/`)) {
+      return new Promise<Response>((resolve, reject) => {
+        if (!init?.signal) {
+          resolve(new Response(JSON.stringify({}), { status: 200 }));
+          return;
+        }
+        if (init.signal.aborted) {
+          reject(new DOMException("The signal has been aborted due to timeout.", "TimeoutError"));
+          return;
+        }
+        init.signal.addEventListener("abort", () => {
+          reject(new DOMException("The signal has been aborted due to timeout.", "TimeoutError"));
+        });
+      });
+    }
+    return fetchOriginal1(input, init);
+  };
+
+  const resposta1 = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token-valido",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    deps1,
+  );
+  assertEquals(resposta1.status, 502);
+  const corpo1 = await resposta1.json();
+  assertEquals(corpo1, { code: "erro_interno", message: "erro_interno", details: null });
+
+  // Segunda chamada (retentativa): conta já anonimizada no Postgres, RPC retorna turnos_cancelados = 0;
+  // Admin API agora responde e apaga credencial em auth.users com 202.
+  const deps2 = mockDeps({
+    adminOk: true,
+    onAdminDelete: () => {
+      apagouNoAuth = true;
+      adminTentativas++;
+    },
+    dbRetorno: {
+      perfil_removido_em: "2026-09-26T12:00:00Z",
+      dados_apagados_ate: "2026-10-11",
+      turnos_cancelados: 0,
+    },
+  });
+
+  const resposta2 = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token-valido",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    deps2,
+  );
+  assertEquals(resposta2.status, 202);
+  const corpo2 = await resposta2.json();
+  assertEquals(corpo2.turnos_cancelados, 0);
+  assertEquals(apagouNoAuth, true);
+  assertEquals(adminTentativas, 1);
+});
+
 Deno.test("idempotência: conta autenticada sem registro em public.usuario apaga credencial em auth.users e retorna 202", async () => {
   let chamouAdmin = false;
   const deps = mockDeps({
@@ -411,4 +495,203 @@ Deno.test("SHUDSozj: sem conseguir registrar o pedido, a exclusão não é tenta
   assertEquals(resposta.status, 500);
   assertEquals((await resposta.json()).code, "erro_interno");
   assertEquals(ordem, ["registrar"]);
+});
+
+// ── Lacuna 2: Resiliência a timeout e falhas de rede no Auth e Admin API ───────
+
+Deno.test("resiliência: timeout na Admin API (DELETE auth.users) retorna 502 erro_interno sem quebrar processo", async () => {
+  const deps = mockDeps({
+    timeoutMs: 20,
+  });
+  const fetchOriginal = deps.fetchFn!;
+  deps.fetchFn = (input, init) => {
+    const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (urlStr.includes(`/auth/v1/admin/users/`)) {
+      return new Promise<Response>((resolve, reject) => {
+        // Se a mutação remover signal: AbortSignal.timeout(timeoutMs), resolve com 200 fazendo o teste falhar (esperava 502, recebe 202)
+        if (!init?.signal) {
+          resolve(new Response(JSON.stringify({}), { status: 200 }));
+          return;
+        }
+        if (init.signal.aborted) {
+          reject(new DOMException("The signal has been aborted due to timeout.", "TimeoutError"));
+          return;
+        }
+        init.signal.addEventListener("abort", () => {
+          reject(new DOMException("The signal has been aborted due to timeout.", "TimeoutError"));
+        });
+      });
+    }
+    return fetchOriginal(input, init);
+  };
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token-valido",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 502);
+  const corpo = await resposta.json();
+  assertEquals(corpo, { code: "erro_interno", message: "erro_interno", details: null });
+});
+
+Deno.test("resiliência: erro de rede na Admin API retorna 502 erro_interno sem vazar detalhes", async () => {
+  const deps = mockDeps({});
+  const fetchOriginal = deps.fetchFn!;
+  deps.fetchFn = (input, init) => {
+    const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (urlStr.includes(`/auth/v1/admin/users/`)) {
+      return Promise.reject(new TypeError("fetch failed: connection reset by peer"));
+    }
+    return fetchOriginal(input, init);
+  };
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token-valido",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 502);
+  const corpo = await resposta.json();
+  assertEquals(corpo, { code: "erro_interno", message: "erro_interno", details: null });
+});
+
+Deno.test("resiliência: timeout ao validar token em /auth/v1/user retorna 502 erro_interno", async () => {
+  let chamouRegistrar = false;
+  const deps = mockDeps({
+    timeoutMs: 20,
+  });
+  deps.sqlClient = {
+    ...deps.sqlClient!,
+    registrarPedido: (_id) => {
+      chamouRegistrar = true;
+      return Promise.resolve();
+    },
+  };
+  deps.fetchFn = (input, init) => {
+    const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (urlStr.includes("/auth/v1/user")) {
+      return new Promise<Response>((resolve, reject) => {
+        // Se a mutação remover signal: AbortSignal.timeout(timeoutMs), resolve com 200 retornando usuário válido
+        if (!init?.signal) {
+          resolve(new Response(JSON.stringify({ id: MOCK_USER_ID }), { status: 200 }));
+          return;
+        }
+        if (init.signal.aborted) {
+          reject(new DOMException("The signal has been aborted due to timeout.", "TimeoutError"));
+          return;
+        }
+        init.signal.addEventListener("abort", () => {
+          reject(new DOMException("The signal has been aborted due to timeout.", "TimeoutError"));
+        });
+      });
+    }
+    // Sob mutação (sem signal no /auth/v1/user), o handler avança até o DELETE que responde 200, retornando 202
+    if (urlStr.includes("/auth/v1/admin/users/")) {
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }
+    return Promise.resolve(new Response("Not Found", { status: 404 }));
+  };
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token-valido",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 502);
+  const corpo = await resposta.json();
+  assertEquals(corpo, { code: "erro_interno", message: "erro_interno", details: null });
+  assertEquals(chamouRegistrar, false, "Sob timeout em /auth/v1/user, a execução não deve chegar ao registrarPedido");
+});
+
+Deno.test("resiliência: erro de rede ao validar token em /auth/v1/user retorna 502 erro_interno", async () => {
+  let chamouRegistrar = false;
+  const deps = mockDeps({});
+  deps.sqlClient = {
+    ...deps.sqlClient!,
+    registrarPedido: (_id) => {
+      chamouRegistrar = true;
+      return Promise.resolve();
+    },
+  };
+  deps.fetchFn = (input, _init) => {
+    const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (urlStr.includes("/auth/v1/user")) {
+      return Promise.reject(new TypeError("fetch failed: DNS lookup failed"));
+    }
+    if (urlStr.includes("/auth/v1/admin/users/")) {
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }
+    return Promise.resolve(new Response("Not Found", { status: 404 }));
+  };
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token-valido",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 502);
+  const corpo = await resposta.json();
+  assertEquals(corpo, { code: "erro_interno", message: "erro_interno", details: null });
+  assertEquals(chamouRegistrar, false, "Sob erro de rede em /auth/v1/user, não deve registrar pedido");
+});
+
+Deno.test("resiliência: resposta malformada (JSON inválido) em /auth/v1/user retorna 502 erro_interno", async () => {
+  const deps = mockDeps({});
+  deps.fetchFn = (input, _init) => {
+    const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (urlStr.includes("/auth/v1/user")) {
+      return Promise.resolve(
+        new Response("<html>Bad Gateway from upstream proxy</html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html" },
+        }),
+      );
+    }
+    return Promise.resolve(new Response("Not Found", { status: 404 }));
+  };
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer token-valido",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 502);
+  const corpo = await resposta.json();
+  assertEquals(corpo, { code: "erro_interno", message: "erro_interno", details: null });
 });
