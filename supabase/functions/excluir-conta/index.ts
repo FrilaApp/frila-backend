@@ -23,6 +23,8 @@ export interface SqlClient {
   query: (userId: string) => Promise<{ dados: Record<string, unknown> }>;
 }
 
+export const TIMEOUT_PADRAO_MS = 10_000;
+
 export interface HandlerDeps {
   fetchFn?: typeof fetch;
   sqlClient?: SqlClient;
@@ -30,6 +32,7 @@ export interface HandlerDeps {
   anonKey?: string;
   serviceRoleKey?: string;
   dbUrl?: string;
+  timeoutMs?: number;
 }
 
 function resposta(status: number, corpo: unknown): Response {
@@ -125,25 +128,38 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   }
 
   const fetchFn = deps?.fetchFn ?? fetch;
+  const timeoutMs = deps?.timeoutMs ?? TIMEOUT_PADRAO_MS;
   const origem = obterVariavel("SUPABASE_URL", deps?.supabaseUrl);
   const anon = obterVariavel("SUPABASE_ANON_KEY", deps?.anonKey);
   const serviceRole = obterVariavel("SUPABASE_SERVICE_ROLE_KEY", deps?.serviceRoleKey);
   const sqlClient = criarSqlClient(deps);
 
   // 1. Valida o token e obtém identidade do usuário no Supabase Auth
-  const usuarioRes = await fetchFn(`${origem}/auth/v1/user`, {
-    headers: {
-      apikey: anon,
-      Authorization: autorizacao,
-      "Content-Type": "application/json",
-    },
-  });
+  let usuarioRes: Response;
+  try {
+    usuarioRes = await fetchFn(`${origem}/auth/v1/user`, {
+      headers: {
+        apikey: anon,
+        Authorization: autorizacao,
+        "Content-Type": "application/json",
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (_err) {
+    return resposta(502, { code: "erro_interno", message: "erro_interno", details: null });
+  }
 
   if (!usuarioRes.ok) {
     return resposta(401, { code: "nao_autenticado", message: "nao_autenticado", details: null });
   }
 
-  const usuario = (await usuarioRes.json()) as { id?: unknown };
+  let usuario: { id?: unknown };
+  try {
+    usuario = (await usuarioRes.json()) as { id?: unknown };
+  } catch {
+    return resposta(502, { code: "erro_interno", message: "erro_interno", details: null });
+  }
+
   if (typeof usuario.id !== "string") {
     return resposta(401, { code: "nao_autenticado", message: "nao_autenticado", details: null });
   }
@@ -171,13 +187,19 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   }
 
   // 4. Remove credencial do auth.users via Admin API usando service_role
-  const deleteRes = await fetchFn(`${origem}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
-    method: "DELETE",
-    headers: {
-      apikey: serviceRole,
-      Authorization: `Bearer ${serviceRole}`,
-    },
-  });
+  let deleteRes: Response;
+  try {
+    deleteRes = await fetchFn(`${origem}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+      method: "DELETE",
+      headers: {
+        apikey: serviceRole,
+        Authorization: `Bearer ${serviceRole}`,
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (_err) {
+    return resposta(502, { code: "erro_interno", message: "erro_interno", details: null });
+  }
 
   if (!deleteRes.ok) {
     return resposta(502, { code: "erro_interno", message: "erro_interno", details: null });
