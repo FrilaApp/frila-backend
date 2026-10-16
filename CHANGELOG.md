@@ -38,6 +38,11 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Recomendações técnicas documentadas em `docs/carga-10x.md` para futuros PRs dedicados de otimização e índices com pgTAP.
 
 ### Testes
+- **Cobertura de ativação automática de RLS (`ensure_rls` e `public.rls_auto_enable`, RNF11):**
+  - Teste pgTAP `supabase/tests/690_rls_auto_enable.sql` cobrindo a lacuna #1 do mapa pgTAP (10 asserções).
+  - Validação de existência, linguagem e `SECURITY DEFINER` de `public.rls_auto_enable()` e revogação de `EXECUTE` para `anon` e `authenticated`.
+  - Validação do event trigger `ensure_rls` em `ddl_command_end` e comprovação de que `CREATE TABLE` e `CREATE TABLE AS` ativam automaticamente `relrowsecurity = true` nas novas tabelas criadas.
+  - Comprovação de não interferência em tabelas temporárias (`pg_temp`).
 - **Robustez estatística do portão de caminho quente sob carga (`scripts/planos-com-carga.sh`):**
   - Implementado aquecimento prévio robusto (2 voltas em `privado.elegiveis` e 10 chamadas de `public.vagas_abertas`) descartando transientes de cache e povoando buffers do índice espacial.
   - Ampliação da amostragem (50 chamadas de `vagas_abertas` e 36 de `elegiveis` por bateria) e julgamento pelo melhor resultado entre 3 baterias consecutivas (mínimo independente de mediana e p95), eliminando a vulnerabilidade amostral do p95 de 25 chamadas.
