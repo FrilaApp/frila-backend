@@ -59,10 +59,10 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Teste pgTAP `supabase/tests/682_exigir_conta_ativa_rpcs_criticas.sql` (35 asserções) cobrindo a validação de `privado.exigir_conta_ativa` e imunidade a regressão em `pg_context`.
   - Prova de recusa com `403 conta_suspensa` em 9 RPCs críticas de escrita (`publicar_vaga`, `escolher_candidato`, `cancelar_posicao`, `cancelar_vaga`, `fazer_checkin`, `fazer_checkout`, `avaliar`, `denunciar`, `bloquear`) e recusa com `401 nao_autenticado` para contas inexistentes ou anonimizadas (excluídas).
   - Prova de que `candidatar` responde com `422 inelegivel/perfil_suspenso` em virtude de exceção contratual.
-  - Validação das 4 exceções contratuais na regex de `exigir_conta_ativa` (`candidatar`, `contestar_suspensao`, `registrar_dispositivo`, `remover_dispositivo`, além de `privado.excluir_conta`), garantindo que refatorações ou renomeações não permitam desvio silencioso do barramento.
+  - Validação das 5 exceções contratuais na regex de `exigir_conta_ativa` (`candidatar`, `contestar_suspensao`, `registrar_dispositivo`, `remover_dispositivo`, `privado.excluir_conta`), garantindo que refatorações ou renomeações não permitam desvio silencioso do barramento.
 - **Cobertura pgTAP de reconciliação de reputação (`privado.reconciliar_reputacao`, RNF13, RF22, PR #208):**
   - Teste pgTAP `supabase/tests/694_reconciliar_reputacao.sql` (14 asserções) cobrindo a lacuna #5 do mapa pgTAP.
-  - Validação de detecção e correção do cache de reputação adulterado (`taxa_comparecimento`, `turnos_concluidos`, `avaliacoes_positivas`, `avaliacoes_total`), gravação da divergência em `privado.divergencia_reputacao` e retorno 0 em reexecução idempotente.
+  - Validação de detecção e correção do cache de reputação adulterado (`taxa_comparecimento`, `turnos_realizados`, `aval_positivas`, `aval_total`), gravação da divergência em `privado.divergencia_reputacao` e retorno 0 em reexecução idempotente.
 - **Cobertura pgTAP de fechamento de turnos e vagas (`privado.fechar_turnos`, RNF03, RF11, PR #209):**
   - Teste pgTAP `supabase/tests/695_fechar_turnos.sql` (15 asserções) cobrindo a lacuna #6 do mapa pgTAP.
   - Validação de transições de estado (posições confirmadas expiradas para `cumprida`, posições abertas para `cancelada`, vagas expiradas para `encerrada`), enfileiramento de notificação `avaliacao_disponivel` e idempotência de execução (retorno 0).
