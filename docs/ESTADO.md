@@ -1,4 +1,4 @@
-# Estado do backend — 15/10/2026
+# Estado do backend — 16/10/2026
 
 Onde o trabalho parou e o que a próxima sessão precisa saber. As regras duráveis estão
 no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
@@ -9,43 +9,44 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 **A `develop` é o tronco e está à frente do `main`, que não se move desde
 28/09.** O `main` continua inteiramente contido na `develop` (`git log
-origin/develop..origin/main` sai vazio) e parado em `c190836`. A `develop` possui **106 migrações**
-e **102 arquivos de regras pgTAP** (103 na suíte com carga, 100% PASS).
+origin/develop..origin/main` sai vazio) e parado em `c190836`. A `develop` possui **107 migrações**
+e **108 arquivos de regras pgTAP** (109 na suíte com carga, 100% PASS).
 
-Os números abaixo foram consolidados e remedidos em 15/10:
+Os números abaixo foram consolidados e remedidos em 16/10 (commit de referência `7e011ea` na `develop`):
 
 | | | Comando |
 |---|---|---|
-| Commits à frente do `main` | **402** (em 15/10) | `git rev-list --count origin/main..origin/develop` |
-| Migrações na `develop` | **106** (veja `scripts/migracoes-sem-colisao.sh`) | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
-| pgTAP | **102 arquivos de regras** (103 totais com carga), verde | `Files=103 … Result: PASS`, medido na CI e localmente com `supabase test db` |
+| Commits à frente do `main` | **439** (em 16/10, ref `7e011ea`) | `git rev-list --count origin/main..origin/develop` |
+| Migrações na `develop` | **107** (veja `scripts/migracoes-sem-colisao.sh`, ref `7e011ea`) | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
+| pgTAP | **108 arquivos de regras** (109 totais com carga, ref `7e011ea`), verde | `Files=109 … Result: PASS`, medido na CI e localmente com `supabase test db` |
 | Portão `contrato-responde.sh` | **151 recusas vigiadas e alcançadas**, verde | 151 de 151 vigiados e alcançados (100% de cobertura; 16 isentas, 0 não vigiadas de 167 declaradas), 46 de 50 respostas 200 validadas, 37 de 37 coleções |
 | Testes em Deno das Edge Functions | **179** na suíte, verde | `ok \| 179 passed \| 0 failed`, medido com `deno test --allow-all --no-check` |
 | Edge Functions | **9** | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
 | Testes unitários em `exportar-turnos` | **31**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
 | Scripts em `scripts/` | **39** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
-| Contrato espelhado | **0.2.41** | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
+| Contrato espelhado | **0.2.43** | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
-Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **102** arquivos de teste de regras,
-e o `prove` conta **103** porque alcança também `supabase/tests/carga/gerar_df.sql`, que é gerador
-de carga e não teste de regra. O número da CI, e o da tabela, é **103 arquivos**.
+Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **108** arquivos de teste de regras,
+e o `prove` conta **109** porque alcança também `supabase/tests/carga/gerar_df.sql`, que é gerador
+de carga e não teste de regra. O número da CI, e o da tabela, é **109 arquivos**.
 
-> ## 🟢 O espelho do contrato está em dia (0.2.41) e alinhado ao original
+> ## 🟢 O espelho do contrato está em dia (0.2.43) e alinhado ao original
 >
-> O contrato **0.2.41** está em vigor na raiz de `develop` e alinhado ao `FrilaApp/frila-docs · api/openapi.yaml`.
+> O contrato **0.2.43** está em vigor na raiz de `develop` e alinhado ao `FrilaApp/frila-docs · api/openapi.yaml`.
 > Ele consolida o modo de seleção com menos de 24h em urgência (0.2.38), a remoção de 403 não documentado
 > em rotas sem barreira de perfil (0.2.39), o suporte por e-mail a partir do turno (RPC `abrir_suporte` / Opção C,
-> 0.2.40, PR #169 e operação P6 no PR #171) e a republicação de posições restantes (RPC `republicar_posicoes_restantes`,
-> 0.2.41, PR #170).
+> 0.2.40, PR #169 e operação P6 no PR #171), a republicação de posições restantes (RPC `republicar_posicoes_restantes`,
+> 0.2.41, PR #170), o bloqueio no modo de seleção e alinhamento de corpo sem mudança de superfície em `privado.elegiveis`
+> (0.2.42, PR #193) e a liberação de relato sem filtro de termos ofensivos em contestação e denúncia (0.2.43, PR #198).
 >
-> A `develop` recebeu o espelho idêntico (`31d91467aac0369669c73c251993eafa65528e4964f4051242be10594b3f27ce`)
-> e todas as implementações, migrações e testes correspondentes (#161, #169, #170 e #171).
+> A `develop` recebeu o espelho idêntico (`acb687f617c805f431824fc2fc4d6cad08cae202539dd970aa80cdafaa953ce8`)
+> e todas as implementações, migrações e testes correspondentes.
 > O portão `./scripts/contrato-em-dia.sh` confirma integridade com sha256 exato.
 >
 > | | Versão | sha256 | bytes |
 > |---|---|---|---|
-> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.41** | `31d91467aac0369669c73c251993eafa65528e4964f4051242be10594b3f27ce` | 243 887 |
-> | original, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.41** | `31d91467aac0369669c73c251993eafa65528e4964f4051242be10594b3f27ce` | 243 887 |
+> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.43** | `acb687f617c805f431824fc2fc4d6cad08cae202539dd970aa80cdafaa953ce8` | 246 967 |
+> | original, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.43** | `acb687f617c805f431824fc2fc4d6cad08cae202539dd970aa80cdafaa953ce8` | 246 967 |
 
 > ## 🟢 Instabilidades de concorrência em `Corridas do ciclo` sanadas na raiz
 >
@@ -68,9 +69,9 @@ de carga e não teste de regra. O número da CI, e o da tabela, é **103 arquivo
 
 ## Onde cada coisa parou
 
-### Entregas Recentes e Marcos Consolidados (até 15/10)
+### Entregas Recentes e Marcos Consolidados (até 16/10)
 
-O repositório ultrapassou **180 PRs mergeados**, com cobertura integral do contrato, novas RPCs e endurecimento da esteira:
+O repositório conta com mais de 180 PRs mergeados (183 em 16/10, ref develop `7e011ea`; datas de merge abaixo em horário de Brasília / BRT), com cobertura integral do contrato, novas RPCs, propostas de escala da v1.1/v1.2 e consolidação do mapa pgTAP:
 
 1. **Lotes 6 a 10 de Recusas Críticas e Endurecimento do Portão (#157, #159, #163, #164, #165, #167):**
    Expansão completa das recusas críticas no `contrato-responde.sh`, saltando de 81 para 151 pares vigiados e alcançados, cobrindo 100% dos pares possíveis do banco (com 16 isenções técnicas justificadas em `contrato_responde.py` e 0 não vigiados). O portão passou a falhar estritamente na CI caso surjam novas recusas sem cobertura ou sem isenção justificada. Acompanhado pelas suítes pgTAP `490` a `494`.
@@ -86,25 +87,38 @@ O repositório ultrapassou **180 PRs mergeados**, com cobertura integral do cont
    Envio de `"mutable-content": 1` em `apns.payload.aps` no payload APNs via FCM v1 no motor de despacho (`supabase/functions/despachar/index.ts` e testes Deno), permitindo à Notification Service Extension do iOS interceptar e tratar o aviso antes da exibição para validação de `vinculo_id` sem expor dados pessoais (RN15).
 7. **PR #179 (Recusa de Contato e Link no Texto da Vaga J5 / pBXTS4vv · merge em 15/10):**
    Validação sintática em `privado.contem_contato_ou_link` integrada a `publicar_vaga`/`republicar_vaga` recusando telefones, e-mails e URLs em texto livre com `422 campo_invalido` (RN10, RN15). Migração `20261014160000_recusar_contato_e_link_texto_vaga.sql` e teste pgTAP `640_contato_e_link_texto_vaga.sql`.
-8. **PR #180 (Robustez do Portão de Plano e Correção de Carga / mhHuBOeG · merge em 15/10):**
-   Correção de datas da carga sintética (`gerar_df.sql`) com datas relativas a `privado.agora()` para restaurar short-circuit e reduzir latência de 9.360 ms para 15.0 ms local (38.2 ms na CI); autoteste com 11 casos em `teste-planos-com-carga.sh` e aferição robusta com descarte de warm-up, 5 iterações e cálculo de mediana (p50), p90 e p95.
+8. **PR #180 e #196 (Robustez do Portão de Plano sob Carga / mhHuBOeG · merge em 15/10):**
+   Correção de datas da carga sintética (`gerar_df.sql`) com datas relativas a `privado.agora()` para restaurar short-circuit e reduzir latência de 9.360 ms para 15.0 ms local (38.2 ms na CI); autoteste com 11 casos em `teste-planos-com-carga.sh` e aferição robusta com aquecimento prévio de buffers e critério do melhor de 3 baterias de 50 chamadas de `vagas_abertas` e 36 de `elegiveis` (#196).
 9. **PR #181 (Fechamento de Vagas Expiradas sem Processo / D654gdGQ · merge em 15/10):**
    Correção em `privado.fechar_turnos_e_vagas()` para cancelar posições remanescentes que permaneceram em `estado = 'aberta'` após o término do turno (`fim_em <= privado.agora()`) e encerrar as vagas correspondentes (`estado = 'encerrada'`), eliminando resíduos perpétuos de vagas expiradas no índice GiST `vaga_ponto_publicada`. Migração `20261015100000_fechar_vagas_expiradas_sem_processo.sql` e teste pgTAP `650_fechamento_vaga_expirada_sem_processo.sql`.
 10. **PR #182 (Atualização de Estado e Proposta do Vault · merge em 15/10):**
     Atualização de métricas e estado do backend em `docs/ESTADO.md` e formalização da proposta técnica em `docs/proposta-vault-agendador-secret.md` para migração do segredo `frila.agendador_secret` do GUC para o Supabase Vault, eliminando o erro de permissão 42501 no banco gerenciado.
 11. **PR #183 (Otimização de Ciclo e Filtro de Despacho / Achados 2 e 3 · merge em 15/10):**
     Correção do laço de avaliação em `privado.fechar_turnos_e_vagas()` para evitar renotificação de `avaliacao_disponivel` com filtro de 7 dias e `not exists`, e filtro em `privado.verificar_saude()` para limitar a checagem de despachos retidos além do teto a vagas ativas e futuras (`publicada` com `inicio_em > agora`). Migração `20261015140000_correcao_ciclo_de_vida_achados_2_e_3.sql` e suíte pgTAP `660_ciclo_de_vida_achados.sql`.
+12. **PR #184 (Segurança, Bloqueio Mútuo e Restrição de Privilégios · merge em 15/10):**
+    Implementação da 107ª migração (`20261015150000_seguranca_bloqueio_e_privilegios.sql`), sanando os Achados 1 e 4 da Caçada de Segurança: bloqueio bidirecional entre contas com recusa imediata de candidaturas mútuas e revogação de privilégios de escrita indevidos concedidos a `anon`/`authenticated` em tabelas do catálogo. Teste pgTAP `670_seguranca_bloqueio_e_privilegios.sql`.
+13. **PRs #186, #188 e #189 (Desenhos e Propostas de Arquitetura da v1.1/v1.2 · merge em 15/10):**
+    Adição dos documentos de referência técnica para evolução do produto: `docs/proposta-escala-em-lote.md` (#186, cartão `6mi66YDp`), `docs/proposta-multiplos-membros.md` (#188, cartão `JpKoxqWo`) e `docs/desenho-verificacao-progressiva-rn14.md` (#189, cartão `GtWr3ZeJ`).
+14. **PRs #192 e #194 (Endurecimento pgTAP e Mutantes · merge em 15/10):**
+    Suítes `671_bloqueio_escolher_candidato_recusa_e_contato.sql` (#192) e `672_mutantes_sobreviventes_ciclo_e_texto.sql` (#194), eliminando mutantes sobreviventes nas rotinas de fechamento, moderação de texto e ciclo de vida.
+15. **PRs #193 e #198 (Espelhos do Contrato 0.2.42 e 0.2.43 · merge em 15/10):**
+    Integração dos contratos 0.2.42 (bloqueio de perfil no modo de seleção e alinhamento de corpo sem mudança de superfície em `privado.elegiveis`, #193) e 0.2.43 (liberação de relato sem filtro de termos ofensivos em contestação e denúncia, #198).
+16. **PRs #195, #199 e #200 (Relatório de Carga 10x do DF e Medição de Triggers · merge em 15/10):**
+    Elaboração de `docs/carga-10x.md` com análise de EXPLAIN sob volume de 1 milhão de profissionais e 200 mil vagas no DF (#195), registro documental da refutação empírica da recomendação 1 (#199) e medição de triggers sob carga 2x (#200) comprovando que ~80% a 88% do tempo do encerramento decorre de gatilhos por tupla (`audita_ciclo`, integridade referencial, expiração de candidaturas), fundamentando a decisão de não criar índices parciais no momento.
+17. **PR #197 (Paridade Exaustiva de `privado.elegiveis` · merge em 15/10):**
+    Teste pgTAP `680_elegiveis_paridade_e_comportamento.sql` validando a invariância de resultados e a refutação da reordenação da CTE de elegíveis sob carga.
+18. **PR #201 (Proteção do Schema Privado · merge em 16/10):**
+    Teste pgTAP `681_privilegios_tabelas_privado.sql` (320 linhas) comprovando a total ausência de privilégios de SELECT, INSERT, UPDATE e DELETE para o papel `authenticated` em todas as tabelas do schema `privado`.
+19. **PR #202 (Ativação Automática de RLS por ensure_rls e public.rls_auto_enable · merge em 16/10):**
+    Teste pgTAP `690_rls_auto_enable.sql` cobrindo a lacuna 1 do mapa pgTAP: validação de SECURITY DEFINER, ausência de EXECUTE para `anon`/`authenticated`, disparo do event trigger em `ddl_command_end` e ativação obrigatória de `relrowsecurity = true` em `CREATE TABLE` e `CREATE TABLE AS` sem afetar tabelas temporárias.
 
-### A fila de PRs aberta em 15/10
+### A fila de PRs aberta em 16/10
 
-Medida com `gh pr list --state open` em 15/10:
+Medida com `gh pr list --state open` em 16/10:
 
-- **PR #184** (`fix/seguranca-bloqueio-e-privilegios`): Bloqueio mútuo e restrição de privilégios para segurança (Achados 1 e 4 da Caçada).
 - **PR #185** (`chore/retencao-demonstracao-e-falhas` · Draft): Retenção de demonstração e limpeza de falhas [AGUARDA DECISÃO DO DONO].
-- **PR #186** (`docs/proposta-escala-linear-pgtap`): Proposta técnica de escala linear da suíte pgTAP.
 - **PR #187** (`feat/vault-agendador-secret` · Draft): Implementação do segredo do agendador via Supabase Vault [AGUARDA DECISÃO DO DONO].
-- **PR #188** (`docs/proposta-multiplas-instancias-agendador`): Proposta de múltiplas instâncias concorrentes do agendador.
-- **PR #189** (`docs/desenho-verificacao-regras-rls`): Desenho técnico de verificação contínua de integridade de regras RLS.
+- **PRs da ronda noturna pgTAP e CI (#203 a #212):** PRs pequenos e focados cobrindo as lacunas do mapa pgTAP (#203 a #206, #208 a #210), sanitização de logs e tetos em Edge Functions (#207) e endurecimento de CI e dependências Deno (#211, #212).
 
 ---
 
@@ -112,7 +126,7 @@ Medida com `gh pr list --state open` em 15/10:
 
 | | |
 |---|---|
-| local | `supabase start` · Postgres 17 · **106** migrações na `develop` (veja `scripts/migracoes-sem-colisao.sh`), **47** no `main` (em 15/10) |
+| local | `supabase start` · Postgres 17 · **107** migrações na `develop` (veja `scripts/migracoes-sem-colisao.sh`), **47** no `main` (em 16/10) |
 | `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · SMTP próprio ativo (`smtp.gmail.com:465`, código de 6 dígitos) · **Entrega bloqueada** por `frila.agendador_secret` (vide abaixo) |
 | `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **vazio**: aguarda esteira de deploy por tag |
 
@@ -138,8 +152,8 @@ Medida com `gh pr list --state open` em 15/10:
 
 ## O contrato em detalhes
 
-Versão vigente: **0.2.41**, espelhada em `contrato/openapi.yaml` e **em dia com o original**,
-conferido em 10/10 com o portão: *"Espelho em dia com FrilaApp/frila-docs"*.
+Versão vigente: **0.2.43**, espelhada em `contrato/openapi.yaml` e **em dia com o original**,
+conferido em 15/10 com o portão: *"Espelho em dia com FrilaApp/frila-docs"*.
 
 Histórico das versões recentes integradas no backend:
 
@@ -159,12 +173,14 @@ Histórico das versões recentes integradas no backend:
 | **0.2.39** | remoção de status 403 não documentado em operações sem barreira de perfil | #166 |
 | **0.2.40** | suporte por e-mail a partir do turno (RPC `abrir_suporte` / Opção C, RF23, UC14) | #169, #171 |
 | **0.2.41** | republicação de posições restantes (RPC `republicar_posicoes_restantes`, D1-C) | #170 |
+| **0.2.42** | bloqueio de perfil no modo de seleção e alinhamento de corpo sem mudança em `privado.elegiveis` | #193 |
+| **0.2.43** | liberação de relato sem filtro de termos ofensivos em contestação e denúncia | #198 |
 
 ---
 
 ## O que existe no banco
 
-Medido no banco de desenvolvimento com a `develop` em `f73020b`:
+Medido no banco de desenvolvimento com a `develop` em `7e011ea`:
 
 - **22 tabelas** em `public`:
   ```
@@ -173,7 +189,7 @@ Medido no banco de desenvolvimento com a `develop` em `f73020b`:
   funcao · membro_estabelecimento · notificacao · ocorrencia · pedido_de_exclusao
   posicao · profissional · profissional_funcao · turno · usuario · vaga
   ```
-- **102 migrações** aplicadas sequencialmente sem colisão.
+- **107 migrações** aplicadas sequencialmente sem colisão.
 - RLS ativado em todas as tabelas; escrita exclusivamente através de funções `security definer`.
 - **44 RPCs expostas a `authenticated`** (+ 1 pública `configuracao_do_app`):
   ```
@@ -207,20 +223,20 @@ Medido no banco de desenvolvimento com a `develop` em `f73020b`:
 
 ## Os portões
 
-Medição consolidada da bateria em 15/10:
+Medição consolidada da bateria em 16/10 (ref `7e011ea`):
 
-| Comando | O que garante | Medida em 15/10 |
+| Comando | O que garante | Medida em 16/10 |
 |---|---|---|
-| `supabase test db` | pgTAP | **101** arquivos (102 no prove), **2.700+** asserções verdes (100% PASS) |
+| `supabase test db` | pgTAP | **108** arquivos de regras (109 no prove), **2.980** asserções verdes (100% PASS) |
 | `./scripts/contrato-responde.sh` | respostas casam com o contrato | **46 de 50** respostas 200 validadas, **151 de 151** recusas vigiadas e alcançadas, **37 de 37** coleções exercitadas |
 | `deno test --allow-all --no-check` | Edge Functions em Deno | **179** testes verdes (0 falhas), incluindo 31 em `exportar-turnos` |
 | `./scripts/teste-contrato-promete.sh` | autoteste da direção contrato-à-frente | 9 de 9 casos verdes |
 | `./scripts/teste-contrato-responde.sh` | autoteste de schemas do contrato | 14 de 14 casos verdes |
 | `./scripts/teste-contrato-acompanha.sh` | PR que altera `public` acompanha contrato | 19 de 19 casos verdes |
-| `./scripts/relogio-em-testes.sh` | imunidade contra bombas-relógio de relógio | **100** arquivos pgTAP imunizados |
-| `./scripts/migracoes-sem-colisao.sh` | carimbos de migração únicos | **105** carimbos distintos sem colisão |
+| `./scripts/relogio-em-testes.sh` | imunidade contra bombas-relógio de relógio | **108** arquivos pgTAP imunizados |
+| `./scripts/migracoes-sem-colisao.sh` | carimbos de migração únicos | **107** carimbos distintos sem colisão |
 | `./scripts/migracoes-imutaveis.sh` | migrações passadas não foram alteradas | verde |
-| `./scripts/planos-com-carga.sh` | caminho quente sob volume sintético do DF (PR #180) | verde na CI (autoteste de 11 casos em `teste-planos-com-carga.sh`, p50 15 ms local / 38 ms CI) |
+| `./scripts/planos-com-carga.sh` | caminho quente sob volume sintético do DF (PR #180, #196) | verde na CI (aquecimento prévio, melhor de 3 baterias, autoteste de 11 casos em `teste-planos-com-carga.sh`) |
 
 ### O portão do contrato, medido em 10/10
 
@@ -302,7 +318,7 @@ E alinhamentos consolidados de negócio:
 
 ## Por onde continuar
 
-1. **Homologação e Deploy no `frila-dev`:** Com a aprovação da proposta do Vault e o desbloqueio do erro 42501, aplicar as 106 migrações no projeto remoto `jcobftbhbqdikratzizz` via `scripts/aplicar-remoto.sh`.
+1. **Homologação e Deploy no `frila-dev`:** Com a aprovação da proposta do Vault e o desbloqueio do erro 42501, aplicar as 107 migrações no projeto remoto `jcobftbhbqdikratzizz` via `scripts/aplicar-remoto.sh`.
 2. **Frontend e Clientes Mobile:** As novas funcionalidades (recusa de dados de contato e links em texto livre no PR #179, fechamento automático de vagas expiradas no PR #181, e suporte a push mutável no PR #178) estão 100% disponíveis na `develop`.
 3. **Backlog de Tarefas Backend sem Decisão do Dono:** Seguir com a execução contínua de tarefas que independem de decisões de negócio/infraestrutura externa.
 
