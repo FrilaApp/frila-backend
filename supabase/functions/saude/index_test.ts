@@ -3,7 +3,7 @@
 //   deno test --allow-all supabase/functions/saude/
 
 import { assertEquals, assertThrows } from "jsr:@std/assert@1.0.19";
-import { getDbUrl, processarSaude, SqlProbe } from "./index.ts";
+import { criarSqlProbe, getDbUrl, processarSaude, SqlProbe } from "./index.ts";
 
 function probeMock(opcoes: {
   ok?: boolean;
@@ -144,3 +144,62 @@ Deno.test("kT7NhMGV / B3: getDbUrl exige SUPABASE_DB_URL ou DATABASE_URL e remov
     else Deno.env.delete("DATABASE_URL");
   }
 });
+
+// ── Lacuna 10: Resiliência a falhas/timeouts no probe SQL ─────────────────────
+// Nota: index.ts não possui timeout de consulta próprio (apenas connect_timeout: 3).
+// Rejeições no ping (seja por timeout de statement 57014 ou erro de rede) são tratadas pelo handler.
+
+Deno.test("saude: ping rejeitado com 57014 (statement_timeout simulado) responde 503 indisponivel com erro conexao_falhou", async () => {
+  let falhaRegistrada: { origem: string; codigo: string } | null = null;
+  const erroTimeout = Object.assign(
+    new Error("canceling statement due to statement timeout"),
+    { code: "57014" },
+  );
+
+  const probe: SqlProbe = {
+    ping: () => Promise.reject(erroTimeout),
+    registrarFalha: async (origem: string, codigo: string) => {
+      falhaRegistrada = { origem, codigo };
+    },
+  };
+
+  const req = new Request("http://localhost/functions/v1/saude", { method: "GET" });
+  const res = await processarSaude(req, { sqlProbe: probe });
+
+  assertEquals(res.status, 503);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.status, "indisponivel");
+  assertEquals(json.erro, "conexao_falhou");
+  assertEquals(falhaRegistrada, { origem: "saude", codigo: "conexao_falhou" });
+});
+
+Deno.test("saude: HEAD com ping rejeitado (ex.: timeout) responde 503 sem corpo", async () => {
+  const probe: SqlProbe = {
+    ping: () => Promise.reject(new DOMException("The operation timed out.", "TimeoutError")),
+  };
+
+  const req = new Request("http://localhost/functions/v1/saude", { method: "HEAD" });
+  const res = await processarSaude(req, { sqlProbe: probe });
+
+  assertEquals(res.status, 503);
+  const text = await res.text();
+  assertEquals(text, "");
+});
+
+Deno.test("saude: criarSqlProbe real possui silencio defensivo em registrarFalha sob banco inacessivel", async () => {
+  // Exercita a implementação REAL de criarSqlProbe com endpoint inacessível (127.0.0.1:1).
+  // O probe falha em ping() e em registrarFalha(), mas graças ao silêncio defensivo
+  // (try/catch em registrarFalha) não lança exceção não tratada e o handler responde 503.
+  const probe = criarSqlProbe("postgres://u:p@127.0.0.1:1/db");
+  const req = new Request("http://localhost/functions/v1/saude", { method: "GET" });
+  const res = await processarSaude(req, { sqlProbe: probe });
+
+  assertEquals(res.status, 503);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.status, "indisponivel");
+  assertEquals(json.erro, "conexao_falhou");
+});
+
+
