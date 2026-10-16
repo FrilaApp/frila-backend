@@ -107,25 +107,30 @@ insert into public.vaga (
    'Plano Piloto', '70600000-0000-4000-8000-0000000000c1', '70600000-0000-4000-8000-000000000001',
    '2026-10-16 12:00:00-03');
 
--- Posição 1: cancelada (com falta registrada)
--- Posição 2: confirmada (profissional alocado)
+-- Posição 1: cancelada (com falta registrada, turno pendente)
+-- Posição 2: confirmada (profissional alocado, turno pendente)
+-- Posição 3: cancelada (posição que foi cancelada mas cujo turno já estava 'verificado')
 insert into public.posicao (
   id, vaga_id, estado, profissional_id, confirmado_em, falta, inicio_em, fim_em
 ) values
   ('70600000-0000-4000-8000-0000000000a1', '70600000-0000-4000-8000-000000000030',
    'cancelada', null, null, true, '2026-10-18 18:00:00-03', '2026-10-19 02:00:00-03'),
   ('70600000-0000-4000-8000-0000000000a2', '70600000-0000-4000-8000-000000000030',
-   'confirmada', '70600000-0000-4000-8000-000000000020', '2026-10-16 14:00:00-03', false, '2026-10-18 18:00:00-03', '2026-10-19 02:00:00-03');
+   'confirmada', '70600000-0000-4000-8000-000000000020', '2026-10-16 14:00:00-03', false, '2026-10-18 18:00:00-03', '2026-10-19 02:00:00-03'),
+  ('70600000-0000-4000-8000-0000000000a3', '70600000-0000-4000-8000-000000000030',
+   'cancelada', null, null, true, '2026-10-18 18:00:00-03', '2026-10-19 02:00:00-03');
 
--- Turno 1 na posição cancelada: simula o cenário canônico medido em 30/09:
--- check-in manual pendente já existia antes da desistência/cancelamento da posição.
--- Turno 2 na posição confirmada (verificacao inicial 'pendente')
-insert into public.turno (id, posicao_id, checkin_em, checkin_tipo, verificacao, valor_acordado_centavos)
+-- Turno 1 na posição cancelada: check-in manual pendente antes da desistência.
+-- Turno 2 na posição confirmada: pendente.
+-- Turno 3 na posição cancelada 3: já verificado (para provar a borda do old.verificacao).
+insert into public.turno (id, posicao_id, checkin_em, checkin_tipo, checkin_confirmado_em, verificacao, valor_acordado_centavos)
 values
   ('70600000-0000-4000-8000-0000000000b1', '70600000-0000-4000-8000-0000000000a1',
-   '2026-10-18 18:05:00-03', 'manual', 'pendente', 16000),
+   '2026-10-18 18:05:00-03', 'manual', null, 'pendente', 16000),
   ('70600000-0000-4000-8000-0000000000b2', '70600000-0000-4000-8000-0000000000a2',
-   null, null, 'pendente', 16000);
+   null, null, null, 'pendente', 16000),
+  ('70600000-0000-4000-8000-0000000000b3', '70600000-0000-4000-8000-0000000000a3',
+   '2026-10-18 18:05:00-03', 'manual', '2026-10-18 18:10:00-03', 'verificado', 16000);
 
 -- ── 3. Testes de Bloqueio em Posição Cancelada (RN22/RN07) ──────────────────────
 
@@ -157,10 +162,12 @@ select is(
   'turno da posicao confirmada foi atualizado para verificado com sucesso'
 );
 
--- 4. UPDATE idempotente de verificacao = 'verificado' no turno já verificado é permitido
+-- 4. UPDATE idempotente de verificacao = 'verificado' em turno de POSIÇÃO CANCELADA que já estava verificado.
+-- Prova estrita de mutação: se remover "old.verificacao is distinct from 'verificado'",
+-- este UPDATE em posição cancelada falharia indevidamente com 409 vaga_encerrada.
 select lives_ok(
-  $$update public.turno set verificacao = 'verificado' where id = '70600000-0000-4000-8000-0000000000b2'$$,
-  'UPDATE idempotente de verificacao = verificado não levanta erro (old.verificacao já é verificado)'
+  $$update public.turno set verificacao = 'verificado' where id = '70600000-0000-4000-8000-0000000000b3'$$,
+  'UPDATE idempotente de verificacao = verificado em posicao cancelada nao dispara erro (old.verificacao ja verificado)'
 );
 
 -- 5. UPDATE em outras colunas (a_caminho_em) no turno da posição cancelada é permitido
