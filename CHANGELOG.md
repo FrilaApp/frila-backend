@@ -8,6 +8,9 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 ## [Não lançado]
 
 ### Modificado
+- **Espelho do contrato 0.2.43 do frila-docs (PR frila-docs#89):**
+  - Alinhamento da documentação de `contestarSuspensao` e `pedirRevisaoDespacho`: o relato das contestações não passa pelo filtro de termos da diretriz 1.2 (decisão J1=B, migração `20261013110000`).
+  - Atualização dos arquivos `contrato/openapi.yaml` e `contrato/openapi.yaml.sha256`.
 - **Espelho do contrato 0.2.42 do frila-docs (PR frila-docs#88):**
   - Documentação do comportamento de bloqueio mútuo no modo seleção para `candidatosDaVaga` (ocultação de profissionais bloqueados) e `escolherCandidato` (recusa `403 sem_permissao` sem `details` indistinguível de inexistente e com precedência sobre `409`).
   - Atualização dos arquivos `contrato/openapi.yaml` e `contrato/openapi.yaml.sha256`.
