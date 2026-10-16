@@ -7,6 +7,54 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Não lançado]
 
+### Corrigido
+- **Sanitização de caracteres fora do charset WinAnsi no gerador de PDF de turnos (PR #229):**
+  - `supabase/functions/exportar-turnos/index.ts`: sanitiza caracteres não suportados pela fonte Helvetica em WinAnsi substituindo-os por '?', preservando acentuação pt-BR, aspas curvas e travessões; adiciona `try/catch` no handler em volta de `gerarPdf` retornando envelope de erro 500 estruturado em vez de falha não tratada.
+
+### Documentação
+- **Guia de padrões, boas práticas e armadilhas de testes pgTAP e banco (PR #226):**
+  - `docs/TESTES-PGTAP-PADROES.md`: consolida diretrizes para isolamento de container compartilhado local vs CI, `plan(N)` com rollback, padrão de claims JWT em JSON (`request.jwt.claims`), precondição de `privado.ambiente (eh_teste = true)` e fixação de `frila.agora` antes dos dados, validação de `search_path=""` no catálogo, campos `termos_versao` e `termos_aceite_em` NOT NULL em `public.usuario`, e mitigação de testes falso-verde.
+- **Refinamento do runbook operacional de incidentes e diagnóstico (PR #233):**
+  - `docs/RUNBOOK-INCIDENTES.md`: refinamento de queries de diagnóstico somente-leitura para filas de despacho e e-mail, procedimentos de mitigação, mascaramento de e-mails em relatórios de auditoria e diretrizes de escalonamento operacional.
+
+### Testes
+- **Caracterização de resiliência e mascaramento de lote na Edge Function `despachar` (PR #220):**
+  - `supabase/functions/despachar/index_test.ts`: valida resiliência contra indisponibilidade do banco/pgmq e documenta o comportamento atual de retorno HTTP 200 com array de status parciais em falhas de lote.
+- **Resiliência a 429 e remoção de lote sem truncamento em `limpar-contas-orfas` (PR #221):**
+  - `supabase/functions/limpar-contas-orfas/index_test.ts`: prova que lote de 65 contas não é truncado no laço de exclusão e que resposta 429 da Admin API é registrada em `erros_remocao` sem abortar o restante do lote.
+- **Borda estrita de 60 dias no job pg_cron `limpar_dispositivos_inativos` (PR #222):**
+  - `supabase/tests/702_cron_limpar_dispositivos_inativos.sql`: valida o registro do job no catálogo `cron.job` e afere a borda estrita no segundo de `privado.limpar_dispositivos_inativos()` com `frila.agora` determinístico (60d 00h 00s preservado vs 60d 00h 01s purgado).
+- **Resiliência a chave privada corrompida e PEM inválido em `enviar-push` (PR #223):**
+  - `supabase/functions/enviar-push/index_test.ts`: valida resposta 500 estruturada sem vazamento de chave privada no corpo da resposta durante falha de importação de credencial do Firebase (FCM).
+- **Caracterização de falhas de WinAnsi com emojis e unicode em `exportar-turnos` (PR #224):**
+  - `supabase/functions/exportar-turnos/index_test.ts`: caracteriza a recusa de caracteres fora de WinAnsi pelo `pdf-lib` em relatórios PDF de turnos.
+- **Rejeição de probe SQL na Edge Function `saude` (PR #225):**
+  - `supabase/functions/saude/index_test.ts`: exercita recusa de conexão do probe contra `127.0.0.1:1` e valida retorno HTTP 503 com envelope de erro fixo.
+- **Tratamento de TimeoutError no banco e ausência de dados pessoais em `console.error` em `exportar-meus-dados` (PR #227):**
+  - `supabase/functions/exportar-meus-dados/index_test.ts`: falha do banco (57014/TimeoutError) vira 500 erro_interno com log só da constante, sem PII nem texto do Postgres no console.error; e 255 linhas mockadas nas coleções LGPD saem sem truncar com Cache-Control: no-store.
+- **Espionagem de `console.error` provando ausência de vazamento de chave privada em `enviar-push` (PR #228):**
+  - `supabase/functions/enviar-push/index_test.ts`: prova via espião que `console.error` não imprime a chave privada nem trechos do PEM durante falha de importação da conta de serviço Google (FCM).
+- **Varredura sem limite e carência de 24h em `privado.contas_auth_orfas` (PR #230):**
+  - `supabase/tests/703_contas_auth_orfas.sql`: prova que `privado.contas_auth_orfas` devolve contas de `auth.users` sem linha em `public.usuario` sem LIMIT (65 contas testadas), respeita a carência de 24h e não devolve contas anonimizadas que possuem registro em `usuario`.
+- **Classificação de erro de transporte SMTP e política de fila em `enviar-email` (PR #231):**
+  - `supabase/functions/enviar-email/index_test.ts`: valida classificação do erro de transporte como `falha_de_conexao` via mock de envio e a política de reencaminhamento para fila.
+- **Cobertura pgTAP do trigger `usuario_perfil_imutavel` (RN25) em `public.usuario` (PR #232):**
+  - `supabase/tests/704_trg_usuario_perfil_imutavel.sql` (14 asserções, `plan(14)`): valida impedimento de alteração de perfil entre profissional e contratante com erro 23514 e search_path vazio.
+- **Cobertura pgTAP do trigger `despacho_imutavel` (RNF13, RN23, RF25) em `public.despacho` (PR #234):**
+  - `supabase/tests/705_trg_despacho_imutavel.sql` (19 asserções, `plan(19)`): prova imutabilidade de colunas de despacho, regra de repontamento único de `notificacao_id` e bypass sob `privado.retencao = 'on'`.
+- **Cobertura pgTAP do trigger `pedido_de_exclusao_concluido` (RF25) em `public.usuario` (PR #235):**
+  - `supabase/tests/707_trg_pedido_de_exclusao_concluido.sql` (20 asserções, `plan(20)`): valida que a anonimização de usuário transita seu `pedido_de_exclusao` pendente para o estado `concluido` com `concluido_em` preenchido.
+- **Cobertura pgTAP do trigger `turno_verificacao_nunca_em_posicao_cancelada` (RN22, RN07) em `public.turno` (PR #236):**
+  - `supabase/tests/706_trg_turno_verificacao_nunca_em_posicao_cancelada.sql` (13 asserções, `plan(13)`): valida bloqueio de verificação em posições canceladas com erro 409, idempotência e descarte de colunas vizinhas.
+- **Cobertura pgTAP do trigger `vaga_fechada_expira_candidaturas` (D3, RN24) em `public.vaga` (PR #237):**
+  - `supabase/tests/708_trg_vaga_fechada_expira_candidaturas.sql` (17 asserções, `plan(17)`): valida expiração de candidaturas pendentes na transição da vaga para `cancelada` ou `encerrada`.
+- **Cobertura pgTAP dos 6 triggers de auditoria de ciclo (RNF13) (PR #238):**
+  - `supabase/tests/711_trg_auditoria_ciclo.sql` (38 asserções, `plan(38)`): valida existência no catálogo dos 6 gatilhos de auditoria de ciclo (`vaga_auditoria`, `posicao_auditoria`, `candidatura_auditoria`, `turno_auditoria`, `avaliacao_auditoria`, `ocorrencia_auditoria`) e o disparo dos cinco com estado/nascimento (avaliacao_auditoria só no catálogo).
+- **Cobertura pgTAP do trigger `posicao_reaberta_abre_rodada` (RN05, RN12, RN22, RN23) em `public.posicao` (PR #239):**
+  - `supabase/tests/709_trg_posicao_reaberta_abre_rodada.sql` (20 asserções, `plan(20)`): valida incremento em `vaga.rodada_despacho` após inserção de posição com `reaberta_por_atraso_de` preenchido, e ausência de disparo em posições comuns.
+- **Cobertura pgTAP do trigger `vaga_horario_sincroniza` (RN21) em `public.vaga` (PR #240):**
+  - `supabase/tests/710_trg_vaga_horario_sincroniza.sql` (20 asserções, `plan(20)`): valida sincronização atômica de horários de início e fim entre vaga e posições abertas.
+
 ### Adicionado
 - **Suíte de privilégios mínimos nas tabelas do schema `privado` (Defesa em profundidade):**
   - Teste pgTAP `supabase/tests/681_privilegios_tabelas_privado.sql` (35/35 asserções) cobrindo a recomendação da auditoria de segurança da develop (16/10, Oráculo).
