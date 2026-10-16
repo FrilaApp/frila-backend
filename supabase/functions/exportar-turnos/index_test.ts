@@ -11,7 +11,7 @@
 //
 // Execução: deno test supabase/functions/exportar-turnos/
 
-import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1.0.19";
+import { assert, assertEquals, assertStringIncludes, assertRejects } from "jsr:@std/assert@1.0.19";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
 import {
   handler,
@@ -611,5 +611,155 @@ Deno.test("RN17 / RN15 / LGPD: CSV e PDF gerados contêm estritamente as colunas
   const bytesPdf = new Uint8Array(await resPdf.arrayBuffer());
   assert(bytesPdf.length > 500, "PDF deve conter bytes válidos");
   assertEquals(new TextDecoder().decode(bytesPdf.subarray(0, 5)), "%PDF-");
+});
+
+// ── Lacuna 7: Caracterização de Emojis e Caracteres fora de WinAnsi no Gerador PDF ──
+
+Deno.test("exportar-turnos: gerarPdf falha com erro WinAnsi quando funcao contem emoji (ex: 🍕)", async () => {
+  const turnosComEmojiFuncao: TurnoExportacao[] = [
+    {
+      turno_id: "f2000000-0000-4000-8000-000000000301",
+      data: "2026-09-22",
+      funcao: "Garçom 🍕",
+      inicio_em: "2026-09-22T18:00:00Z",
+      fim_em: "2026-09-23T02:00:00Z",
+      checkin_em: "2026-09-22T18:02:00Z",
+      checkout_em: "2026-09-23T02:05:00Z",
+      valor_acordado_centavos: 14000,
+      contraparte: "Bar do Zé",
+      verificacao: "verificado",
+    },
+  ];
+
+  await assertRejects(
+    async () => {
+      await gerarPdf(turnosComEmojiFuncao, "2026-09-01", "2026-09-30");
+    },
+    Error,
+    "WinAnsi cannot encode",
+  );
+});
+
+Deno.test("exportar-turnos: gerarPdf falha com erro WinAnsi quando contraparte contem emoji (ex: 🍻)", async () => {
+  const turnosComEmojiContraparte: TurnoExportacao[] = [
+    {
+      turno_id: "f2000000-0000-4000-8000-000000000302",
+      data: "2026-09-22",
+      funcao: "Bartender",
+      inicio_em: "2026-09-22T18:00:00Z",
+      fim_em: "2026-09-23T02:00:00Z",
+      checkin_em: null,
+      checkout_em: null,
+      valor_acordado_centavos: 18000,
+      contraparte: "Cervejaria Artesanal 🍻",
+      verificacao: "pendente",
+    },
+  ];
+
+  await assertRejects(
+    async () => {
+      await gerarPdf(turnosComEmojiContraparte, "2026-09-01", "2026-09-30");
+    },
+    Error,
+    "WinAnsi cannot encode",
+  );
+});
+
+Deno.test("exportar-turnos: gerarPdf falha com caracteres unicode especiais fora de WinAnsi (ex: seta →)", async () => {
+  const turnosComUnicodeForaWinAnsi: TurnoExportacao[] = [
+    {
+      turno_id: "f2000000-0000-4000-8000-000000000303",
+      data: "2026-09-22",
+      funcao: "Apoio Logístico → Noturno",
+      inicio_em: "2026-09-22T20:00:00Z",
+      fim_em: "2026-09-23T04:00:00Z",
+      checkin_em: null,
+      checkout_em: null,
+      valor_acordado_centavos: 20000,
+      contraparte: "Centro de Eventos",
+      verificacao: "verificado",
+    },
+  ];
+
+  await assertRejects(
+    async () => {
+      await gerarPdf(turnosComUnicodeForaWinAnsi, "2026-09-01", "2026-09-30");
+    },
+    Error,
+    "WinAnsi cannot encode",
+  );
+});
+
+Deno.test("exportar-turnos: handler rejeita requisicao PDF quando banco retorna turnos com emoji", async () => {
+  const turnosComEmoji: TurnoExportacao[] = [
+    {
+      turno_id: "f2000000-0000-4000-8000-000000000304",
+      data: "2026-09-22",
+      funcao: "Cozinheiro 👨‍🍳",
+      inicio_em: "2026-09-22T10:00:00Z",
+      fim_em: "2026-09-22T16:00:00Z",
+      checkin_em: "2026-09-22T10:05:00Z",
+      checkout_em: "2026-09-22T16:00:00Z",
+      valor_acordado_centavos: 16000,
+      contraparte: "Bistrô Francês",
+      verificacao: "verificado",
+    },
+  ];
+
+  const e = criarEspiao(turnosComEmoji);
+
+  await assertRejects(
+    async () => {
+      await chamar(
+        e,
+        requisicao({
+          de: "2026-09-01T00:00:00Z",
+          ate: "2026-09-30T23:59:59Z",
+          formato: "pdf",
+        }),
+      );
+    },
+    Error,
+    "WinAnsi cannot encode",
+  );
+});
+
+Deno.test("exportar-turnos: gerarCsv e handler CSV suportam e preservam emojis e unicode UTF-8 perfeitamente", async () => {
+  const turnosComEmoji: TurnoExportacao[] = [
+    {
+      turno_id: "f2000000-0000-4000-8000-000000000305",
+      data: "2026-09-22",
+      funcao: "Pizzaiolo 🍕",
+      inicio_em: "2026-09-22T17:00:00Z",
+      fim_em: "2026-09-23T01:00:00Z",
+      checkin_em: "2026-09-22T17:02:00Z",
+      checkout_em: "2026-09-23T01:00:00Z",
+      valor_acordado_centavos: 17500,
+      contraparte: "Cantina & Pizzaria 🍷",
+      verificacao: "verificado",
+    },
+  ];
+
+  // 1. gerarCsv preserva os emojis no texto CSV
+  const csv = gerarCsv(turnosComEmoji);
+  assertStringIncludes(csv, "Pizzaiolo 🍕");
+  assertStringIncludes(csv, "Cantina & Pizzaria 🍷");
+
+  // 2. handler devolve 200 com text/csv; charset=utf-8
+  const e = criarEspiao(turnosComEmoji);
+  const res = await chamar(
+    e,
+    requisicao({
+      de: "2026-09-01T00:00:00Z",
+      ate: "2026-09-30T23:59:59Z",
+      formato: "csv",
+    }),
+  );
+
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("Content-Type"), "text/csv; charset=utf-8");
+  const corpo = await res.text();
+  assertStringIncludes(corpo, "Pizzaiolo 🍕");
+  assertStringIncludes(corpo, "Cantina & Pizzaria 🍷");
 });
 
