@@ -13,14 +13,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   banco:
     name: Migrações e pgTAP
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1.7.3
         with:
           version: 2.121.0
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -34,7 +37,7 @@ jobs:
       # O `GITHUB_TOKEN` do próprio job dá uma cota autenticada, e não precisa de
       # segredo nenhum configurado.
       - name: Autenticar no ghcr.io, para o pull não cair na cota anônima
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -183,7 +186,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # O script precisa da base para comparar, e o checkout de PR traz só o
           # commit de merge.
@@ -208,7 +211,7 @@ jobs:
     name: Migrações sem colisão de versão
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # O autoteste do portão de relógio precisa do histórico para extrair os
           # commits dos testes 250 e 280 originais que falharam no produto.
@@ -249,19 +252,19 @@ jobs:
     name: Plano do caminho quente com o volume do DF
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       # O portão é testado antes de julgar a base: um portão com furo aprova calado.
       - name: O portão do caminho quente fecha nos casos conhecidos
         run: ./scripts/teste-planos-com-carga.sh
 
-      - uses: supabase/setup-cli@v1
+      - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1.7.3
         with:
           version: 2.121.0
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Autenticar no ghcr.io, para o pull não cair na cota anônima
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -302,9 +305,9 @@ jobs:
     name: Testes das Edge Functions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: denoland/setup-deno@v2
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.x
 
@@ -319,7 +322,7 @@ jobs:
     name: Contrato em dia com o Frila
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       # Sem o secret, confere só a integridade do espelho e avisa em voz alta que o
       # original não foi conferido. FrilaApp/frila-docs é privado, e o GITHUB_TOKEN do
       # Actions não alcança outro repositório.
@@ -336,9 +339,9 @@ jobs:
     name: Testes das Edge Functions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: denoland/setup-deno@v2
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.x
 
