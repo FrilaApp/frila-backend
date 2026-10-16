@@ -27,6 +27,8 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Atualização dos arquivos `contrato/openapi.yaml` e `contrato/openapi.yaml.sha256`.
 
 ### Documentação
+- **Auditoria de consistência e saneamento de deriva do backend (`docs/ESTADO.md`, PR #213):**
+  - Alinhamento de métricas e contratos com a `develop` em 16/10: contrato atualizado para 0.2.43 com sha256 (`acb687f...`) e tamanho conferidos, 107 migrações sem colisão, contagem de regras pgTAP atualizada para 2.980 asserções verdes e imunização de relógio.
 - **Medição de triggers e decisão sobre índices parciais em `fechar_turnos_e_vagas` (P3, carga 2x):**
   - Aferição empírica com `EXPLAIN (ANALYZE, BUFFERS)` dos comandos `UPDATE public.posicao` e `UPDATE public.vaga` na carga 2x do DF (40.000 vagas/posições, 2.000 expiradas): medição a 2x demonstra que 79% a 88% do tempo total decorre de gatilhos por linha (`audita_ciclo`, `vaga_fechada_expira_candidaturas`, `posicao_recalcula_comparecimento` e FKs), sendo consistente com a hipótese para o resíduo a 10x (26,6 µs/posição a 2x contra 28,7 µs a 10x).
   - Avaliação experimental indicando que índices parciais em `fim_em` reduzem a leitura mas não justificam o acréscimo no schema (ganho ≤ 3,1 ms por rodada; custo de escrita não medido; diferenças no tempo total não distinguíveis entre execuções únicas).
@@ -38,11 +40,37 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Recomendações técnicas documentadas em `docs/carga-10x.md` para futuros PRs dedicados de otimização e índices com pgTAP.
 
 ### Testes
-- **Cobertura de ativação automática de RLS (`ensure_rls` e `public.rls_auto_enable`, RNF11):**
+- **Cobertura de ativação automática de RLS (`ensure_rls` e `public.rls_auto_enable`, RNF11, PR #202):**
   - Teste pgTAP `supabase/tests/690_rls_auto_enable.sql` cobrindo a lacuna #1 do mapa pgTAP (10 asserções).
   - Validação de existência, linguagem e `SECURITY DEFINER` de `public.rls_auto_enable()` e revogação de `EXECUTE` para `anon` e `authenticated`.
-  - Validação do event trigger `ensure_rls` em `ddl_command_end` e comprovação de que `CREATE TABLE` e `CREATE TABLE AS` ativam automaticamente `relrowsecurity = true` nas novas tabelas criadas.
+  - Validação do event trigger `ensure_rls` em `ddl_command_end` e comprovação de que `CREATE TABLE` e `CREATE TABLE AS` ativam automaticamente `relrowsecurity = true` nas novas tabelas criadas no schema `public`.
   - Comprovação de não interferência em tabelas temporárias (`pg_temp`).
+- **Cobertura pgTAP da trilha de auditoria (`privado.auditoria_do_periodo`, RNF13, RF22, RN15, PR #203):**
+  - Teste pgTAP `supabase/tests/691_auditoria_do_periodo.sql` (12 asserções) cobrindo a lacuna #2 do mapa pgTAP.
+  - Validação de ordenação cronológica estrita por `(em, id)` comprovada com registros out-of-order gerados via `OVERRIDING SYSTEM VALUE` e fuso horário fixado deterministicamente (`set local timezone = 'UTC'`).
+  - Prova do intervalo semiaberto `[de, ate)` com inclusão exata do marco inicial e exclusão do marco final.
+- **Cobertura pgTAP do disparo de despacho assíncrono (`trg_despacho_enfileirado` e `privado.trg_disparar_despacho`, RNF03, RF18, PR #204):**
+  - Teste pgTAP `supabase/tests/692_trg_disparar_despacho.sql` (11 asserções) cobrindo a lacuna #3 do mapa pgTAP.
+  - Validação determinística do gatilho na fila `pgmq.q_despacho`, provando a recusa na ausência do segredo do agendador e o enfileiramento com sucesso quando definido na transação, sem execução externa e com execução em bloco transacional sob rollback.
+- **Cobertura pgTAP de parsing de versão semântica (`privado.versao_em_partes`, S0, RNF01, PR #205):**
+  - Teste pgTAP `supabase/tests/693_versao_em_partes.sql` (28 asserções) cobrindo a lacuna #4 do mapa pgTAP.
+  - Validação exaustiva de versões válidas, limites extremos, zeros à esquerda, espaços periféricos, pontos consecutivos e recusas de formato com search_path vazio.
+- **Cobertura pgTAP de barramento de contas suspensas em RPCs críticas e exceções de regex (PR #206):**
+  - Teste pgTAP `supabase/tests/682_exigir_conta_ativa_rpcs_criticas.sql` (35 asserções) cobrindo a validação de `privado.exigir_conta_ativa` e imunidade a regressão em `pg_context`.
+  - Prova de recusa com `403 conta_suspensa` em 9 RPCs críticas de escrita (`publicar_vaga`, `escolher_candidato`, `cancelar_posicao`, `cancelar_vaga`, `fazer_checkin`, `fazer_checkout`, `avaliar`, `denunciar`, `bloquear`) e recusa com `401 nao_autenticado` para contas inexistentes ou anonimizadas (excluídas).
+  - Prova de que `candidatar` responde com `422 inelegivel/perfil_suspenso` em virtude de exceção contratual.
+  - Validação das 5 exceções contratuais na regex de `exigir_conta_ativa` (`candidatar`, `contestar_suspensao`, `registrar_dispositivo`, `remover_dispositivo`, `privado.excluir_conta`), garantindo que refatorações ou renomeações não permitam desvio silencioso do barramento.
+- **Cobertura pgTAP de reconciliação de reputação (`privado.reconciliar_reputacao`, RNF13, RF22, PR #208):**
+  - Teste pgTAP `supabase/tests/694_reconciliar_reputacao.sql` (14 asserções) cobrindo a lacuna #5 do mapa pgTAP.
+  - Validação de detecção e correção do cache de reputação adulterado (`taxa_comparecimento`, `turnos_realizados`, `aval_positivas`, `aval_total`), gravação da divergência em `privado.divergencia_reputacao` e retorno 0 em reexecução idempotente.
+- **Cobertura pgTAP de fechamento de turnos e vagas (`privado.fechar_turnos`, RNF03, RF11, PR #209):**
+  - Teste pgTAP `supabase/tests/695_fechar_turnos.sql` (15 asserções) cobrindo a lacuna #6 do mapa pgTAP.
+  - Validação de transições de estado (posições confirmadas expiradas para `cumprida`, posições abertas para `cancelada`, vagas expiradas para `encerrada`), enfileiramento de notificação `avaliacao_disponivel` e idempotência de execução (retorno 0).
+- **Cobertura pgTAP consolidada das lacunas 7 a 10 do mapa do backend (S0, RNF01, RNF13, PR #210):**
+  - **Lacuna 7 (`privado.limite_de_suporte_por_dia`):** teste pgTAP `supabase/tests/696_limite_suporte_por_dia.sql` (8 asserções) cobrindo volatilidade IMMUTABLE, search_path vazio, privilégios e validação do teto regulamentar de 5 chamados/dia (D13).
+  - **Lacuna 8 (Isolamento RLS e privilégios em `evento_app` e `entrada_demonstracao`):** teste pgTAP `supabase/tests/697_tabelas_sem_politica_evento_e_demonstracao.sql` (25 asserções) comprovando contenção em duas camadas: RLS ativada sem políticas permissivas com recusa estrita `42501` para `anon` e `authenticated` em SELECT e INSERT, preservando acesso exclusivo para `service_role`.
+  - **Lacuna 9 (`privado.ponto_do_json`):** teste pgTAP `supabase/tests/698_ponto_do_json.sql` (22 asserções) cobrindo conversão PostGIS POINT (SRID 4326), aceite de fronteiras (-90..90, -180..180), recusas PGRST (`campo_obrigatorio`, `campo_invalido`) e propagação de campo customizado em `details`.
+  - **Lacuna 10 (`privado.exigir_janela`):** teste pgTAP `supabase/tests/699_exigir_janela.sql` (17 asserções) com relógio fixado deterministicamente (`frila.agora`), tolerância máxima de 2 min contra o futuro, recusas PGRST (`campo_obrigatorio`, `registro_no_futuro`, `fora_da_janela`), aceite nos marcos exatos da janela e isenção da conta de demonstração (atravessa turnos antigos mas mantém barramento contra o futuro).
 - **Robustez estatística do portão de caminho quente sob carga (`scripts/planos-com-carga.sh`):**
   - Implementado aquecimento prévio robusto (2 voltas em `privado.elegiveis` e 10 chamadas de `public.vagas_abertas`) descartando transientes de cache e povoando buffers do índice espacial.
   - Ampliação da amostragem (50 chamadas de `vagas_abertas` e 36 de `elegiveis` por bateria) e julgamento pelo melhor resultado entre 3 baterias consecutivas (mínimo independente de mediana e p95), eliminando a vulnerabilidade amostral do p95 de 25 chamadas.
@@ -54,6 +82,8 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Suíte pgTAP `671_bloqueio_escolher_candidato_recusa_e_contato.sql` (9 asserções).
 
 ### Segurança
+- **Fixação de actions por commit SHA e permissões mínimas em workflows (PR #211):**
+  - Endurecimento de segurança contra ataques de cadeia de suprimentos nos workflows do GitHub Actions (`ci.yml`, `ensaio-backup.yml`, `entrega.yml`), fixando actions por commit SHA imutável e adicionando bloco `permissions: contents: read` explícito.
 - **Mitigação de riscos em Edge Functions (Auditoria 16/10/2026, Achados Baixos, RN15):**
   - **Sanitização de logs de erro (`despachar` e `enviar-push`):** remoção da impressão do objeto bruto de erro nos blocos `catch` de conexão e processamento em `despachar` e de autenticação Google OAuth em `enviar-push`. Os logs passam a registrar apenas código/mensagem tipada (`err.name: err.message`), prevenindo vazamento de metadados internos de conexão de drivers PostgreSQL ou stacks de rede.
   - **Validação e teto (`clamp`) de parâmetros de lote (`limite` e `vt`):** adição de limites de contenção (clamp) nos parâmetros recebidos via payload JSON em `enviar-email` (`limite` 1..200, `vt` 1..300), `enviar-push` (`limite` 1..200) e `despachar` (`limite` 1..100, `vt` 1..300), prevenindo alocação excessiva de memória ou negação de serviço por consultas abusivas.
