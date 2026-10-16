@@ -73,8 +73,8 @@ select ok(
 insert into public.usuario (
   id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado
 ) values
-  ('70500000-0000-4000-8000-000000000001', 'contratante',  'Contratante 705',  '+5561970500001', 'c705@test.com', '1988-03-03', '2026-09-22', now(), 'ativa'),
-  ('70500000-0000-4000-8000-000000000002', 'profissional', 'Profissional 705', '+5561970500002', 'p705@test.com', '1993-07-07', '2026-09-22', now(), 'ativa');
+  ('70500000-0000-4000-8000-000000000001', 'contratante',  'Contratante 705',  '+5561970500001', 'c705@test.com', '1988-03-03', '2026-09-22', '2026-10-16 12:00:00-03', 'ativa'),
+  ('70500000-0000-4000-8000-000000000002', 'profissional', 'Profissional 705', '+5561970500002', 'p705@test.com', '1993-07-07', '2026-09-22', '2026-10-16 12:00:00-03', 'ativa');
 
 insert into public.estabelecimento (
   id, nome, documento, tipo, endereco, ponto, regiao_administrativa
@@ -101,26 +101,29 @@ values (
 insert into public.vaga (
   id, estabelecimento_id, funcao_id, ponto, local, valor_centavos, posicoes,
   inclui_refeicao, inclui_transporte, exige_material_proprio, responsavel_local,
-  inicio_em, fim_em, modo, estado, regiao_administrativa, chave_cliente, publicado_por
+  inicio_em, fim_em, modo, estado, regiao_administrativa, chave_cliente, publicado_por,
+  publicado_em
 ) values
   ('70500000-0000-4000-8000-000000000030', '70500000-0000-4000-8000-000000000010',
    (select id from public.funcao limit 1), 'POINT(-47.8900 -15.8000)'::extensions.geography,
    'Salão Principal', 15000, 1, true, false, false, 'Gerente 705',
    '2026-10-17 18:00:00-03', '2026-10-18 02:00:00-03', 'selecao', 'publicada',
-   'Plano Piloto', '70500000-0000-4000-8000-0000000000c1', '70500000-0000-4000-8000-000000000001'),
+   'Plano Piloto', '70500000-0000-4000-8000-0000000000c1', '70500000-0000-4000-8000-000000000001',
+   '2026-10-16 12:00:00-03'),
   ('70500000-0000-4000-8000-000000000031', '70500000-0000-4000-8000-000000000010',
    (select id from public.funcao limit 1), 'POINT(-47.8900 -15.8000)'::extensions.geography,
    'Salão Lateral', 15000, 1, true, false, false, 'Gerente 705',
    '2026-10-17 18:00:00-03', '2026-10-18 02:00:00-03', 'selecao', 'publicada',
-   'Plano Piloto', '70500000-0000-4000-8000-0000000000c2', '70500000-0000-4000-8000-000000000001');
+   'Plano Piloto', '70500000-0000-4000-8000-0000000000c2', '70500000-0000-4000-8000-000000000001',
+   '2026-10-16 12:00:00-03');
 
 insert into public.notificacao (
-  id, usuario_id, profissional_id, tipo, referencia_id, urgente, estado_entrega
+  id, usuario_id, profissional_id, tipo, referencia_id, urgente, estado_entrega, enviada_em
 ) values
   ('70500000-0000-4000-8000-000000000041', '70500000-0000-4000-8000-000000000002',
-   '70500000-0000-4000-8000-000000000020', 'vaga', '70500000-0000-4000-8000-000000000030', false, 'pendente'),
+   '70500000-0000-4000-8000-000000000020', 'vaga', '70500000-0000-4000-8000-000000000030', false, 'pendente', '2026-10-16 11:00:00-03'),
   ('70500000-0000-4000-8000-000000000042', '70500000-0000-4000-8000-000000000002',
-   '70500000-0000-4000-8000-000000000020', 'vagas_agrupadas', '70500000-0000-4000-8000-000000000031', false, 'pendente');
+   '70500000-0000-4000-8000-000000000020', 'vagas_agrupadas', '70500000-0000-4000-8000-000000000031', false, 'pendente', '2026-10-16 11:00:00-03');
 
 -- Despacho 1: notificacao_id NULL (esperando teto)
 -- Despacho 2: notificacao_id preenchido (já notificado)
