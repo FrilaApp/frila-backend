@@ -210,3 +210,118 @@ Deno.test("criarSqlClient exige SUPABASE_DB_URL em vez de falhar calado", () => 
     if (anterior) Deno.env.set("SUPABASE_DB_URL", anterior);
   }
 });
+
+// ── Lacuna de Resiliência, Timeout e Ausência de Vazamento em Logs (RN15) ─────
+
+Deno.test("RN15 / LGPD: log sob falha do banco escreve apenas constante e nao vaza PII/erro do Postgres", async () => {
+  const e = espiao();
+  const erroComPii = new Error('relation "usuario" failed on ana@frila.test with doc 123.456.789-00');
+
+  const chamadasConsoleError: string[] = [];
+  const consoleErrorOriginal = console.error;
+  console.error = (...args: unknown[]) => {
+    chamadasConsoleError.push(args.map((a) => String(a)).join(" "));
+  };
+
+  try {
+    const res = await handler(requisicao(), {
+      fetchFn: e.fetchFn,
+      supabaseUrl: URL_BASE,
+      anonKey: ANON,
+      sqlClient: {
+        meusDados: () => Promise.reject(erroComPii),
+      },
+    });
+
+    assertEquals(res.status, 500);
+    const corpo = await res.json();
+    assertEquals(corpo.code, "erro_interno");
+
+    // Prova que console.error recebeu estritamente a constante e nada mais
+    assertEquals(chamadasConsoleError, ["exportar-meus-dados: falha ao colher os dados"]);
+
+    // Garante que nenhum dado sensível ou mensagem da exceção vazou para os logs
+    const logTotal = chamadasConsoleError.join("\n");
+    assert(!logTotal.includes("ana@frila.test"), "vazou e-mail no console.error");
+    assert(!logTotal.includes("123.456.789-00"), "vazou documento no console.error");
+    assert(!logTotal.includes('relation "usuario"'), "vazou estrutura de banco no console.error");
+  } finally {
+    console.error = consoleErrorOriginal;
+  }
+});
+
+Deno.test("timeout no banco (57014 ou TimeoutError) responde 500 erro_interno e loga apenas constante", async () => {
+  const e = espiao();
+  const erroTimeout = Object.assign(
+    new Error("canceling statement due to statement timeout"),
+    { code: "57014" },
+  );
+
+  const chamadasConsoleError: string[] = [];
+  const consoleErrorOriginal = console.error;
+  console.error = (...args: unknown[]) => {
+    chamadasConsoleError.push(args.map((a) => String(a)).join(" "));
+  };
+
+  try {
+    const res = await handler(requisicao(), {
+      fetchFn: e.fetchFn,
+      supabaseUrl: URL_BASE,
+      anonKey: ANON,
+      sqlClient: {
+        meusDados: () => Promise.reject(erroTimeout),
+      },
+    });
+
+    assertEquals(res.status, 500);
+    const corpo = await res.json();
+    assertEquals(corpo.code, "erro_interno");
+    assertEquals(corpo.message, "erro_interno");
+    assertEquals(corpo.details, null);
+    assertEquals(chamadasConsoleError, ["exportar-meus-dados: falha ao colher os dados"]);
+  } finally {
+    console.error = consoleErrorOriginal;
+  }
+});
+
+Deno.test("exportacao de conta com grande volume de registros nas colecoes LGPD serializa corretamente", async () => {
+  const e = espiao();
+  const dadosVolumosos = {
+    ...DADOS,
+    turnos: Array.from({ length: 150 }, (_, i) => ({
+      id: `t0000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      inicio: "2026-09-01T08:00:00Z",
+      fim: "2026-09-01T17:00:00Z",
+      valor_total_centavos: 15000,
+      funcao: `Funcao ${i}`,
+      status: "concluido",
+    })),
+    estabelecimentos: Array.from({ length: 25 }, (_, i) => ({
+      id: `e0000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      nome: `Estabelecimento ${i}`,
+      papel: "gerente",
+    })),
+    avaliacoes_recebidas: Array.from({ length: 80 }, (_, i) => ({
+      id: `r0000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      nota: 5,
+      criado_em: "2026-09-10T12:00:00Z",
+    })),
+  };
+
+  const res = await handler(requisicao(), {
+    fetchFn: e.fetchFn,
+    supabaseUrl: URL_BASE,
+    anonKey: ANON,
+    sqlClient: {
+      meusDados: () => Promise.resolve(dadosVolumosos),
+    },
+  });
+
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("Cache-Control"), "no-store");
+  const corpo = await res.json();
+  assertEquals(corpo.turnos.length, 150);
+  assertEquals(corpo.estabelecimentos.length, 25);
+  assertEquals(corpo.avaliacoes_recebidas.length, 80);
+});
+
