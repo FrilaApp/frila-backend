@@ -493,3 +493,195 @@ Deno.test("despachar: erro ao processar loga mensagem tipada e não objeto bruto
   }
 });
 
+// ── Lacuna 3: Caracterização de Resiliência e Falhas no Processamento do Lote ──
+
+Deno.test("despachar: cancelamento de query por statement_timeout no Postgres (57014) responde 500 falha_processamento", async () => {
+  const erroTimeout = Object.assign(
+    new Error("canceling statement due to statement timeout"),
+    { code: "57014" },
+  );
+
+  const mockSql = criarMockSqlClient({
+    despacharVaga: () => Promise.reject(erroTimeout),
+  });
+
+  const req = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ vaga_id: "a1000000-0000-4000-8000-000000000001" }),
+  });
+
+  const res = await handler(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    sqlClient: mockSql,
+  });
+
+  assertEquals(res.status, 500);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.erro, "falha_processamento");
+});
+
+Deno.test("despachar: queda de conexao abrupta com o banco (ECONNRESET) responde 500 falha_processamento", async () => {
+  const mockSql = criarMockSqlClient({
+    processarFilaDespacho: () => Promise.reject(new Error("read ECONNRESET - connection reset by peer")),
+  });
+
+  const req = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({}),
+  });
+
+  const res = await handler(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    sqlClient: mockSql,
+  });
+
+  assertEquals(res.status, 500);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.erro, "falha_processamento");
+});
+
+Deno.test("despachar: falha parcial na drenagem de lote responde 200 ok:true somando apenas sucessos", async () => {
+  const loteMisto = [
+    { msg_id: 101, vaga_id: "a1000000-0000-4000-8000-000000000001", sucesso: true, despachos: 3, erro: null },
+    { msg_id: 102, vaga_id: "a1000000-0000-4000-8000-000000000002", sucesso: false, despachos: 0, erro: "vaga_inexistente" },
+    { msg_id: 103, vaga_id: "a1000000-0000-4000-8000-000000000003", sucesso: true, despachos: 2, erro: null },
+  ];
+
+  const mockSql = criarMockSqlClient({
+    processarFilaDespacho: () => Promise.resolve(loteMisto),
+  });
+
+  const req = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ limite: 10, vt: 30 }),
+  });
+
+  const res = await handler(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    sqlClient: mockSql,
+  });
+
+  assertEquals(res.status, 200);
+  const json = await res.json();
+  assertEquals(json.ok, true);
+  assertEquals(json.processados, 3);
+  assertEquals(json.despachos, 5);
+  assertEquals(json.mensagens.length, 3);
+  assertEquals(json.mensagens[1].sucesso, false);
+  assertEquals(json.mensagens[1].erro, "vaga_inexistente");
+});
+
+Deno.test("despachar: lote com 100% de falhas devolve 200 ok:true com despachos 0 (caracterizacao do comportamento atual)", async () => {
+  // Caracterização do comportamento atual da Edge Function:
+  // processar_fila_despacho captura exceções individualmente por mensagem e devolve o lote;
+  // a Edge Function despachar devolve HTTP 200 { ok: true, processados: N, despachos: 0 }
+  // mesmo quando 100% das mensagens do lote falharam.
+  // Mudar o status HTTP sob falha total do lote é decisão de produto/dono ([DONO]).
+  const loteTotalmenteFalho = [
+    { msg_id: 201, vaga_id: "a1000000-0000-4000-8000-000000000001", sucesso: false, despachos: 0, erro: "vaga_cancelada" },
+    { msg_id: 202, vaga_id: "a1000000-0000-4000-8000-000000000002", sucesso: false, despachos: 0, erro: "deadlock_transiente" },
+  ];
+
+  const mockSql = criarMockSqlClient({
+    processarFilaDespacho: () => Promise.resolve(loteTotalmenteFalho),
+  });
+
+  const req = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ limite: 10, vt: 30 }),
+  });
+
+  const res = await handler(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    sqlClient: mockSql,
+  });
+
+  assertEquals(res.status, 200);
+  const json = await res.json();
+  assertEquals(json.ok, true);
+  assertEquals(json.processados, 2);
+  assertEquals(json.despachos, 0);
+  assertEquals(json.mensagens.length, 2);
+  assertEquals(json.mensagens[0].sucesso, false);
+  assertEquals(json.mensagens[1].sucesso, false);
+});
+
+Deno.test("despachar: lote vazio quando nao ha mensagens pendentes responde 200 ok:true com 0 despachos", async () => {
+  const mockSql = criarMockSqlClient({
+    processarFilaDespacho: () => Promise.resolve([]),
+  });
+
+  const req = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({}),
+  });
+
+  const res = await handler(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    sqlClient: mockSql,
+  });
+
+  assertEquals(res.status, 200);
+  const json = await res.json();
+  assertEquals(json.ok, true);
+  assertEquals(json.processados, 0);
+  assertEquals(json.despachos, 0);
+  assertEquals(json.mensagens, []);
+});
+
+Deno.test("despachar: mensagem arquivada por teto excedido no banco e repassada intacta no lote", async () => {
+  // Confirma que a Edge Function não inspeciona nem depende de read_ct diretamente;
+  // ela repassa transparentemente mensagens arquivadas pelo banco com erro teto_tentativas_excedido.
+  const loteComTetoExcedido = [
+    { msg_id: 301, vaga_id: "a1000000-0000-4000-8000-000000000001", sucesso: false, despachos: 0, erro: "teto_tentativas_excedido" },
+  ];
+
+  const mockSql = criarMockSqlClient({
+    processarFilaDespacho: () => Promise.resolve(loteComTetoExcedido),
+  });
+
+  const req = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({}),
+  });
+
+  const res = await handler(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    sqlClient: mockSql,
+  });
+
+  assertEquals(res.status, 200);
+  const json = await res.json();
+  assertEquals(json.ok, true);
+  assertEquals(json.processados, 1);
+  assertEquals(json.despachos, 0);
+  assertEquals(json.mensagens[0].erro, "teto_tentativas_excedido");
+});
+
+
