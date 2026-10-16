@@ -9,7 +9,7 @@
 --   4. Disparo inicial de alerta para ambos os lados (profissional e contratante);
 --   5. Idempotência estrita sob múltiplas rodadas periódicas do cron (+5m, +10m, +15m) sem duplicação de notificações;
 --   6. Cessação imediata de novos alertas após registro de check-out;
---   7. Respeito à borda da janela máxima de 6 horas (fim_sem_checkout_janela);
+--   7. Descarte de turno fora da janela de 6 horas (fim_sem_checkout_janela);
 --   8. Supressão de alertas para posições canceladas.
 
 begin;
@@ -74,7 +74,7 @@ select ok(
   (select proconfig from pg_proc p
      join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'privado' and p.proname = 'alertar_fim_sem_checkout')
-  @> array['search_path='],
+  @> array['search_path=""'],
   'privado.alertar_fim_sem_checkout() roda com search_path vazio'
 );
 
@@ -131,6 +131,9 @@ select ok(
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
+
+-- Fixa o relógio no setup antes de qualquer publicação ou candidatura
+select set_config('frila.agora', '2026-10-15 20:00:00+00', true);
 
 -- Criação de contas
 select pg_temp.autenticar('70000000-0000-4000-8000-000000000001', 'contratante700@frila.test');
@@ -199,12 +202,14 @@ create temp table turnos700 as
          (c_cancelada->>'posicao_id')::uuid as pos_cancelada, (c_cancelada->>'turno_id')::uuid as turno_cancelado
     from c700;
 
--- Registra check-in em todos
+-- Registra check-in em cada turno no respectivo horário de início (janela válida)
+select set_config('frila.agora', '2026-10-16 00:05:00+00', true);
+select pg_temp.como('70000000-0000-4000-8000-000000000003',
+  format($$ select public.fazer_checkin(%L, 30, '2026-10-16 00:05:00+00') $$, (select turno_antigo from turnos700)));
+
 select set_config('frila.agora', '2026-10-16 12:05:00+00', true);
 select pg_temp.como('70000000-0000-4000-8000-000000000002',
   format($$ select public.fazer_checkin(%L, 30, '2026-10-16 12:05:00+00') $$, (select turno_principal from turnos700)));
-select pg_temp.como('70000000-0000-4000-8000-000000000003',
-  format($$ select public.fazer_checkin(%L, 30, '2026-10-16 00:05:00+00') $$, (select turno_antigo from turnos700)));
 select pg_temp.como('70000000-0000-4000-8000-000000000004',
   format($$ select public.fazer_checkin(%L, 30, '2026-10-16 12:05:00+00') $$, (select turno_cancelado from turnos700)));
 
@@ -347,13 +352,13 @@ select is(
   'Total de avisos ao profissional não se altera após checkout'
 );
 
--- ── 9. Turno Fora da Janela (Expiração de 6 Horas) e Posição Cancelada ──────────
+-- ── 9. Turno Fora da Janela (Janela de 6 Horas) e Posição Cancelada ──────────
 
 -- V2 terminou às 06:00; às 18:21 já se passaram 12h21m (> 6 horas da janela)
 select is(
   pg_temp.avisos('70000000-0000-4000-8000-000000000003', (select turno_antigo from turnos700)),
   0,
-  'Turno antigo fora da janela de 6h não gera alerta de fim sem checkout'
+  'Turno fora da janela de 6h não gera alerta de fim sem checkout'
 );
 
 -- V3 teve a posição cancelada
