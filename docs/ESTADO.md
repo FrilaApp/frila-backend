@@ -71,7 +71,7 @@ de carga e não teste de regra. O número da CI, e o da tabela, é **109 arquivo
 
 ### Entregas Recentes e Marcos Consolidados (até 16/10)
 
-O repositório ultrapassou **200 PRs mergeados**, com cobertura integral do contrato, novas RPCs, propostas de escala da v1.1/v1.2 e consolidação do mapa pgTAP:
+O repositório conta com mais de 180 PRs mergeados (183 em 16/10, ref develop `7e011ea`; datas de merge abaixo em horário de Brasília / BRT), com cobertura integral do contrato, novas RPCs, propostas de escala da v1.1/v1.2 e consolidação do mapa pgTAP:
 
 1. **Lotes 6 a 10 de Recusas Críticas e Endurecimento do Portão (#157, #159, #163, #164, #165, #167):**
    Expansão completa das recusas críticas no `contrato-responde.sh`, saltando de 81 para 151 pares vigiados e alcançados, cobrindo 100% dos pares possíveis do banco (com 16 isenções técnicas justificadas em `contrato_responde.py` e 0 não vigiados). O portão passou a falhar estritamente na CI caso surjam novas recusas sem cobertura ou sem isenção justificada. Acompanhado pelas suítes pgTAP `490` a `494`.
@@ -227,7 +227,7 @@ Medição consolidada da bateria em 16/10 (ref `7e011ea`):
 
 | Comando | O que garante | Medida em 16/10 |
 |---|---|---|
-| `supabase test db` | pgTAP | **108** arquivos de regras (109 no prove), **2.800+** asserções verdes (100% PASS) |
+| `supabase test db` | pgTAP | **108** arquivos de regras (109 no prove), **2.980** asserções verdes (100% PASS) |
 | `./scripts/contrato-responde.sh` | respostas casam com o contrato | **46 de 50** respostas 200 validadas, **151 de 151** recusas vigiadas e alcançadas, **37 de 37** coleções exercitadas |
 | `deno test --allow-all --no-check` | Edge Functions em Deno | **179** testes verdes (0 falhas), incluindo 31 em `exportar-turnos` |
 | `./scripts/teste-contrato-promete.sh` | autoteste da direção contrato-à-frente | 9 de 9 casos verdes |
