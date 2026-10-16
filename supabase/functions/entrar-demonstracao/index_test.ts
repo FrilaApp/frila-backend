@@ -67,7 +67,15 @@ function criarMockFetch(estado: MockState): typeof fetch {
       }
       const url = new URL(urlStr);
       const emailParam = url.searchParams.get("email")?.replace(/^eq\./, "") ?? "";
-      const matches = estado.tentativas.filter((t) => t.email === emailParam);
+      const emParam = url.searchParams.get("em")?.replace(/^gte\./, "");
+      const limitParam = url.searchParams.get("limit");
+      let matches = estado.tentativas.filter((t) => t.email === emailParam);
+      if (emParam) {
+        matches = matches.filter((t) => t.em >= emParam);
+      }
+      if (limitParam) {
+        matches = matches.slice(0, Number(limitParam));
+      }
       return Promise.resolve(
         new Response(JSON.stringify(matches.map((m) => ({ id: m.id }))), {
           status: 200,
@@ -229,15 +237,42 @@ Deno.test("entrar-demonstracao: recusa 404 codigo errado, mas grava tentativa co
   assertEquals(estado.tentativas[0].aceita, false);
 });
 
-Deno.test("entrar-demonstracao: caracterizacao de rate limit por email (risco Apple 2.1)", async () => {
-  // Teste de caracterização do comportamento de teto de tentativas:
-  // O limite de 10 tentativas em 10 minutos é contabilizado por e-mail no banco.
-  // Consequência documentada pelo Oráculo no #207: se um terceiro souber o e-mail do revisor,
-  // pode forjar 10 requisições e travar a revisão da App Store por 10 minutos (risco de diretriz 2.1).
+Deno.test("entrar-demonstracao: normaliza email da requisicao com espacos e maiusculas", async () => {
   const estado: MockState = { tentativas: [], proximoId: 1 };
+  const req = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "  REVISOR@frila.app  ", codigo: MOCK_CODIGO }),
+  });
 
-  // 10 tentativas para o e-mail do revisor (mesmo errando código)
-  for (let i = 1; i <= TETO_TENTATIVAS; i++) {
+  const res = await handler(req, depsPadrao(estado));
+  assertEquals(res.status, 200);
+  const json = await res.json();
+  assertEquals(json.user.email, MOCK_EMAIL_REVISOR);
+  assertEquals(estado.tentativas.length, 1);
+  assertEquals(estado.tentativas[0].email, MOCK_EMAIL_REVISOR);
+});
+
+Deno.test("entrar-demonstracao: caracterizacao de rate limit por email (10 tentativas em 10 min, risco Apple 2.1)", async () => {
+  // Teste de caracterização: decisão do dono / comportamento atual, não necessariamente o desejado.
+  // O limite de 10 tentativas em 10 minutos é contabilizado por e-mail no banco.
+  // Risco registrado na NOTA-AUDITORIA-EDGE-FUNCTIONS.md e na descrição do #207:
+  // se um terceiro souber o e-mail do revisor, pode forjar 10 requisições e travar a revisão da App Store por 10 minutos (risco de diretriz 2.1).
+  const estado: MockState = {
+    tentativas: [
+      // Tentativa antiga (15 minutos atrás) que deve ser ignorada pelo filtro de janela (em=gte)
+      {
+        id: 99,
+        email: MOCK_EMAIL_REVISOR,
+        em: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+        aceita: false,
+      },
+    ],
+    proximoId: 1,
+  };
+
+  // 10 tentativas recentes para o e-mail do revisor travam no literal 10
+  for (let i = 1; i <= 10; i++) {
     const req = new Request("http://localhost/functions/v1/entrar-demonstracao", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -246,9 +281,10 @@ Deno.test("entrar-demonstracao: caracterizacao de rate limit por email (risco Ap
     const res = await handler(req, depsPadrao(estado));
     assertEquals(res.status, 404);
   }
-  assertEquals(estado.tentativas.length, TETO_TENTATIVAS);
+  // 1 tentativa antiga + 10 recentes
+  assertEquals(estado.tentativas.length, 11);
 
-  // A 11ª tentativa contra o mesmo e-mail recebe 429 limite_excedido
+  // A 11ª tentativa recente contra o mesmo e-mail recebe 429 limite_excedido
   const reqBloqueada = new Request("http://localhost/functions/v1/entrar-demonstracao", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -271,7 +307,7 @@ Deno.test("entrar-demonstracao: caracterizacao de rate limit por email (risco Ap
   assertEquals(resOutroEmail.status, 200);
 });
 
-Deno.test("entrar-demonstracao: comparacao em tempo constante funciona para diversos casos", () => {
+Deno.test("entrar-demonstracao: igualdade correta resistente a timing em comparacao de codigo", () => {
   assertEquals(igualEmTempoConstante("123456", "123456"), true);
   assertEquals(igualEmTempoConstante("123456", "123457"), false);
   assertEquals(igualEmTempoConstante("123456", "223456"), false);
