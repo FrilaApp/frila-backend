@@ -12,12 +12,13 @@
 // Execução: deno test supabase/functions/exportar-turnos/
 
 import { assert, assertEquals, assertStringIncludes, assertRejects } from "jsr:@std/assert@1.0.19";
-import { PDFDocument } from "npm:pdf-lib@1.17.1";
+import { PDFDocument, StandardFonts } from "npm:pdf-lib@1.17.1";
 import {
   handler,
   criarSqlClient,
   gerarCsv,
   gerarPdf,
+  sanitizarTextoWinAnsi,
   formatarCentavosReais,
   formatarHoraLocal,
   formatarDataLocal,
@@ -613,14 +614,26 @@ Deno.test("RN17 / RN15 / LGPD: CSV e PDF gerados contêm estritamente as colunas
   assertEquals(new TextDecoder().decode(bytesPdf.subarray(0, 5)), "%PDF-");
 });
 
-// ── Lacuna 7: Caracterização de Emojis e Caracteres fora de WinAnsi no Gerador PDF ──
+// ── Lacuna 7: Correção do Bug do PDF (Sanitização WinAnsi e Captura de Erro 500) ──
 
-Deno.test("exportar-turnos: gerarPdf falha com erro WinAnsi quando funcao contem emoji (ex: 🍕)", async () => {
+Deno.test("exportar-turnos: sanitizarTextoWinAnsi substitui apenas caracteres fora de WinAnsi por ? e preserva acentos pt-BR, aspas curvas, traços e euro", async () => {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+
+  const input = "Łukasz & Nguyễn: 100% Café com Açúcar, “Aspas”, traço – e € 50! 🍕";
+  const output = sanitizarTextoWinAnsi(input, font);
+
+  assertEquals(output, "?ukasz & Nguy?n: 100% Café com Açúcar, “Aspas”, traço – e € 50! ?");
+  // Prova que a string sanitizada é 100% codificável pelo StandardFonts.Helvetica sem lançar exceção
+  assertEquals(typeof font.encodeText(output), "object");
+});
+
+Deno.test("exportar-turnos: gerarPdf sanitiza funcao com emoji (ex: 🍕) ou Łukasz gerando PDF valido", async () => {
   const turnosComEmojiFuncao: TurnoExportacao[] = [
     {
       turno_id: "f2000000-0000-4000-8000-000000000301",
       data: "2026-09-22",
-      funcao: "Garçom 🍕",
+      funcao: "Garçom 🍕 (Łukasz)",
       inicio_em: "2026-09-22T18:00:00Z",
       fim_em: "2026-09-23T02:00:00Z",
       checkin_em: "2026-09-22T18:02:00Z",
@@ -631,16 +644,13 @@ Deno.test("exportar-turnos: gerarPdf falha com erro WinAnsi quando funcao contem
     },
   ];
 
-  await assertRejects(
-    async () => {
-      await gerarPdf(turnosComEmojiFuncao, "2026-09-01", "2026-09-30");
-    },
-    Error,
-    "WinAnsi cannot encode",
-  );
+  const pdfBytes = await gerarPdf(turnosComEmojiFuncao, "2026-09-01", "2026-09-30");
+  assert(pdfBytes instanceof Uint8Array);
+  assert(pdfBytes.length > 500);
+  assertEquals(new TextDecoder().decode(pdfBytes.subarray(0, 5)), "%PDF-");
 });
 
-Deno.test("exportar-turnos: gerarPdf falha com erro WinAnsi quando contraparte contem emoji (ex: 🍻)", async () => {
+Deno.test("exportar-turnos: gerarPdf sanitiza contraparte com emoji (ex: 🍻) ou Nguyễn gerando PDF valido", async () => {
   const turnosComEmojiContraparte: TurnoExportacao[] = [
     {
       turno_id: "f2000000-0000-4000-8000-000000000302",
@@ -651,46 +661,40 @@ Deno.test("exportar-turnos: gerarPdf falha com erro WinAnsi quando contraparte c
       checkin_em: null,
       checkout_em: null,
       valor_acordado_centavos: 18000,
-      contraparte: "Cervejaria Artesanal 🍻",
+      contraparte: "Cervejaria Nguyễn 🍻",
       verificacao: "pendente",
     },
   ];
 
-  await assertRejects(
-    async () => {
-      await gerarPdf(turnosComEmojiContraparte, "2026-09-01", "2026-09-30");
-    },
-    Error,
-    "WinAnsi cannot encode",
-  );
+  const pdfBytes = await gerarPdf(turnosComEmojiContraparte, "2026-09-01", "2026-09-30");
+  assert(pdfBytes instanceof Uint8Array);
+  assert(pdfBytes.length > 500);
+  assertEquals(new TextDecoder().decode(pdfBytes.subarray(0, 5)), "%PDF-");
 });
 
-Deno.test("exportar-turnos: gerarPdf falha com caracteres unicode especiais fora de WinAnsi (ex: seta →)", async () => {
+Deno.test("exportar-turnos: gerarPdf sanitiza caracteres unicode especiais (ex: seta →, 👨‍🍳) sem corromper acentos pt-BR, aspas curvas, – e €", async () => {
   const turnosComUnicodeForaWinAnsi: TurnoExportacao[] = [
     {
       turno_id: "f2000000-0000-4000-8000-000000000303",
       data: "2026-09-22",
-      funcao: "Apoio Logístico → Noturno",
+      funcao: "Apoio Logístico – “Especial” → 👨‍🍳 € 50",
       inicio_em: "2026-09-22T20:00:00Z",
       fim_em: "2026-09-23T04:00:00Z",
       checkin_em: null,
       checkout_em: null,
       valor_acordado_centavos: 20000,
-      contraparte: "Centro de Eventos",
+      contraparte: "Centro de Eventos & Café",
       verificacao: "verificado",
     },
   ];
 
-  await assertRejects(
-    async () => {
-      await gerarPdf(turnosComUnicodeForaWinAnsi, "2026-09-01", "2026-09-30");
-    },
-    Error,
-    "WinAnsi cannot encode",
-  );
+  const pdfBytes = await gerarPdf(turnosComUnicodeForaWinAnsi, "2026-09-01", "2026-09-30");
+  assert(pdfBytes instanceof Uint8Array);
+  assert(pdfBytes.length > 500);
+  assertEquals(new TextDecoder().decode(pdfBytes.subarray(0, 5)), "%PDF-");
 });
 
-Deno.test("exportar-turnos: handler rejeita requisicao PDF quando banco retorna turnos com emoji", async () => {
+Deno.test("exportar-turnos: handler aceita requisicao PDF quando banco retorna turnos com emoji e devolve 200", async () => {
   const turnosComEmoji: TurnoExportacao[] = [
     {
       turno_id: "f2000000-0000-4000-8000-000000000304",
@@ -701,27 +705,57 @@ Deno.test("exportar-turnos: handler rejeita requisicao PDF quando banco retorna 
       checkin_em: "2026-09-22T10:05:00Z",
       checkout_em: "2026-09-22T16:00:00Z",
       valor_acordado_centavos: 16000,
-      contraparte: "Bistrô Francês",
+      contraparte: "Bistrô Francês 🍕",
       verificacao: "verificado",
     },
   ];
 
   const e = criarEspiao(turnosComEmoji);
 
-  await assertRejects(
-    async () => {
-      await chamar(
-        e,
-        requisicao({
-          de: "2026-09-01T00:00:00Z",
-          ate: "2026-09-30T23:59:59Z",
-          formato: "pdf",
-        }),
-      );
-    },
-    Error,
-    "WinAnsi cannot encode",
+  const res = await chamar(
+    e,
+    requisicao({
+      de: "2026-09-01T00:00:00Z",
+      ate: "2026-09-30T23:59:59Z",
+      formato: "pdf",
+    }),
   );
+
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("Content-Type"), "application/pdf");
+  assertEquals(res.headers.get("Cache-Control"), "no-store");
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  assert(bytes.length > 500);
+  assertEquals(new TextDecoder().decode(bytes.subarray(0, 5)), "%PDF-");
+});
+
+Deno.test("exportar-turnos: handler captura falha de geracao do PDF e devolve envelope de erro padrao 500 erro_interno", async () => {
+  const e = criarEspiao(TURNOS_MOCK);
+
+  const req = requisicao({
+    de: "2026-09-01T00:00:00Z",
+    ate: "2026-09-30T23:59:59Z",
+    formato: "pdf",
+  });
+
+  const res = await handler(req, {
+    fetchFn: e.fetchFn,
+    sqlClient: e.sql,
+    supabaseUrl: URL_BASE,
+    anonKey: ANON,
+    gerarPdfFn: () => Promise.reject(new Error("falha fatal simulada no motor de pdf")),
+  });
+
+  assertEquals(res.status, 500);
+  assertEquals(res.headers.get("Content-Type"), "application/json");
+  assertEquals(res.headers.get("Cache-Control"), "no-store");
+  const corpo = await res.json();
+  assertEquals(corpo, {
+    code: "erro_interno",
+    message: "erro_interno",
+    details: null,
+    hint: null,
+  });
 });
 
 Deno.test("exportar-turnos: gerarCsv e handler CSV suportam e preservam emojis e unicode UTF-8 perfeitamente", async () => {
