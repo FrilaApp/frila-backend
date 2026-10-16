@@ -13,12 +13,14 @@
 --   2. Controle de acesso estrito: sem EXECUTE para anon e authenticated; concedido a service_role.
 --   3. Semântica estrita do intervalo [de, ate): inclui o marco inicial exato (em = de) e exclui
 --      o marco final exato (em = ate).
---   4. Ordenação cronológica por `em` e desempate por `id`.
+--   4. Ordenação cronológica por `em` com desempate determinístico por `id` (inserção física fora de ordem).
 --   5. Estrutura do payload JSONB (entidade, entidade_id, acao, estado_anterior, estado_novo, autor_id, em).
 --   6. Retorno de array vazio '[]'::jsonb (e nunca NULL) quando não há registros ou quando de > ate.
 --   7. RN15: nenhum dado pessoal (telefone, email, documento, coordenadas) no retorno da trilha.
 
 begin;
+
+set local timezone = 'UTC';
 
 select plan(12);
 
@@ -48,24 +50,31 @@ create temp table ids_auditoria as select
   'b6910000-0000-4000-8000-000000000001'::uuid as ent_id,
   'b6910000-0000-4000-8000-000000000002'::uuid as autor_id;
 
-insert into privado.auditoria_ciclo (entidade, entidade_id, acao, estado_anterior, estado_novo, autor_id, em)
+-- Inserção intencionalmente fora de ordem cronológica e fora de ordem de id
+-- para validar que a ordenação final provém do ORDER BY a.em, a.id e não da ordem física do heap.
+insert into privado.auditoria_ciclo (id, entidade, entidade_id, acao, estado_anterior, estado_novo, autor_id, em)
+overriding system value
 values
-  ('vaga',    (select ent_id from ids_auditoria), 'criou',        null,        'publicada', (select autor_id from ids_auditoria), '2030-06-01 00:00:00+00'),
-  ('posicao', (select ent_id from ids_auditoria), 'mudou_estado', 'aberta',    'confirmada', (select autor_id from ids_auditoria), '2030-06-01 12:00:00+00'),
-  ('turno',   (select ent_id from ids_auditoria), 'mudou_estado', 'pendente',  'verificado', (select autor_id from ids_auditoria), '2030-06-01 23:59:59+00'),
-  ('turno',   (select ent_id from ids_auditoria), 'mudou_estado', 'verificado','cumprido',  (select autor_id from ids_auditoria), '2030-06-02 00:00:00+00'),
-  ('vaga',    (select ent_id from ids_auditoria), 'criou',        null,        'publicada', (select autor_id from ids_auditoria), '2030-05-31 23:59:59+00');
+  -- Fora de ordem cronológica e com IDs que desrespeitam a ordem física:
+  (600, 'turno',   (select ent_id from ids_auditoria), 'mudou_estado', 'pendente',  'verificado', (select autor_id from ids_auditoria), '2030-06-01 23:59:59+00'),
+  (900, 'posicao', (select ent_id from ids_auditoria), 'mudou_estado', 'aberta',    'confirmada', (select autor_id from ids_auditoria), '2030-06-01 12:00:00+00'),
+  (700, 'vaga',    (select ent_id from ids_auditoria), 'criou',        null,        'publicada',  (select autor_id from ids_auditoria), '2030-06-01 00:00:00+00'),
+  (800, 'posicao', (select ent_id from ids_auditoria), 'mudou_estado', 'aberta',    'cancelada',   (select autor_id from ids_auditoria), '2030-06-01 12:00:00+00'),
+  -- Fora do intervalo semiaberto [de, ate):
+  (500, 'turno',   (select ent_id from ids_auditoria), 'mudou_estado', 'verificado','cumprido',   (select autor_id from ids_auditoria), '2030-06-02 00:00:00+00'),
+  (400, 'vaga',    (select ent_id from ids_auditoria), 'criou',        null,        'publicada',  (select autor_id from ids_auditoria), '2030-05-31 23:59:59+00');
 
 select is(
   jsonb_array_length(privado.auditoria_do_periodo('2030-06-01 00:00:00+00', '2030-06-02 00:00:00+00')),
-  3,
+  4,
   'RNF13: intervalo [de, ate) inclui em=de e exclui em=ate'
 );
 
 select is(
-  (select jsonb_agg(x->>'em') from jsonb_array_elements(privado.auditoria_do_periodo('2030-06-01 00:00:00+00', '2030-06-02 00:00:00+00')) x),
-  '["2030-06-01T00:00:00+00:00", "2030-06-01T12:00:00+00:00", "2030-06-01T23:59:59+00:00"]'::jsonb,
-  'RNF13: registros ordenados cronologicamente por em e id'
+  (select jsonb_agg(jsonb_build_object('em', x->>'em', 'estado_novo', x->>'estado_novo'))
+     from jsonb_array_elements(privado.auditoria_do_periodo('2030-06-01 00:00:00+00', '2030-06-02 00:00:00+00')) x),
+  '[{"em": "2030-06-01T00:00:00+00:00", "estado_novo": "publicada"}, {"em": "2030-06-01T12:00:00+00:00", "estado_novo": "cancelada"}, {"em": "2030-06-01T12:00:00+00:00", "estado_novo": "confirmada"}, {"em": "2030-06-01T23:59:59+00:00", "estado_novo": "verificado"}]'::jsonb,
+  'RNF13: registros ordenados cronologicamente por em e com desempate por id'
 );
 
 select is(
@@ -95,7 +104,7 @@ select ok(
     select 1 from jsonb_array_elements(privado.auditoria_do_periodo('2030-06-01 00:00:00+00', '2030-06-02 00:00:00+00')) x
      where x ?| array['nome', 'email', 'telefone', 'documento', 'ponto', 'latitude', 'longitude']
   ),
-  'RN15: a saida da trilha nao contem nenhuma coluna de dado pessoal'
+  'RN15: a saida da trilha nao contem nenhuma chave de dado pessoal'
 );
 
 select * from finish();
