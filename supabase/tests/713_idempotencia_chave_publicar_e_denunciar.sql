@@ -14,8 +14,10 @@
 begin;
 select plan(25);
 
-perform privado.ambiente(eh_teste => true);
+insert into privado.ambiente (id, eh_teste) values (true, true)
+  on conflict (id) do update set eh_teste = true;
 set local frila.agora = '2026-10-25 12:00:00+00';
+set local frila.agendador_secret = 'teste-segredo-713';
 
 -- ── 1. Auxiliares ──────────────────────────────────────────────────────────────
 
@@ -32,14 +34,9 @@ begin
   return r;
 end $$;
 
-create function pg_temp.erro(p_code text, p_campo text default null) returns text
+create function pg_temp.erro(p_code text, p_details text default null) returns text
 language sql as $$
-  select case
-    when p_campo is not null then
-      json_build_object('code', p_code, 'message', p_code, 'details', json_build_object('campo', p_campo))::text
-    else
-      json_build_object('code', p_code, 'message', p_code)::text
-  end;
+  select json_build_object('code', p_code, 'message', p_code, 'details', p_details, 'hint', null)::text;
 $$;
 
 -- ── 2. Cenário Hermético ───────────────────────────────────────────────────────
