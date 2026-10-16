@@ -18,7 +18,8 @@
 begin;
 select plan(22);
 
-perform privado.ambiente(eh_teste => true);
+insert into privado.ambiente (id, eh_teste) values (true, true)
+  on conflict (id) do update set eh_teste = true;
 set local frila.agora = '2026-10-25 12:00:00+00';
 
 -- ── 1. Auxiliares de Identidade ────────────────────────────────────────────────
@@ -257,7 +258,6 @@ select is(
 
 -- ── 8. Prova de Mutação: Remoção de Política Fecha Acesso ──────────────────────
 
-savepoint mutacao_sem_politica;
 drop policy notificacao_leitura on public.notificacao;
 
 select is(
@@ -267,7 +267,8 @@ select is(
   'prova de mutação: sem a política notificacao_leitura, o acesso legítimo do contratante fecha (0 linhas)'
 );
 
-rollback to savepoint mutacao_sem_politica;
+create policy notificacao_leitura on public.notificacao for select to authenticated
+  using (usuario_id = (select auth.uid()));
 
 select * from finish();
 rollback;
