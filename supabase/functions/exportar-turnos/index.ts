@@ -48,6 +48,7 @@ export interface HandlerDeps {
   anonKey?: string;
   dbUrl?: string;
   agoraFn?: () => Date;
+  gerarPdfFn?: (turnos: TurnoExportacao[], deStr: string, ateStr: string) => Promise<Uint8Array>;
 }
 
 function respostaJson(status: number, corpo: unknown, headersExtra?: Record<string, string>): Response {
@@ -171,6 +172,23 @@ export function gerarCsv(turnos: TurnoExportacao[]): string {
   return linhas.join("\r\n");
 }
 
+export function sanitizarTextoWinAnsi(
+  texto: string,
+  font: { encodeText: (t: string) => unknown },
+): string {
+  if (!texto) return "";
+  let out = "";
+  for (const char of texto) {
+    try {
+      font.encodeText(char);
+      out += char;
+    } catch {
+      out += "?";
+    }
+  }
+  return out;
+}
+
 export async function gerarPdf(turnos: TurnoExportacao[], deStr: string, ateStr: string): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   const fontRegular = await doc.embedFont(StandardFonts.Helvetica);
@@ -278,15 +296,17 @@ export async function gerarPdf(turnos: TurnoExportacao[], deStr: string, ateStr:
         : "Pendente";
 
     const corStatus = t.verificacao === "nao_verificado" ? corDestaque : corTexto;
+    const funcaoFmt = sanitizarTextoWinAnsi(t.funcao, fontRegular).substring(0, 24);
+    const contraparteFmt = sanitizarTextoWinAnsi(t.contraparte, fontRegular).substring(0, 36);
 
     pagina.drawText(dataFmt, { x: margemX, y, size: 8, font: fontRegular, color: corTexto });
-    pagina.drawText(t.funcao.substring(0, 24), { x: margemX + 60, y, size: 8, font: fontRegular, color: corTexto });
+    pagina.drawText(funcaoFmt, { x: margemX + 60, y, size: 8, font: fontRegular, color: corTexto });
     pagina.drawText(inicioFmt, { x: margemX + 180, y, size: 8, font: fontRegular, color: corTexto });
     pagina.drawText(fimFmt, { x: margemX + 235, y, size: 8, font: fontRegular, color: corTexto });
     pagina.drawText(checkinFmt, { x: margemX + 290, y, size: 8, font: fontRegular, color: corTexto });
     pagina.drawText(checkoutFmt, { x: margemX + 345, y, size: 8, font: fontRegular, color: corTexto });
     pagina.drawText(valorFmt, { x: margemX + 400, y, size: 8, font: fontRegular, color: corTexto });
-    pagina.drawText(t.contraparte.substring(0, 36), { x: margemX + 485, y, size: 8, font: fontRegular, color: corTexto });
+    pagina.drawText(contraparteFmt, { x: margemX + 485, y, size: 8, font: fontRegular, color: corTexto });
     pagina.drawText(statusFmt, {
       x: margemX + 660,
       y,
@@ -522,7 +542,14 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
       },
     });
   } else {
-    const pdfBytes = await gerarPdf(turnos, deStr, ateStr);
+    const gerarPdfFn = deps?.gerarPdfFn ?? gerarPdf;
+    let pdfBytes: Uint8Array;
+    try {
+      pdfBytes = await gerarPdfFn(turnos, deStr, ateStr);
+    } catch (_err) {
+      console.error("exportar-turnos: erro interno ao gerar pdf");
+      return erro(500, "erro_interno");
+    }
     return new Response(pdfBytes as unknown as BodyInit, {
       status: 200,
       headers: {
