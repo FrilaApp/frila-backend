@@ -15,7 +15,7 @@
 begin;
 
 set local timezone = 'UTC';
-select plan(23);
+select plan(24);
 
 -- ── 1. Estrutura e Controle de Acesso ──────────────────────────────────────────
 
@@ -131,13 +131,16 @@ select ok(
 
 -- ── 4. Comportamento com Fila Vazia ───────────────────────────────────────────
 
+-- Define segredo válido para provar que a devolução de NULL decorre da fila vazia e não do segredo ausente
+set local frila.agendador_secret = 'segredo-de-teste-cron-701';
+
 -- Esvazia mensagens prévias da fila email dentro da transação isolada
 delete from pgmq.q_email;
 
 select is(
   privado.disparar_email(),
   null,
-  'Com fila vazia, privado.disparar_email() retorna NULL e não dispara requisição HTTP'
+  'Com fila vazia e segredo configurado, privado.disparar_email() retorna NULL e não dispara requisição HTTP'
 );
 
 -- ── 5. Comportamento com Fila Populada e Segredo Ausente ───────────────────────
@@ -164,9 +167,10 @@ select is(
 set local frila.agendador_secret = 'segredo-de-teste-cron-701';
 set local frila.email_function_url = 'http://127.0.0.1:54321/functions/v1/enviar-email';
 
-select lives_ok(
-  $$ select privado.disparar_email() $$,
-  'Com agendador_secret e URL configurados, privado.disparar_email() executa com sucesso'
+select isnt(
+  privado.disparar_email(),
+  null,
+  'Com agendador_secret e URL configurados, privado.disparar_email() executa net.http_post com sucesso e devolve request_id'
 );
 
 select is(
@@ -177,9 +181,16 @@ select is(
 
 -- ── 7. Idempotência e Esvaziamento da Fila ─────────────────────────────────────
 
-select lives_ok(
-  $$ select privado.disparar_email() $$,
-  'Segunda execução consecutiva é resiliente e executa sem falhas'
+select isnt(
+  privado.disparar_email(),
+  null,
+  'Segunda execução consecutiva é resiliente e executa net.http_post sem falhas'
+);
+
+select is(
+  (select count(*)::int from pgmq.q_email where (message->>'ocorrencia_id') = '70100000-0000-4000-8000-000000000001'),
+  1,
+  'Fila mantém exatamente 1 pedido (sem duplicação nem perda)'
 );
 
 -- Simula conclusão do pedido (remoção da fila)
