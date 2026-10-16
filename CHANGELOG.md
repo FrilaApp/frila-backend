@@ -46,24 +46,26 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Validação do event trigger `ensure_rls` em `ddl_command_end` e comprovação de que `CREATE TABLE` e `CREATE TABLE AS` ativam automaticamente `relrowsecurity = true` nas novas tabelas criadas no schema `public`.
   - Comprovação de não interferência em tabelas temporárias (`pg_temp`).
 - **Cobertura pgTAP da trilha de auditoria (`privado.auditoria_do_periodo`, RNF13, RF22, RN15, PR #203):**
-  - Teste pgTAP `supabase/tests/691_auditoria_do_periodo.sql` (15 asserções) cobrindo a lacuna #2 do mapa pgTAP.
-  - Validação de ordenação cronológica estrita por `(em, id)` comprovada com registros out-of-order gerados via `OVERRIDING SYSTEM VALUE`, timezone UTC fixado e search_path vazio.
+  - Teste pgTAP `supabase/tests/691_auditoria_do_periodo.sql` (12 asserções) cobrindo a lacuna #2 do mapa pgTAP.
+  - Validação de ordenação cronológica estrita por `(em, id)` comprovada com registros out-of-order gerados via `OVERRIDING SYSTEM VALUE` e fuso horário fixado deterministicamente (`set local timezone = 'UTC'`).
   - Prova do intervalo semiaberto `[de, ate)` com inclusão exata do marco inicial e exclusão do marco final.
 - **Cobertura pgTAP do disparo de despacho assíncrono (`trg_despacho_enfileirado` e `privado.trg_disparar_despacho`, RNF03, RF18, PR #204):**
   - Teste pgTAP `supabase/tests/692_trg_disparar_despacho.sql` (11 asserções) cobrindo a lacuna #3 do mapa pgTAP.
-  - Validação determinística do gatilho na fila `pgmq.q_despacho`, com segredo efêmero setado na transação, idempotência e ausência de execução externa.
+  - Validação determinística do gatilho na fila `pgmq.q_despacho`, provando a recusa na ausência do segredo do agendador e o enfileiramento com sucesso quando definido na transação, sem execução externa e com execução em bloco transacional sob rollback.
 - **Cobertura pgTAP de parsing de versão semântica (`privado.versao_em_partes`, S0, RNF01, PR #205):**
   - Teste pgTAP `supabase/tests/693_versao_em_partes.sql` (28 asserções) cobrindo a lacuna #4 do mapa pgTAP.
   - Validação exaustiva de versões válidas, limites extremos, zeros à esquerda, espaços periféricos, pontos consecutivos e recusas de formato com search_path vazio.
-- **Cobertura pgTAP de barramento de contas suspensas e excluídas em RPCs críticas (PR #206):**
-  - Teste pgTAP `supabase/tests/682_exigir_conta_ativa_rpcs_criticas.sql` garantindo que `privado.exigir_conta_ativa` barra contas suspensas (`403 conta_suspensa`) e excluídas (`403 conta_excluida`) nas 10 RPCs críticas de escrita (`publicar_vaga`, `candidatar`, `escolher_candidato`, `cancelar_posicao`, `cancelar_vaga`, `fazer_checkin`, `fazer_checkout`, `avaliar`, `denunciar`, `bloquear`).
-  - Cobertura da regex de exceção no contexto de execução, assegurando que refatorações ou renomeações não permitam desvio silencioso do barramento.
+- **Cobertura pgTAP de barramento de contas suspensas em RPCs críticas e exceções de regex (PR #206):**
+  - Teste pgTAP `supabase/tests/682_exigir_conta_ativa_rpcs_criticas.sql` (35 asserções) cobrindo a validação de `privado.exigir_conta_ativa` e imunidade a regressão em `pg_context`.
+  - Prova de recusa com `403 conta_suspensa` em 9 RPCs críticas de escrita (`publicar_vaga`, `escolher_candidato`, `cancelar_posicao`, `cancelar_vaga`, `fazer_checkin`, `fazer_checkout`, `avaliar`, `denunciar`, `bloquear`) e recusa com `401 nao_autenticado` para contas inexistentes ou anonimizadas (excluídas).
+  - Prova de que `candidatar` responde com `422 inelegivel/perfil_suspenso` em virtude de exceção contratual.
+  - Validação das 4 exceções contratuais na regex de `exigir_conta_ativa` (`candidatar`, `contestar_suspensao`, `registrar_dispositivo`, `remover_dispositivo`, além de `privado.excluir_conta`), garantindo que refatorações ou renomeações não permitam desvio silencioso do barramento.
 - **Cobertura pgTAP de reconciliação de reputação (`privado.reconciliar_reputacao`, RNF13, RF22, PR #208):**
-  - Teste pgTAP `supabase/tests/694_reconciliar_reputacao.sql` cobrindo a lacuna #5 do mapa pgTAP.
-  - Validação de reconciliação proporcional de avaliações, tolerância a cancelamentos e ausência de distorção de score.
+  - Teste pgTAP `supabase/tests/694_reconciliar_reputacao.sql` (14 asserções) cobrindo a lacuna #5 do mapa pgTAP.
+  - Validação de detecção e correção do cache de reputação adulterado (`taxa_comparecimento`, `turnos_concluidos`, `avaliacoes_positivas`, `avaliacoes_total`), gravação da divergência em `privado.divergencia_reputacao` e retorno 0 em reexecução idempotente.
 - **Cobertura pgTAP de fechamento de turnos e vagas (`privado.fechar_turnos`, RNF03, RF11, PR #209):**
-  - Teste pgTAP `supabase/tests/695_fechar_turnos.sql` cobrindo a lacuna #6 do mapa pgTAP.
-  - Validação de encerramento automático de turnos vencidos, expiração de candidaturas pendentes e idempotência de fechamento.
+  - Teste pgTAP `supabase/tests/695_fechar_turnos.sql` (15 asserções) cobrindo a lacuna #6 do mapa pgTAP.
+  - Validação de transições de estado (posições confirmadas expiradas para `cumprida`, posições abertas para `cancelada`, vagas expiradas para `encerrada`), enfileiramento de notificação `avaliacao_disponivel` e idempotência de execução (retorno 0).
 - **Cobertura pgTAP consolidada das lacunas 7 a 10 do mapa do backend (S0, RNF01, RNF13, PR #210):**
   - **Lacuna 7 (`privado.limite_de_suporte_por_dia`):** teste pgTAP `supabase/tests/696_limite_suporte_por_dia.sql` (8 asserções) cobrindo volatilidade IMMUTABLE, search_path vazio, privilégios e validação do teto regulamentar de 5 chamados/dia (D13).
   - **Lacuna 8 (Isolamento RLS e privilégios em `evento_app` e `entrada_demonstracao`):** teste pgTAP `supabase/tests/697_tabelas_sem_politica_evento_e_demonstracao.sql` (25 asserções) comprovando contenção em duas camadas: RLS ativada sem políticas permissivas com recusa estrita `42501` para `anon` e `authenticated` em SELECT e INSERT, preservando acesso exclusivo para `service_role`.
