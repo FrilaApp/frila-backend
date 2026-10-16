@@ -218,7 +218,7 @@ Para testar experimentalmente se índices parciais em `fim_em` adiantam contra o
    - **Os índices parciais NÃO adiantam para mitigar o gargalo de tempo total.**
    - O ganho obtido na leitura (economia de ~1,3 a 3,1 ms) é insignificante frente ao tempo total, dominado em 80%–88% pelos gatilhos por linha.
    - Além disso, novos índices acarretam custo de escrita permanente a cada `INSERT` ou `UPDATE` de vaga e posição.
-   - Na rotina normal de produção (execução a cada 5 minutos pelo `pg_cron` com volume típico de 5 a 20 vagas expiradas por rodada), o tempo total é sub-milissegundo (< 1 ms). Logo, a decisão técnica fundamentada é **não criar os índices parciais**.
+   - Na rotina normal de produção (execução a cada 5 minutos pelo `pg_cron` com volume incremental proporcional ao intervalo, consideravelmente menor do que a massa em lote de teste), o tempo total esperado é reduzido. Logo, a decisão técnica fundamentada a partir do medido é **não criar os índices parciais**.
 
 ---
 
@@ -253,4 +253,4 @@ Para testar experimentalmente se índices parciais em `fim_em` adiantam contra o
 - **Conclusão e Decisão Empírica (Aferida na Seção 3.4):**
   - A medição de triggers sob carga 2x comprovou que 80% a 88% do tempo de execução decorre dos gatilhos disparados linha a linha (`audita_ciclo`, `vaga_fechada_expira_candidaturas`, `posicao_recalcula_comparecimento` e FKs), e não da varredura de leitura (`Seq Scan`), que consome apenas ~1,5 a 8,5 ms.
   - A criação dos índices parciais reduziu a leitura para ~0,2 ms, mas não alterou a ordem de grandeza do tempo total (53 ms vs 59 ms em posições; 96 ms vs 91 ms em vagas).
-  - Como a rotina de produção roda a cada 5 minutos com volume reduzido (5 a 20 vagas) e tempo sub-milissegundo, o custo de manutenção desses índices parciais supera qualquer benefício. **Decisão:** Não criar os índices parciais.
+  - Como a rotina de produção roda a cada 5 minutos com volume incremental menor e tempo proporcionalmente reduzido, o custo de manutenção desses índices parciais supera qualquer benefício. **Decisão:** Não criar os índices parciais.
