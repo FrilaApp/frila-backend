@@ -7,6 +7,11 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Não lançado]
 
+### Adicionado
+- **Suíte de paridade exaustiva de `privado.elegiveis` (RNF11, RNF12):**
+  - Teste pgTAP `supabase/tests/680_elegiveis_paridade_e_comportamento.sql` comprovando a equivalência estrita de elegíveis (10/10 asserções cobrindo 100% das vagas cadastradas, fixtures de demonstração e `excluir_conta`).
+  - Documentação técnica e comprovação experimental refutando a Recomendação 1 do relatório #195: a reordenação interna da CTE sofre *subquery pull-up* pelo planejador PostgreSQL, gerando plano físico idêntico ao canônico, enquanto a extração de `usuario` para a consulta externa dispara varredura sequencial em `disponibilidade` e `usuario`.
+
 ### Modificado
 - **Espelho do contrato 0.2.43 do frila-docs (PR frila-docs#89):**
   - Alinhamento da documentação de `contestarSuspensao` e `pedirRevisaoDespacho`: o relato das contestações não passa pelo filtro de termos da diretriz 1.2 (decisão J1=B, migração `20261013110000`).
