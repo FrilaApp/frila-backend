@@ -137,7 +137,10 @@ Execution Time: 969.952 ms
 
 ### 3.4. Medição de Triggers em `privado.fechar_turnos_e_vagas()` (Escala 2x)
 
-Para investigar a causa do tempo residual fora dos nós de leitura (`Seq Scan` / `Update`), foi executada a medição empírica com `EXPLAIN (ANALYZE, BUFFERS)` na carga 2x do Distrito Federal (40.000 vagas e 40.000 posições, com lote de 2.000 registros expirados). O plano revela detalhadamente a execução de gatilhos disparados linha a linha (`Trigger ...: time=... calls=...`).
+Para investigar a causa do tempo residual fora dos nós de leitura (`Seq Scan` / `Update`), foi executada medição empírica com `EXPLAIN (ANALYZE, BUFFERS)` na carga 2x do Distrito Federal (40.000 vagas e 40.000 posições, com lote sintético de 2.000 registros expirados em transação isolada com rollback). O plano discrimina a execução de gatilhos disparados linha a linha (`Trigger ...: time=... calls=...`).
+
+> [!NOTE]
+> **Ressalva Metodológica sobre Variância:** Os tempos apresentados refletem uma execução amostral pontual sob carga sintética controlada. Os números absolutos estão sujeitos à variância de execução do ambiente e do cache de buffers, servindo como demonstração da ordem de grandeza e da proporção relativa entre seleção, atualização e gatilhos.
 
 #### 3.4.1. UPDATE de Posições Expiradas (`public.posicao`)
 
@@ -156,13 +159,12 @@ Execution Time: 53.223 ms
 ```
 
 - **Decomposição do Tempo:**
-  - Varredura de seleção (`Seq Scan` em 40.000 posições): **1,48 ms** (2,8% do tempo total).
-  - Execução da atualização no nó `Update`: **5,93 ms** (11,1%).
-  - **Execução de Triggers por Linha:** **47,02 ms** (**88,3% do tempo total**):
+  - Dos 53,22 ms de `Execution Time`, a maior parcela (47,02 ms, correspondendo a ~88% do tempo medido) concentra-se nos **gatilhos disparados linha a linha**:
     - `posicao_auditoria` (`audita_ciclo`): **38,08 ms** (71,5%)
-    - `posicao_vaga_id_fkey` (checagem de FK): **6,45 ms** (12,1%)
+    - `posicao_vaga_id_fkey` (checagem de integridade referencial): **6,45 ms** (12,1%)
     - `posicao_recalcula_comparecimento`: **2,50 ms** (4,7%)
-- **Causa Comprovada:** O tempo residual anteriormente não discriminado (~228 ms na carga 10x) decorre comprovadamente dos gatilhos executados para cada posição cancelada, sendo a auditoria de ciclo (`audita_ciclo`) responsável por mais de 70% do tempo total.
+  - Em contrapartida, a varredura sequencial de seleção (`Seq Scan`) demandou apenas **1,48 ms** e o nó `Update` **5,93 ms** (os tempos pontuais dos nós no Postgres interagem com o ciclo de disparo dos triggers na composição do tempo de execução final).
+- **Consistência com a Hipótese:** O resultado é consistente com o diagnóstico de que o tempo residual anteriormente não discriminado (~228 ms na carga 10x) decorre primordialmente da execução dos gatilhos por linha para cada posição cancelada, com prevalência do registro de auditoria de ciclo.
 
 #### 3.4.2. UPDATE de Vagas Expiradas (`public.vaga`)
 
@@ -193,32 +195,32 @@ Execution Time: 95.951 ms
 ```
 
 - **Decomposição do Tempo:**
-  - Varredura e junção de seleção (`Hash Anti Join` + `Seq Scan` em 40.000 vagas e posições): **8,48 ms** (8,8% do tempo total).
-  - Execução da atualização no nó `Update`: **19,14 ms** (19,9%).
-  - **Execução de Triggers por Linha:** **76,33 ms** (**79,5% do tempo total**):
+  - Dos 95,95 ms de `Execution Time`, a maior fração (76,33 ms, cerca de ~80% do tempo) decorre dos **gatilhos disparados linha a linha**:
     - `vaga_auditoria` (`audita_ciclo`): **44,94 ms** (46,8%)
     - `vaga_fechada_expira_candidaturas`: **14,97 ms** (15,6%)
-    - Triggers de FK (`estabelecimento`, `funcao`, `publicado_por`): **16,42 ms** (17,1%)
-- **Causa Comprovada:** O tempo residual (~811 ms na carga 10x) é explicado em ~80% pelos gatilhos pós-update (`vaga_auditoria`, `vaga_fechada_expira_candidaturas`) e pelas verificações de chaves estrangeiras.
+    - Triggers de integridade referencial (`estabelecimento`, `funcao`, `publicado_por`): **16,42 ms** (17,1%)
+  - A fase de junção e seleção (`Hash Anti Join` + `Seq Scan`) respondeu por **8,48 ms** e a atualização das tuplas no nó `Update` por **19,14 ms**.
+- **Consistência com a Hipótese:** O comportamento observado apoia a hipótese de que o resíduo (~811 ms na carga 10x) é majoritariamente atribuível aos gatilhos pós-update (`vaga_auditoria`, expiração de candidaturas) e à validação de integridade referencial por vaga encerrada.
 
 #### 3.4.3. Avaliação Experimental de Índices Parciais em `fim_em`
 
-Para testar experimentalmente se índices parciais em `fim_em` adiantam contra o gargalo, os comandos foram repetidos com os índices criados na sessão:
+Para testar empiricamente se índices parciais em `fim_em` mitigam o tempo da operação, os comandos foram repetidos com os índices criados na sessão:
 - `posicao_aberta_expirada_idx ON public.posicao (fim_em) WHERE estado = 'aberta'`
 - `vaga_ativa_expirada_idx ON public.vaga (fim_em) WHERE estado IN ('publicada', 'preenchida')`
 
-**Resultados:**
+**Resultados da Amostra Comparativa:**
 1. **Fase de Leitura/Seleção:**
-   - Em `posicao`: o tempo de seleção caiu de 1,48 ms (`Seq Scan`, 455 buffers) para **0,17 ms** (`Bitmap Index Scan`, 27 buffers).
-   - Em `vaga`: o scan da tabela `vaga` caiu de 3,39 ms (1.334 buffers) para **0,25 ms** (70 buffers), permanecendo a leitura da tabela de posições pelo Hash Anti Join (2,89 ms).
+   - Em `posicao`: o tempo de seleção reduziu de 1,48 ms (`Seq Scan`, 455 buffers) para **0,17 ms** (`Bitmap Index Scan`, 27 buffers).
+   - Em `vaga`: a varredura da tabela `vaga` reduziu de 3,39 ms (1.334 buffers) para **0,25 ms** (70 buffers), permanecendo a leitura da tabela `posicao` no Hash Anti Join (2,89 ms).
 2. **Tempo Total de Execução:**
    - `posicao`: 53,2 ms (sem índice) vs **59,8 ms** (com índice).
    - `vaga`: 95,9 ms (sem índice) vs **91,1 ms** (com índice).
-3. **Decisão:**
-   - **Os índices parciais NÃO adiantam para mitigar o gargalo de tempo total.**
-   - O ganho obtido na leitura (economia de ~1,3 a 3,1 ms) é insignificante frente ao tempo total, dominado em 80%–88% pelos gatilhos por linha.
-   - Além disso, novos índices acarretam custo de escrita permanente a cada `INSERT` ou `UPDATE` de vaga e posição.
-   - Na rotina normal de produção (execução a cada 5 minutos pelo `pg_cron` com volume incremental proporcional ao intervalo, consideravelmente menor do que a massa em lote de teste), o tempo total esperado é reduzido. Logo, a decisão técnica fundamentada a partir do medido é **não criar os índices parciais**.
+3. **Decisão e Recomendações:**
+   - **Os dados medidos indicam que índices parciais em `fim_em` não trazem ganho substancial ao tempo total.**
+   - O ganho obtido na fase de leitura (~1,3 a 3,1 ms) é pequeno frente ao tempo total, dominado em sua maior parte pelos gatilhos executados para cada linha afetada.
+   - Adicionar esses índices introduziria custo contínuo de manutenção de escrita em todos os `INSERT` e `UPDATE` das tabelas correspondentes.
+   - Na rotina normal de produção (execução periódica a cada 5 minutos pelo `pg_cron` com volume incremental proporcional ao intervalo, consideravelmente menor do que a massa em lote sintético), o tempo total esperado tende a ser baixo.
+   - **Nota sobre Escala Futura:** Caso a base de dados cresça para ordens de grandeza muito superiores (~1 milhão de posições ou vagas ativas), o tempo de leitura sequencial poderá escalar e justificar a reavaliação de índices de seleção. Na faixa atual e projetada de curto/médio prazo (40k a 200k), a evidência empírica sugere não criar os índices parciais.
 
 ---
 
@@ -251,6 +253,6 @@ Para testar experimentalmente se índices parciais em `fim_em` adiantam contra o
   WHERE estado IN ('publicada', 'preenchida');
   ```
 - **Conclusão e Decisão Empírica (Aferida na Seção 3.4):**
-  - A medição de triggers sob carga 2x comprovou que 80% a 88% do tempo de execução decorre dos gatilhos disparados linha a linha (`audita_ciclo`, `vaga_fechada_expira_candidaturas`, `posicao_recalcula_comparecimento` e FKs), e não da varredura de leitura (`Seq Scan`), que consome apenas ~1,5 a 8,5 ms.
-  - A criação dos índices parciais reduziu a leitura para ~0,2 ms, mas não alterou a ordem de grandeza do tempo total (53 ms vs 59 ms em posições; 96 ms vs 91 ms em vagas).
-  - Como a rotina de produção roda a cada 5 minutos com volume incremental menor e tempo proporcionalmente reduzido, o custo de manutenção desses índices parciais supera qualquer benefício. **Decisão:** Não criar os índices parciais.
+  - A medição de triggers sob carga 2x indicou que a maior parte do tempo de execução decorre dos gatilhos disparados linha a linha (`audita_ciclo`, `vaga_fechada_expira_candidaturas`, `posicao_recalcula_comparecimento` e FKs), e não da varredura de leitura (`Seq Scan`), que consumiu apenas ~1,5 a 8,5 ms na amostra medida.
+  - A criação dos índices parciais reduziu a leitura para ~0,2 ms, mas não alterou a ordem de grandeza do tempo total (53 ms vs 60 ms em posições; 96 ms vs 91 ms em vagas na amostra).
+  - Como a rotina de produção roda a cada 5 minutos com volume incremental menor, o custo contínuo de escrita de manter esses índices parciais no momento não se justifica, recomendando-se reavaliar apenas caso o volume atinja escala na ordem de ~1 milhão de registros ativos. **Decisão:** Não criar os índices parciais no patamar atual.
