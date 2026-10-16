@@ -11,7 +11,7 @@
 //
 // Execução: deno test supabase/functions/exportar-turnos/
 
-import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1.0.19";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
 import {
   handler,

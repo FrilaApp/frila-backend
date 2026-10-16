@@ -309,14 +309,13 @@ jobs:
 
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: v2.x
+          deno-version: v2.9.7
 
       # `--no-check` de propósito: as funções importam do `esm.sh` e de `deno.land/std` sem
       # mapa de importação, e a checagem de tipos puxaria a rede inteira para dizer o que o
       # teste já diz. O que este portão mede é comportamento, não tipo.
       - name: deno test
-        working-directory: supabase/functions
-        run: deno test --allow-all --no-check
+        run: deno test --allow-all --no-check --lock=deno.lock --frozen supabase/functions/
 
   contrato:
     name: Contrato em dia com o Frila
@@ -343,7 +342,7 @@ jobs:
 
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: v2.x
+          deno-version: v2.9.7
 
       - name: deno test
-        run: deno test --allow-all supabase/functions/
+        run: deno test --allow-all --lock=deno.lock --frozen supabase/functions/

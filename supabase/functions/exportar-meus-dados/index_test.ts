@@ -6,7 +6,7 @@
 //
 //   deno test --allow-all supabase/functions/exportar-meus-dados/
 
-import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertStringIncludes } from "jsr:@std/assert@1.0.19";
 import { criarSqlClient, handler, SqlClient } from "./index.ts";
 
 const URL_BASE = "http://127.0.0.1:54321";

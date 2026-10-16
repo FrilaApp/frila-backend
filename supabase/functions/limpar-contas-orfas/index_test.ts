@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "jsr:@std/assert@1";
+import { assertEquals, assertRejects } from "jsr:@std/assert@1.0.19";
 import { handler, HandlerDeps } from "./index.ts";
 
 const MOCK_URL = "http://127.0.0.1:54321";

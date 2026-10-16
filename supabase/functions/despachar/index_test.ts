@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1";
+import { assertEquals, assertRejects, assertThrows } from "jsr:@std/assert@1.0.19";
 import { handler, obterDbUrl, SqlClient } from "./index.ts";
 
 const SEGREDO_TESTE = "teste-segredo-agendador-despachar";
