@@ -1,7 +1,7 @@
 -- Disparo assíncrono do processamento da fila de e-mails (RN15, RNF03).
 --
 -- Cobertura do gatilho `trg_email_enfileirado` e da função `privado.trg_disparar_email()`
--- (migração 20260927000000_emails_transacionais.sql).
+-- (migração 20260929174512_emails_transacionais.sql).
 --
 -- Sempre que uma mensagem entra na fila `pgmq.q_email` (ex.: notificação transacional de ocorrência),
 -- o gatilho AFTER INSERT dispara imediatamente a chamada HTTP assíncrona pós-commit via

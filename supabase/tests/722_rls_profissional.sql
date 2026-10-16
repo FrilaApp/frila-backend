@@ -113,7 +113,7 @@ select ok(
 select throws_ok(
   $$ select pg_temp.como('anon', 'select count(*) from public.profissional') $$,
   '42501',
-  null,
+  'permission denied for table profissional',
   'papel anon recebe 42501 em SELECT direto em public.profissional'
 );
 
@@ -128,21 +128,21 @@ select is(
 select throws_ok(
   $$ select pg_temp.como('authenticated', 'insert into public.profissional (usuario_id, ponto_base) values (gen_random_uuid(), ''POINT(-47.88 -15.79)''::extensions.geography)') $$,
   '42501',
-  null,
+  'permission denied for table profissional',
   'prova do REVOKE: authenticated recebe 42501 em INSERT direto em public.profissional'
 );
 
 select throws_ok(
   $$ select pg_temp.como('authenticated', 'update public.profissional set turnos_realizados = 10') $$,
   '42501',
-  null,
+  'permission denied for table profissional',
   'prova do REVOKE: authenticated recebe 42501 em UPDATE direto em public.profissional'
 );
 
 select throws_ok(
   $$ select pg_temp.como('authenticated', 'delete from public.profissional') $$,
   '42501',
-  null,
+  'permission denied for table profissional',
   'prova do REVOKE: authenticated recebe 42501 em DELETE direto em public.profissional'
 );
 

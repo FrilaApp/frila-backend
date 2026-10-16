@@ -121,7 +121,7 @@ select ok(
 select throws_ok(
   $$ select pg_temp.como('anon', 'select count(*) from public.membro_estabelecimento') $$,
   '42501',
-  null,
+  'permission denied for table membro_estabelecimento',
   'papel anon recebe 42501 em SELECT direto em public.membro_estabelecimento'
 );
 
@@ -136,21 +136,21 @@ select is(
 select throws_ok(
   $$ select pg_temp.como('authenticated', 'insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel) values (gen_random_uuid(), gen_random_uuid(), ''operador'')') $$,
   '42501',
-  null,
+  'permission denied for table membro_estabelecimento',
   'prova do REVOKE: authenticated recebe 42501 em INSERT direto em public.membro_estabelecimento'
 );
 
 select throws_ok(
   $$ select pg_temp.como('authenticated', 'update public.membro_estabelecimento set papel = ''administrador''') $$,
   '42501',
-  null,
+  'permission denied for table membro_estabelecimento',
   'prova do REVOKE: authenticated recebe 42501 em UPDATE direto em public.membro_estabelecimento'
 );
 
 select throws_ok(
   $$ select pg_temp.como('authenticated', 'delete from public.membro_estabelecimento') $$,
   '42501',
-  null,
+  'permission denied for table membro_estabelecimento',
   'prova do REVOKE: authenticated recebe 42501 em DELETE direto em public.membro_estabelecimento'
 );
 
