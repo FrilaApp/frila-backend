@@ -2483,6 +2483,113 @@ Deno.test("enviar-push: falha ao autenticar no Google OAuth loga mensagem tipada
   }
 });
 
+// ── Lacuna 8: Resiliência a chave privada corrompida (PEM inválido) ───────────
+
+Deno.test("enviar-push: private_key com PEM corrompido (caracteres invalidos) resulta em 500 estruturado falha_oauth_google", async () => {
+  const saInvalida = {
+    project_id: "frila-test",
+    client_email: "test@frila-test.iam.gserviceaccount.com",
+    private_key: "-----BEGIN PRIVATE KEY-----\nCARACTERES_INVALIDOS_NAO_BASE64!@#$%\n-----END PRIVATE KEY-----",
+  };
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
+    const url = input.toString();
+    if (url.includes("/rest/v1/notificacao")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "b1000000-0000-4000-8000-000000000001",
+              usuario_id: "u1000000-0000-4000-8000-000000000001",
+              tipo: "confirmacao_vaga",
+              referencia_id: "r1000000-0000-4000-8000-000000000001",
+              payload: {},
+              tentativas: 0,
+              estado_entrega: "pendente",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response("Not Found", { status: 404 }));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ notificacao_id: "b1000000-0000-4000-8000-000000000001" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    serviceAccount: saInvalida,
+    fetchFn: mockFetch,
+    sqlClient: criarMockSqlClient(),
+    agendadorSecret: SEGREDO_TESTE,
+  });
+
+  assertEquals(res.status, 500);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.erro, "falha_oauth_google");
+});
+
+Deno.test("enviar-push: private_key com PEM contendo bytes invalidos de chave PKCS8 resulta em 500 falha_oauth_google", async () => {
+  const saPkcs8Invalido = {
+    project_id: "frila-test",
+    client_email: "test@frila-test.iam.gserviceaccount.com",
+    private_key: "-----BEGIN PRIVATE KEY-----\nSGVsbG8gV29ybGQh\n-----END PRIVATE KEY-----",
+  };
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
+    const url = input.toString();
+    if (url.includes("/rest/v1/notificacao")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "b1000000-0000-4000-8000-000000000001",
+              usuario_id: "u1000000-0000-4000-8000-000000000001",
+              tipo: "confirmacao_vaga",
+              referencia_id: "r1000000-0000-4000-8000-000000000001",
+              payload: {},
+              tentativas: 0,
+              estado_entrega: "pendente",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.resolve(new Response("Not Found", { status: 404 }));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: JSON.stringify({ notificacao_id: "b1000000-0000-4000-8000-000000000001" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    serviceAccount: saPkcs8Invalido,
+    fetchFn: mockFetch,
+    sqlClient: criarMockSqlClient(),
+    agendadorSecret: SEGREDO_TESTE,
+  });
+
+  assertEquals(res.status, 500);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.erro, "falha_oauth_google");
+});
+
+
 
 
 
