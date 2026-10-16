@@ -45,7 +45,7 @@ select ok(
   (select proconfig from pg_proc p
      join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'privado' and p.proname = 'disparar_email')
-  @> array['search_path='],
+  @> array['search_path=""'],
   'privado.disparar_email() opera com search_path vazio'
 );
 
