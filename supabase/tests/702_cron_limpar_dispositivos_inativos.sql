@@ -131,10 +131,10 @@ select is(
 select set_config('frila.agora', '2026-10-20 12:00:00+00', true);
 
 -- Cria duas contas reais de usuário para vincular os dispositivos
-insert into public.usuario (id, perfil, nome, telefone, email, nascimento, estado)
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, estado, termos_versao, termos_aceite_em)
 values
-  ('70200000-0000-4000-8000-000000000001', 'profissional', 'Conta Push A', '+5561970200001', 'push_a@teste.frila', '1990-01-01', 'ativa'),
-  ('70200000-0000-4000-8000-000000000002', 'profissional', 'Conta Push B', '+5561970200002', 'push_b@teste.frila', '1992-06-15', 'ativa')
+  ('70200000-0000-4000-8000-000000000001', 'profissional', 'Conta Push A', '+5561970200001', 'push_a@teste.frila', '1990-01-01', 'ativa', '2026-09-22', '2026-09-22 12:00:00+00'),
+  ('70200000-0000-4000-8000-000000000002', 'profissional', 'Conta Push B', '+5561970200002', 'push_b@teste.frila', '1992-06-15', 'ativa', '2026-09-22', '2026-09-22 12:00:00+00')
 on conflict (id) do nothing;
 
 -- Inserção de 7 dispositivos nos pontos estratégicos de borda:
