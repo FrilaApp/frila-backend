@@ -177,8 +177,9 @@ export function sanitizarTextoWinAnsi(
   font: { encodeText: (t: string) => unknown },
 ): string {
   if (!texto) return "";
+  const textoNormalizado = texto.normalize("NFC");
   let out = "";
-  for (const char of texto) {
+  for (const char of textoNormalizado) {
     try {
       font.encodeText(char);
       out += char;

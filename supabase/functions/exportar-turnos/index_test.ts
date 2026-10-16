@@ -626,6 +626,12 @@ Deno.test("exportar-turnos: sanitizarTextoWinAnsi substitui apenas caracteres fo
   assertEquals(output, "?ukasz & Nguy?n: 100% Café com Açúcar, “Aspas”, traço – e € 50! ?");
   // Prova que a string sanitizada é 100% codificável pelo StandardFonts.Helvetica sem lançar exceção
   assertEquals(typeof font.encodeText(output), "object");
+
+  // Acentos decompostos (NFD, comuns no macOS) são normalizados via NFC e preservados sem corromper para '?'
+  const nfdInput = "e\u0301vora com ac\u0327a\u0303o";
+  const nfdOutput = sanitizarTextoWinAnsi(nfdInput, font);
+  assertEquals(nfdOutput, "évora com ação");
+  assertEquals(typeof font.encodeText(nfdOutput), "object");
 });
 
 Deno.test("exportar-turnos: gerarPdf sanitiza funcao com emoji (ex: 🍕) ou Łukasz gerando PDF valido", async () => {
@@ -738,24 +744,39 @@ Deno.test("exportar-turnos: handler captura falha de geracao do PDF e devolve en
     formato: "pdf",
   });
 
-  const res = await handler(req, {
-    fetchFn: e.fetchFn,
-    sqlClient: e.sql,
-    supabaseUrl: URL_BASE,
-    anonKey: ANON,
-    gerarPdfFn: () => Promise.reject(new Error("falha fatal simulada no motor de pdf")),
-  });
+  const logsError: unknown[][] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logsError.push(args);
+  };
 
-  assertEquals(res.status, 500);
-  assertEquals(res.headers.get("Content-Type"), "application/json");
-  assertEquals(res.headers.get("Cache-Control"), "no-store");
-  const corpo = await res.json();
-  assertEquals(corpo, {
-    code: "erro_interno",
-    message: "erro_interno",
-    details: null,
-    hint: null,
-  });
+  try {
+    const res = await handler(req, {
+      fetchFn: e.fetchFn,
+      sqlClient: e.sql,
+      supabaseUrl: URL_BASE,
+      anonKey: ANON,
+      gerarPdfFn: () => Promise.reject(new Error("falha fatal simulada no motor de pdf: WinAnsi cannot encode \"Ł\"")),
+    });
+
+    assertEquals(res.status, 500);
+    assertEquals(res.headers.get("Content-Type"), "application/json");
+    assertEquals(res.headers.get("Cache-Control"), "no-store");
+    const corpo = await res.json();
+    assertEquals(corpo, {
+      code: "erro_interno",
+      message: "erro_interno",
+      details: null,
+      hint: null,
+    });
+
+    // Espião de logs: apenas a constante sanitizada é logada,
+    // sem segundo argumento e sem vazar a mensagem de erro bruta ou detalhes internos (RN15)
+    assertEquals(logsError.length, 1);
+    assertEquals(logsError[0], ["exportar-turnos: erro interno ao gerar pdf"]);
+  } finally {
+    console.error = originalConsoleError;
+  }
 });
 
 Deno.test("exportar-turnos: gerarCsv e handler CSV suportam e preservam emojis e unicode UTF-8 perfeitamente", async () => {
