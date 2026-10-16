@@ -116,18 +116,18 @@ values ('70900000-0000-4000-8000-000000000010', '70900000-0000-4000-8000-0000000
 insert into public.vaga (
   id, estabelecimento_id, funcao_id, ponto, local, valor_centavos, posicoes,
   inclui_refeicao, inclui_transporte, exige_material_proprio, responsavel_local,
-  inicio_em, fim_em, modo, estado, regiao_administrativa, chave_cliente, publicado_por
+  inicio_em, fim_em, modo, estado, regiao_administrativa, chave_cliente, publicado_por, publicado_em
 ) values
   ('70900000-0000-4000-8000-000000000031', '70900000-0000-4000-8000-000000000010',
    (select id from public.funcao limit 1), 'POINT(-47.8825 -15.7942)'::extensions.geography,
    'Restaurante 709', 15000, 4, true, false, false, 'Gerente 709',
-   '2026-10-25 18:00:00+00', '2026-10-25 23:00:00+00', 'direto', 'publicada', 'Plano Piloto',
-   '70900000-0000-4000-8000-000000000031', '70900000-0000-4000-8000-000000000001'),
+   '2026-10-25 18:00:00+00', '2026-10-25 23:00:00+00', 'urgencia', 'publicada', 'Plano Piloto',
+   '70900000-0000-4000-8000-000000000031', '70900000-0000-4000-8000-000000000001', '2026-10-19 12:00:00+00'),
   ('70900000-0000-4000-8000-000000000032', '70900000-0000-4000-8000-000000000010',
    (select id from public.funcao limit 1), 'POINT(-47.8825 -15.7942)'::extensions.geography,
    'Restaurante 709', 15000, 2, true, false, false, 'Gerente 709',
-   '2026-10-26 18:00:00+00', '2026-10-26 23:00:00+00', 'direto', 'publicada', 'Plano Piloto',
-   '70900000-0000-4000-8000-000000000032', '70900000-0000-4000-8000-000000000001');
+   '2026-10-26 18:00:00+00', '2026-10-26 23:00:00+00', 'urgencia', 'publicada', 'Plano Piloto',
+   '70900000-0000-4000-8000-000000000032', '70900000-0000-4000-8000-000000000001', '2026-10-19 12:00:00+00');
 
 select is(
   (select rodada_despacho from public.vaga where id = '70900000-0000-4000-8000-000000000031'),
