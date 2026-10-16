@@ -8,7 +8,7 @@
 // 4. Instante real de envio ao FCM gravado em enviada_em e aceita_em medidos no RNF02.
 
 import "./test_setup.ts";
-import { assertEquals, assert, assertMatch, assertRejects } from "jsr:@std/assert@1";
+import { assertEquals, assert, assertMatch, assertRejects } from "jsr:@std/assert@1.0.19";
 import {
   processarEnvioPush,
   carregarContaDeServico,

@@ -2,7 +2,7 @@
 //
 //   deno test --allow-all supabase/functions/saude/
 
-import { assertEquals, assertThrows } from "jsr:@std/assert@1";
+import { assertEquals, assertThrows } from "jsr:@std/assert@1.0.19";
 import { getDbUrl, processarSaude, SqlProbe } from "./index.ts";
 
 function probeMock(opcoes: {

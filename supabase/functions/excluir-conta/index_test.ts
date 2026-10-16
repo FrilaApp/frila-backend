@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "jsr:@std/assert@1";
+import { assertEquals, assertRejects } from "jsr:@std/assert@1.0.19";
 import { handler, HandlerDeps, tratarErroBanco } from "./index.ts";
 
 const MOCK_USER_ID = "a1111111-1111-4000-8000-000000000001";
