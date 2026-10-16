@@ -152,12 +152,12 @@ select pg_temp.como('70000000-0000-4000-8000-000000000004',
 
 create temp table fn700 as select (select id from public.funcao where nome = 'garçom') as id;
 
-create function pg_temp.perfil700(conta uuid) returns void language plpgsql as $$
+create function pg_temp.perfil700(conta uuid) returns void language plpgsql as $corpo$
 begin
   perform pg_temp.como(conta, format(
-    $$ select public.criar_perfil_profissional(array[%L]::uuid[],
-         '{"latitude":-15.7900,"longitude":-47.8850}'::jsonb) $$, (select id from fn700)));
-end $$;
+    $sql$ select public.criar_perfil_profissional(array[%L]::uuid[],
+         '{"latitude":-15.7900,"longitude":-47.8850}'::jsonb) $sql$, (select id from fn700)));
+end $corpo$;
 
 select pg_temp.perfil700('70000000-0000-4000-8000-000000000002');
 select pg_temp.perfil700('70000000-0000-4000-8000-000000000003');
@@ -169,14 +169,14 @@ create temp table estab700 as
          'SCLN 100','{"latitude":-15.7910,"longitude":-47.8860}') $$)->>'id')::uuid as id;
 
 create function pg_temp.publicar700(chave uuid, inicio_t timestamptz, fim_t timestamptz) returns uuid
-language plpgsql as $$
+language plpgsql as $corpo$
 begin
   return (pg_temp.como('70000000-0000-4000-8000-000000000001', format(
-    $$ select public.publicar_vaga(%L, %L, %L, %L, 'CLN 100',
+    $sql$ select public.publicar_vaga(%L, %L, %L, %L, 'CLN 100',
          '{"latitude":-15.7910,"longitude":-47.8860}'::jsonb,
-         20000, 1, true, true, false, 'Gerente 700', 'urgencia', %L) $$,
+         20000, 1, true, true, false, 'Gerente 700', 'urgencia', %L) $sql$,
     (select id from estab700), (select id from fn700), inicio_t, fim_t, chave))->>'vaga_id')::uuid;
-end $$;
+end $corpo$;
 
 -- 3 Vagas: 
 -- V1 (alvo principal do teste): inicio 12:00, fim 18:00
