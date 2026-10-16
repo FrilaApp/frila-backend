@@ -431,3 +431,128 @@ Deno.test("lida com exceção de rede no fetch do admin registrando erro status 
   assertEquals(corpo.erros_remocao[0].status, 500);
 });
 
+// ── Lacuna 4: Caracterização de Paginação e Volume da Admin API ───────────────
+
+Deno.test("limpar-contas-orfas: processa volume acima de 50 contas (tamanho de pagina padrao da Admin API) sem truncamento", async () => {
+  // Caracterização da arquitetura:
+  // A Edge Function NÃO consome GET /auth/v1/admin/users (que sofreria truncamento
+  // na paginação padrão de 50 usuários do Supabase Auth). Em vez disso, a fonte da verdade
+  // é a consulta privada no PostgreSQL (privado.contas_auth_orfas), que retorna a totalidade
+  // das contas elegíveis, sendo todas purgadas individualmente via DELETE na Admin API.
+  const TOTAL_CONTAS = 65;
+  const contasOrfasMuitas: string[] = [];
+  for (let i = 1; i <= TOTAL_CONTAS; i++) {
+    const hex = i.toString().padStart(12, "0");
+    contasOrfasMuitas.push(`c3200000-0000-4000-8000-${hex}`);
+  }
+
+  const removidosIds: string[] = [];
+  const deps = mockDeps({
+    contasOrfas: contasOrfasMuitas,
+    onDeleteUser: (id) => removidosIds.push(id),
+  });
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        "x-agendador-secret": MOCK_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 200);
+  const corpo = await resposta.json();
+  assertEquals(corpo.ok, true);
+  assertEquals(corpo.contas_orfas_encontradas, TOTAL_CONTAS);
+  assertEquals(corpo.contas_orfas_removidas, TOTAL_CONTAS);
+  assertEquals(removidosIds.length, TOTAL_CONTAS);
+  assertEquals(corpo.erros_remocao.length, 0);
+});
+
+Deno.test("limpar-contas-orfas: lida com erro 429 Too Many Requests da Admin API registrando em erros_remocao sem abortar lote", async () => {
+  const ID_RATE_LIMITED = "c3200000-0000-4000-8000-000000000099";
+  const contas = [ORFAO_1, ID_RATE_LIMITED, ORFAO_2];
+  const removidosIds: string[] = [];
+
+  const deps = mockDeps({
+    contasOrfas: contas,
+    onDeleteUser: (id) => removidosIds.push(id),
+  });
+
+  // Sobrescreve fetchFn para simular 429 Rate Limit no usuário alvo
+  const originalFetch = deps.fetchFn;
+  deps.fetchFn = (input, init) => {
+    const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (urlStr.includes(ID_RATE_LIMITED)) {
+      return Promise.resolve(new Response(JSON.stringify({ message: "Too many requests" }), { status: 429 }));
+    }
+    return originalFetch!(input, init);
+  };
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        "x-agendador-secret": MOCK_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 200);
+  const corpo = await resposta.json();
+  assertEquals(corpo.ok, true);
+  assertEquals(corpo.contas_orfas_encontradas, 3);
+  assertEquals(corpo.contas_orfas_removidas, 2);
+  assertEquals(removidosIds, [ORFAO_1, ORFAO_2]);
+  assertEquals(corpo.erros_remocao.length, 1);
+  assertEquals(corpo.erros_remocao[0], { id: ID_RATE_LIMITED, status: 429 });
+});
+
+Deno.test("limpar-contas-orfas: contabilidade precisa em lote heterogeneo com falhas de rede e HTTP variadas", async () => {
+  const ID_404 = "c3200000-0000-4000-8000-000000000404";
+  const ID_TIMEOUT = "c3200000-0000-4000-8000-000000000504";
+  const contas = [ORFAO_1, ID_404, ORFAO_2, ID_TIMEOUT];
+
+  const deps = mockDeps({ contasOrfas: contas });
+  const originalFetch = deps.fetchFn;
+  deps.fetchFn = (input, init) => {
+    const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (urlStr.includes(ID_404)) {
+      return Promise.resolve(new Response(JSON.stringify({ error: "User not found" }), { status: 404 }));
+    }
+    if (urlStr.includes(ID_TIMEOUT)) {
+      return Promise.reject(new TypeError("connection timeout"));
+    }
+    return originalFetch!(input, init);
+  };
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        "x-agendador-secret": MOCK_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 200);
+  const corpo = await resposta.json();
+  assertEquals(corpo.ok, true);
+  assertEquals(corpo.contas_orfas_encontradas, 4);
+  assertEquals(corpo.contas_orfas_removidas, 2);
+  assertEquals(corpo.erros_remocao.length, 2);
+  assertEquals(corpo.erros_remocao[0], { id: ID_404, status: 404 });
+  assertEquals(corpo.erros_remocao[1], { id: ID_TIMEOUT, status: 500 });
+});
+
+
