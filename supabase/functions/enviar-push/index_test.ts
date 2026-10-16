@@ -2492,49 +2492,68 @@ Deno.test("enviar-push: private_key com PEM corrompido (caracteres invalidos) re
     private_key: "-----BEGIN PRIVATE KEY-----\nCARACTERES_INVALIDOS_NAO_BASE64!@#$%\n-----END PRIVATE KEY-----",
   };
 
-  const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
-    const url = input.toString();
-    if (url.includes("/rest/v1/notificacao")) {
-      return Promise.resolve(
-        new Response(
-          JSON.stringify([
-            {
-              id: "b1000000-0000-4000-8000-000000000001",
-              usuario_id: "u1000000-0000-4000-8000-000000000001",
-              tipo: "confirmacao_vaga",
-              referencia_id: "r1000000-0000-4000-8000-000000000001",
-              payload: {},
-              tentativas: 0,
-              estado_entrega: "pendente",
-            },
-          ]),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-      );
-    }
-    return Promise.resolve(new Response("Not Found", { status: 404 }));
+  const logs: unknown[] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logs.push(args);
   };
 
-  const req = new Request("http://localhost/functions/v1/enviar-push", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-agendador-secret": SEGREDO_TESTE,
-    },
-    body: JSON.stringify({ notificacao_id: "b1000000-0000-4000-8000-000000000001" }),
-  });
+  try {
+    const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/rest/v1/notificacao")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                id: "b1000000-0000-4000-8000-000000000001",
+                usuario_id: "u1000000-0000-4000-8000-000000000001",
+                tipo: "confirmacao_vaga",
+                referencia_id: "r1000000-0000-4000-8000-000000000001",
+                payload: {},
+                tentativas: 0,
+                estado_entrega: "pendente",
+              },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(new Response("Not Found", { status: 404 }));
+    };
 
-  const res = await processarEnvioPush(req, {
-    serviceAccount: saInvalida,
-    fetchFn: mockFetch,
-    sqlClient: criarMockSqlClient(),
-    agendadorSecret: SEGREDO_TESTE,
-  });
+    const req = new Request("http://localhost/functions/v1/enviar-push", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-agendador-secret": SEGREDO_TESTE,
+      },
+      body: JSON.stringify({ notificacao_id: "b1000000-0000-4000-8000-000000000001" }),
+    });
 
-  assertEquals(res.status, 500);
-  const json = await res.json();
-  assertEquals(json.ok, false);
-  assertEquals(json.erro, "falha_oauth_google");
+    const res = await processarEnvioPush(req, {
+      serviceAccount: saInvalida,
+      fetchFn: mockFetch,
+      sqlClient: criarMockSqlClient(),
+      agendadorSecret: SEGREDO_TESTE,
+    });
+
+    assertEquals(res.status, 500);
+    const json = await res.json();
+    assertEquals(json.ok, false);
+    assertEquals(json.erro, "falha_oauth_google");
+
+    // RN15: Prova que console.error loga estritamente mensagem tipada e não vaza a chave privada
+    assertEquals(logs.length, 1);
+    const [prefixo, errArg] = logs[0] as [string, unknown];
+    assertEquals(prefixo, "Erro ao autenticar no Google OAuth:");
+    assertEquals(typeof errArg, "string");
+    assert((errArg as string).includes("Failed to decode base64") || (errArg as string).includes("InvalidCharacterError"));
+    assert(!JSON.stringify(logs).includes(saInvalida.private_key));
+    assert(!JSON.stringify(logs).includes("CARACTERES_INVALIDOS_NAO_BASE64"));
+  } finally {
+    console.error = originalConsoleError;
+  }
 });
 
 Deno.test("enviar-push: private_key com PEM contendo bytes invalidos de chave PKCS8 resulta em 500 falha_oauth_google", async () => {
@@ -2544,49 +2563,67 @@ Deno.test("enviar-push: private_key com PEM contendo bytes invalidos de chave PK
     private_key: "-----BEGIN PRIVATE KEY-----\nSGVsbG8gV29ybGQh\n-----END PRIVATE KEY-----",
   };
 
-  const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
-    const url = input.toString();
-    if (url.includes("/rest/v1/notificacao")) {
-      return Promise.resolve(
-        new Response(
-          JSON.stringify([
-            {
-              id: "b1000000-0000-4000-8000-000000000001",
-              usuario_id: "u1000000-0000-4000-8000-000000000001",
-              tipo: "confirmacao_vaga",
-              referencia_id: "r1000000-0000-4000-8000-000000000001",
-              payload: {},
-              tentativas: 0,
-              estado_entrega: "pendente",
-            },
-          ]),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-      );
-    }
-    return Promise.resolve(new Response("Not Found", { status: 404 }));
+  const logs: unknown[] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    logs.push(args);
   };
 
-  const req = new Request("http://localhost/functions/v1/enviar-push", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-agendador-secret": SEGREDO_TESTE,
-    },
-    body: JSON.stringify({ notificacao_id: "b1000000-0000-4000-8000-000000000001" }),
-  });
+  try {
+    const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/rest/v1/notificacao")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                id: "b1000000-0000-4000-8000-000000000001",
+                usuario_id: "u1000000-0000-4000-8000-000000000001",
+                tipo: "confirmacao_vaga",
+                referencia_id: "r1000000-0000-4000-8000-000000000001",
+                payload: {},
+                tentativas: 0,
+                estado_entrega: "pendente",
+              },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+      return Promise.resolve(new Response("Not Found", { status: 404 }));
+    };
 
-  const res = await processarEnvioPush(req, {
-    serviceAccount: saPkcs8Invalido,
-    fetchFn: mockFetch,
-    sqlClient: criarMockSqlClient(),
-    agendadorSecret: SEGREDO_TESTE,
-  });
+    const req = new Request("http://localhost/functions/v1/enviar-push", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-agendador-secret": SEGREDO_TESTE,
+      },
+      body: JSON.stringify({ notificacao_id: "b1000000-0000-4000-8000-000000000001" }),
+    });
 
-  assertEquals(res.status, 500);
-  const json = await res.json();
-  assertEquals(json.ok, false);
-  assertEquals(json.erro, "falha_oauth_google");
+    const res = await processarEnvioPush(req, {
+      serviceAccount: saPkcs8Invalido,
+      fetchFn: mockFetch,
+      sqlClient: criarMockSqlClient(),
+      agendadorSecret: SEGREDO_TESTE,
+    });
+
+    assertEquals(res.status, 500);
+    const json = await res.json();
+    assertEquals(json.ok, false);
+    assertEquals(json.erro, "falha_oauth_google");
+
+    // RN15: Prova que console.error loga estritamente mensagem tipada e não vaza a chave privada
+    assertEquals(logs.length, 1);
+    const [prefixo, errArg] = logs[0] as [string, unknown];
+    assertEquals(prefixo, "Erro ao autenticar no Google OAuth:");
+    assertEquals(typeof errArg, "string");
+    assert(!JSON.stringify(logs).includes(saPkcs8Invalido.private_key));
+    assert(!JSON.stringify(logs).includes("SGVsbG8gV29ybGQh"));
+  } finally {
+    console.error = originalConsoleError;
+  }
 });
 
 
