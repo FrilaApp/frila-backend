@@ -140,10 +140,11 @@ Execution Time: 969.952 ms
 > [!IMPORTANT]
 > Nenhuma das alterações abaixo é aplicada neste PR (estritamente documental). Cada intervenção deverá ser implementada em branch própria com migração versionada, teste com `EXPLAIN` antes/depois sob carga e cobertura pgTAP.
 
-### Recomendação 1: Otimizar o Join de `usuario` em `privado.elegiveis`
-- **Ação:** Reordenar as junções da CTE de candidatos para aplicar o filtro de raio espacial GiST (`ST_DWithin(ponto_base, ...) <= 15000`) **antes** de efetuar o join com `usuario`.
-- **Hipótese de Ganho (Projeção Teórica não Medida Experimentalmente):**
-  - Espera-se que, ao filtrar geograficamente primeiro, a massa de candidatos seja reduzida de ~62.500 para poucas dezenas de profissionais locais. Com isso, o planejador passará a empregar `Index Scan` na chave primária `usuario_pkey`, eliminando a necessidade do hash table de 1,3 milhão de contas e do `Seq Scan`. A hipótese deve ser validada e medida empiricamente em PR dedicado.
+### Recomendação 1: Otimizar o Join de `usuario` em `privado.elegiveis` (refutada, ver #197)
+- **Ação (Não aplicável):** Reordenar as junções da CTE de candidatos para aplicar o filtro de raio espacial GiST (`ST_DWithin(ponto_base, ...) <= 15000`) **antes** de efetuar o join com `usuario`.
+- **Status:** Refutada, ver #197: a subquery sofre pull-up e o plano é idêntico; mover usuario para fora da CTE causa Seq Scan em disponibilidade/usuario a 2x.
+- **Hipótese original (refutada; só registro):**
+  - Esperava-se que, ao filtrar geograficamente primeiro, a massa de candidatos fosse reduzida de ~62.500 para poucas dezenas de profissionais locais e o planejador passasse a empregar `Index Scan` na chave primária `usuario_pkey`, eliminando a necessidade do hash table de 1,3 milhão de contas e do `Seq Scan`. Medido em #197: plano idêntico a 2x e Seq Scan mantido a 10x; sem ganho.
 
 ### Recomendação 2: Índice Composto ou Particionado para `vagas_abertas`
 - **Ação:** Avaliar o uso da extensão `btree_gist` para compor data de início e ponto geográfico no mesmo índice GiST:
