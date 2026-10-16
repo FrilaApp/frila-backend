@@ -662,3 +662,201 @@ Deno.test("enviar-email: clamp de limite e vt protege contra valores abusivos ou
   assertEquals(vtCapturado, 1);
 });
 
+// ── Lacuna 5: Caracterização de Timeout SMTP (Handshake, Socket, Retentativa e Teto) ──
+
+Deno.test("Lacuna 5: classificarErro classifica exaustivamente timeouts de conexao e handshake SMTP como transitorios", () => {
+  const casosTimeout = [
+    "ETIMEDOUT",
+    "connect ETIMEDOUT 198.51.100.1:587",
+    "Connection timed out",
+    "connection timed out during TLS handshake",
+    "SMTP timeout waiting for 220 banner",
+    "The operation was aborted due to timeout",
+    "socket timeout while waiting for server response",
+    "connection reset",
+    "read ECONNRESET",
+    "connection closed by remote host",
+  ];
+
+  for (const msg of casosTimeout) {
+    const res = classificarErro(new Error(msg));
+    assertEquals(res.codigo, "falha_de_conexao", `Erro '${msg}' deveria ser classificado como falha_de_conexao`);
+    assertEquals(res.transitorio, true, `Erro '${msg}' deveria ser marcado como transitório`);
+  }
+
+  // Erro 421 contendo 'Timeout' tem prioridade da regex de timeout ('falha_de_conexao')
+  const erro421Timeout = classificarErro(new Error("421 4.4.2 Timeout waiting for data from client"));
+  assertEquals(erro421Timeout.codigo, "falha_de_conexao");
+  assertEquals(erro421Timeout.transitorio, true);
+
+  // Erro 421 puro sem a palavra timeout classifica como smtp_421 (transitório)
+  const erro421Puro = classificarErro(new Error("421 Service not available, closing transmission channel"));
+  assertEquals(erro421Puro.codigo, "smtp_421");
+  assertEquals(erro421Puro.transitorio, true);
+});
+
+Deno.test("Lacuna 5: timeout SMTP no envio de ocorrencia em primeira leitura mantem pedido pendente na fila", async () => {
+  const e = espiao([pedido({ msg_id: 501, read_ct: 1 })]);
+  const timeoutEnvio = () => Promise.resolve<ResultadoEnvio>({
+    ok: false,
+    codigo: "falha_de_conexao",
+    transitorio: true,
+  });
+
+  const res = await chamar(e, timeoutEnvio);
+  assertEquals(res.status, 200);
+
+  const corpo = await res.json();
+  assertEquals(corpo.ok, true);
+  assertEquals(corpo.processados, 1);
+  assertEquals(corpo.relatorio, [
+    { msg_id: 501, status: "pendente", detalhe: "falha_de_conexao" },
+  ]);
+
+  // Registrou a falha na ocorrência para auditoria
+  assertEquals(e.falhas, [{ ocorrencia: OCORRENCIA, codigo: "falha_de_conexao" }]);
+  // NÃO concluiu no pgmq (mensagem permanece na fila para expirar o visibility timeout e retentar)
+  assertEquals(e.arquivados, []);
+  // Nada foi gravado como enviado
+  assertEquals(e.registrados, []);
+});
+
+Deno.test("Lacuna 5: timeout SMTP repetido que atinge teto de leituras arquiva pedido no pgmq para nao travar fila", async () => {
+  // read_ct = 5 (atingiu TETO_DE_LEITURAS)
+  const e = espiao([pedido({ msg_id: 502, read_ct: 5 })]);
+  const timeoutEnvio = () => Promise.resolve<ResultadoEnvio>({
+    ok: false,
+    codigo: "falha_de_conexao",
+    transitorio: true,
+  });
+
+  const res = await chamar(e, timeoutEnvio);
+  assertEquals(res.status, 200);
+
+  const corpo = await res.json();
+  assertEquals(corpo.ok, true);
+  assertEquals(corpo.processados, 1);
+  assertEquals(corpo.relatorio, [
+    { msg_id: 502, status: "arquivado", detalhe: "teto_de_leituras_excedido" },
+  ]);
+
+  // Registrou a falha
+  assertEquals(e.falhas, [{ ocorrencia: OCORRENCIA, codigo: "falha_de_conexao" }]);
+  // Concluiu/arquivou no pgmq para evitar loop infinito
+  assertEquals(e.arquivados, [502]);
+});
+
+Deno.test("Lacuna 5: timeout SMTP em alerta operacional mantem pendente sob read_ct baixo e arquiva no teto", async () => {
+  const pedidoAlertaPendente = pedido({
+    msg_id: 503,
+    read_ct: 2,
+    mensagem: { tipo: "alerta", codigo: "queda_banco", valor: 3 },
+  });
+  const e1 = espiao([pedidoAlertaPendente]);
+  const timeoutEnvio = () => Promise.resolve<ResultadoEnvio>({
+    ok: false,
+    codigo: "falha_de_conexao",
+    transitorio: true,
+  });
+
+  const res1 = await chamar(e1, timeoutEnvio);
+  assertEquals(res1.status, 200);
+  const corpo1 = await res1.json();
+  assertEquals(corpo1.relatorio, [
+    { msg_id: 503, status: "pendente", detalhe: "falha_de_conexao" },
+  ]);
+  assertEquals(e1.arquivados, []);
+
+  // Agora no teto de leituras (read_ct = 5)
+  const pedidoAlertaTeto = pedido({
+    msg_id: 504,
+    read_ct: 5,
+    mensagem: { tipo: "alerta", codigo: "queda_banco", valor: 3 },
+  });
+  const e2 = espiao([pedidoAlertaTeto]);
+  const res2 = await chamar(e2, timeoutEnvio);
+  assertEquals(res2.status, 200);
+  const corpo2 = await res2.json();
+  assertEquals(corpo2.relatorio, [
+    { msg_id: 504, status: "arquivado", detalhe: "falha_de_conexao" },
+  ]);
+  assertEquals(e2.arquivados, [504]);
+});
+
+Deno.test("Lacuna 5: lote heterogeneo lida independentemente com sucesso, timeout SMTP e erro permanente 5xx", async () => {
+  const p1 = pedido({ msg_id: 510, read_ct: 1, mensagem: { tipo: "denuncia", ocorrencia_id: "c1000000-0000-4000-8000-000000000001" } });
+  const p2 = pedido({ msg_id: 511, read_ct: 1, mensagem: { tipo: "denuncia", ocorrencia_id: "c1000000-0000-4000-8000-000000000002" } });
+  const p3 = pedido({ msg_id: 512, read_ct: 1, mensagem: { tipo: "denuncia", ocorrencia_id: "c1000000-0000-4000-8000-000000000003" } });
+
+  const pedidos = [p1, p2, p3];
+  const e = espiao(pedidos);
+
+  // Sobrescreve dadosDoEmail para simular destinos apenas para a equipe em cada caso
+  e.sql.dadosDoEmail = (id) => Promise.resolve(dados({
+    ocorrencia_id: id,
+    equipe_pendente: true,
+    autor_pendente: false,
+  }));
+
+  const envioHeterogeneo = (email: Email): Promise<ResultadoEnvio> => {
+    if (email.texto.includes("c1000000-0000-4000-8000-000000000001")) {
+      return Promise.resolve({ ok: true });
+    }
+    if (email.texto.includes("c1000000-0000-4000-8000-000000000002")) {
+      return Promise.resolve({ ok: false, codigo: "falha_de_conexao", transitorio: true });
+    }
+    // p3 tem erro definitivo (ex: caixa de e-mail rejeitada 550)
+    return Promise.resolve({ ok: false, codigo: "smtp_550", transitorio: false });
+  };
+
+  const res = await chamar(e, envioHeterogeneo);
+  assertEquals(res.status, 200);
+
+  const corpo = await res.json();
+  assertEquals(corpo.ok, true);
+  assertEquals(corpo.processados, 3);
+  assertEquals(corpo.relatorio, [
+    { msg_id: 510, status: "enviado" },
+    { msg_id: 511, status: "pendente", detalhe: "falha_de_conexao" },
+    { msg_id: 512, status: "arquivado", detalhe: "smtp_550" },
+  ]);
+
+  // Mensagem 510 concluída por sucesso; mensagem 512 concluída por erro fatal 5xx; 511 preservada na fila
+  assertEquals(e.arquivados, [510, 512]);
+  assertEquals(e.registrados.map((r) => r.ocorrencia), ["c1000000-0000-4000-8000-000000000001"]);
+  assertEquals(e.falhas, [
+    { ocorrencia: "c1000000-0000-4000-8000-000000000002", codigo: "falha_de_conexao" },
+    { ocorrencia: "c1000000-0000-4000-8000-000000000003", codigo: "smtp_550" },
+  ]);
+});
+
+Deno.test("Lacuna 5: falha parcial por timeout SMTP entre equipe e autor registra entrega parcial e nao duplica", async () => {
+  const e = espiao([pedido({ msg_id: 520, read_ct: 1 })]);
+
+  // Equipe passa, mas autor sofre timeout
+  const envioMisto = (email: Email): Promise<ResultadoEnvio> => {
+    if (email.para === EQUIPE) {
+      return Promise.resolve({ ok: true });
+    }
+    return Promise.resolve({ ok: false, codigo: "falha_de_conexao", transitorio: true });
+  };
+
+  const res = await chamar(e, envioMisto);
+  assertEquals(res.status, 200);
+
+  const corpo = await res.json();
+  assertEquals(corpo.relatorio, [
+    { msg_id: 520, status: "pendente", detalhe: "falha_de_conexao" },
+  ]);
+
+  // Equipe foi gravada como entregue
+  assertEquals(e.registrados.length, 1);
+  assertEquals(e.registrados[0].destino, "equipe");
+
+  // Autor falhou e registrou falha
+  assertEquals(e.falhas, [{ ocorrencia: OCORRENCIA, codigo: "falha_de_conexao" }]);
+  // Pedido mantido pendente para a próxima rodada
+  assertEquals(e.arquivados, []);
+});
+
+
