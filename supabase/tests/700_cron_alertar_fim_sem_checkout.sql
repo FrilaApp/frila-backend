@@ -135,6 +135,10 @@ on conflict (id) do update set eh_teste = true;
 -- Fixa o relógio no setup antes de qualquer publicação ou candidatura
 select set_config('frila.agora', '2026-10-15 20:00:00+00', true);
 
+-- Isola o teste fechando temporariamente turnos pré-existentes de cenários de desenvolvimento
+update public.turno set checkout_em = coalesce(checkin_em, now())
+ where checkin_em is not null and checkout_em is null;
+
 -- Criação de contas
 select pg_temp.autenticar('70000000-0000-4000-8000-000000000001', 'contratante700@frila.test');
 select pg_temp.autenticar('70000000-0000-4000-8000-000000000002', 'profissional700@frila.test');
@@ -326,10 +330,10 @@ select is(
 
 -- ── 8. Cessação de Alertas Após Check-out Registrado ─────────────────────────────
 
--- Profissional registra check-out às 18:20
+-- Profissional registra check-out às 18:20 (com carimbo do término previsto 18:00)
 select set_config('frila.agora', '2026-10-16 18:20:00+00', true);
 select pg_temp.como('70000000-0000-4000-8000-000000000002',
-  format($$ select public.fazer_checkout(%L, 30, '2026-10-16 18:20:00+00') $$, (select turno_principal from turnos700)));
+  format($$ select public.fazer_checkout(%L, 30, '2026-10-16 18:00:00+00') $$, (select turno_principal from turnos700)));
 
 select isnt(
   (select checkout_em from public.turno where id = (select turno_principal from turnos700)),
