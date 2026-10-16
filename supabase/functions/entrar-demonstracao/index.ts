@@ -31,16 +31,25 @@
 
 // O teto de tentativas contra o código fixo. Um código de seis dígitos que nunca expira
 // precisa disto: sem o teto, o espaço inteiro sai em poucas horas.
-const JANELA_MINUTOS = 10;
-const TETO_TENTATIVAS = 10;
+export const JANELA_MINUTOS = 10;
+export const TETO_TENTATIVAS = 10;
 
-const ORIGEM = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
+export interface Erro {
+  code: string;
+  message: string;
+  details: string | null;
+}
 
-type Erro = { code: string; message: string; details: string | null };
+export interface HandlerDeps {
+  fetchFn?: typeof fetch;
+  supabaseUrl?: string;
+  serviceRoleKey?: string;
+  anonKey?: string;
+  emailsDeclarados?: string[];
+  codigoEsperado?: string;
+}
 
-function recusa(status: number, code: string, details: string | null = null): Response {
+export function recusa(status: number, code: string, details: string | null = null): Response {
   const corpo: Erro = { code, message: code, details };
   return new Response(JSON.stringify(corpo), {
     status,
@@ -51,7 +60,7 @@ function recusa(status: number, code: string, details: string | null = null): Re
 // Comparação que não entrega o prefixo certo pelo tempo que leva para falhar. O
 // `localeCompare` e o `===` de string saem no primeiro byte diferente; com um código
 // fixo e um teto alto de tentativas isso é explorável.
-function igualEmTempoConstante(a: string, b: string): boolean {
+export function igualEmTempoConstante(a: string, b: string): boolean {
   const x = new TextEncoder().encode(a);
   const y = new TextEncoder().encode(b);
   let diferenca = x.length ^ y.length;
@@ -66,26 +75,14 @@ function igualEmTempoConstante(a: string, b: string): boolean {
 // profissional, porque RN25 dá um perfil por conta e o revisor precisa ver os dois lados.
 // Uma lista atende aos dois: com um endereço só, o comportamento é letra por letra o que
 // o contrato descreve. A divergência está registrada no cartão e no docs/ESTADO.md.
-function emailsDeclarados(): string[] {
+export function emailsDeclarados(): string[] {
   return (Deno.env.get("DEMONSTRACAO_EMAILS") ?? "")
     .split(",")
     .map((e) => e.trim().toLowerCase())
     .filter((e) => e.length > 0);
 }
 
-async function rest(caminho: string, init: RequestInit = {}): Promise<Response> {
-  return await fetch(`${ORIGEM}/rest/v1/${caminho}`, {
-    ...init,
-    headers: {
-      apikey: SERVICE_ROLE,
-      Authorization: `Bearer ${SERVICE_ROLE}`,
-      "Content-Type": "application/json",
-      ...(init.headers ?? {}),
-    },
-  });
-}
-
-Deno.serve(async (req: Request): Promise<Response> => {
+export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Response> {
   if (req.method !== "POST") return recusa(404, "nao_encontrado");
 
   let email = "";
@@ -99,10 +96,29 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
   if (email === "" || codigo === "") return recusa(404, "nao_encontrado");
 
+  const listaEmails = deps.emailsDeclarados ?? emailsDeclarados();
+
   // O endereço desconhecido sai antes de gravar qualquer coisa. Gravar a tentativa de
   // todo endereço que chega transformaria a tabela num depósito de lixo de quem varre a
   // internet, e o teto de tentativas é por endereço — lixo não precisa de teto.
-  if (!emailsDeclarados().includes(email)) return recusa(404, "nao_encontrado");
+  if (!listaEmails.includes(email)) return recusa(404, "nao_encontrado");
+
+  const fetchFn = deps.fetchFn ?? fetch;
+  const origem = (deps.supabaseUrl ?? Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
+  const serviceRole = deps.serviceRoleKey ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  const anon = deps.anonKey ?? Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
+  const rest = async (caminho: string, init: RequestInit = {}): Promise<Response> => {
+    return await fetchFn(`${origem}/rest/v1/${caminho}`, {
+      ...init,
+      headers: {
+        apikey: serviceRole,
+        Authorization: `Bearer ${serviceRole}`,
+        "Content-Type": "application/json",
+        ...(init.headers ?? {}),
+      },
+    });
+  };
 
   // A tentativa é gravada **antes** de conferir o código: quem erra o código tem de
   // consumir a cota igual a quem acerta, senão o teto não segura nada.
@@ -130,17 +146,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return recusa(429, "limite_excedido", "tentativas");
   }
 
-  const esperado = Deno.env.get("DEMONSTRACAO_CODIGO") ?? "";
+  const esperado = deps.codigoEsperado ?? (Deno.env.get("DEMONSTRACAO_CODIGO") ?? "");
   if (esperado === "" || !igualEmTempoConstante(codigo, esperado)) {
     return recusa(404, "nao_encontrado");
   }
 
   // Passo 1: o código de uso único, sem passar pela caixa de e-mail de ninguém.
-  const link = await fetch(`${ORIGEM}/auth/v1/admin/generate_link`, {
+  const link = await fetchFn(`${origem}/auth/v1/admin/generate_link`, {
     method: "POST",
     headers: {
-      apikey: SERVICE_ROLE,
-      Authorization: `Bearer ${SERVICE_ROLE}`,
+      apikey: serviceRole,
+      Authorization: `Bearer ${serviceRole}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ type: "magiclink", email }),
@@ -149,9 +165,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const { email_otp } = await link.json();
 
   // Passo 2: a mesma troca que o app faz com o código digitado.
-  const sessao = await fetch(`${ORIGEM}/auth/v1/verify`, {
+  const sessao = await fetchFn(`${origem}/auth/v1/verify`, {
     method: "POST",
-    headers: { apikey: ANON, "Content-Type": "application/json" },
+    headers: { apikey: anon, "Content-Type": "application/json" },
     body: JSON.stringify({ type: "magiclink", email, token: email_otp }),
   });
   if (!sessao.ok) return recusa(404, "nao_encontrado");
@@ -165,4 +181,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     status: 200,
     headers: { "Content-Type": "application/json" },
   });
-});
+}
+
+if (import.meta.main) {
+  Deno.serve(async (req: Request) => await handler(req));
+}
