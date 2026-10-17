@@ -24,29 +24,30 @@ Os números abaixo foram consolidados e remedidos em 16/10 (commit de referênci
 | Edge Functions | **9** | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
 | Testes unitários em `exportar-turnos` | **31**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
 | Scripts em `scripts/` | **39** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
-| Contrato espelhado | **0.2.43** | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
+| Contrato espelhado | **0.2.44** | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
 Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **108** arquivos de teste de regras,
 e o `prove` conta **109** porque alcança também `supabase/tests/carga/gerar_df.sql`, que é gerador
 de carga e não teste de regra. O número da CI, e o da tabela, é **109 arquivos**.
 
-> ## 🟢 O espelho do contrato está em dia (0.2.43) e alinhado ao original
+> ## 🟢 O espelho do contrato está em dia (0.2.44) e alinhado ao original
 >
-> O contrato **0.2.43** está em vigor na raiz de `develop` e alinhado ao `FrilaApp/frila-docs · api/openapi.yaml`.
+> O contrato **0.2.44** está em vigor na raiz de `develop` e alinhado ao `FrilaApp/frila-docs · api/openapi.yaml`.
 > Ele consolida o modo de seleção com menos de 24h em urgência (0.2.38), a remoção de 403 não documentado
 > em rotas sem barreira de perfil (0.2.39), o suporte por e-mail a partir do turno (RPC `abrir_suporte` / Opção C,
 > 0.2.40, PR #169 e operação P6 no PR #171), a republicação de posições restantes (RPC `republicar_posicoes_restantes`,
 > 0.2.41, PR #170), o bloqueio no modo de seleção e alinhamento de corpo sem mudança de superfície em `privado.elegiveis`
-> (0.2.42, PR #193) e a liberação de relato sem filtro de termos ofensivos em contestação e denúncia (0.2.43, PR #198).
+> (0.2.42, PR #193), a liberação de relato sem filtro de termos ofensivos em contestação e denúncia (0.2.43, PR #198)
+> e a documentação textual das recusas de presença em `fazer_checkin`, `confirmar_checkin_manual` e `fazer_checkout` (0.2.44, PR #92).
 >
-> A `develop` recebeu o espelho idêntico (`acb687f617c805f431824fc2fc4d6cad08cae202539dd970aa80cdafaa953ce8`)
+> A `develop` recebeu o espelho idêntico (`454c08f8bab4528d4158257be9b72ab1803399650d5653d7a12d7bbdab587527`)
 > e todas as implementações, migrações e testes correspondentes.
 > O portão `./scripts/contrato-em-dia.sh` confirma integridade com sha256 exato.
 >
 > | | Versão | sha256 | bytes |
 > |---|---|---|---|
-> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.43** | `acb687f617c805f431824fc2fc4d6cad08cae202539dd970aa80cdafaa953ce8` | 246 967 |
-> | original, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.43** | `acb687f617c805f431824fc2fc4d6cad08cae202539dd970aa80cdafaa953ce8` | 246 967 |
+> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.44** | `454c08f8bab4528d4158257be9b72ab1803399650d5653d7a12d7bbdab587527` | 250 266 |
+> | original, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.44** | `454c08f8bab4528d4158257be9b72ab1803399650d5653d7a12d7bbdab587527` | 250 266 |
 
 > ## 🟢 Instabilidades de concorrência em `Corridas do ciclo` sanadas na raiz
 >
@@ -152,8 +153,8 @@ Medida com `gh pr list --state open` em 16/10:
 
 ## O contrato em detalhes
 
-Versão vigente: **0.2.43**, espelhada em `contrato/openapi.yaml` e **em dia com o original**,
-conferido em 15/10 com o portão: *"Espelho em dia com FrilaApp/frila-docs"*.
+Versão vigente: **0.2.44**, espelhada em `contrato/openapi.yaml` e **em dia com o original**,
+conferido em 17/10 com o portão: *"Espelho em dia com FrilaApp/frila-docs"*.
 
 Histórico das versões recentes integradas no backend:
 
@@ -175,6 +176,7 @@ Histórico das versões recentes integradas no backend:
 | **0.2.41** | republicação de posições restantes (RPC `republicar_posicoes_restantes`, D1-C) | #170 |
 | **0.2.42** | bloqueio de perfil no modo de seleção e alinhamento de corpo sem mudança em `privado.elegiveis` | #193 |
 | **0.2.43** | liberação de relato sem filtro de termos ofensivos em contestação e denúncia | #198 |
+| **0.2.44** | documentação de recusas de presença em `fazer_checkin`, `confirmar_checkin_manual` e `fazer_checkout` (só texto) | #92 |
 
 ---
 

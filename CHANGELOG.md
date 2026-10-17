@@ -67,6 +67,9 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Documentação técnica e comprovação experimental refutando a Recomendação 1 do relatório #195: a reordenação interna da CTE sofre *subquery pull-up* pelo planejador PostgreSQL, gerando plano físico idêntico ao canônico, enquanto a extração de `usuario` para a consulta externa dispara varredura sequencial em `disponibilidade` e `usuario`.
 
 ### Modificado
+- **Espelho do contrato 0.2.44 do frila-docs (PR frila-docs#92):**
+  - Documentação das recusas nas operações de presença (`fazer_checkin`, `confirmar_checkin_manual` e `fazer_checkout`): `422 registro_no_futuro` (relógio do aparelho adiantado mais de 2 min), `422 fora_da_janela` (fora do intervalo de 60 min antes do início até o fim previsto do turno, com isenção para a conta de revisão da App Store conforme diretriz 2.1) e `409 checkin_pendente` (tentativa de confirmar manual ou dar check-out em turno sem check-in realizado).
+  - Atualização dos arquivos `contrato/openapi.yaml` e `contrato/openapi.yaml.sha256`.
 - **Espelho do contrato 0.2.43 do frila-docs (PR frila-docs#89):**
   - Alinhamento da documentação de `contestarSuspensao` e `pedirRevisaoDespacho`: o relato das contestações não passa pelo filtro de termos da diretriz 1.2 (decisão J1=B, migração `20261013110000`).
   - Atualização dos arquivos `contrato/openapi.yaml` e `contrato/openapi.yaml.sha256`.
