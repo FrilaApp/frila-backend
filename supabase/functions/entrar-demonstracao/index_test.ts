@@ -383,19 +383,26 @@ Deno.test("entrar-demonstracao: falha no admin generate_link ou verify retorna 4
   assertEquals(await res2.json(), { code: "nao_encontrado", message: "nao_encontrado", details: null });
 });
 
-Deno.test("mutação: entrar-demonstracao com codigoEsperado vazio falha fechado com 404 nao_encontrado", async () => {
+Deno.test("mutação: entrar-demonstracao com codigoEsperado vazio ('') nao faz fallback para DEMONSTRACAO_CODIGO do ambiente", async () => {
   const estado: MockState = { tentativas: [], proximoId: 1 };
   const req = new Request("http://localhost/functions/v1/entrar-demonstracao", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: MOCK_CODIGO }),
+    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "codigo-do-ambiente-999" }),
   });
 
-  const res = await handler(req, depsPadrao(estado, { codigoEsperado: "" }));
-  assertEquals(res.status, 404);
-  const json = await res.json();
-  assertEquals(json.code, "nao_encontrado");
-  assertEquals(json.message, "nao_encontrado");
+  const envAntigo = Deno.env.get("DEMONSTRACAO_CODIGO");
+  try {
+    Deno.env.set("DEMONSTRACAO_CODIGO", "codigo-do-ambiente-999");
+    const res = await handler(req, depsPadrao(estado, { codigoEsperado: "" }));
+    assertEquals(res.status, 404);
+    const json = await res.json();
+    assertEquals(json.code, "nao_encontrado");
+    assertEquals(json.message, "nao_encontrado");
+  } finally {
+    if (envAntigo !== undefined) Deno.env.set("DEMONSTRACAO_CODIGO", envAntigo);
+    else Deno.env.delete("DEMONSTRACAO_CODIGO");
+  }
 });
 
 Deno.test("mutação: entrar-demonstracao sem DEMONSTRACAO_CODIGO no ambiente falha fechado com 404", async () => {
