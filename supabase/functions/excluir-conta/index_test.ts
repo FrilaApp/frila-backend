@@ -696,14 +696,16 @@ Deno.test("resiliência: resposta malformada (JSON inválido) em /auth/v1/user r
   assertEquals(corpo, { code: "erro_interno", message: "erro_interno", details: null });
 });
 
-Deno.test("mutação: recusa Authorization fora do padrao Bearer ou sem token com 401 sem chamar Auth nem banco", async () => {
+Deno.test("porta: validacao estrita do formato Authorization Bearer rejeita malformados e aceita case-insensitive", async () => {
   const esquemasInvalidos = [
     "Basic dXNlcjpwYXNz",
+    "Token token-valido",
+    "Digest username=abc",
     "Bearer",
     "Bearer ",
-    "Bearer   ",
-    "Token xyz",
-    "Digest username=abc",
+    "X Bearer token-valido",
+    "Bearer token-valido extra",
+    "Bearertoken-valido",
   ];
 
   for (const auth of esquemasInvalidos) {
@@ -744,5 +746,28 @@ Deno.test("mutação: recusa Authorization fora do padrao Bearer ou sem token co
     assertEquals(chamouFetch, false, `Esquema '${auth}' não deve chamar Auth`);
     assertEquals(chamouDb, false, `Esquema '${auth}' não deve tocar no banco`);
   }
+
+  // Caso positivo com flag case-insensitive ("bearer token-valido")
+  let chamouFetchPositivo = false;
+  const depsPositivo = mockDeps({});
+  depsPositivo.fetchFn = () => {
+    chamouFetchPositivo = true;
+    return Promise.resolve(new Response(JSON.stringify({ id: MOCK_USER_ID }), { status: 200 }));
+  };
+
+  const respostaPositiva = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        Authorization: "bearer token-valido",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ confirmar: true }),
+    }),
+    depsPositivo,
+  );
+  assertEquals(respostaPositiva.status, 202, "bearer em minúsculo deve ser aceito na porta pela flag /i");
+  assertEquals(chamouFetchPositivo, true);
 });
+
 
