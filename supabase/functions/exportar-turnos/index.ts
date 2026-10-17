@@ -118,6 +118,43 @@ export function formatarDataLocal(dataStr: string | null): string {
   }
 }
 
+export const BOM_UTF8 = "\uFEFF";
+
+// Caracteres que disparam fórmulas ou comandos em planilhas (OWASP CSV Injection).
+const CARACTERES_FORMULA_INICIO = ["=", "+", "-", "@", "\t", "\r"];
+
+/**
+ * Neutraliza fórmulas em células de TEXTO LIVRE para exportação CSV (OWASP CSV Injection / CWE-1236).
+ * Previne execução de comandos/fórmulas em Excel/Google Sheets prefixando com apóstrofo (')
+ * valores que iniciam com =, +, -, @, \t ou \r.
+ *
+ * NOTA DE DESIGN (segurança por tipo de coluna):
+ * Aplicar estritamente em colunas de texto livre fornecidas por usuários (ex.: `funcao`, `contraparte`).
+ * Colunas de sistema formatadas (datas "DD/MM/YYYY", valores em reais "R$ 100,00", status de enum),
+ * marcadores de ausência ("-") e eventuais colunas de telefones com "+55" intencional
+ * NÃO devem ser alteradas por esta função.
+ */
+export function neutralizarFormulaCsv(texto: string): string {
+  if (!texto) return "";
+  const primeiroChar = texto.charAt(0);
+  if (CARACTERES_FORMULA_INICIO.includes(primeiroChar)) {
+    return `'${texto}`;
+  }
+  return texto;
+}
+
+/**
+ * Escapa uma célula segundo a RFC 4180.
+ * Envolve em aspas duplas se contiver vírgula (,), aspas duplas ("), line feed (\n)
+ * ou carriage return (\r), duplicando aspas duplas internas.
+ */
+export function escaparCelulaCsv(val: string): string {
+  if (val.includes(",") || val.includes('"') || val.includes("\n") || val.includes("\r")) {
+    return `"${val.replace(/"/g, '""')}"`;
+  }
+  return val;
+}
+
 export function gerarCsv(turnos: TurnoExportacao[]): string {
   const cabecalhos = [
     "Data",
@@ -147,30 +184,29 @@ export function gerarCsv(turnos: TurnoExportacao[]): string {
         ? "Nao verificado"
         : "Pendente";
 
-    const escapar = (val: string) => {
-      if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-        return `"${val.replace(/"/g, '""')}"`;
-      }
-      return val;
-    };
+    // Colunas de texto livre que aceitam entrada de usuário (função e contraparte)
+    // são neutralizadas contra CSV formula injection
+    const funcaoFmt = neutralizarFormulaCsv(t.funcao);
+    const contraparteFmt = neutralizarFormulaCsv(t.contraparte);
 
     linhas.push(
       [
-        escapar(dataFmt),
-        escapar(t.funcao),
-        escapar(inicioFmt),
-        escapar(fimFmt),
-        escapar(checkinFmt),
-        escapar(checkoutFmt),
-        escapar(valorFmt),
-        escapar(t.contraparte),
-        escapar(statusFmt),
+        escaparCelulaCsv(dataFmt),
+        escaparCelulaCsv(funcaoFmt),
+        escaparCelulaCsv(inicioFmt),
+        escaparCelulaCsv(fimFmt),
+        escaparCelulaCsv(checkinFmt),
+        escaparCelulaCsv(checkoutFmt),
+        escaparCelulaCsv(valorFmt),
+        escaparCelulaCsv(contraparteFmt),
+        escaparCelulaCsv(statusFmt),
       ].join(","),
     );
   }
 
-  return linhas.join("\r\n");
+  return BOM_UTF8 + linhas.join("\r\n");
 }
+
 
 export function sanitizarTextoWinAnsi(
   texto: string,

