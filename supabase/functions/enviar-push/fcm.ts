@@ -176,8 +176,11 @@ export async function sendFcmMessage(
       // ignore
     }
 
+    // Documentação FCM HTTP v1 (HTTP v1 error codes):
+    // 404 puro (NOT_FOUND) ocorre quando o project_id ou a rota está incorreta (falha de configuração).
+    // O desregistro de token é identificado estritamente quando errorCode === "UNREGISTERED" nos details (geralmente HTTP 404) ou HTTP 410 Gone.
+    // Tokens NUNCA devem ser removidos por 404 genérico sem errorCode "UNREGISTERED", evitando que uma credencial/projeto incorreto apague os tokens de todo o parque.
     const isUnregistered =
-      status === 404 ||
       status === 410 ||
       errCode === "UNREGISTERED";
 
