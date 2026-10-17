@@ -28,22 +28,45 @@ select is(
   'AUDITORIA-RLS achado 2: toda tabela de public sem política não tem SELECT para authenticated ou anon'
 );
 
--- Confirma que exatamente as 3 tabelas internas de public conhecidas sem política continuam protegidas
+-- ── 2. Prova de mutação em public: tabela sem política com GRANT SELECT é capturada ──
+create table public._mutante_public_sem_politica (id int);
+grant select on public._mutante_public_sem_politica to authenticated;
+
 select is(
   (select count(*)::int from (
      select c.oid
        from pg_class c
        join pg_namespace n on n.oid = c.relnamespace
        left join pg_policy p on p.polrelid = c.oid
-      where n.nspname = 'public' and c.relkind in ('r', 'p')
+      where n.nspname = 'public' and c.relname = '_mutante_public_sem_politica'
       group by c.oid
      having count(p.polname) = 0
-   ) sem_politica),
-  3,
-  'exatamente as 3 tabelas operacionais internas de public (entrada_demonstracao, evento_app, pedido_de_exclusao) não possuem política'
+        and (has_table_privilege('authenticated', c.oid, 'select')
+             or has_table_privilege('anon', c.oid, 'select'))
+   ) mutante),
+  1,
+  'mutação provada: tabela sem política com GRANT SELECT em public é capturada pelo invariante'
 );
 
--- ── 2. Todas as tabelas de privado têm RLS ativado ─────────────────────────────
+drop table public._mutante_public_sem_politica;
+
+-- ── 3. Prova de mutação em privado: criação de tabela sem RLS em privado é capturada ──
+create table privado._mutante_sem_rls (id int);
+
+select is(
+  (select count(*)::int
+     from pg_class c
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'privado' and c.relkind in ('r', 'p')
+      and not c.relrowsecurity),
+  1,
+  'mutação provada: criação de tabela sem RLS em privado é detectada imediatamente pelo invariante'
+);
+
+drop table privado._mutante_sem_rls;
+
+
+-- ── 3. Todas as tabelas de privado têm RLS ativado (invariante puro) ─────────────
 -- Dinâmico: nenhuma tabela comum ou particionada no schema privado pode ter relrowsecurity = false.
 select is(
   (select count(*)::int
@@ -55,18 +78,7 @@ select is(
   'AUDITORIA-RLS achado 1: toda tabela do schema privado tem Row Level Security (RLS) ativado'
 );
 
--- Contagem total de tabelas em privado com RLS (as 13 tabelas catalogadas)
-select is(
-  (select count(*)::int
-     from pg_class c
-     join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'privado' and c.relkind in ('r', 'p')
-      and c.relrowsecurity),
-  13,
-  'todas as 13 tabelas do schema privado possuem RLS ligado'
-);
-
--- ── 3. Nenhuma tabela de privado possui FORCE ROW LEVEL SECURITY ───────────────
+-- ── 4. Nenhuma tabela de privado possui FORCE ROW LEVEL SECURITY (invariante) ─────
 select is(
   (select count(*)::int
      from pg_class c
@@ -74,24 +86,30 @@ select is(
     where n.nspname = 'privado' and c.relkind in ('r', 'p')
       and c.relforcerowsecurity),
   0,
-  'nenhuma tabela de privado possui FORCE RLS (funções SECURITY DEFINER do owner postgres não são barradas)'
+  'nenhuma tabela de privado possui FORCE RLS (funções SECURITY DEFINER do owner postgres mantêm bypass)'
 );
 
--- ── 4. As 9 tabelas anteriormente sem RLS agora têm RLS comprovadamente ligado ──
+-- ── 5. As 9 tabelas da auditoria possuem RLS habilitado (sem exceções pendentes) ──
 select is(
-  (select count(*)::int
-     from pg_class c
-     join pg_namespace n on n.oid = c.relnamespace
-    where n.nspname = 'privado' and c.relname in (
-      'ambiente', 'auditoria_ciclo', 'conta_equipe', 'divergencia_reputacao',
-      'parametro_notificacao', 'termo_bloqueado', 'texto_da_vaga_ocultado',
-      'tipo_no_teto', 'vaga_ocultada'
-    ) and c.relrowsecurity),
-  9,
-  'as 9 tabelas do achado da auditoria possuem RLS habilitado'
+  (select coalesce(array_agg(t.tabela order by t.tabela), '{}'::text[])
+     from unnest(ARRAY[
+       'ambiente', 'auditoria_ciclo', 'conta_equipe', 'divergencia_reputacao',
+       'parametro_notificacao', 'termo_bloqueado', 'texto_da_vaga_ocultado',
+       'tipo_no_teto', 'vaga_ocultada'
+     ]) as t(tabela)
+     left join (
+       select c.relname
+         from pg_class c
+         join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'privado' and c.relrowsecurity
+     ) c on c.relname = t.tabela
+    where c.relname is null),
+  '{}'::text[],
+  'as 9 tabelas do achado da auditoria possuem RLS habilitado (nenhuma ausência)'
 );
 
--- ── 5. Defesa em profundidade: simulação de concessão indevida acidental ────────
+-- ── 6. Defesa em profundidade: simulação de concessão indevida acidental ────────
+
 -- Se por engano um administrador conceder GRANT SELECT para authenticated em privado.parametro_notificacao:
 grant select on privado.parametro_notificacao to authenticated;
 
