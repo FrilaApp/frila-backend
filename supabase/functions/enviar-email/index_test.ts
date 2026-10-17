@@ -859,4 +859,72 @@ Deno.test("Lacuna 5: falha parcial por timeout SMTP entre equipe e autor registr
   assertEquals(e.arquivados, []);
 });
 
+Deno.test("mutação: classificarErro classifica exaustivamente falhas de credenciais/autenticação SMTP como não-transitórias", () => {
+  const mensagensAutenticacao = [
+    "Authentication failed: invalid username or password",
+    "Invalid credentials provided by client",
+    "auth error: unauthorized",
+    "SMTP client credential rejected",
+  ];
+
+  for (const msg of mensagensAutenticacao) {
+    const res = classificarErro(new Error(msg));
+    assertEquals(
+      res,
+      { codigo: "falha_de_autenticacao", transitorio: false },
+      `Mensagem '${msg}' deveria ser classificada como falha_de_autenticacao definitiva`,
+    );
+  }
+});
+
+Deno.test("mutação: falha_de_autenticacao no envio de ocorrencia arquiva imediatamente o pedido sem queimar leituras", async () => {
+  const e = espiao([pedido({ msg_id: 530, read_ct: 1 })]);
+
+  const envioAuthInvalida = (_email: Email): Promise<ResultadoEnvio> => {
+    return Promise.resolve({ ok: false, codigo: "falha_de_autenticacao", transitorio: false });
+  };
+
+  const res = await chamar(e, envioAuthInvalida);
+  assertEquals(res.status, 200);
+
+  const corpo = await res.json();
+  assertEquals(corpo.relatorio, [
+    { msg_id: 530, status: "arquivado", detalhe: "falha_de_autenticacao" },
+  ]);
+
+  // Registra falha no banco
+  assertEquals(e.falhas, [{ ocorrencia: OCORRENCIA, codigo: "falha_de_autenticacao" }]);
+  // Arquivado imediatamente no pgmq sem consumir mais tentativas
+  assertEquals(e.arquivados, [530]);
+});
+
+Deno.test("mutação: falha_de_autenticacao em alerta operacional arquiva imediatamente no pgmq", async () => {
+  const p: PedidoDaFila = {
+    msg_id: 540,
+    read_ct: 1,
+    mensagem: {
+      tipo: "alerta",
+      codigo: "erro_5xx",
+      valor: 42,
+    },
+  };
+  const e = espiao([p]);
+
+  const envioAuthInvalida = (_email: Email): Promise<ResultadoEnvio> => {
+    return Promise.resolve({ ok: false, codigo: "falha_de_autenticacao", transitorio: false });
+  };
+
+  const res = await chamar(e, envioAuthInvalida);
+  assertEquals(res.status, 200);
+
+  const corpo = await res.json();
+  assertEquals(corpo.relatorio, [
+    { msg_id: 540, status: "arquivado", detalhe: "falha_de_autenticacao" },
+  ]);
+
+  // Arquivado imediatamente no pgmq sem queimar retentativas
+  assertEquals(e.arquivados, [540]);
+});
+
+
 
