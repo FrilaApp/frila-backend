@@ -2,9 +2,20 @@ begin;
 select plan(12);
 
 -- Teste 741: Segurança do schema `net` (extensão pg_net) contra acesso de anon e authenticated
--- Achado do Item 0e / 10c: os cabeçalhos de requisição em net.http_request_queue contêm
--- frila.agendador_secret e Bearer token. anon e authenticated NÃO podem ter USAGE no schema net,
--- NÃO podem ter SELECT/ALL nas tabelas de net e NÃO podem executar net.http_post / net.http_get.
+-- Achado do Item 0e / 10c / AUDITORIA-PG-NET.md.
+--
+-- AVISO DE ESCOPO E LIMITAÇÃO DE SEGURANÇA (LOCAL/CI vs HOSPEDADO):
+-- Este teste valida a revogação de privilégios nos objetos do schema `net` para `anon`,
+-- `authenticated` e `PUBLIC`.
+-- ATENÇÃO: Este teste só é garantido de passar onde o papel executor da migração é dono
+-- dos objetos ou superusuário (ambientes local e de CI). No Supabase hospedado (nuvem),
+-- as migrações rodam como `postgres`, que NÃO consegue revogar privilégios de objetos pertencentes
+-- a `supabase_admin` (emitindo aviso 'no privileges could be revoked' sem alterar as ACLs).
+-- Portanto, a revogação aqui testada NÃO fecha o risco em produção no Supabase hospedado.
+-- A mitigação real para produção é arquitetural (detalhada na nota PROPOSTA-SEGREDO-DESPACHO.md:
+-- segredos por função + tokens HMAC efêmeros de ~60 s nos cabeçalhos, além de verificar se `net`
+-- está fora dos schemas expostos na API PostgREST com CHECK-GRANTS-NET-DONO.sql).
+
 
 -- 1 a 4. Verificação de privilégios de schema
 select ok(
