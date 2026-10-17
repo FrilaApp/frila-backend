@@ -818,3 +818,50 @@ Deno.test("exportar-turnos: gerarCsv e handler CSV suportam e preservam emojis e
   assertStringIncludes(corpo, "Cantina & Pizzaria 🍷");
 });
 
+Deno.test("porta: validacao estrita do formato Authorization Bearer rejeita malformados e aceita case-insensitive", async () => {
+  const esquemasInvalidos = [
+    "Basic dXNlcjpwYXNz",
+    "Token token-valido",
+    "Digest username=abc",
+    "Bearer",
+    "Bearer ",
+    "X Bearer token-valido",
+    "Bearer token-valido extra",
+    "Bearertoken-valido",
+  ];
+
+  for (const auth of esquemasInvalidos) {
+    const e = criarEspiao();
+    const req = new Request(`${URL_BASE}/functions/v1/exportar-turnos`, {
+      method: "POST",
+      headers: {
+        Authorization: auth,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ formato: "csv" }),
+    });
+    const res = await chamar(e, req);
+
+    assertEquals(res.status, 401, `Esquema '${auth}' deveria ser recusado com 401`);
+    assertEquals((await res.json()).code, "nao_autenticado");
+    assertEquals(e.pedidos.length, 0, `Esquema '${auth}' não deve acessar o banco`);
+    assertEquals(e.chamadasAuth.length, 0, `Esquema '${auth}' não deve chamar Auth`);
+  }
+
+  // Caso positivo com flag case-insensitive ("bearer token-valido")
+  const ePositivo = criarEspiao();
+  const reqPositivo = new Request(`${URL_BASE}/functions/v1/exportar-turnos`, {
+    method: "POST",
+    headers: {
+      Authorization: "bearer token-valido",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ formato: "csv" }),
+  });
+  const resPositivo = await chamar(ePositivo, reqPositivo);
+  assertEquals(resPositivo.status, 200, "bearer em minúsculo deve ser aceito na porta pela flag /i");
+  assertEquals(ePositivo.chamadasAuth.length, 1);
+});
+
+
+
