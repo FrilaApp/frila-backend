@@ -818,3 +818,33 @@ Deno.test("exportar-turnos: gerarCsv e handler CSV suportam e preservam emojis e
   assertStringIncludes(corpo, "Cantina & Pizzaria 🍷");
 });
 
+Deno.test("mutação: porta recusa Authorization fora do padrao Bearer ou sem token com 401 sem chamar Auth nem banco", async () => {
+  const esquemasInvalidos = [
+    "Basic dXNlcjpwYXNz",
+    "Bearer",
+    "Bearer ",
+    "Bearer   ",
+    "Token xyz",
+    "Digest username=abc",
+  ];
+
+  for (const auth of esquemasInvalidos) {
+    const e = criarEspiao();
+    const req = new Request(`${URL_BASE}/functions/v1/exportar-turnos`, {
+      method: "POST",
+      headers: {
+        Authorization: auth,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ formato: "csv" }),
+    });
+    const res = await chamar(e, req);
+
+    assertEquals(res.status, 401, `Esquema '${auth}' deveria ser recusado com 401`);
+    assertEquals((await res.json()).code, "nao_autenticado");
+    assertEquals(e.pedidos.length, 0, `Esquema '${auth}' não deve acessar o banco`);
+    assertEquals(e.chamadasAuth.length, 0, `Esquema '${auth}' não deve chamar Auth`);
+  }
+});
+
+
