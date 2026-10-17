@@ -325,3 +325,29 @@ Deno.test("exportacao de conta com grande volume de registros nas colecoes LGPD 
   assertEquals(corpo.avaliacoes_recebidas.length, 80);
 });
 
+Deno.test("mutação: porta recusa Authorization fora do padrao Bearer ou sem token com 401 sem chamar Auth nem banco", async () => {
+  const esquemasInvalidos = [
+    "Basic dXNlcjpwYXNz",
+    "Bearer",
+    "Bearer ",
+    "Bearer   ",
+    "Token xyz",
+    "Digest username=abc",
+  ];
+
+  for (const auth of esquemasInvalidos) {
+    const e = espiao();
+    const req = new Request(`${URL_BASE}/functions/v1/exportar-meus-dados`, {
+      method: "POST",
+      headers: { Authorization: auth },
+    });
+    const res = await chamar(e, req);
+
+    assertEquals(res.status, 401, `Esquema '${auth}' deveria ser recusado com 401`);
+    assertEquals((await res.json()).code, "nao_autenticado");
+    assertEquals(e.pedidos, [], `Esquema '${auth}' não deve acessar o banco`);
+    assertEquals(e.chamadasAuth, [], `Esquema '${auth}' não deve chamar Auth`);
+  }
+});
+
+
