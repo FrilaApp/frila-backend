@@ -875,13 +875,36 @@ Deno.test("mutação: classificarErro classifica exaustivamente falhas de creden
       `Mensagem '${msg}' deveria ser classificada como falha_de_autenticacao definitiva`,
     );
   }
+
+  // Falsos positivos: palavras que contêm 'auth' ou 'credential' apenas como substring/prefixo
+  // não devem ser classificadas como falha de autenticação.
+  const mensagensFalsosPositivos = [
+    "author not found in database",
+    "authoritative DNS server unreachable",
+    "south datacenter temporary route error",
+  ];
+
+  for (const msg of mensagensFalsosPositivos) {
+    const res = classificarErro(new Error(msg));
+    assertEquals(
+      res,
+      { codigo: "erro_nao_classificado", transitorio: true },
+      `Mensagem '${msg}' não deveria casar com falha_de_autenticacao`,
+    );
+  }
 });
 
 Deno.test("mutação: falha_de_autenticacao no envio de ocorrencia arquiva imediatamente o pedido sem queimar leituras", async () => {
   const e = espiao([pedido({ msg_id: 530, read_ct: 1 })]);
 
+  // Passa pelo classificarErro real a partir de uma exceção do provedor SMTP
   const envioAuthInvalida = (_email: Email): Promise<ResultadoEnvio> => {
-    return Promise.resolve({ ok: false, codigo: "falha_de_autenticacao", transitorio: false });
+    try {
+      throw new Error("Authentication failed: invalid username or password");
+    } catch (erro) {
+      const { codigo, transitorio } = classificarErro(erro);
+      return Promise.resolve({ ok: false, codigo, transitorio });
+    }
   };
 
   const res = await chamar(e, envioAuthInvalida);
@@ -910,8 +933,14 @@ Deno.test("mutação: falha_de_autenticacao em alerta operacional arquiva imedia
   };
   const e = espiao([p]);
 
+  // Passa pelo classificarErro real a partir de uma exceção do provedor SMTP
   const envioAuthInvalida = (_email: Email): Promise<ResultadoEnvio> => {
-    return Promise.resolve({ ok: false, codigo: "falha_de_autenticacao", transitorio: false });
+    try {
+      throw new Error("auth error: unauthorized");
+    } catch (erro) {
+      const { codigo, transitorio } = classificarErro(erro);
+      return Promise.resolve({ ok: false, codigo, transitorio });
+    }
   };
 
   const res = await chamar(e, envioAuthInvalida);
