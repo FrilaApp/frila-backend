@@ -109,9 +109,9 @@ select throws_ok(
 
 -- ── RN20: a maioridade é do banco, não da tela ─────────────────────────────────
 select throws_ok(
-  $$ select pg_temp.como('f0000000-0000-4000-8000-000000000003',
-       $x$ select public.criar_conta('profissional','Menor','+5561999990003',
-             (current_date - interval '17 years')::date, '2026-09-22') $x$) $$,
+  format($$ select pg_temp.como('f0000000-0000-4000-8000-000000000003',
+       $x$ select public.criar_conta('profissional','Menor','+5561999990003','%s','2026-09-22') $x$) $$,
+       ((privado.agora() at time zone 'America/Sao_Paulo')::date - interval '17 years')::date),
   'PGRST',
   '{"code" : "menor_de_idade", "message" : "menor_de_idade", "details" : null, "hint" : null}',
   'RN20: menos de 18 anos é recusado, com o código que o aplicativo compara');
@@ -122,9 +122,9 @@ select is(
   'e nada é gravado — a recusa acontece antes do insert');
 
 select lives_ok(
-  $$ select pg_temp.como('f0000000-0000-4000-8000-000000000003',
-       $x$ select public.criar_conta('profissional','No limite','+5561999990003',
-             (current_date - interval '18 years')::date, '2026-09-22') $x$) $$,
+  format($$ select pg_temp.como('f0000000-0000-4000-8000-000000000003',
+       $x$ select public.criar_conta('profissional','No limite','+5561999990003','%s','2026-09-22') $x$) $$,
+       ((privado.agora() at time zone 'America/Sao_Paulo')::date - interval '18 years')::date),
   'RN20: exatamente 18 anos entra');
 
 -- ── Campos obrigatórios ────────────────────────────────────────────────────────
