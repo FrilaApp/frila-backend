@@ -2626,6 +2626,77 @@ Deno.test("enviar-push: private_key com PEM contendo bytes invalidos de chave PK
   }
 });
 
+Deno.test("mutação: sendFcmMessage classifica erros transitórios (429, >=500, UNAVAILABLE, rede) e permanentes (UNREGISTERED, 404, 400)", async () => {
+  const sa = await gerarContaDeServicoTeste();
+
+  const casos = [
+    {
+      nome: "429 Too Many Requests -> transitório",
+      resposta: () => Promise.resolve(new Response(JSON.stringify({ error: { message: "Quota exceeded" } }), { status: 429 })),
+      esperado: { ok: false, status: 429, transient: true, unregistered: false },
+    },
+    {
+      nome: "503 Service Unavailable -> transitório",
+      resposta: () => Promise.resolve(new Response(JSON.stringify({ error: { status: "UNAVAILABLE" } }), { status: 503 })),
+      esperado: { ok: false, status: 503, transient: true, unregistered: false },
+    },
+    {
+      nome: "500 Internal Error -> transitório",
+      resposta: () => Promise.resolve(new Response(JSON.stringify({ error: { status: "INTERNAL" } }), { status: 500 })),
+      esperado: { ok: false, status: 500, transient: true, unregistered: false },
+    },
+    {
+      nome: "404 Not Found -> desregistrado e definitivo",
+      resposta: () => Promise.resolve(new Response(JSON.stringify({ error: { message: "Not found" } }), { status: 404 })),
+      esperado: { ok: false, status: 404, transient: false, unregistered: true },
+    },
+    {
+      nome: "410 Gone -> desregistrado e definitivo",
+      resposta: () => Promise.resolve(new Response(JSON.stringify({ error: { message: "Token expired" } }), { status: 410 })),
+      esperado: { ok: false, status: 410, transient: false, unregistered: true },
+    },
+    {
+      nome: "400 com errorCode UNREGISTERED -> desregistrado e definitivo",
+      resposta: () => Promise.resolve(new Response(JSON.stringify({ error: { details: [{ errorCode: "UNREGISTERED" }] } }), { status: 400 })),
+      esperado: { ok: false, status: 400, transient: false, unregistered: true },
+    },
+    {
+      nome: "400 Bad Request comum -> erro permanente",
+      resposta: () => Promise.resolve(new Response(JSON.stringify({ error: { message: "Invalid payload" } }), { status: 400 })),
+      esperado: { ok: false, status: 400, transient: false, unregistered: false },
+    },
+    {
+      nome: "Exceção de rede (DNS/conexão falhou) -> status 0 e transitório",
+      resposta: () => Promise.reject(new TypeError("Failed to fetch")),
+      esperado: { ok: false, status: 0, transient: true, unregistered: undefined },
+    },
+  ];
+
+  for (const c of casos) {
+    const res = await sendFcmMessage(
+      sa.project_id,
+      "mock-access-token",
+      {
+        token: "fcm_token_teste",
+        title: "Teste",
+        body: "Corpo de teste",
+      },
+      {
+        apiUrl: "http://mock-fcm/messages:send",
+        fetchFn: c.resposta as unknown as typeof fetch,
+      },
+    );
+
+    assertEquals(res.ok, c.esperado.ok, `[${c.nome}] ok incompatível`);
+    assertEquals(res.status, c.esperado.status, `[${c.nome}] status incompatível`);
+    assertEquals(res.transient, c.esperado.transient, `[${c.nome}] transient incompatível`);
+    if (c.esperado.unregistered !== undefined) {
+      assertEquals(res.unregistered, c.esperado.unregistered, `[${c.nome}] unregistered incompatível`);
+    }
+  }
+});
+
+
 
 
 
