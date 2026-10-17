@@ -115,17 +115,20 @@ else
   exit 1
 fi
 
-# O motor de despacho lê `frila.agendador_secret` a cada vaga publicada, e sem ele
-# `publicar_vaga` falha. A migração aplica sem o segredo, então o ambiente parece em dia e
-# não publica vaga nenhuma. A conferência devolve só se o segredo existe, nunca o valor.
+# O motor de despacho lê `agendador_secret` a cada vaga publicada (via Supabase Vault
+# com fallback para frila.agendador_secret), e sem ele `publicar_vaga` falha.
+# A conferência devolve só se o segredo existe, nunca o valor.
 echo "▸ O segredo do agendador está no banco"
-if rodar "select count(*) as n from pg_db_role_setting s
-            cross join unnest(s.setconfig) c
-           where c like 'frila.agendador_secret=_%'" | grep -q '"n":0'; then
-  echo "  ✗ frila.agendador_secret não está configurado neste banco"
+if rodar "select count(*) as n from (
+            select 1 from vault.decrypted_secrets where name = 'agendador_secret'
+            union all
+            select 1 from pg_db_role_setting s cross join unnest(s.setconfig) c where c like 'frila.agendador_secret=_%'
+          ) t" | grep -q '"n":0'; then
+  echo "  ✗ agendador_secret não está configurado no Supabase Vault nem no banco"
   echo
-  echo "  Configure o mesmo valor no banco e em AGENDADOR_SECRET das Edge Functions,"
-  echo "  como em 'Antes de aplicar no frila-dev ou em produção', no README."
+  echo "  Cadastre o segredo no Vault (Dashboard em Project Settings → Vault ou via"
+  echo "  select vault.create_secret('...', 'agendador_secret')) e em"
+  echo "  AGENDADOR_SECRET das Edge Functions antes de prosseguir."
   exit 1
 fi
 echo "  ✓"
