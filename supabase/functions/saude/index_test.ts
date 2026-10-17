@@ -202,4 +202,35 @@ Deno.test("saude: criarSqlProbe real possui silencio defensivo em registrarFalha
   assertEquals(json.erro, "conexao_falhou");
 });
 
+Deno.test("mutação: saude inclui header Cache-Control no-store para evitar cache de status por proxies ou CDN (RNF12)", async () => {
+  // 1. Em 200 OK
+  const reqGet = new Request("http://localhost/functions/v1/saude", { method: "GET" });
+  const resOk = await processarSaude(reqGet, { sqlProbe: probeMock({ ok: true }) });
+  assertEquals(resOk.status, 200);
+  assertEquals(resOk.headers.get("Cache-Control"), "no-store, no-cache, must-revalidate");
+  assertEquals(resOk.headers.get("Content-Type"), "application/json");
+
+  const jsonOk = await resOk.json();
+  assertEquals(typeof jsonOk.timestamp, "string");
+  assertEquals(isNaN(Date.parse(jsonOk.timestamp)), false);
+  assertEquals(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(jsonOk.timestamp), true);
+
+  // 2. Em 503 Indisponível (ping falso)
+  const res503Falso = await processarSaude(reqGet, { sqlProbe: probeMock({ ok: false }) });
+  assertEquals(res503Falso.status, 503);
+  assertEquals(res503Falso.headers.get("Cache-Control"), "no-store, no-cache, must-revalidate");
+
+  // 3. Em 503 Indisponível (erro de conexão)
+  const res503Erro = await processarSaude(reqGet, { sqlProbe: probeMock({ erro: true }) });
+  assertEquals(res503Erro.status, 503);
+  assertEquals(res503Erro.headers.get("Cache-Control"), "no-store, no-cache, must-revalidate");
+
+  // 4. Em 405 Método Não Permitido
+  const reqPost = new Request("http://localhost/functions/v1/saude", { method: "POST" });
+  const res405 = await processarSaude(reqPost, { sqlProbe: probeMock() });
+  assertEquals(res405.status, 405);
+  assertEquals(res405.headers.get("Cache-Control"), "no-store, no-cache, must-revalidate");
+});
+
+
 
