@@ -2849,22 +2849,37 @@ Deno.test(
       body: JSON.stringify({ notificacao_id: "a2000000-0000-4000-8000-000000000003" }),
     });
 
-    const res = await processarEnvioPush(req, {
-      serviceAccount: sa,
-      fetchFn: mockFetch,
-      fcmApiUrl: "http://mock-fcm/messages:send",
-      sqlClient,
-    });
+    const errosConsole: string[] = [];
+    const consoleErrorOriginal = console.error;
+    console.error = (...args: unknown[]) => {
+      errosConsole.push(args.map(String).join(" "));
+      consoleErrorOriginal(...args);
+    };
 
-    assertEquals(res.status, 200);
-    const data = await res.json();
-    assertEquals(data.relatorio[0].status, "falhou");
-    assert(data.relatorio[0].detalhe !== "UNREGISTERED", "não deve relatar UNREGISTERED");
+    try {
+      const res = await processarEnvioPush(req, {
+        serviceAccount: sa,
+        fetchFn: mockFetch,
+        fcmApiUrl: "http://mock-fcm/messages:send",
+        sqlClient,
+      });
 
-    // PROVA CRÍTICA: o token NUNCA deve ser removido do banco por 404 genérico de configuração
-    assertEquals(tokensRemovidos.length, 0, "token FCM NÃO deve ser removido por 404 genérico sem UNREGISTERED");
-    assertEquals(chamadasFalha.length, 1);
-    assert(chamadasFalha[0]?.motivo !== "UNREGISTERED");
+      assertEquals(res.status, 200);
+      const data = await res.json();
+      assertEquals(data.relatorio[0].status, "falhou");
+      assert(data.relatorio[0].detalhe !== "UNREGISTERED", "não deve relatar UNREGISTERED");
+
+      // PROVA CRÍTICA: o token NUNCA deve ser removido do banco por 404 genérico de configuração
+      assertEquals(tokensRemovidos.length, 0, "token FCM NÃO deve ser removido por 404 genérico sem UNREGISTERED");
+      assertEquals(chamadasFalha.length, 1);
+      assert(chamadasFalha[0]?.motivo !== "UNREGISTERED");
+      assert(
+        errosConsole.some((msg) => msg.includes("[ALERTA_CONFIG_FCM]")),
+        "deve emitir alerta explicito [ALERTA_CONFIG_FCM] no console.error",
+      );
+    } finally {
+      console.error = consoleErrorOriginal;
+    }
   },
 );
 

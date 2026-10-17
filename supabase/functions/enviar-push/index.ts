@@ -872,6 +872,9 @@ export async function processarEnvioPush(
         detalhe: `erro_transitorio: ${erroUltimo}`,
       });
     } else {
+      if (erroUltimo === "NOT_FOUND" || erroUltimo.startsWith("HTTP 404")) {
+        console.error(`[ALERTA_CONFIG_FCM] Falha de configuração detectada no FCM: ${erroUltimo}`);
+      }
       await sqlClient.gravarFalhaPush({
         notificacaoId: n.id,
         motivo: erroUltimo || "falha_envio",
