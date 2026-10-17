@@ -409,13 +409,13 @@ select ok(
 -- ── 7. Envelope Canônico de Resposta ──────────────────────────────────────────
 
 select is(
-  (select (elem ?& array['candidatura_id', 'criada_em', 'profissional'])
+  (select (elem ?& array['candidatura_id', 'criada_em', 'profissional', 'da_equipe'])
       and ((elem->'profissional') ?& array['id', 'tipo', 'nome', 'funcoes', 'reputacao'])
       and ((elem->'profissional'->'reputacao') ?& array['positivas', 'total', 'taxa_comparecimento', 'turnos_realizados', 'turnos_considerados'])
      from jsonb_array_elements(pg_temp.como((select user_dono_ze from ids), format($$ select public.candidatos_da_vaga(%L) $$, (select vaga_ze_selecao from ids)))) elem
     limit 1),
   true,
-  'envelope canonico: cada candidato possui candidatura_id, criada_em e profissional com reputacao completa'
+  'envelope canonico: cada candidato possui candidatura_id, criada_em, profissional e da_equipe'
 );
 
 -- ── 8. Provas de Mutação Real via pg_get_functiondef ─────────────────────────

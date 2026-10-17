@@ -202,7 +202,7 @@ select is(jsonb_array_length(pg_temp.como('c9000000-0000-4000-8000-0000000000d1'
 select is((select array_agg(k order by k) from jsonb_object_keys(
     pg_temp.como('c9000000-0000-4000-8000-0000000000d1',
       format($$ select public.candidatos_da_vaga(%L) $$, (select s1 from vagas)))->0) k),
-  array['candidatura_id', 'criada_em', 'profissional'],
+  array['candidatura_id', 'criada_em', 'da_equipe', 'profissional'],
   'cada candidato é um Candidato do contrato');
 select is(pg_temp.como('c9000000-0000-4000-8000-0000000000d1',
     format($$ select public.candidatos_da_vaga(%L) $$, (select s1 from vagas)))->0->'profissional'->>'tipo',
