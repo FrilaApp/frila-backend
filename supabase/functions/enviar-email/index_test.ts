@@ -865,6 +865,11 @@ Deno.test("mutação: classificarErro classifica exaustivamente falhas de creden
     "Invalid credentials provided by client",
     "auth error: unauthorized",
     "SMTP client credential rejected",
+    "Authorization required by server",
+    "Failed to authenticate against relay",
+    "not authenticated",
+    "auth_failed: bad username or secret",
+    "authorized users only",
   ];
 
   for (const msg of mensagensAutenticacao) {
@@ -875,13 +880,37 @@ Deno.test("mutação: classificarErro classifica exaustivamente falhas de creden
       `Mensagem '${msg}' deveria ser classificada como falha_de_autenticacao definitiva`,
     );
   }
+
+  // Falsos positivos: palavras que contêm 'auth' ou 'credential' apenas como substring interna
+  // ou prefixo que não seja flexão de autenticação não devem casar com falha_de_autenticacao.
+  const mensagensFalsosPositivos = [
+    "author not found in database",
+    "south datacenter temporary route error",
+    "authoritative DNS response failure",
+    "oauth temporary token network failure",
+  ];
+
+  for (const msg of mensagensFalsosPositivos) {
+    const res = classificarErro(new Error(msg));
+    assertEquals(
+      res,
+      { codigo: "erro_nao_classificado", transitorio: true },
+      `Mensagem '${msg}' não deveria casar com falha_de_autenticacao`,
+    );
+  }
 });
 
 Deno.test("mutação: falha_de_autenticacao no envio de ocorrencia arquiva imediatamente o pedido sem queimar leituras", async () => {
   const e = espiao([pedido({ msg_id: 530, read_ct: 1 })]);
 
+  // Passa pelo classificarErro real a partir de uma exceção do provedor SMTP
   const envioAuthInvalida = (_email: Email): Promise<ResultadoEnvio> => {
-    return Promise.resolve({ ok: false, codigo: "falha_de_autenticacao", transitorio: false });
+    try {
+      throw new Error("Authorization required: user credentials rejected");
+    } catch (erro) {
+      const { codigo, transitorio } = classificarErro(erro);
+      return Promise.resolve({ ok: false, codigo, transitorio });
+    }
   };
 
   const res = await chamar(e, envioAuthInvalida);
@@ -910,8 +939,14 @@ Deno.test("mutação: falha_de_autenticacao em alerta operacional arquiva imedia
   };
   const e = espiao([p]);
 
+  // Passa pelo classificarErro real a partir de uma exceção do provedor SMTP
   const envioAuthInvalida = (_email: Email): Promise<ResultadoEnvio> => {
-    return Promise.resolve({ ok: false, codigo: "falha_de_autenticacao", transitorio: false });
+    try {
+      throw new Error("auth_failed: unauthorized");
+    } catch (erro) {
+      const { codigo, transitorio } = classificarErro(erro);
+      return Promise.resolve({ ok: false, codigo, transitorio });
+    }
   };
 
   const res = await chamar(e, envioAuthInvalida);
