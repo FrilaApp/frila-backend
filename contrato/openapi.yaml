@@ -2623,7 +2623,6 @@ paths:
 
         Tentativa de confirmar turno em que o profissional ainda não realizou o check-in é recusada com
         `409 checkin_pendente`. Turno com check-in geolocalizado (que já nasce verificado) recusa `409 checkin_ja_confirmado`.
-        Turno em posição cancelada recusa `409 vaga_encerrada` com `details: posicao_cancelada`.
         Turno que não existe é `404 nao_encontrado`.
       x-requisitos: [RF13, RF20, RN22, UC05, UC07]
       requestBody:

@@ -40,14 +40,14 @@ de carga e não teste de regra. O número da CI, e o da tabela, é **109 arquivo
 > (0.2.42, PR #193), a liberação de relato sem filtro de termos ofensivos em contestação e denúncia (0.2.43, PR #198)
 > e a documentação textual das recusas de presença em `fazer_checkin`, `confirmar_checkin_manual` e `fazer_checkout` (0.2.44, PR #92).
 >
-> A `develop` recebeu o espelho idêntico (`b514ca35d05b7844ab0fb3363b18847fde2ca4ccdb85cc3993f26d527247dacf`)
+> A `develop` recebeu o espelho idêntico (`454c08f8bab4528d4158257be9b72ab1803399650d5653d7a12d7bbdab587527`)
 > e todas as implementações, migrações e testes correspondentes.
 > O portão `./scripts/contrato-em-dia.sh` confirma integridade com sha256 exato.
 >
 > | | Versão | sha256 | bytes |
 > |---|---|---|---|
-> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.44** | `b514ca35d05b7844ab0fb3363b18847fde2ca4ccdb85cc3993f26d527247dacf` | 250 365 |
-> | original, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.44** | `b514ca35d05b7844ab0fb3363b18847fde2ca4ccdb85cc3993f26d527247dacf` | 250 365 |
+> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.44** | `454c08f8bab4528d4158257be9b72ab1803399650d5653d7a12d7bbdab587527` | 250 266 |
+> | original, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.44** | `454c08f8bab4528d4158257be9b72ab1803399650d5653d7a12d7bbdab587527` | 250 266 |
 
 > ## 🟢 Instabilidades de concorrência em `Corridas do ciclo` sanadas na raiz
 >
