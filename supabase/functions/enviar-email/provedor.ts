@@ -85,7 +85,7 @@ export function classificarErro(erro: unknown): { codigo: string; transitorio: b
     return { codigo: `smtp_${completo}`, transitorio: false };
   }
 
-  if (/\b(auth|authentication|credential)/i.test(texto)) {
+  if (/(?<![a-z0-9])(auth|authenticat\w*|authoriz\w*|credentials?)(?![a-z0-9])/i.test(texto)) {
     return { codigo: "falha_de_autenticacao", transitorio: false };
   }
 
