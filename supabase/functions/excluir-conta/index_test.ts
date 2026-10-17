@@ -695,3 +695,54 @@ Deno.test("resiliência: resposta malformada (JSON inválido) em /auth/v1/user r
   const corpo = await resposta.json();
   assertEquals(corpo, { code: "erro_interno", message: "erro_interno", details: null });
 });
+
+Deno.test("mutação: recusa Authorization fora do padrao Bearer ou sem token com 401 sem chamar Auth nem banco", async () => {
+  const esquemasInvalidos = [
+    "Basic dXNlcjpwYXNz",
+    "Bearer",
+    "Bearer ",
+    "Bearer   ",
+    "Token xyz",
+    "Digest username=abc",
+  ];
+
+  for (const auth of esquemasInvalidos) {
+    let chamouFetch = false;
+    let chamouDb = false;
+
+    const deps = mockDeps({});
+    deps.fetchFn = () => {
+      chamouFetch = true;
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    };
+    deps.sqlClient = {
+      registrarPedido: () => {
+        chamouDb = true;
+        return Promise.resolve();
+      },
+      query: () => {
+        chamouDb = true;
+        return Promise.resolve({ dados: {} });
+      },
+    };
+
+    const resposta = await handler(
+      new Request("http://localhost", {
+        method: "POST",
+        headers: {
+          Authorization: auth,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ confirmar: true }),
+      }),
+      deps,
+    );
+
+    assertEquals(resposta.status, 401, `Esquema '${auth}' deveria ser recusado com 401`);
+    const corpo = await resposta.json();
+    assertEquals(corpo.code, "nao_autenticado");
+    assertEquals(chamouFetch, false, `Esquema '${auth}' não deve chamar Auth`);
+    assertEquals(chamouDb, false, `Esquema '${auth}' não deve tocar no banco`);
+  }
+});
+
