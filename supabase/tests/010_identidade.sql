@@ -17,12 +17,12 @@ $$;
 -- ── RN20: maioridade verificada na escrita ─────────────────────────────────────
 select lives_ok(
   $$ select pg_temp.conta('00000000-0000-0000-0000-000000000001', 'profissional',
-                          (current_date - interval '18 years')::date) $$,
+                          ((privado.agora() at time zone 'America/Sao_Paulo')::date - interval '18 years')::date) $$,
   'RN20: exatamente 18 anos entra');
 
 select throws_ok(
   $$ select pg_temp.conta('00000000-0000-0000-0000-000000000002', 'profissional',
-                          (current_date - interval '18 years' + interval '1 day')::date) $$,
+                          ((privado.agora() at time zone 'America/Sao_Paulo')::date - interval '18 years' + interval '1 day')::date) $$,
   '23514',
   null,
   'RN20: um dia a menos de 18 anos é recusado pelo banco, não pela tela');
