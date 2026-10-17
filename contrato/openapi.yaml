@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.43
+  version: 0.2.44
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -97,6 +97,23 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.44, de 17/10/2026.** Só texto: nenhuma operação, campo, código de erro ou status
+    muda. Documenta explicitamente nas operações de presença (`/rpc/fazer_checkin`,
+    `/rpc/confirmar_checkin_manual` e `/rpc/fazer_checkout`) as recusas que já constavam no catálogo de
+    erros e no backend (Achado 2 da auditoria de contrato e alinhamento com a diretriz 2.1):
+
+    - **`fazerCheckin`**: documenta as recusas `422 registro_no_futuro` (quando `registrado_em` está
+      adiantado em mais de 2 minutos em relação ao relógio do servidor) e `422 fora_da_janela` (quando o
+      toque ocorre fora da janela permitida, de 60 minutos antes do início até o fim previsto do turno; a
+      conta de revisão da App Store é isenta da janela de turno, mas continua sujeita a `registro_no_futuro`).
+    - **`confirmarCheckinManual`**: documenta a recusa `409 checkin_pendente` (quando chamado em turno cujo
+      check-in ainda não foi realizado) e `409 checkin_ja_confirmado` (em check-in geolocalizado).
+    - **`fazerCheckout`**: documenta as recusas `409 checkin_pendente` (quando tenta encerrar um
+      turno sem check-in prévio), `422 registro_no_futuro` e `422 fora_da_janela` (com a mesma isenção de
+      janela para a conta de revisão).
+    - Exemplos `checkin_pendente`, `fora_da_janela` e `registro_no_futuro` adicionados às respostas
+      canônicas `Conflito` e `RegraRecusou`.
 
     **Versão 0.2.43, de 15/10/2026.** Só texto: nenhuma operação, campo, código de erro ou status
     muda. Alinha a descrição ao que o backend faz desde a migração `20261013110000` (decisão J1=B da
@@ -2564,6 +2581,13 @@ paths:
         posição já cancelada (por exemplo, o que esperava na fila do app quando a posição foi
         cancelada) é `409 vaga_encerrada` com `details: posicao_cancelada`; a trava é um gatilho do
         banco.
+
+        Toque com `registrado_em` adiantado em mais de 2 minutos em relação ao relógio do servidor é
+        recusado com `422 registro_no_futuro`. Toque fora da janela permitida (de 60 minutos antes do
+        início até o fim previsto do turno) é recusado com `422 fora_da_janela` (RN22). A conta de
+        demonstração/revisão da App Store (`usuario.demonstracao`) atravessa a janela de turno sem recusa
+        de `fora_da_janela` para permitir inspeção assíncrona da diretriz 2.1, mas mantém a trava de
+        `registro_no_futuro`.
       x-requisitos: [RF13, RN11, RN22, UC05]
       requestBody:
         required: true
@@ -2597,6 +2621,9 @@ paths:
       description: |
         Um toque, no app ou no Painel web. Só então o check-in manual conta como presença (RN22).
 
+        Tentativa de confirmar turno em que o profissional ainda não realizou o check-in é recusada com
+        `409 checkin_pendente`. Turno com check-in geolocalizado (que já nasce verificado) recusa `409 checkin_ja_confirmado`.
+        Turno em posição cancelada recusa `409 vaga_encerrada` com `details: posicao_cancelada`.
         Turno que não existe é `404 nao_encontrado`.
       x-requisitos: [RF13, RF20, RN22, UC05, UC07]
       requestBody:
@@ -2638,6 +2665,12 @@ paths:
         os dois já foram avisados pelo agendador, e o valor fica entre as partes (A09).
 
         Turno que não existe, ou que não é de quem chama, é `404 nao_encontrado`.
+
+        Check-out de um turno que ainda não teve check-in registrado é recusado com `409 checkin_pendente`
+        (indica o passo que falta para a tela direcionar a pessoa). Toque com `registrado_em` adiantado
+        em mais de 2 minutos em relação ao relógio do servidor recusa `422 registro_no_futuro`, e fora da
+        janela permitida do turno recusa `422 fora_da_janela` (RN22). A conta de demonstração/revisão
+        da App Store é isenta da janela de turno, mantendo a trava de `registro_no_futuro`.
       x-requisitos: [RF13, RN11, RN22, UC05]
       requestBody:
         required: true
@@ -3631,6 +3664,12 @@ components:
                 message: contestacao_ja_aberta
                 details: null
                 hint: null
+            checkin_pendente:
+              value:
+                code: checkin_pendente
+                message: checkin_pendente
+                details: null
+                hint: null
     RegraRecusou:
       description: Uma regra de negócio recusou a operação.
       content:
@@ -3685,6 +3724,18 @@ components:
               value:
                 code: a_caminho_fora_da_janela
                 message: a_caminho_fora_da_janela
+                details: null
+                hint: null
+            fora_da_janela:
+              value:
+                code: fora_da_janela
+                message: fora_da_janela
+                details: null
+                hint: null
+            registro_no_futuro:
+              value:
+                code: registro_no_futuro
+                message: registro_no_futuro
                 details: null
                 hint: null
     LimiteExcedido:
