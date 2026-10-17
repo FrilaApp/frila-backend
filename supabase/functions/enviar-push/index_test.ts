@@ -2682,11 +2682,29 @@ Deno.test("sendFcmMessage: classificacao estrita de erros transitorios (429, 500
       resposta: () => Promise.resolve(new Response(JSON.stringify({ error: { message: "Quota exceeded" } }), { status: 429 })),
       esperado: { ok: false, status: 429, transient: true, unregistered: false },
     },
-    // 8. 404 e 410 -> desregistrado
+    // 8. 404 FCM com UNREGISTERED x 404 genérico (projeto/URL errada) x 410 Gone
     {
-      nome: "404 Not Found -> desregistrado e definitivo",
-      resposta: () => Promise.resolve(new Response(JSON.stringify({ error: { message: "Not found" } }), { status: 404 })),
+      nome: "404 FCM com errorCode UNREGISTERED nos details -> desregistrado e definitivo",
+      resposta: () => Promise.resolve(new Response(JSON.stringify({
+        error: {
+          code: 404,
+          message: "Requested entity was not found.",
+          status: "NOT_FOUND",
+          details: [{ "@type": "type.googleapis.com/google.firebase.fcm.v1.FcmError", errorCode: "UNREGISTERED" }],
+        },
+      }), { status: 404 })),
       esperado: { ok: false, status: 404, transient: false, unregistered: true },
+    },
+    {
+      nome: "404 generico de configuracao (NOT_FOUND sem UNREGISTERED) -> definitivo e NAO desregistrado",
+      resposta: () => Promise.resolve(new Response(JSON.stringify({
+        error: {
+          code: 404,
+          message: "Project not found or path not found.",
+          status: "NOT_FOUND",
+        },
+      }), { status: 404 })),
+      esperado: { ok: false, status: 404, transient: false, unregistered: false },
     },
     {
       nome: "410 Gone -> desregistrado e definitivo",
@@ -2736,6 +2754,119 @@ Deno.test("sendFcmMessage: classificacao estrita de erros transitorios (429, 500
     }
   }
 });
+
+Deno.test(
+  "Edge Function: 404 genérico do FCM (projeto inexistente ou URL errada sem UNREGISTERED) NÃO remove token do banco",
+  async () => {
+    const sa = await gerarContaDeServicoTeste();
+    const tokensRemovidos: string[] = [];
+    const chamadasFalha: GravarFalhaPushParams[] = [];
+
+    const sqlClient: SqlClient = {
+      notificacaoExpirada: () => Promise.resolve(false),
+      gravarFalhaPush: (p) => {
+        chamadasFalha.push(p);
+        return Promise.resolve();
+      },
+      gravarAceitePush: () => Promise.resolve(),
+      removerTokenFcm: (token) => {
+        tokensRemovidos.push(token);
+        return Promise.resolve(1);
+      },
+    };
+
+    const mockFetch = (url: string | URL | Request) => {
+      const urlStr = typeof url === "string" ? url : "url" in url ? url.url : url.toString();
+
+      if (urlStr.includes("oauth") || urlStr.includes("/token")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ access_token: "mock-token" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
+
+      if (urlStr.includes("notificacao")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                id: "a2000000-0000-4000-8000-000000000003",
+                usuario_id: "u3",
+                tipo: "vaga",
+                titulo: "Nova vaga",
+                corpo: "Vaga disponível",
+                payload: {},
+                vaga_id: "v1",
+                turno_id: null,
+                tentativas: 0,
+                estado_entrega: "pendente",
+                proxima_tentativa_em: null,
+              },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+
+      if (urlStr.includes("dispositivo")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              { id: "d3", token_fcm: "fcm_token_valido_projeto_errado", plataforma: "ios" },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+
+      if (urlStr.includes("/messages:send")) {
+        // Simula resposta 404 de erro de projeto/URL (NOT_FOUND genérico sem details de Unregistered)
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 404,
+                message: "Project not found or path not found.",
+                status: "NOT_FOUND",
+              },
+            }),
+            { status: 404, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+
+      return Promise.reject(new Error(`URL não tratada: ${urlStr}`));
+    };
+
+    const req = new Request("http://localhost/functions/v1/enviar-push", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-agendador-secret": SEGREDO_TESTE,
+      },
+      body: JSON.stringify({ notificacao_id: "a2000000-0000-4000-8000-000000000003" }),
+    });
+
+    const res = await processarEnvioPush(req, {
+      serviceAccount: sa,
+      fetchFn: mockFetch,
+      fcmApiUrl: "http://mock-fcm/messages:send",
+      sqlClient,
+    });
+
+    assertEquals(res.status, 200);
+    const data = await res.json();
+    assertEquals(data.relatorio[0].status, "falhou");
+    assert(data.relatorio[0].detalhe !== "UNREGISTERED", "não deve relatar UNREGISTERED");
+
+    // PROVA CRÍTICA: o token NUNCA deve ser removido do banco por 404 genérico de configuração
+    assertEquals(tokensRemovidos.length, 0, "token FCM NÃO deve ser removido por 404 genérico sem UNREGISTERED");
+    assertEquals(chamadasFalha.length, 1);
+    assert(chamadasFalha[0]?.motivo !== "UNREGISTERED");
+  },
+);
 
 
 
