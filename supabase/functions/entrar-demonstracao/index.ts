@@ -82,6 +82,34 @@ export function emailsDeclarados(): string[] {
     .filter((e) => e.length > 0);
 }
 
+// Rate limit em memória por IP (10 tentativas por 10 min)
+const tentativasPorIp = new Map<string, number[]>();
+
+export function verificarLimiteIp(ip: string, agoraMs = Date.now()): boolean {
+  if (!ip || ip === "desconhecido") return true;
+  const timestamps = (tentativasPorIp.get(ip) ?? []).filter(
+    (t) => agoraMs - t < JANELA_MINUTOS * 60_000,
+  );
+  if (timestamps.length >= TETO_TENTATIVAS) {
+    tentativasPorIp.set(ip, timestamps);
+    return false;
+  }
+  return true;
+}
+
+export function registrarTentativaIp(ip: string, agoraMs = Date.now()): void {
+  if (!ip || ip === "desconhecido") return;
+  const timestamps = (tentativasPorIp.get(ip) ?? []).filter(
+    (t) => agoraMs - t < JANELA_MINUTOS * 60_000,
+  );
+  timestamps.push(agoraMs);
+  tentativasPorIp.set(ip, timestamps);
+}
+
+export function resetarLimitesIp(): void {
+  tentativasPorIp.clear();
+}
+
 export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Response> {
   if (req.method !== "POST") return recusa(404, "nao_encontrado");
 
@@ -103,6 +131,15 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
   // internet, e o teto de tentativas é por endereço — lixo não precisa de teto.
   if (!listaEmails.includes(email)) return recusa(404, "nao_encontrado");
 
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("cf-connecting-ip")?.trim() ||
+    "desconhecido";
+
+  // Se o IP do cliente já excedeu o teto na janela, recusa uniforme sem tocar o banco
+  if (!verificarLimiteIp(ip)) {
+    return recusa(404, "nao_encontrado");
+  }
+
   const fetchFn = deps.fetchFn ?? fetch;
   const origem = (deps.supabaseUrl ?? Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
   const serviceRole = deps.serviceRoleKey ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -120,67 +157,74 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
     });
   };
 
-  // A tentativa é gravada **antes** de conferir o código: quem erra o código tem de
-  // consumir a cota igual a quem acerta, senão o teto não segura nada.
-  //
-  // O carimbo `em` vem do banco, pelo `privado.agora()`, e é ele que define a janela.
-  // Calcular a janela com o relógio da função deixaria o teto fora de fase com o resto do
-  // produto no dia em que o relógio for deslocado num teste.
-  const gravada = await rest("entrada_demonstracao", {
-    method: "POST",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify({ email, aceita: false }),
-  });
-  if (!gravada.ok) return recusa(500, "erro_interno");
-  const [tentativa] = await gravada.json();
-  const inicioDaJanela = new Date(
-    new Date(tentativa.em).getTime() - JANELA_MINUTOS * 60_000,
-  ).toISOString();
+  const esperado = deps.codigoEsperado ?? (Deno.env.get("DEMONSTRACAO_CODIGO") ?? "");
+  const codigoCorreto = esperado !== "" && igualEmTempoConstante(codigo, esperado);
+
+  // DIRETRIZ 2.1 DA APPLE: o código CORRETO nunca é bloqueado por tentativas erradas
+  // prévias (ataques de negação de serviço contra o revisor são neutralizados).
+  if (codigoCorreto) {
+    // Passo 1: o código de uso único, sem passar pela caixa de e-mail de ninguém.
+    const link = await fetchFn(`${origem}/auth/v1/admin/generate_link`, {
+      method: "POST",
+      headers: {
+        apikey: serviceRole,
+        Authorization: `Bearer ${serviceRole}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ type: "magiclink", email }),
+    });
+    if (!link.ok) return recusa(404, "nao_encontrado");
+    const { email_otp } = await link.json();
+
+    // Passo 2: a mesma troca que o app faz com o código digitado.
+    const sessao = await fetchFn(`${origem}/auth/v1/verify`, {
+      method: "POST",
+      headers: { apikey: anon, "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "magiclink", email, token: email_otp }),
+    });
+    if (!sessao.ok) return recusa(404, "nao_encontrado");
+
+    // Registra a entrada bem-sucedida para auditoria
+    const gravada = await rest("entrada_demonstracao", {
+      method: "POST",
+      body: JSON.stringify({ email, aceita: true }),
+    });
+    if (!gravada.ok) return recusa(500, "erro_interno");
+
+    return new Response(await sessao.text(), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Código INCORRETO:
+  // Contar ANTES de inserir: se o e-mail já atingiu o teto na janela recente, não grava
+  // mais linhas (previne inundação da tabela) e recusa uniformemente com 404 (sem revelar
+  // 429 para não confirmar existência do e-mail na lista da Apple).
+  const inicioDaJanela = new Date(Date.now() - JANELA_MINUTOS * 60_000).toISOString();
 
   const janela = await rest(
     `entrada_demonstracao?select=id&email=eq.${encodeURIComponent(email)}` +
-      `&em=gte.${encodeURIComponent(inicioDaJanela)}&limit=${TETO_TENTATIVAS + 1}`,
+      `&em=gte.${encodeURIComponent(inicioDaJanela)}&aceita=eq.false&limit=${TETO_TENTATIVAS + 1}`,
   );
   if (!janela.ok) return recusa(500, "erro_interno");
-  if ((await janela.json()).length > TETO_TENTATIVAS) {
-    return recusa(429, "limite_excedido", "tentativas");
-  }
+  const tentativasErradas = await janela.json();
 
-  const esperado = deps.codigoEsperado ?? (Deno.env.get("DEMONSTRACAO_CODIGO") ?? "");
-  if (esperado === "" || !igualEmTempoConstante(codigo, esperado)) {
+  registrarTentativaIp(ip);
+
+  if (Array.isArray(tentativasErradas) && tentativasErradas.length >= TETO_TENTATIVAS) {
+    // Teto já atingido: não grava mais nada no banco
     return recusa(404, "nao_encontrado");
   }
 
-  // Passo 1: o código de uso único, sem passar pela caixa de e-mail de ninguém.
-  const link = await fetchFn(`${origem}/auth/v1/admin/generate_link`, {
+  // Grava a tentativa errada no banco para computar cota
+  const gravada = await rest("entrada_demonstracao", {
     method: "POST",
-    headers: {
-      apikey: serviceRole,
-      Authorization: `Bearer ${serviceRole}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ type: "magiclink", email }),
+    body: JSON.stringify({ email, aceita: false }),
   });
-  if (!link.ok) return recusa(404, "nao_encontrado");
-  const { email_otp } = await link.json();
+  if (!gravada.ok) return recusa(500, "erro_interno");
 
-  // Passo 2: a mesma troca que o app faz com o código digitado.
-  const sessao = await fetchFn(`${origem}/auth/v1/verify`, {
-    method: "POST",
-    headers: { apikey: anon, "Content-Type": "application/json" },
-    body: JSON.stringify({ type: "magiclink", email, token: email_otp }),
-  });
-  if (!sessao.ok) return recusa(404, "nao_encontrado");
-
-  await rest(`entrada_demonstracao?id=eq.${tentativa.id}`, {
-    method: "PATCH",
-    body: JSON.stringify({ aceita: true }),
-  });
-
-  return new Response(await sessao.text(), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+  return recusa(404, "nao_encontrado");
 }
 
 if (import.meta.main) {

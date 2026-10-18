@@ -5,6 +5,7 @@ import {
   HandlerDeps,
   igualEmTempoConstante,
   JANELA_MINUTOS,
+  resetarLimitesIp,
   TETO_TENTATIVAS,
 } from "./index.ts";
 
@@ -68,10 +69,14 @@ function criarMockFetch(estado: MockState): typeof fetch {
       const url = new URL(urlStr);
       const emailParam = url.searchParams.get("email")?.replace(/^eq\./, "") ?? "";
       const emParam = url.searchParams.get("em")?.replace(/^gte\./, "");
+      const aceitaParam = url.searchParams.get("aceita")?.replace(/^eq\./, "");
       const limitParam = url.searchParams.get("limit");
       let matches = estado.tentativas.filter((t) => t.email === emailParam);
       if (emParam) {
         matches = matches.filter((t) => t.em >= emParam);
+      }
+      if (aceitaParam !== undefined && aceitaParam !== null && aceitaParam !== "") {
+        matches = matches.filter((t) => String(t.aceita) === aceitaParam);
       }
       if (limitParam) {
         matches = matches.slice(0, Number(limitParam));
@@ -253,11 +258,10 @@ Deno.test("entrar-demonstracao: normaliza email da requisicao com espacos e maiu
   assertEquals(estado.tentativas[0].email, MOCK_EMAIL_REVISOR);
 });
 
-Deno.test("entrar-demonstracao: caracterizacao de rate limit por email (10 tentativas em 10 min, risco Apple 2.1)", async () => {
-  // Teste de caracterização: decisão do dono / comportamento atual, não necessariamente o desejado.
-  // O limite de 10 tentativas em 10 minutos é contabilizado por e-mail no banco.
-  // Risco registrado na NOTA-AUDITORIA-EDGE-FUNCTIONS.md e na descrição do #207:
-  // se um terceiro souber o e-mail do revisor, pode forjar 10 requisições e travar a revisão da App Store por 10 minutos (risco de diretriz 2.1).
+Deno.test("entrar-demonstracao: 11 tentativas erradas seguidas de 1 correta devolve 200 (diretriz 2.1 da Apple)", async () => {
+  // Diretriz 2.1 da Apple: o código correto NUNCA é bloqueado por tentativas erradas anteriores.
+  // Tentativas erradas além do teto recebem 404 uniforme (sem vazar 429) e não inundam a tabela.
+  resetarLimitesIp();
   const estado: MockState = {
     tentativas: [
       // Tentativa antiga (15 minutos atrás) que deve ser ignorada pelo filtro de janela (em=gte)
@@ -271,40 +275,78 @@ Deno.test("entrar-demonstracao: caracterizacao de rate limit por email (10 tenta
     proximoId: 1,
   };
 
-  // 10 tentativas recentes para o e-mail do revisor travam no literal 10
-  for (let i = 1; i <= 10; i++) {
+  // 11 tentativas erradas recentes para o e-mail do revisor
+  for (let i = 1; i <= 11; i++) {
     const req = new Request("http://localhost/functions/v1/entrar-demonstracao", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-forwarded-for": `192.168.1.${i}` },
       body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "errado" }),
     });
     const res = await handler(req, depsPadrao(estado));
     assertEquals(res.status, 404);
   }
-  // 1 tentativa antiga + 10 recentes
+
+  // Contenção de inundação: após 10 tentativas erradas recentes (mais 1 antiga = 11 no total),
+  // a 11ª tentativa errada recente NÃO gravou nova linha no banco
   assertEquals(estado.tentativas.length, 11);
 
-  // A 11ª tentativa recente contra o mesmo e-mail recebe 429 limite_excedido
-  const reqBloqueada = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+  // A 12ª tentativa com o CÓDIGO CORRETO do revisor DEVE ter sucesso (200 OK)
+  const reqCorreta = new Request("http://localhost/functions/v1/entrar-demonstracao", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-forwarded-for": "10.0.0.1" },
     body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: MOCK_CODIGO }),
   });
-  const resBloqueada = await handler(reqBloqueada, depsPadrao(estado));
-  assertEquals(resBloqueada.status, 429);
-  const jsonBloqueada = await resBloqueada.json();
-  assertEquals(jsonBloqueada.code, "limite_excedido");
-  assertEquals(jsonBloqueada.message, "limite_excedido");
-  assertEquals(jsonBloqueada.details, "tentativas");
+  const resCorreta = await handler(reqCorreta, depsPadrao(estado));
+  assertEquals(resCorreta.status, 200);
+  const jsonCorreta = await resCorreta.json();
+  assertEquals(jsonCorreta.access_token, "mock-access-token");
+  assertEquals(jsonCorreta.user.email, MOCK_EMAIL_REVISOR);
 
-  // Outro e-mail de demonstração (segundo perfil) NÃO é afetado pelo bloqueio do primeiro
-  const reqOutroEmail = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+  // A tentativa correta foi registrada com aceita = true
+  const ultimaTentativa = estado.tentativas[estado.tentativas.length - 1];
+  assertEquals(ultimaTentativa.aceita, true);
+  assertEquals(ultimaTentativa.email, MOCK_EMAIL_REVISOR);
+});
+
+Deno.test("entrar-demonstracao: teto por IP bloqueia tentativas excessivas com 404 uniforme", async () => {
+  resetarLimitesIp();
+  const estado: MockState = {
+    tentativas: [],
+    proximoId: 1,
+  };
+
+  const ipAtacante = "203.0.113.42";
+
+  // 10 tentativas do mesmo IP
+  for (let i = 1; i <= 10; i++) {
+    const req = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-forwarded-for": ipAtacante },
+      body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "errado" }),
+    });
+    const res = await handler(req, depsPadrao(estado));
+    assertEquals(res.status, 404);
+  }
+
+  // 11ª tentativa do mesmo IP: bloqueada no Edge sem nem bater no banco
+  const qtdBancoAntes = estado.tentativas.length;
+  const reqBloqueada = new Request("http://localhost/functions/v1/entrar-demonstracao", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: MOCK_EMAIL_CONTRATANTE, codigo: MOCK_CODIGO }),
+    headers: { "Content-Type": "application/json", "x-forwarded-for": ipAtacante },
+    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "errado" }),
   });
-  const resOutroEmail = await handler(reqOutroEmail, depsPadrao(estado));
-  assertEquals(resOutroEmail.status, 200);
+  const resBloqueada = await handler(reqBloqueada, depsPadrao(estado));
+  assertEquals(resBloqueada.status, 404);
+  assertEquals(estado.tentativas.length, qtdBancoAntes);
+
+  // Outro IP consegue fazer a tentativa correta normalmente
+  const reqOutroIp = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-forwarded-for": "198.51.100.1" },
+    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: MOCK_CODIGO }),
+  });
+  const resOutroIp = await handler(reqOutroIp, depsPadrao(estado));
+  assertEquals(resOutroIp.status, 200);
 });
 
 Deno.test("entrar-demonstracao: igualdade correta resistente a timing em comparacao de codigo", () => {
@@ -350,7 +392,7 @@ Deno.test("entrar-demonstracao: falha do banco na janela retorna 500 erro_intern
   const req = new Request("http://localhost/functions/v1/entrar-demonstracao", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: MOCK_CODIGO }),
+    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "errado" }),
   });
 
   const res = await handler(req, depsPadrao(estado));
