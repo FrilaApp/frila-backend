@@ -29,10 +29,13 @@
 // nao_encontrado`: um `401` no código errado confirmaria que aquele endereço existe, e a
 // lista de endereços da revisão é justamente o que não deve ser descoberto.
 
-// O teto de tentativas contra o código fixo. Um código de seis dígitos que nunca expira
-// precisa disto: sem o teto, o espaço inteiro sai em poucas horas.
+// O teto de tentativas contra o código fixo.
 export const JANELA_MINUTOS = 10;
 export const TETO_TENTATIVAS = 10;
+// Entropia mínima do código de demonstração: falha fechado se for menor que 20 caracteres
+export const MIN_COMPRIMENTO_CODIGO = 20;
+// Limite máximo de entradas no mapa de IPs para evitar vazamento de memória
+export const MAX_IPS_EM_MEMORIA = 1000;
 
 export interface Erro {
   code: string;
@@ -82,23 +85,56 @@ export function emailsDeclarados(): string[] {
     .filter((e) => e.length > 0);
 }
 
-// Rate limit em memória por IP (10 tentativas por 10 min)
+// Extração segura do IP do cliente: cabeçalho da borda que o cliente não consegue forjar.
+// Se houver x-forwarded-for com múltiplos IPs, o cliente controla o primeiro,
+// enquanto o proxy reverso/borda acrescenta o IP real ao final.
+export function extrairIpCliente(req: Request): string {
+  const cf = req.headers.get("cf-connecting-ip")?.trim();
+  if (cf) return cf;
+  const realIp = req.headers.get("x-real-ip")?.trim();
+  if (realIp) return realIp;
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) {
+    const partes = xff.split(",").map((p) => p.trim()).filter(Boolean);
+    if (partes.length > 0) return partes[partes.length - 1];
+  }
+  return "desconhecido";
+}
+
+// Rate limit em memória por IP (10 tentativas erradas por 10 min)
 const tentativasPorIp = new Map<string, number[]>();
+
+function podarMapIp(agoraMs: number): void {
+  for (const [chave, timestamps] of tentativasPorIp.entries()) {
+    const validos = timestamps.filter((t) => agoraMs - t < JANELA_MINUTOS * 60_000);
+    if (validos.length === 0) {
+      tentativasPorIp.delete(chave);
+    } else {
+      tentativasPorIp.set(chave, validos);
+    }
+  }
+  if (tentativasPorIp.size > MAX_IPS_EM_MEMORIA) {
+    const excedente = tentativasPorIp.size - MAX_IPS_EM_MEMORIA;
+    let removidos = 0;
+    for (const chave of tentativasPorIp.keys()) {
+      tentativasPorIp.delete(chave);
+      removidos++;
+      if (removidos >= excedente) break;
+    }
+  }
+}
 
 export function verificarLimiteIp(ip: string, agoraMs = Date.now()): boolean {
   if (!ip || ip === "desconhecido") return true;
   const timestamps = (tentativasPorIp.get(ip) ?? []).filter(
     (t) => agoraMs - t < JANELA_MINUTOS * 60_000,
   );
-  if (timestamps.length >= TETO_TENTATIVAS) {
-    tentativasPorIp.set(ip, timestamps);
-    return false;
-  }
-  return true;
+  return timestamps.length < TETO_TENTATIVAS;
 }
 
 export function registrarTentativaIp(ip: string, agoraMs = Date.now()): void {
   if (!ip || ip === "desconhecido") return;
+  podarMapIp(agoraMs);
   const timestamps = (tentativasPorIp.get(ip) ?? []).filter(
     (t) => agoraMs - t < JANELA_MINUTOS * 60_000,
   );
@@ -131,15 +167,6 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
   // internet, e o teto de tentativas é por endereço — lixo não precisa de teto.
   if (!listaEmails.includes(email)) return recusa(404, "nao_encontrado");
 
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("cf-connecting-ip")?.trim() ||
-    "desconhecido";
-
-  // Se o IP do cliente já excedeu o teto na janela, recusa uniforme sem tocar o banco
-  if (!verificarLimiteIp(ip)) {
-    return recusa(404, "nao_encontrado");
-  }
-
   const fetchFn = deps.fetchFn ?? fetch;
   const origem = (deps.supabaseUrl ?? Deno.env.get("SUPABASE_URL") ?? "").replace(/\/+$/, "");
   const serviceRole = deps.serviceRoleKey ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -158,10 +185,13 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
   };
 
   const esperado = deps.codigoEsperado ?? (Deno.env.get("DEMONSTRACAO_CODIGO") ?? "");
-  const codigoCorreto = esperado !== "" && igualEmTempoConstante(codigo, esperado);
+  // O código fixo de demonstração DEVE ter alta entropia (mínimo 20 caracteres)
+  // para tornar inviável busca exaustiva. Se for menor ou vazio, falha fechado.
+  const codigoValidoConfigurado = esperado !== "" && esperado.length >= MIN_COMPRIMENTO_CODIGO;
+  const codigoCorreto = codigoValidoConfigurado && igualEmTempoConstante(codigo, esperado);
 
   // DIRETRIZ 2.1 DA APPLE: o código CORRETO nunca é bloqueado por tentativas erradas
-  // prévias (ataques de negação de serviço contra o revisor são neutralizados).
+  // prévias nem por rate limit de IP (ataques de negação de serviço contra o revisor são neutralizados).
   if (codigoCorreto) {
     // Passo 1: o código de uso único, sem passar pela caixa de e-mail de ninguém.
     const link = await fetchFn(`${origem}/auth/v1/admin/generate_link`, {
@@ -198,9 +228,20 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
   }
 
   // Código INCORRETO:
-  // Contar ANTES de inserir: se o e-mail já atingiu o teto na janela recente, não grava
-  // mais linhas (previne inundação da tabela) e recusa uniformemente com 404 (sem revelar
-  // 429 para não confirmar existência do e-mail na lista da Apple).
+  const ip = extrairIpCliente(req);
+
+  // 1. Teto por IP no ramo errado: se o IP já atingiu o teto na janela, recusa
+  // uniformemente sem bater no banco (atenua DoS/força bruta).
+  if (!verificarLimiteIp(ip)) {
+    return recusa(404, "nao_encontrado");
+  }
+
+  // Registra a tentativa associada ao IP
+  registrarTentativaIp(ip);
+
+  // 2. Contar ANTES de inserir no banco: se o e-mail já atingiu o teto na janela recente,
+  // não grava mais linhas (previne inundação da tabela) e recusa uniformemente com 404
+  // (sem revelar 429 para não confirmar existência do e-mail na lista da Apple).
   const inicioDaJanela = new Date(Date.now() - JANELA_MINUTOS * 60_000).toISOString();
 
   const janela = await rest(
@@ -210,10 +251,8 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
   if (!janela.ok) return recusa(500, "erro_interno");
   const tentativasErradas = await janela.json();
 
-  registrarTentativaIp(ip);
-
   if (Array.isArray(tentativasErradas) && tentativasErradas.length >= TETO_TENTATIVAS) {
-    // Teto já atingido: não grava mais nada no banco
+    // Teto por e-mail atingido: não grava mais no banco
     return recusa(404, "nao_encontrado");
   }
 
