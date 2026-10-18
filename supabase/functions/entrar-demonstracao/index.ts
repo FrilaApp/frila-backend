@@ -24,10 +24,15 @@
 //
 // ── O que esta porta não faz ──────────────────────────────────────────────────────────
 //
-// Não cria conta, não aceita endereço fora da lista declarada e não diz o que deu errado.
-// E-mail desconhecido, código errado e corpo malformado recebem todos o mesmo `404
-// nao_encontrado`: um `401` no código errado confirmaria que aquele endereço existe, e a
-// lista de endereços da revisão é justamente o que não deve ser descoberto.
+// Não cria conta, não aceita endereço fora da lista declarada e não expõe credenciais.
+// E-mail desconhecido, corpo malformado e falhas de configuração (janela inativa/ausente/sem fuso
+// ou código fixo ausente/<6 caracteres) recebem uniformemente `404 nao_encontrado`.
+//
+// Para endereços da lista declarada: código incorreto recebe `404 nao_encontrado` enquanto
+// dentro do teto (até 10 tentativas em 10 minutos por e-mail ou IP); ao ultrapassar o teto
+// na janela recente, o ramo incorreto passa a responder `429 excesso_tentativas` e emite
+// alerta operacional. O código correto para e-mail da lista é sempre validado com precedência
+// (nunca bloqueado por tentativas incorretas acumuladas) enquanto dentro da janela ativa.
 //
 // ── Tempo de resposta e enumeração ──────────────────────────────────────────────────
 //
@@ -161,6 +166,19 @@ export function resetarLimitesIp(): void {
   tentativasPorIp.clear();
 }
 
+// Valida e converte a data limite da janela de demonstração.
+// Exige formato ISO-8601 estrito com 'T' e fuso horário explícito ('Z' ou offset [+-]HH:MM).
+// Formatos sem fuso (ex.: "2026-10-30" ou "2026-10-30T23:59:00") são ambíguos quanto ao fuso
+// do ambiente (ex.: meia-noite UTC = 21h BRT do dia anterior) e são rejeitados com fail-closed (NaN).
+export function parseLimiteJanela(isoStr: string): number {
+  const str = isoStr.trim();
+  if (!str) return NaN;
+  const padraoIsoComFuso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/i;
+  if (!padraoIsoComFuso.test(str)) return NaN;
+  const t = new Date(str).getTime();
+  return isNaN(t) ? NaN : t;
+}
+
 export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Response> {
   if (req.method !== "POST") return recusa(404, "nao_encontrado");
 
@@ -200,13 +218,13 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
   };
 
   // 1. Janela de demonstração (Opção A): DEMONSTRACAO_ATIVA_ATE é obrigatória (fail-closed se ausente)
-  // Fora da janela ou se ausente/inválida: fecha a porta com 404 uniforme e emite alerta operacional.
+  // Fora da janela, se ausente, ou se sem fuso horário explícito: fecha a porta com 404 e emite alerta operacional.
   const ativaAte = deps.ativaAte ?? (Deno.env.get("DEMONSTRACAO_ATIVA_ATE") ?? "");
-  const limiteMs = ativaAte.trim() !== "" ? new Date(ativaAte.trim()).getTime() : NaN;
+  const limiteMs = parseLimiteJanela(ativaAte);
   const janelaValida = !isNaN(limiteMs) && Date.now() <= limiteMs;
   if (!janelaValida) {
     console.error(
-      "[ALERTA_CONFIG_DEMONSTRACAO] DEMONSTRACAO_ATIVA_ATE ausente, invalida ou expirada",
+      "[ALERTA_CONFIG_DEMONSTRACAO] DEMONSTRACAO_ATIVA_ATE ausente, invalida, sem fuso horario explicito ou expirada",
     );
     return recusa(404, "nao_encontrado");
   }
