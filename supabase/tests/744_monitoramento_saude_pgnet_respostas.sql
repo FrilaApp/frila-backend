@@ -14,7 +14,7 @@
 -- 12. Execução defensiva de verificar_saude não quebra
 
 begin;
-select plan(13);
+select plan(19);
 
 -- ── 1. Preparação: ativa modo teste e limpa alertas/fila ──────────────────────
 insert into privado.ambiente (id, eh_teste) values (true, true)
@@ -159,5 +159,56 @@ select is(
   'alerta de falha_execucao dos blocos 1-6 é emitido com sucesso e não é afetado pelo bloco 7'
 );
 
+-- ── 14. Guarda: quando extensão pg_net ou net._http_response está ausente, cai no else ──
+savepoint s_guarda_pgnet;
+drop extension pg_net cascade;
+delete from privado.alerta_emitido where codigo = 'pgnet_monitor_indisponivel';
+
+select lives_ok(
+  'select privado.verificar_saude()',
+  'verificar_saude roda normalmente mesmo com schema net/pg_net ausente (guarda ativa)'
+);
+
+select is(
+  (select count(*)::int from privado.alerta_emitido where codigo = 'pgnet_monitor_indisponivel'),
+  1,
+  'guarda ausente/sem privilégio dispara alerta pgnet_monitor_indisponivel via else'
+);
+
+rollback to savepoint s_guarda_pgnet;
+
+-- ── 15. Exceção: quando consulta gera erro em tempo de execução, bloco exception captura e emite alerta ──
+savepoint s_excecao_pgnet;
+drop extension pg_net cascade;
+create schema net;
+create table net._http_response (dummy int);
+delete from privado.alerta_emitido where codigo = 'pgnet_monitor_indisponivel';
+
+select lives_ok(
+  'select privado.verificar_saude()',
+  'verificar_saude não quebra ao disparar exceção dentro do bloco 7 (pg_net)'
+);
+
+select is(
+  (select count(*)::int from privado.alerta_emitido where codigo = 'pgnet_monitor_indisponivel'),
+  1,
+  'bloco de exceção do pg_net captura erro e dispara alerta pgnet_monitor_indisponivel'
+);
+
+rollback to savepoint s_excecao_pgnet;
+
+-- ── 16. Rate-limit para pgnet_monitor_indisponivel ───────────────────────────
+select ok(
+  privado.emitir_alerta('pgnet_monitor_indisponivel', 1),
+  'primeiro alerta de pgnet_monitor_indisponivel é emitido com sucesso'
+);
+
+select is(
+  privado.emitir_alerta('pgnet_monitor_indisponivel', 1),
+  false,
+  'segundo alerta de pgnet_monitor_indisponivel dentro de 1h é suprimido pelo rate-limit'
+);
+
 select * from finish();
 rollback;
+

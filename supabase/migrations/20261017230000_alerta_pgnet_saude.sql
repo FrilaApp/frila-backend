@@ -155,6 +155,12 @@ begin
           v_alertas := v_alertas + 1;
         end if;
       end if;
+    else
+      -- Ramo sem tabela net._http_response ou sem privilégio de SELECT pelo papel postgres:
+      -- Emite alerta operacional com rate-limit para avisar que o monitoramento do pg_net está inativo
+      if privado.emitir_alerta('pgnet_monitor_indisponivel', 1) then
+        v_alertas := v_alertas + 1;
+      end if;
     end if;
   exception
     when others then
