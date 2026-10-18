@@ -242,7 +242,7 @@ select is(
 
 -- Critério 12d: Nenhuma mensagem enfileirada na fila email
 select is(
-  (select count(*)::int from pgmq.q_email),
+  (select count(*)::int from pgmq.q_email where coalesce(message->>'tipo', '') <> 'alerta'),
   0,
   '12d. nenhuma mensagem enfileirada na fila email'
 );

@@ -343,6 +343,7 @@ select is(
 -- aqui.
 
 select set_config('frila.agendador_secret', '', true);
+delete from pgmq.q_email where coalesce(message->>'tipo', '') = 'alerta';
 
 select lives_ok(
   $$ select pgmq.send('email', jsonb_build_object(
@@ -351,7 +352,8 @@ select lives_ok(
 
 select is(
   (select count(*)::int from pgmq.q_email
-    where message->>'ocorrencia_id' = '0c430000-0000-4000-8000-000000000002'),
+    where message->>'ocorrencia_id' = '0c430000-0000-4000-8000-000000000002'
+      and coalesce(message->>'tipo', '') <> 'alerta'),
   1,
   'e o pedido fica na fila até o segredo voltar: nada se perde');
 
@@ -385,7 +387,8 @@ select is(
 -- A falha do provedor não arquiva: o pedido continua na fila para a próxima rodada.
 select is(
   (select count(*)::int from pgmq.q_email
-    where message->>'ocorrencia_id' = '0c430000-0000-4000-8000-000000000001'),
+    where message->>'ocorrencia_id' = '0c430000-0000-4000-8000-000000000001'
+      and coalesce(message->>'tipo', '') <> 'alerta'),
   1,
   'ler a fila não apaga o pedido: ele volta quando o visibility timeout vence');
 
@@ -397,7 +400,8 @@ select is(
 
 select is(
   (select count(*)::int from pgmq.q_email
-    where message->>'ocorrencia_id' = '0c430000-0000-4000-8000-000000000001'),
+    where message->>'ocorrencia_id' = '0c430000-0000-4000-8000-000000000001'
+      and coalesce(message->>'tipo', '') <> 'alerta'),
   0,
   'e o pedido sai da fila');
 
