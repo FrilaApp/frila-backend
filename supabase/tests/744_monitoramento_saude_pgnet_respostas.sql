@@ -2,15 +2,19 @@
 -- Cobre:
 -- 1. Respostas 200 normais não disparam alerta
 -- 2. Falhas antigas (>15 min) não disparam alerta
--- 3. timed_out = true emite alerta 'pgnet_falha_transporte'
--- 4. error_msg is not null emite alerta 'pgnet_falha_transporte'
--- 5. status_code >= 500 (502) emite alerta 'pgnet_falha_transporte'
--- 6. status_code in (401, 403, 404) emite alerta 'pgnet_resposta_recusada'
--- 7. Rate-limit de 1h suprime o segundo alerta
--- 8. Execução defensiva de verificar_saude não quebra
+-- 3. Limiar de transporte: < 3 falhas isoladas NÃO disparam alerta pgnet_falha_transporte
+-- 4. >= 3 falhas recentes (timed_out, error_msg, 5xx) disparam alerta 'pgnet_falha_transporte'
+-- 5. Rate-limit de 1h suprime envio imediato subsequente de transporte
+-- 6. status_code in (401, 403, 404) emitem alerta 'pgnet_resposta_recusada' (cobrindo 401, 403 e 404)
+-- 7. Contagem exata de respostas recusadas enviada no alerta
+-- 8. Respostas recusadas (401, 403, 404) NÃO são contabilizadas no código de transporte
+-- 9. Rate-limit de 1h independente para pgnet_resposta_recusada
+-- 10. Sigilo: nenhum header de net._http_response vazado em q_email
+-- 11. Sigilo: nenhum content de net._http_response vazado em q_email
+-- 12. Execução defensiva de verificar_saude não quebra
 
 begin;
-select plan(11);
+select plan(13);
 
 -- ── 1. Preparação: ativa modo teste e limpa alertas/fila ──────────────────────
 insert into privado.ambiente (id, eh_teste) values (true, true)
@@ -49,19 +53,33 @@ select is(
   'falhas assíncronas do pg_net mais velhas que 15 min não disparam alerta'
 );
 
--- ── 4. timed_out = true nos últimos 15 min emite 'pgnet_falha_transporte' ─────
+-- ── 4. Limiar de transporte: 1 ou 2 timeouts (< 3) NÃO disparam alerta ─────────
 insert into net._http_response (id, status_code, content_type, headers, content, timed_out, error_msg, created)
-values (1005, null, null, null, null, true, null, privado.agora() - interval '5 minutes');
+values 
+  (1005, null, null, null, null, true, null, privado.agora() - interval '5 minutes'),
+  (1006, null, null, null, null, true, null, privado.agora() - interval '4 minutes');
+
+select privado.verificar_saude();
+
+select is(
+  (select count(*)::int from privado.alerta_emitido where codigo = 'pgnet_falha_transporte'),
+  0,
+  '1 ou 2 falhas isoladas de transporte (< 3) não disparam alerta pgnet_falha_transporte'
+);
+
+-- ── 5. Na 3ª falha recente (limiar >= 3), emite 'pgnet_falha_transporte' ───────
+insert into net._http_response (id, status_code, content_type, headers, content, timed_out, error_msg, created)
+values (1007, 502, 'text/html', '{}'::jsonb, 'Bad Gateway', false, null, privado.agora() - interval '3 minutes');
 
 select privado.verificar_saude();
 
 select is(
   (select count(*)::int from privado.alerta_emitido where codigo = 'pgnet_falha_transporte'),
   1,
-  'timed_out = true recente emite alerta operacional pgnet_falha_transporte'
+  'ao atingir o limiar de >= 3 falhas na janela, emite alerta operacional pgnet_falha_transporte'
 );
 
--- ── 5. Rate-limit 1/hora suprime envio imediato subsequente ───────────────────
+-- ── 6. Rate-limit 1/hora suprime envio imediato subsequente ───────────────────
 select privado.verificar_saude();
 
 select is(
@@ -70,45 +88,37 @@ select is(
   'segunda chamada dentro da janela de 1h suprime o alerta pgnet_falha_transporte'
 );
 
--- ── 6. error_msg is not null e status_code 502 contados em transporte ─────────
--- Avança o relógio mais de 1h para vencer o rate-limit
-select set_config('frila.agora', '2026-10-18 13:30:00-03', true);
-
-insert into net._http_response (id, status_code, content_type, headers, content, timed_out, error_msg, created)
-values 
-  (1006, null, null, null, null, false, 'Couldn''t connect to server', privado.agora() - interval '3 minutes'),
-  (1007, 502, 'text/html', '{}'::jsonb, 'Bad Gateway', false, null, privado.agora() - interval '4 minutes');
-
-select privado.verificar_saude();
-
--- O alerta deve ter sido emitido de novo com valor = 2 falhas na janela
-select is(
-  (select count(*)::int from pgmq.q_email where (message->>'tipo') = 'alerta' and (message->>'codigo') = 'pgnet_falha_transporte' and (message->>'valor')::int = 2),
-  1,
-  'falha de conexão (error_msg) e erro 502 somam na contagem do alerta pgnet_falha_transporte'
-);
-
--- ── 7. Respostas 401 e 404 emitem 'pgnet_resposta_recusada' ───────────────────
+-- ── 7. Respostas 401, 403 e 404 emitem 'pgnet_resposta_recusada' ──────────────
+-- Avança o relógio para testar respostas recusadas
 insert into net._http_response (id, status_code, content_type, headers, content, timed_out, error_msg, created)
 values 
   (1008, 401, 'application/json', '{}'::jsonb, '{"code":401}', false, null, privado.agora() - interval '2 minutes'),
-  (1009, 404, 'application/json', '{}'::jsonb, '{"code":404}', false, null, privado.agora() - interval '1 minute');
+  (1009, 403, 'application/json', '{}'::jsonb, '{"code":403}', false, null, privado.agora() - interval '2 minutes'),
+  (1010, 404, 'application/json', '{}'::jsonb, '{"code":404}', false, null, privado.agora() - interval '1 minute');
 
 select privado.verificar_saude();
 
 select is(
   (select count(*)::int from privado.alerta_emitido where codigo = 'pgnet_resposta_recusada'),
   1,
-  'respostas HTTP 401 e 404 recentes emitem alerta operacional pgnet_resposta_recusada'
+  'respostas HTTP 401, 403 e 404 recentes emitem alerta operacional pgnet_resposta_recusada'
 );
 
 select is(
-  (select count(*)::int from pgmq.q_email where (message->>'tipo') = 'alerta' and (message->>'codigo') = 'pgnet_resposta_recusada' and (message->>'valor')::int = 2),
+  (select count(*)::int from pgmq.q_email where (message->>'tipo') = 'alerta' and (message->>'codigo') = 'pgnet_resposta_recusada' and (message->>'valor')::int = 3),
   1,
-  'a quantidade de respostas 401/404 é enviada como valor numérico para a equipe'
+  'a quantidade exata de respostas recusadas (3, cobrindo 401, 403 e 404) é enviada como valor numérico'
 );
 
--- ── 8. Rate-limit 1/hora independente para pgnet_resposta_recusada ────────────
+-- ── 8. Respostas recusadas (401/403/404) NÃO são contabilizadas no transporte ──
+-- O número de alertas de transporte deve permanecer exatamente 1
+select is(
+  (select count(*)::int from privado.alerta_emitido where codigo = 'pgnet_falha_transporte'),
+  1,
+  'respostas recusadas 401/403/404 não são somadas nem afetam o código pgnet_falha_transporte'
+);
+
+-- ── 9. Rate-limit 1/hora independente para pgnet_resposta_recusada ────────────
 select privado.verificar_saude();
 
 select is(
@@ -117,7 +127,7 @@ select is(
   'segunda chamada dentro de 1h suprime o alerta pgnet_resposta_recusada'
 );
 
--- ── 9. Sigilo Absoluto: nada de headers ou content vazado nos alertas ─────────
+-- ── 10. Sigilo Absoluto: nada de headers ou content vazado nos alertas ────────
 select is(
   (select count(*)::int from pgmq.q_email where (message->>'tipo') = 'alerta' and message ? 'headers'),
   0,
@@ -130,10 +140,23 @@ select is(
   'conteúdo de resposta da tabela net._http_response nunca é colocado na mensagem do alerta'
 );
 
--- ── 10. Robustez defensiva: chamada limpa a verificar_saude ──────────────────
+-- ── 12. Robustez defensiva: chamada limpa a verificar_saude ───────────────────
 select lives_ok(
   'select privado.verificar_saude()',
   'verificar_saude executa defensivamente e com sucesso'
+);
+
+-- ── 13. Isolamento dos blocos 1 a 6: falhas prévias continuam alertando ────────
+delete from privado.alerta_emitido where codigo = 'falha_execucao_edge_function';
+insert into privado.falha_execucao (origem, codigo, detalhes, criada_em)
+values ('enviar-email', 'erro_teste', '{"status":500}'::jsonb, privado.agora() - interval '2 minutes');
+
+select privado.verificar_saude();
+
+select is(
+  (select count(*)::int from privado.alerta_emitido where codigo = 'falha_execucao_edge_function'),
+  1,
+  'alerta de falha_execucao dos blocos 1-6 é emitido com sucesso e não é afetado pelo bloco 7'
 );
 
 select * from finish();

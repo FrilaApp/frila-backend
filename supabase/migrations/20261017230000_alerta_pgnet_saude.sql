@@ -119,39 +119,51 @@ begin
   end if;
 
   -- 7. Falhas assíncronas do pg_net em net._http_response nos últimos 15 min (Item 22)
-  if exists (select 1 from pg_tables where schemaname = 'net' and tablename = '_http_response') then
-    -- 7a. Falha de transporte ou infraestrutura (timeout, erro de conexão/DNS ou 5xx)
-    execute $dyn$
-      select count(*)
-        from net._http_response
-       where created > $1 - interval '15 minutes'
-         and (
-           timed_out = true
-           or error_msg is not null
-           or status_code >= 500
-         )
-    $dyn$ into v_pgnet_transporte_falhas using v_agora;
+  begin
+    if exists (select 1 from pg_tables where schemaname = 'net' and tablename = '_http_response')
+       and has_table_privilege('postgres', 'net._http_response', 'select') then
+      -- 7a. Falha de transporte ou infraestrutura (timeout, erro de conexão/DNS ou 5xx)
+      -- Limiar >= 3 na janela de 15 min para evitar falso alerta em timeouts transitórios de deploy
+      execute $dyn$
+        select count(*)
+          from net._http_response
+         where created > $1 - interval '15 minutes'
+           and (
+             timed_out = true
+             or error_msg is not null
+             or status_code >= 500
+           )
+      $dyn$ into v_pgnet_transporte_falhas using v_agora;
 
-    if v_pgnet_transporte_falhas > 0 then
-      if privado.emitir_alerta('pgnet_falha_transporte', v_pgnet_transporte_falhas) then
-        v_alertas := v_alertas + 1;
+      if v_pgnet_transporte_falhas >= 3 then
+        if privado.emitir_alerta('pgnet_falha_transporte', v_pgnet_transporte_falhas) then
+          v_alertas := v_alertas + 1;
+        end if;
+      end if;
+
+      -- 7b. Resposta HTTP recusada (401/403 de autenticação ou 404 de URL/rota inexistente)
+      -- Limiar > 0 mantido: 401/403/404 em chamada da nossa infraestrutura indica erro imediato de configuração
+      execute $dyn$
+        select count(*)
+          from net._http_response
+         where created > $1 - interval '15 minutes'
+           and status_code in (401, 403, 404)
+      $dyn$ into v_pgnet_recusadas_falhas using v_agora;
+
+      if v_pgnet_recusadas_falhas > 0 then
+        if privado.emitir_alerta('pgnet_resposta_recusada', v_pgnet_recusadas_falhas) then
+          v_alertas := v_alertas + 1;
+        end if;
       end if;
     end if;
-
-    -- 7b. Resposta HTTP recusada (401/403 de autenticação ou 404 de URL/rota inexistente)
-    execute $dyn$
-      select count(*)
-        from net._http_response
-       where created > $1 - interval '15 minutes'
-         and status_code in (401, 403, 404)
-    $dyn$ into v_pgnet_recusadas_falhas using v_agora;
-
-    if v_pgnet_recusadas_falhas > 0 then
-      if privado.emitir_alerta('pgnet_resposta_recusada', v_pgnet_recusadas_falhas) then
+  exception
+    when others then
+      -- Falha ao consultar net._http_response (ex.: falta de privilégios no Supabase hospedado)
+      -- é registrada defensivamente em alerta opcional com rate-limit e nunca aborta os blocos 1 a 6.
+      if privado.emitir_alerta('pgnet_monitor_indisponivel', 1) then
         v_alertas := v_alertas + 1;
       end if;
-    end if;
-  end if;
+  end;
 
   return v_alertas;
 end $$;
