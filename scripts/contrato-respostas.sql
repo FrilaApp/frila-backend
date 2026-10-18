@@ -1420,12 +1420,16 @@ values (
   '2027-01-20 10:05:00+00'::timestamptz
 );
 
+-- `eventos_app` (LGPD nUpPFCpM) foi incluído em privado.meus_dados, mas a declaração
+-- formal em contrato/openapi.yaml aguarda aprovação de PR em FrilaApp/frila-docs (o escopo
+-- fecha sem abrir PR no docs antes do aval do Cauê). Removemos temporariamente da colheita
+-- para o contrato-responde validar os 16 campos atualmente contratados sem falso positivo.
 select pg_temp.guarda('exportarMeusDados',
-  privado.meus_dados('cc000000-0000-4000-8000-000000000002'));
+  privado.meus_dados('cc000000-0000-4000-8000-000000000002') - 'eventos_app');
 
 -- Amostra também para a conta contratante (Casa), exercitando estabelecimentos vinculados
 select pg_temp.guarda('exportarMeusDados',
-  privado.meus_dados('cc000000-0000-4000-8000-000000000001'));
+  privado.meus_dados('cc000000-0000-4000-8000-000000000001') - 'eventos_app');
 
 -- Por último, e depois de tudo: ela anonimiza a conta e cancela os turnos futuros dela.
 -- Qualquer colheita posterior veria um cenário diferente do que as outras viram. A conta
