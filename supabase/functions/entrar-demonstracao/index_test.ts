@@ -281,8 +281,8 @@ Deno.test("entrar-demonstracao: 11 tentativas erradas seguidas de 1 correta devo
     proximoId: 1,
   };
 
-  // 11 tentativas erradas recentes para o e-mail do revisor
-  for (let i = 1; i <= 11; i++) {
+  // 10 tentativas erradas recentes recebem 404; a 11ª excede o teto e recebe 429 limite_excedido
+  for (let i = 1; i <= 10; i++) {
     const req = new Request("http://localhost/functions/v1/entrar-demonstracao", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-forwarded-for": `192.168.1.${i}` },
@@ -291,6 +291,16 @@ Deno.test("entrar-demonstracao: 11 tentativas erradas seguidas de 1 correta devo
     const res = await handler(req, depsPadrao(estado));
     assertEquals(res.status, 404);
   }
+
+  const req11 = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-forwarded-for": "192.168.1.11" },
+    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "errado" }),
+  });
+  const res11 = await handler(req11, depsPadrao(estado));
+  assertEquals(res11.status, 429);
+  const json11 = await res11.json();
+  assertEquals(json11.code, "limite_excedido");
 
   // Contenção de inundação: após 10 tentativas erradas recentes (mais 1 antiga = 11 no total),
   // a 11ª tentativa errada recente NÃO gravou nova linha no banco
@@ -342,7 +352,8 @@ Deno.test("entrar-demonstracao: 10 erradas do mesmo IP seguidas da correta do ME
     body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "codigo-errado-invalido" }),
   });
   const resBloqueada = await handler(reqBloqueada, depsPadrao(estado));
-  assertEquals(resBloqueada.status, 404);
+  assertEquals(resBloqueada.status, 429);
+  assertEquals((await resBloqueada.json()).code, "limite_excedido");
   assertEquals(estado.tentativas.length, qtdBancoAntes);
 
   // BLOQUEIO 1: A tentativa com o CÓDIGO CORRETO vinda do MESMO IP (que atingiu o teto)
@@ -655,7 +666,8 @@ Deno.test("entrar-demonstracao: emite [ALERTA_DEMONSTRACAO] quando IP ou e-mail 
       body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "codigo-errado" }),
     });
     const res11 = await handler(req11, depsPadrao(estado));
-    assertEquals(res11.status, 404);
+    assertEquals(res11.status, 429);
+    assertEquals((await res11.json()).code, "limite_excedido");
 
     // Valida que o alerta operacional [ALERTA_DEMONSTRACAO] foi emitido para o IP
     assertEquals(
@@ -672,7 +684,8 @@ Deno.test("entrar-demonstracao: emite [ALERTA_DEMONSTRACAO] quando IP ou e-mail 
       body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "codigo-errado" }),
     });
     const resEmailTeto = await handler(reqEmailTeto, depsPadrao(estado));
-    assertEquals(resEmailTeto.status, 404);
+    assertEquals(resEmailTeto.status, 429);
+    assertEquals((await resEmailTeto.json()).code, "limite_excedido");
 
     assertEquals(
       logsErro.some((msg) => msg.includes("[ALERTA_DEMONSTRACAO]") && msg.includes("e-mail")),

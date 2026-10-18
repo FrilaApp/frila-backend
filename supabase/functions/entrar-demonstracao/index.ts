@@ -264,20 +264,20 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
   const ip = extrairIpCliente(req);
 
   // 1. Teto por IP no ramo errado: se o IP já atingiu o teto na janela,
-  // emite [ALERTA_DEMONSTRACAO] e recusa uniformemente sem bater no banco (atenua DoS/força bruta).
+  // emite [ALERTA_DEMONSTRACAO] e recusa com 429 limite_excedido sem bater no banco (atenua DoS/força bruta).
   if (!verificarLimiteIp(ip)) {
     console.error(
       "[ALERTA_DEMONSTRACAO] Teto de tentativas incorretas excedido para IP na janela recente",
     );
-    return recusa(404, "nao_encontrado");
+    return recusa(429, "limite_excedido", "tentativas");
   }
 
   // Registra a tentativa associada ao IP
   registrarTentativaIp(ip);
 
   // 2. Contar ANTES de inserir no banco: se o e-mail já atingiu o teto na janela recente,
-  // emite [ALERTA_DEMONSTRACAO], não grava mais linhas (previne inundação da tabela) e recusa com 404
-  // (sem revelar 429 para não confirmar existência do e-mail na lista da Apple).
+  // emite [ALERTA_DEMONSTRACAO], não grava mais linhas (previne inundação da tabela) e recusa com 429 limite_excedido
+  // conforme especificado no contrato OpenAPI (/entrar-demonstracao -> 429 LimiteExcedido).
   const inicioDaJanela = new Date(Date.now() - JANELA_MINUTOS * 60_000).toISOString();
 
   const janela = await rest(
@@ -292,7 +292,7 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
       "[ALERTA_DEMONSTRACAO] Teto de tentativas incorretas excedido para e-mail na janela recente",
     );
     // Teto por e-mail atingido: não grava mais no banco
-    return recusa(404, "nao_encontrado");
+    return recusa(429, "limite_excedido", "tentativas");
   }
 
   // Grava a tentativa errada no banco para computar cota
