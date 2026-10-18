@@ -287,6 +287,7 @@ Colunas do esquema com funções de negócio específicas que complementam a Mod
 |---|---|
 | `vaga.publicado_por` | um estabelecimento tem vários membros, e RF04 pergunta quem publicou |
 | `usuario.demonstracao` | conta de revisão da App Store; as duas populações dividem o banco sem se enxergar |
+| `usuario.sinal_idade`, `usuario.idade_aferida_por`, `usuario.idade_aferida_em` | prova de como a idade foi aferida no cadastro (ECA Digital, cartão LQlwDaYZ): só a faixa que o aparelho respondeu (`dezoito_ou_mais`, `recusou`, `indisponivel`), o método (`aparelho` ou `declaracao`) e o instante; nunca data ou identificador do aparelho (Decreto 12.880/2026, art. 24 §3º); não sai em `conta_em_json` |
 | `turno.checkin_recebido_em` | `checkin_em` é a hora do toque; sem as duas, registro offline vira indistinguível |
 | `turno.checkout_recebido_em` | o mesmo, do outro lado |
 | `posicao.reaberta_por_atraso_de` | `reabrir_por_atraso` (e8XpOZJN): a posição nova sabe de qual falta nasceu; aceita candidato depois do início até 1 h antes do fim |
