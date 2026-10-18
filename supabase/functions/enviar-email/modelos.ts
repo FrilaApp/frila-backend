@@ -75,14 +75,14 @@ export function denunciaParaEquipe(d: DadosDaOcorrencia): Mensagem {
     : "a outra parte";
 
   return {
-    assunto: `[Frila] Denúncia ${curto} · moderar em até 24h (resposta ${prazo})`,
+    assunto: `[Frila] Denúncia ${curto} · responder até ${prazo}`,
     texto: [
       `Uma denúncia foi registrada contra ${alvo}.`,
       "",
       `Protocolo: ${d.ocorrencia_id}`,
       `Categoria: ${categoria(d.motivo)}`,
       `Aberta em: ${formatarData(d.criada_em)}`,
-      "Prazo de moderação: até 24 horas corridas (Diretriz 1.2 da App Store)",
+      "Prazo de moderação: triagem em até 5 dias úteis e resposta formal em até 15 dias corridos",
       `Prazo de resposta ao denunciante: ${prazo} (5 dias úteis, RN13)`,
       "",
       "O relato não vai por e-mail. Abra a ocorrência pelo protocolo para lê-lo.",
@@ -104,7 +104,7 @@ export function denunciaParaAutor(d: DadosDaOcorrencia): Mensagem {
       `Protocolo: ${d.ocorrencia_id}`,
       `Prazo de resposta: até ${prazo}`,
       "",
-      "A Equipe Frila responde por e-mail em até 5 dias úteis. Guarde o protocolo:",
+      "As denúncias são atendidas o mais breve possível, com triagem em até 5 dias úteis e resposta formal em até 15 dias corridos. Guarde o protocolo:",
       "é por ele que acompanhamos o caso.",
       "",
       "Se você estiver em risco imediato, procure a autoridade policial. O Frila não",
@@ -154,7 +154,50 @@ export function contestacaoParaAutor(d: DadosDaOcorrencia): Mensagem {
       `Protocolo: ${d.ocorrencia_id}`,
       `Prazo de resposta: até ${prazo}`,
       "",
-      "A Equipe Frila responde por e-mail em até 5 dias úteis.",
+      "A Equipe Frila analisa cada pedido com base nos termos de uso e nas regras do produto. O pedido é atendido o mais breve possível, com triagem em até 5 dias úteis e resposta formal em até 15 dias corridos. A resposta será enviada para este mesmo endereço de e-mail.",
+      "",
+      ASSINATURA,
+    ].join("\n"),
+  };
+}
+
+// ── Revisão de despacho (RF27, LGPD art. 20, cartão eaWhDeym) ────────────────
+
+export function revisaoDespachoParaEquipe(d: DadosDaOcorrencia): Mensagem {
+  const curto = protocoloCurto(d.ocorrencia_id);
+  const prazo = formatarData(d.prazo_resposta_ate);
+
+  return {
+    assunto: `[Frila] Pedido de revisão de despacho ${curto} · responder até ${prazo}`,
+    texto: [
+      "Um pedido de revisão dos critérios de despacho foi registrado (LGPD art. 20 / RF27).",
+      "",
+      `Protocolo: ${d.ocorrencia_id}`,
+      `Aberta em: ${formatarData(d.criada_em)}`,
+      `Prazo de resposta: ${prazo} (5 dias úteis)`,
+      "",
+      "O relato não vai por e-mail (RN15). Abra a ocorrência pelo protocolo no console para consultá-lo junto com os critérios de notificação vigentes.",
+      "",
+      ASSINATURA,
+    ].join("\n"),
+  };
+}
+
+export function revisaoDespachoParaAutor(d: DadosDaOcorrencia): Mensagem {
+  const curto = protocoloCurto(d.ocorrencia_id);
+  const prazo = formatarData(d.prazo_resposta_ate);
+
+  return {
+    assunto: `[Protocolo ${curto}] Seu pedido de revisão foi recebido — Frila`,
+    texto: [
+      "Recebemos seu pedido de revisão dos critérios de envio de vagas.",
+      "",
+      `Protocolo: ${d.ocorrencia_id}`,
+      `Registrado em: ${formatarData(d.criada_em)}`,
+      "",
+      `A Equipe Frila analisará seus critérios de notificação (funções ativas, grade de horários, raio de atendimento e cadência) e responderá formalmente em até 5 dias úteis (até ${prazo}).`,
+      "",
+      "Guarde este protocolo para acompanhar sua solicitação.",
       "",
       ASSINATURA,
     ].join("\n"),
@@ -200,6 +243,11 @@ export function modeloDe(
   }
   if (tipo === "contestacao") {
     return destino === "equipe" ? contestacaoParaEquipe(d) : contestacaoParaAutor(d);
+  }
+  if (tipo === "revisao_despacho") {
+    return destino === "equipe"
+      ? revisaoDespachoParaEquipe(d)
+      : revisaoDespachoParaAutor(d);
   }
   return null;
 }

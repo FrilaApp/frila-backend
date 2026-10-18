@@ -33,6 +33,8 @@ import {
   formatarData,
   modeloDe,
   protocoloCurto,
+  revisaoDespachoParaAutor,
+  revisaoDespachoParaEquipe,
 } from "./modelos.ts";
 
 const SEGREDO = "segredo-de-teste";
@@ -307,6 +309,48 @@ Deno.test("modelos: a contestação tem modelo próprio nos dois destinos (RF24)
   assertStringIncludes(equipe.texto, OCORRENCIA);
   // O texto da contestação é de quem escreveu: não sai por e-mail.
   assert(!equipe.texto.includes("suspensão indevida"));
+});
+
+Deno.test("modelos: a revisao_despacho tem modelo próprio nos dois destinos (RF27, LGPD art. 20)", () => {
+  const d = dados({ tipo: "revisao_despacho", motivo: "revisao_despacho" });
+  const equipe = modeloDe("revisao_despacho", "equipe", d)!;
+  const autor = modeloDe("revisao_despacho", "autor", d)!;
+  assert(equipe, "modelo de revisao_despacho para equipe não deve ser nulo");
+  assert(autor, "modelo de revisao_despacho para autor não deve ser nulo");
+  assertStringIncludes(equipe.assunto, "revisão de despacho");
+  assertStringIncludes(equipe.assunto, "3F2A1B9C");
+  assertStringIncludes(equipe.assunto, "06/10/2026");
+  assertStringIncludes(equipe.texto, OCORRENCIA);
+  assertStringIncludes(equipe.texto, "5 dias úteis");
+  assertStringIncludes(equipe.texto, "LGPD art. 20");
+  assertStringIncludes(autor.assunto, "3F2A1B9C");
+  assertStringIncludes(autor.assunto, "revisão foi recebido");
+  assertStringIncludes(autor.texto, OCORRENCIA);
+  assertStringIncludes(autor.texto, "5 dias úteis");
+  assertStringIncludes(autor.texto, "06/10/2026");
+  // O relato não vai por e-mail (RN15)
+  assert(!equipe.texto.includes(RELATO));
+  assert(!autor.texto.includes(RELATO));
+});
+
+Deno.test("eaWhDeym: pedido de revisao_despacho na fila envia e-mail à equipe e ao autor e registra envio", async () => {
+  const e = espiao(
+    [pedido({ mensagem: { tipo: "revisao_despacho", ocorrencia_id: OCORRENCIA } })],
+    dados({ tipo: "revisao_despacho" }),
+  );
+  const res = await chamar(e, sucesso);
+  assertEquals(res.status, 200);
+
+  const paraEquipe = e.enviados.find((m) => m.para === EQUIPE);
+  const paraAutor = e.enviados.find((m) => m.para === "ana@frila.test");
+  assert(paraEquipe, "equipe deve receber e-mail de revisao_despacho");
+  assert(paraAutor, "autor deve receber e-mail de revisao_despacho");
+  assertStringIncludes(paraEquipe.assunto, "3F2A1B9C");
+  assertStringIncludes(paraAutor.assunto, "3F2A1B9C");
+  assertStringIncludes(paraEquipe.texto, "5 dias úteis");
+  assertStringIncludes(paraAutor.texto, "5 dias úteis");
+  assertEquals(e.registrados.map((r) => r.destino).sort(), ["autor", "equipe"]);
+  assertEquals(e.arquivados, [1]);
 });
 
 Deno.test("modelos: tipo sem modelo devolve null, e o consumidor não inventa e-mail", () => {
@@ -591,6 +635,8 @@ Deno.test("RN15 / LGPD: modelos de e-mail nunca vazam relato, telefone ou CPF, e
     denunciaParaAutor(mockDados),
     contestacaoParaEquipe(mockDados),
     contestacaoParaAutor(mockDados),
+    revisaoDespachoParaEquipe(mockDados),
+    revisaoDespachoParaAutor(mockDados),
     alertaParaEquipe("erro_5xx", 12),
   ];
 
@@ -612,17 +658,44 @@ Deno.test("RN15 / LGPD: modelos de e-mail nunca vazam relato, telefone ou CPF, e
     "denúncia para equipe deve afirmar expressamente a ausência do relato por e-mail (RN15)",
   );
   assert(
-    equipeMsg.texto.includes("24 horas corridas") && equipeMsg.texto.includes("Diretriz 1.2"),
-    "denúncia para equipe deve explicitar o prazo de 24h corridas de moderação (Diretriz 1.2 da App Store)",
+    !equipeMsg.texto.toLowerCase().includes("24h") && !equipeMsg.texto.toLowerCase().includes("24 h"),
+    "denúncia para equipe não deve prometer prazo de 24h",
   );
   assert(
-    equipeMsg.assunto.includes("moderar em até 24h"),
-    "assunto da denúncia para equipe deve trazer o prazo de 24h",
+    !equipeMsg.assunto.toLowerCase().includes("24h") && !equipeMsg.assunto.toLowerCase().includes("24 h"),
+    "assunto da denúncia para equipe não deve trazer prazo de 24h",
+  );
+  assert(
+    equipeMsg.texto.includes("5 dias úteis") && equipeMsg.texto.includes("15 dias corridos"),
+    "denúncia para equipe deve explicitar os prazos de 5 dias úteis e 15 dias corridos",
   );
   assert(
     !equipeMsg.texto.includes("Maria"),
     "denúncia para equipe não pode inventar nomes civis",
   );
+});
+
+Deno.test("prRWMvWj: modelos não contêm promessa de 24h e trazem prazos de 5 dias úteis e 15 dias corridos", () => {
+  const d = dados();
+  const denEquipe = denunciaParaEquipe(d);
+  const denAutor = denunciaParaAutor(d);
+  const contAutor = contestacaoParaAutor(d);
+  const revEquipe = revisaoDespachoParaEquipe(d);
+  const revAutor = revisaoDespachoParaAutor(d);
+
+  for (const m of [denEquipe, denAutor, contAutor, revEquipe, revAutor]) {
+    assert(!m.assunto.toLowerCase().includes("24h") && !m.assunto.toLowerCase().includes("24 h"), `Assunto contém 24h: ${m.assunto}`);
+    assert(!m.texto.toLowerCase().includes("24h") && !m.texto.toLowerCase().includes("24 h"), `Texto contém 24h: ${m.texto}`);
+  }
+
+  assertStringIncludes(denEquipe.texto, "5 dias úteis");
+  assertStringIncludes(denEquipe.texto, "15 dias corridos");
+  assertStringIncludes(denAutor.texto, "5 dias úteis");
+  assertStringIncludes(denAutor.texto, "15 dias corridos");
+  assertStringIncludes(contAutor.texto, "5 dias úteis");
+  assertStringIncludes(contAutor.texto, "15 dias corridos");
+  assertStringIncludes(revEquipe.texto, "5 dias úteis");
+  assertStringIncludes(revAutor.texto, "5 dias úteis");
 });
 
 Deno.test("enviar-email: clamp de limite e vt protege contra valores abusivos ou negativos", async () => {
