@@ -75,14 +75,15 @@ export function denunciaParaEquipe(d: DadosDaOcorrencia): Mensagem {
     : "a outra parte";
 
   return {
-    assunto: `[Frila] Denúncia ${curto} · responder até ${prazo}`,
+    assunto: `[Frila] Denúncia ${curto} · moderar em até 24h (resposta ${prazo})`,
     texto: [
       `Uma denúncia foi registrada contra ${alvo}.`,
       "",
       `Protocolo: ${d.ocorrencia_id}`,
       `Categoria: ${categoria(d.motivo)}`,
       `Aberta em: ${formatarData(d.criada_em)}`,
-      `Prazo de resposta: ${prazo} (5 dias úteis)`,
+      "Prazo de moderação: até 24 horas corridas (Diretriz 1.2 da App Store)",
+      `Prazo de resposta ao denunciante: ${prazo} (5 dias úteis, RN13)`,
       "",
       "O relato não vai por e-mail. Abra a ocorrência pelo protocolo para lê-lo.",
       "",

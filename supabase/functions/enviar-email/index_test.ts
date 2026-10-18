@@ -612,6 +612,14 @@ Deno.test("RN15 / LGPD: modelos de e-mail nunca vazam relato, telefone ou CPF, e
     "denúncia para equipe deve afirmar expressamente a ausência do relato por e-mail (RN15)",
   );
   assert(
+    equipeMsg.texto.includes("24 horas corridas") && equipeMsg.texto.includes("Diretriz 1.2"),
+    "denúncia para equipe deve explicitar o prazo de 24h corridas de moderação (Diretriz 1.2 da App Store)",
+  );
+  assert(
+    equipeMsg.assunto.includes("moderar em até 24h"),
+    "assunto da denúncia para equipe deve trazer o prazo de 24h",
+  );
+  assert(
     !equipeMsg.texto.includes("Maria"),
     "denúncia para equipe não pode inventar nomes civis",
   );
