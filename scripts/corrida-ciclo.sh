@@ -576,6 +576,23 @@ SQL
 
     total=$((total + n_livres))
     if [ -n "$erros" ] || [ "$duas" -ne 0 ] || [ "$esperando" -ne "$n_livres" ]; then
+      local ts_dump
+      ts_dump=$(date -u +"%Y-%m-%dT%H:%M:%S.%3NZ")
+      echo "--- [DUMP DIAGNÓSTICO CENÁRIO 3 RODADA $r | $ts_dump] ---" >&2
+      echo ">> PLACAR:" >&2
+      psql -c "select * from corrida_ciclo.placar where cenario = 'teto' and rodada = $r;" >&2
+      echo ">> DESPACHOS:" >&2
+      psql -c "select id, vaga_id, profissional_id, notificacao_id, criado_em from public.despacho where vaga_id in ('$TETO_A', '$TETO_B') order by id;" >&2
+      echo ">> NOTIFICAÇÕES (livres):" >&2
+      psql -c "select n.id, n.usuario_id, n.profissional_id, n.tipo, n.referencia_id, n.enviada_em, n.estado_entrega, n.esperou_teto from public.notificacao n join public.profissional p on p.usuario_id = n.usuario_id where p.id in ($livres) order by n.id;" >&2
+      echo ">> PG_STAT_ACTIVITY:" >&2
+      psql -c "select pid, usename, application_name, client_addr, backend_type, wait_event_type, wait_event, state, query_start, regexp_replace(regexp_replace(query, '(agendador_secret[^,)]*,\s*)[^,)]+', '\1''[REDACTED]''', 'gi'), '(Bearer\s+)[^\"'']+', '\1[REDACTED]', 'gi') as query from pg_stat_activity where pid <> pg_backend_pid();" >&2
+      echo ">> PG_LOCKS (advisory):" >&2
+      psql -c "select pid, locktype, mode, granted, classid, objid, objsubid from pg_locks where locktype = 'advisory';" >&2
+      echo ">> CRON.JOB_RUN_DETAILS (últimos 2 min):" >&2
+      psql -c "select jobid, runid, job_pid, database, username, regexp_replace(regexp_replace(command, '(agendador_secret[^,)]*,\s*)[^,)]+', '\1''[REDACTED]''', 'gi'), '(Bearer\s+)[^\"'']+', '\1[REDACTED]', 'gi') as command, status, return_message, start_time, end_time from cron.job_run_details where start_time >= now() - interval '2 minutes' order by runid desc limit 20;" >&2
+      echo "--- [FIM DUMP DIAGNÓSTICO RODADA $r] ---" >&2
+
       ruins="$ruins
 rodada $r: erros=[$erros] fora_de_uma=$duas esperando=$esperando/$n_livres"
     fi
