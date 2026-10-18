@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.44
+  version: 0.2.45
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -97,6 +97,15 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.45, de 18/10/2026.** Adições compatíveis no cadastro e na portabilidade de dados:
+
+    - **`criarConta`** (`/rpc/criar_conta`): parâmetro opcional `sinal_idade` (enum `dezoito_ou_mais`,
+      `recusou`, `indisponivel`) para aferição da faixa etária declarada pelo aparelho (Declared Age Range,
+      iOS 26.2+; ECA Digital, Lei 15.211/2025; frila-backend#302). Resposta `Usuario` inalterada.
+    - **`MeusDados`** (`/exportar-meus-dados`): propriedade opcional `eventos_app` (lista de eventos
+      estruturados de telemetria do titular: `id`, `evento`, `vaga_id`, `turno_id`, `ocorrido_em` e
+      `criado_em`; LGPD art. 18; frila-backend#304).
 
     **Versão 0.2.44, de 17/10/2026.** Só texto: nenhuma operação, campo, código de erro ou status
     muda. Documenta explicitamente nas operações de presença (`/rpc/fazer_checkin`,
@@ -1337,6 +1346,12 @@ paths:
         no banco pela data de nascimento, e não por um booleano enviado pela tela (RN20). Nenhum
         documento é pedido aqui (RN14).
 
+        Se o app consultou a faixa etária do aparelho (Declared Age Range), envia o resultado
+        em `sinal_idade`. O servidor guarda só a faixa, o método e o instante da aferição —
+        nunca a data vinda do aparelho nem identificador do sistema — e não os devolve: são
+        prova de conformidade (ECA Digital), não dado do perfil. Quem não envia o campo é
+        cadastrado como hoje.
+
         O `nome` passa pelo filtro de texto da diretriz 1.2 da App Store: termo da lista de
         bloqueio, como palavra inteira, é recusado com `422 campo_invalido` e `details: nome`. A
         conferência vem **depois** da de presença, então nome vazio continua saindo como
@@ -1376,6 +1391,20 @@ paths:
                     instante é carimbado pelo servidor, porque data de aceite enviada pelo
                     cliente é forjável e não vale como registro de consentimento.
                   example: '2026-09-22'
+                sinal_idade:
+                  type: string
+                  enum: [dezoito_ou_mais, recusou, indisponivel]
+                  description: |
+                    Faixa etária que o aparelho respondeu no cadastro (Declared Age Range,
+                    iOS 26.2 ou mais novo). Opcional: app que não consulta o sinal não envia
+                    o campo. `abaixo_de_18` não é valor aceito — o app bloqueia antes de
+                    chamar. O servidor grava só a faixa, o método (`aparelho` para
+                    `dezoito_ou_mais`; `declaracao`, isto é, data de nascimento mais aceite
+                    dos termos, nos outros dois) e o instante, pelo próprio relógio; nada
+                    disso volta na resposta. Valor fora da lista: `422 campo_invalido` com
+                    `details: sinal_idade`. Prova de como a idade foi aferida (Lei
+                    15.211/2025, art. 9º; Decreto 12.880/2026, arts. 24 §3º e 25 a 27).
+                  example: dezoito_ou_mais
       responses:
         '200':
           description: Conta criada.
@@ -5218,6 +5247,34 @@ components:
                     - $ref: '#/components/schemas/Instante'
                     - type: 'null'
             - type: 'null'
+        eventos_app:
+          description: |
+            Eventos de telemetria emitidos pelo aplicativo e vinculados à conta do titular (LGPD art. 18,
+            cartão nUpPFCpM, T-0017, RN15).
+
+            **Sem campos livres de texto e sem coordenadas.** Contém apenas os identificadores
+            estruturados do dicionário fechado (`EventoDeTelemetria`).
+          type: array
+          items:
+            type: object
+            required: [id, evento, ocorrido_em, criado_em]
+            properties:
+              id:
+                $ref: '#/components/schemas/Uuid'
+              evento:
+                $ref: '#/components/schemas/EventoDeTelemetria'
+              vaga_id:
+                oneOf:
+                  - $ref: '#/components/schemas/Uuid'
+                  - type: 'null'
+              turno_id:
+                oneOf:
+                  - $ref: '#/components/schemas/Uuid'
+                  - type: 'null'
+              ocorrido_em:
+                $ref: '#/components/schemas/Instante'
+              criado_em:
+                $ref: '#/components/schemas/Instante'
 
     Dispositivo:
       type: object
