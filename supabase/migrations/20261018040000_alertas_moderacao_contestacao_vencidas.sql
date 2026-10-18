@@ -304,22 +304,18 @@ begin
     values (v_vaga_id, v_oc_id, v_agora);
 
     -- Fecha denúncias abertas associadas à vaga denunciada (Diretriz 1.2, Item 21c)
+    -- Fechamento estrito por turno da vaga moderada: denúncias de outras vagas do mesmo
+    -- estabelecimento ou contra o perfil do estabelecimento permanecem abertas e vencíveis.
     update public.ocorrencia o
        set resolvido_em = v_agora,
            resultado    = coalesce(o.resultado, 'Conteúdo moderado em até 24h pela Equipe Frila (Diretriz 1.2).')
      where o.tipo = 'denuncia'
        and o.resolvido_em is null
-       and (
-         exists (
-           select 1 from public.turno t
-             join public.posicao p on p.id = t.posicao_id
-            where p.vaga_id = v_vaga_id
-              and t.id = o.turno_id
-         )
-         or (
-           o.estabelecimento_id is not null
-           and o.estabelecimento_id = v_vaga.estabelecimento_id
-         )
+       and exists (
+         select 1 from public.turno t
+           join public.posicao p on p.id = t.posicao_id
+          where p.vaga_id = v_vaga_id
+            and t.id = o.turno_id
        );
 
     return jsonb_build_object(
@@ -456,22 +452,18 @@ begin
      where g.id = v_vaga_id;
 
     -- Fecha denúncias abertas associadas à vaga (Diretriz 1.2, Item 21c)
+    -- Fechamento estrito por turno da vaga moderada: denúncias de outras vagas do mesmo
+    -- estabelecimento ou contra o perfil do estabelecimento permanecem abertas e vencíveis.
     update public.ocorrencia o
        set resolvido_em = v_agora,
            resultado    = coalesce(o.resultado, 'Texto ofensivo moderado em até 24h pela Equipe Frila (Diretriz 1.2).')
      where o.tipo = 'denuncia'
        and o.resolvido_em is null
-       and (
-         exists (
-           select 1 from public.turno t
-             join public.posicao p on p.id = t.posicao_id
-            where p.vaga_id = v_vaga_id
-              and t.id = o.turno_id
-         )
-         or (
-           o.estabelecimento_id is not null
-           and o.estabelecimento_id = v_vaga.estabelecimento_id
-         )
+       and exists (
+         select 1 from public.turno t
+           join public.posicao p on p.id = t.posicao_id
+          where p.vaga_id = v_vaga_id
+            and t.id = o.turno_id
        );
 
     return jsonb_build_object(

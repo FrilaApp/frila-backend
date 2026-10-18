@@ -3,7 +3,7 @@
 
 begin;
 
-select plan(13);
+select plan(17);
 
 set local frila.agendador_secret = 'segredo-de-teste';
 
@@ -38,7 +38,10 @@ select
   gen_random_uuid() as estab_id,
   gen_random_uuid() as vaga_id,
   gen_random_uuid() as pos_id,
-  gen_random_uuid() as turno_id;
+  gen_random_uuid() as turno_id,
+  gen_random_uuid() as vaga2_id,
+  gen_random_uuid() as pos2_id,
+  gen_random_uuid() as turno2_id;
 
 -- Usuários
 insert into auth.users (instance_id, id, aud, role, email)
@@ -62,7 +65,7 @@ values ((select estab_id from ids), 'Estab 742', '12345678000199', 'food_service
 insert into public.membro_estabelecimento (estabelecimento_id, usuario_id, papel)
 values ((select estab_id from ids), (select casa_usr from ids), 'administrador');
 
--- Cria vaga, posição e turno
+-- Cria vaga 1, posição 1 e turno 1
 insert into public.vaga (id, estabelecimento_id, publicado_por, funcao_id, inicio_em, fim_em, local, regiao_administrativa, responsavel_local, valor_centavos, posicoes, modo, estado, ponto, chave_cliente, traje, observacoes, inclui_refeicao, inclui_transporte, exige_material_proprio)
 values (
   (select vaga_id from ids),
@@ -71,7 +74,7 @@ values (
   (select id from public.funcao limit 1),
   now() + interval '3 days',
   now() + interval '3 days 6 hours',
-  'Estab 742',
+  'Estab 742 Vaga 1',
   'Plano Piloto',
   'Gerente 742',
   15000,
@@ -81,7 +84,7 @@ values (
   'POINT(-47.88 -15.79)'::extensions.geography,
   gen_random_uuid(),
   'Social',
-  'Texto da vaga para teste de moderacao',
+  'Texto da vaga 1 para teste de moderacao',
   false,
   false,
   false
@@ -92,6 +95,37 @@ values ((select pos_id from ids), (select vaga_id from ids), 'confirmada', now()
 
 insert into public.turno (id, posicao_id, valor_acordado_centavos)
 values ((select turno_id from ids), (select pos_id from ids), 15000);
+
+-- Cria vaga 2 no MESMO estabelecimento (para provar independência de moderação e não supressão de alarmes)
+insert into public.vaga (id, estabelecimento_id, publicado_por, funcao_id, inicio_em, fim_em, local, regiao_administrativa, responsavel_local, valor_centavos, posicoes, modo, estado, ponto, chave_cliente, traje, observacoes, inclui_refeicao, inclui_transporte, exige_material_proprio)
+values (
+  (select vaga2_id from ids),
+  (select estab_id from ids),
+  (select casa_usr from ids),
+  (select id from public.funcao limit 1),
+  now() + interval '4 days',
+  now() + interval '4 days 6 hours',
+  'Estab 742 Vaga 2',
+  'Plano Piloto',
+  'Gerente 742',
+  15000,
+  1,
+  'urgencia',
+  'publicada',
+  'POINT(-47.88 -15.79)'::extensions.geography,
+  gen_random_uuid(),
+  'Social',
+  'Texto da vaga 2 para teste de moderacao',
+  false,
+  false,
+  false
+);
+
+insert into public.posicao (id, vaga_id, estado, inicio_em, fim_em, profissional_id, confirmado_em)
+values ((select pos2_id from ids), (select vaga2_id from ids), 'confirmada', now() + interval '4 days', now() + interval '4 days 6 hours', (select prof_id from ids), now());
+
+insert into public.turno (id, posicao_id, valor_acordado_centavos)
+values ((select turno2_id from ids), (select pos2_id from ids), 15000);
 
 -- Limpa alertas antigos da tabela de controle
 delete from privado.alerta_emitido where codigo in ('moderacao_vencida', 'contestacao_vencida');
@@ -167,59 +201,113 @@ select is(
   'alerta contestacao_vencida registrado em privado.alerta_emitido para contestação vencida'
 );
 
--- ── Teste 4: operacao_moderar_conteudo('ocultar') fecha denúncia pendente ─────
--- Cria nova denúncia para a vaga
+-- ── Teste 4: operacao_moderar_conteudo('ocultar') fecha denúncia da vaga,
+-- mas NÃO apaga denúncias de outras vagas do mesmo estabelecimento nem de perfil (Item 21c) ─────
 create temp table den_vaga as
-select gen_random_uuid() as den_id;
+select
+  gen_random_uuid() as den1_id,
+  gen_random_uuid() as den2_id,
+  gen_random_uuid() as den_perfil_id;
 
+-- Denúncia 1: associada à Vaga 1 (via turno_id)
 insert into public.ocorrencia (id, tipo, turno_id, usuario_id, autor_id, motivo, relato, criada_em)
 values (
-  (select den_id from den_vaga),
+  (select den1_id from den_vaga),
   'denuncia',
   (select turno_id from ids),
   (select casa_usr from ids),
   (select prof_usr from ids),
   'outro',
-  'Denuncia a ser fechada pela moderacao de conteudo',
+  'Denuncia da vaga 1 a ser fechada',
   privado.agora()
 );
 
-select is(
-  (select resolvido_em is null from public.ocorrencia where id = (select den_id from den_vaga)),
-  true,
-  'denúncia inicia não resolvida (resolvido_em is null)'
+-- Denúncia 2: associada à Vaga 2 do MESMO estabelecimento, aberta há mais de 24h (vencível!)
+insert into public.ocorrencia (id, tipo, turno_id, usuario_id, autor_id, motivo, relato, criada_em)
+values (
+  (select den2_id from den_vaga),
+  'denuncia',
+  (select turno2_id from ids),
+  (select casa_usr from ids),
+  (select prof_usr from ids),
+  'outro',
+  'Denuncia da vaga 2 antiga e vencida',
+  privado.agora() - interval '26 hours'
 );
 
--- Modera a vaga ocultando
-select lives_ok(
-  format($$ select privado.operacao_moderar_conteudo(%L, 'ocultar', 'Violacao constatada', %L) $$,
-         (select vaga_id from ids), (select equipe_usr from ids)),
-  'operacao_moderar_conteudo oculta vaga com sucesso'
-);
-
-select is(
-  (select resolvido_em is not null from public.ocorrencia where id = (select den_id from den_vaga)),
-  true,
-  'operacao_moderar_conteudo preenche resolvido_em da denúncia da vaga'
-);
-
--- ── Teste 5: operacao_moderar_texto fecha denúncia pendente ────────────────────
--- Cria denúncia com estabelecimento
-create temp table den_texto as
-select gen_random_uuid() as den_id;
-
+-- Denúncia 3: associada diretamente ao perfil do estabelecimento, aberta há mais de 24h (vencível!)
 insert into public.ocorrencia (id, tipo, estabelecimento_id, autor_id, motivo, relato, criada_em)
 values (
-  (select den_id from den_texto),
+  (select den_perfil_id from den_vaga),
   'denuncia',
   (select estab_id from ids),
   (select prof_usr from ids),
   'outro',
-  'Denuncia de texto ofensivo',
+  'Denuncia do perfil do estabelecimento antiga e vencida',
+  privado.agora() - interval '26 hours'
+);
+
+select is(
+  (select resolvido_em is null from public.ocorrencia where id = (select den1_id from den_vaga)),
+  true,
+  'denúncia 1 da vaga 1 inicia não resolvida (resolvido_em is null)'
+);
+
+-- Modera a VAGA 1 ocultando-a
+select lives_ok(
+  format($$ select privado.operacao_moderar_conteudo(%L, 'ocultar', 'Violacao constatada', %L) $$,
+         (select vaga_id from ids), (select equipe_usr from ids)),
+  'operacao_moderar_conteudo oculta vaga 1 com sucesso'
+);
+
+-- Denúncia 1 da vaga 1 foi fechada
+select is(
+  (select resolvido_em is not null from public.ocorrencia where id = (select den1_id from den_vaga)),
+  true,
+  'operacao_moderar_conteudo preenche resolvido_em da denúncia da vaga moderada'
+);
+
+-- Denúncia 2 da vaga 2 do MESMO estabelecimento CONTINUA aberta
+select is(
+  (select resolvido_em is null from public.ocorrencia where id = (select den2_id from den_vaga)),
+  true,
+  'denúncia da vaga 2 do mesmo estabelecimento CONTINUA aberta (resolvido_em is null)'
+);
+
+-- Denúncia 3 do perfil do mesmo estabelecimento CONTINUA aberta
+select is(
+  (select resolvido_em is null from public.ocorrencia where id = (select den_perfil_id from den_vaga)),
+  true,
+  'denúncia de perfil do mesmo estabelecimento CONTINUA aberta (resolvido_em is null)'
+);
+
+-- O alarme de 24h NÃO foi apagado: verificar_saude emite moderacao_vencida pelas denúncias que continuam abertas
+delete from privado.alerta_emitido where codigo = 'moderacao_vencida';
+select privado.verificar_saude();
+
+select is(
+  (select count(*)::int from privado.alerta_emitido where codigo = 'moderacao_vencida'),
+  1,
+  'alerta moderacao_vencida continua disparando para denúncia vencida da outra vaga/perfil'
+);
+
+-- ── Teste 5: operacao_moderar_texto fecha SÓ a denúncia da vaga moderada ───────
+create temp table den_texto_vaga as
+select gen_random_uuid() as den_texto_id;
+
+insert into public.ocorrencia (id, tipo, turno_id, usuario_id, autor_id, motivo, relato, criada_em)
+values (
+  (select den_texto_id from den_texto_vaga),
+  'denuncia',
+  (select turno_id from ids),
+  (select casa_usr from ids),
+  (select prof_usr from ids),
+  'outro',
+  'Denuncia de texto ofensivo da vaga 1',
   privado.agora()
 );
 
--- Modera texto
+-- Modera texto da Vaga 1
 select lives_ok(
   format($$ select privado.operacao_moderar_texto(%L, 'ocultar', 'Texto ofensivo removido', %L) $$,
          (select vaga_id from ids), (select equipe_usr from ids)),
@@ -227,9 +315,15 @@ select lives_ok(
 );
 
 select is(
-  (select resolvido_em is not null from public.ocorrencia where id = (select den_id from den_texto)),
+  (select resolvido_em is not null from public.ocorrencia where id = (select den_texto_id from den_texto_vaga)),
   true,
-  'operacao_moderar_texto preenche resolvido_em da denúncia do estabelecimento'
+  'operacao_moderar_texto preenche resolvido_em da denúncia da vaga 1'
+);
+
+select is(
+  (select resolvido_em is null from public.ocorrencia where id = (select den2_id from den_vaga)),
+  true,
+  'denúncia da vaga 2 continua aberta após moderar texto da vaga 1'
 );
 
 -- ── Teste 6: operacao_reativar_conta fecha contestações pendentes ──────────────
