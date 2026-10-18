@@ -14,7 +14,7 @@
 -- 12. Execução defensiva de verificar_saude não quebra
 
 begin;
-select plan(19);
+select plan(21);
 
 -- ── 1. Preparação: ativa modo teste e limpa alertas/fila ──────────────────────
 insert into privado.ambiente (id, eh_teste) values (true, true)
@@ -194,8 +194,29 @@ select is(
 );
 
 rollback to savepoint s_excecao_pgnet;
+set local frila.simular_excecao_pgnet = 'off';
 
--- ── 16. Rate-limit para pgnet_monitor_indisponivel ───────────────────────────
+-- ── 16. Guarda eh_teste: fora do ambiente de teste, ganchos frila.simular_* são ignorados ──
+savepoint s_sem_eh_teste;
+update privado.ambiente set eh_teste = false;
+set local frila.simular_sem_pgnet = 'on';
+delete from privado.alerta_emitido where codigo = 'pgnet_monitor_indisponivel';
+
+select lives_ok(
+  'select privado.verificar_saude()',
+  'verificar_saude roda sem erro quando eh_teste é falso mesmo com frila.simular_sem_pgnet ativo'
+);
+
+select is(
+  (select count(*)::int from privado.alerta_emitido where codigo = 'pgnet_monitor_indisponivel'),
+  0,
+  'gancho frila.simular_sem_pgnet é ignorado fora de teste (zero alertas indevidos)'
+);
+
+rollback to savepoint s_sem_eh_teste;
+set local frila.simular_sem_pgnet = 'off';
+
+-- ── 17. Rate-limit para pgnet_monitor_indisponivel ───────────────────────────
 select ok(
   privado.emitir_alerta('pgnet_monitor_indisponivel', 1),
   'primeiro alerta de pgnet_monitor_indisponivel é emitido com sucesso'

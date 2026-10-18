@@ -120,10 +120,20 @@ begin
 
   -- 7. Falhas assíncronas do pg_net em net._http_response nos últimos 15 min (Item 22)
   begin
-    if coalesce(current_setting('frila.simular_sem_pgnet', true), 'off') <> 'on'
-       and exists (select 1 from pg_tables where schemaname = 'net' and tablename = '_http_response')
+    if (
+      exists (select 1 from privado.ambiente where eh_teste)
+      and coalesce(current_setting('frila.simular_sem_pgnet', true), 'off') = 'on'
+    ) then
+      -- Simulação de guarda de teste (só onde privado.ambiente.eh_teste): cai no alerta de indisponibilidade
+      if privado.emitir_alerta('pgnet_monitor_indisponivel', 1) then
+        v_alertas := v_alertas + 1;
+      end if;
+    elsif exists (select 1 from pg_tables where schemaname = 'net' and tablename = '_http_response')
        and has_table_privilege('postgres', 'net._http_response', 'select') then
-      if coalesce(current_setting('frila.simular_excecao_pgnet', true), 'off') = 'on' then
+      if (
+        exists (select 1 from privado.ambiente where eh_teste)
+        and coalesce(current_setting('frila.simular_excecao_pgnet', true), 'off') = 'on'
+      ) then
         raise exception 'simulacao de erro pgnet em tempo de execucao';
       end if;
 
