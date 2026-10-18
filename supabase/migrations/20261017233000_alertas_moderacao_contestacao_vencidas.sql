@@ -148,8 +148,23 @@ begin
 
   -- 9. Falhas assíncronas do pg_net em net._http_response nos últimos 15 min (Item 22)
   begin
-    if exists (select 1 from pg_tables where schemaname = 'net' and tablename = '_http_response')
+    if (
+      exists (select 1 from privado.ambiente where eh_teste)
+      and coalesce(current_setting('frila.simular_sem_pgnet', true), 'off') = 'on'
+    ) then
+      -- Simulação de guarda de teste (só onde privado.ambiente.eh_teste): cai no alerta de indisponibilidade
+      if privado.emitir_alerta('pgnet_monitor_indisponivel', 1) then
+        v_alertas := v_alertas + 1;
+      end if;
+    elsif exists (select 1 from pg_tables where schemaname = 'net' and tablename = '_http_response')
        and has_table_privilege('postgres', 'net._http_response', 'select') then
+      if (
+        exists (select 1 from privado.ambiente where eh_teste)
+        and coalesce(current_setting('frila.simular_excecao_pgnet', true), 'off') = 'on'
+      ) then
+        raise exception 'simulacao de erro pgnet em tempo de execucao';
+      end if;
+
       -- 9a. Falha de transporte ou infraestrutura (timeout, erro de conexão/DNS ou 5xx)
       -- Limiar >= 3 na janela de 15 min para evitar falso alerta em timeouts transitórios de deploy
       execute $dyn$
@@ -182,6 +197,12 @@ begin
         if privado.emitir_alerta('pgnet_resposta_recusada', v_pgnet_recusadas_falhas) then
           v_alertas := v_alertas + 1;
         end if;
+      end if;
+    else
+      -- Ramo sem tabela net._http_response ou sem privilégio de SELECT pelo papel postgres:
+      -- Emite alerta operacional com rate-limit para avisar que o monitoramento do pg_net está inativo
+      if privado.emitir_alerta('pgnet_monitor_indisponivel', 1) then
+        v_alertas := v_alertas + 1;
       end if;
     end if;
   exception
