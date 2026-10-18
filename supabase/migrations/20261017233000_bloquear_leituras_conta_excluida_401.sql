@@ -4,6 +4,14 @@
 -- 401 'nao_autenticado' em todas as leituras de perfil, painel e turnos, além do registro de telemetria.
 -- Contas suspensas (estado = 'suspensa') continuam recebendo 200 em todas as leituras para fins
 -- de conferência, acompanhamento e contestação (RN13 / contrato 0.2.44).
+--
+-- contrato: corpo-sem-mudanca-de-superficie public.minha_conta 0.2.44
+-- contrato: corpo-sem-mudanca-de-superficie public.meus_turnos 0.2.44
+-- contrato: corpo-sem-mudanca-de-superficie public.meu_perfil_profissional 0.2.44
+-- contrato: corpo-sem-mudanca-de-superficie public.meu_estabelecimento 0.2.44
+-- contrato: corpo-sem-mudanca-de-superficie public.painel_estabelecimento 0.2.44
+-- contrato: corpo-sem-mudanca-de-superficie public.perfil_publico 0.2.44
+-- contrato: corpo-sem-mudanca-de-superficie public.registrar_evento 0.2.44
 
 -- ── 1. minha_conta ─────────────────────────────────────────────────────────────
 create or replace function public.minha_conta()
