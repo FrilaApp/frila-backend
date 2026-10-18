@@ -1207,6 +1207,23 @@ Deno.test("Ciclo do token: depois de sair da conta, nenhuma notificação sai pa
 // vaga única, urgente e reaberta na Opção B (o banco ainda não tem a região), e a
 // agrupada na Opção A, com a quantidade interpolada no envio.
 
+Deno.test("candidatura_recusada: texto aprovado cabe no push e não interpola nomes", () => {
+  for (const [payload, variaveis] of [
+    [{}, {}],
+    [
+      { estabelecimento_id: "x", estabelecimento: "Casa de teste", vaga: "Vaga de teste" },
+      { estabelecimento: "Casa de teste", funcao: "garçom", regiao: "Região de teste" },
+    ],
+  ] as Array<[Record<string, unknown>, VariaveisDoTexto]>) {
+    const texto = titulosECorposPorTipo("candidatura_recusada", payload, variaveis);
+    assertEquals(texto, {
+      title: "Vaga preenchida",
+      body: "A vaga foi preenchida com outro profissional. Você está livre para novas vagas.",
+    });
+    assert(texto.body.length <= 110, `corpo longo: ${texto.body}`);
+  }
+});
+
 Deno.test("RN23: textos de vaga seguem a planilha (casos 01, 02 e 04)", () => {
   assertEquals(titulosECorposPorTipo("vaga", { vaga_id: "x" }), {
     title: "Nova vaga no Frila",
