@@ -72,19 +72,17 @@ select is(
 );
 
 select is(
-  (select turnos_concluidos_com_presenca_verificada
-     from metrica.north_star_semanal
-    where semana_inicio = date_trunc('week', (select p.fim_em at time zone 'America/Sao_Paulo' from public.posicao p where p.id = 'f1000000-0000-4000-8000-000000000301'::uuid))::date),
-  2::bigint,
-  'seed: semana da vaga d03 tem 2 turnos verificados (301 e 302; 303 e 304 não verificados excluídos)'
+  (select count(*)::bigint from metrica.north_star_semanal),
+  1::bigint,
+  'seed: exatamente 1 semana possui turnos concluídos no seed'
 );
 
 select is(
   (select turnos_concluidos_com_presenca_verificada
      from metrica.north_star_semanal
-    where semana_inicio = date_trunc('week', (select p.fim_em at time zone 'America/Sao_Paulo' from public.posicao p where p.id = 'f1000000-0000-4000-8000-000000000701'::uuid))::date),
-  1::bigint,
-  'seed: semana da vaga d07 tem 1 turno verificado (701)'
+    where semana_inicio = date_trunc('week', (select p.fim_em at time zone 'America/Sao_Paulo' from public.posicao p where p.id = 'f1000000-0000-4000-8000-000000000301'::uuid))::date),
+  3::bigint,
+  'seed: a semana das vagas d03 e d07 consolida 3 turnos verificados (301 e 302 de d03 + 701 de d07; 303 e 304 não verificados excluídos)'
 );
 
 -- ── 3. Os 5 Casos de Aceite do Critério 2 ─────────────────────────────────────
