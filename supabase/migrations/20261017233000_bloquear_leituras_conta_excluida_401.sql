@@ -1,23 +1,11 @@
--- Bloqueio de leituras autenticadas para conta excluída / anonimizada (Item 23 / contrato OpenAPI).
+-- Recusa leituras autenticadas para contas anonimizadas (excluídas) com 401 nao_autenticado (Item 23).
 --
--- Quando uma conta é excluída, seu registro passa para estado = 'anonimizada'.
--- O token JWT emitido pelo Auth pode permanecer válido até sua expiração natural.
--- Esta migração assegura que todas as RPCs autenticadas de leitura recusem conta anonimizada com 401 nao_autenticado,
--- disparando o encerramento imediato de sessão no app cliente (SaidaDaConta / RF25).
---
--- CUIDADO DE CONTRATO (RN13 / RF24):
--- A conta SUSPENSA mantém a capacidade de ler minha_conta() (HTTP 200) para exibir
--- a tela de suspensão e permitir a contestação. As demais leituras operacionais exigem conta ativa (403 conta_suspensa).
---
--- contrato: corpo-sem-mudanca-de-superficie public.minha_conta 0.2.44
--- contrato: corpo-sem-mudanca-de-superficie public.meus_turnos 0.2.44
--- contrato: corpo-sem-mudanca-de-superficie public.meu_perfil_profissional 0.2.44
--- contrato: corpo-sem-mudanca-de-superficie public.meu_estabelecimento 0.2.44
--- contrato: corpo-sem-mudanca-de-superficie public.painel_estabelecimento 0.2.44
--- contrato: corpo-sem-mudanca-de-superficie public.perfil_publico 0.2.44
--- contrato: corpo-sem-mudanca-de-superficie public.registrar_evento 0.2.44
+-- Contas excluídas (estado = 'anonimizada') deixam de ter acesso autenticado e devem receber
+-- 401 'nao_autenticado' em todas as leituras de perfil, painel e turnos, além do registro de telemetria.
+-- Contas suspensas (estado = 'suspensa') continuam recebendo 200 em todas as leituras para fins
+-- de conferência, acompanhamento e contestação (RN13 / contrato 0.2.44).
 
--- ── 1. minha_conta ────────────────────────────────────────────────────────────
+-- ── 1. minha_conta ─────────────────────────────────────────────────────────────
 create or replace function public.minha_conta()
 returns jsonb
 language plpgsql
@@ -35,19 +23,18 @@ begin
     perform public.erro(404, 'nao_encontrado');
   end if;
 
-  -- Conta anonimizada é tratada como não autenticada (401), forçando saída no cliente
   if v_linha.estado = 'anonimizada' then
     perform public.erro(401, 'nao_autenticado');
   end if;
 
-  -- Conta suspensa retorna 200 para permitir que a tela de contestação seja exibida
   return public.conta_em_json(v_linha);
 end $$;
 
 revoke execute on function public.minha_conta() from public, anon;
 grant  execute on function public.minha_conta() to authenticated;
 
--- ── 2. meus_turnos ────────────────────────────────────────────────────────────
+
+-- ── 2. meus_turnos ─────────────────────────────────────────────────────────────
 create or replace function public.meus_turnos(
   de                 timestamptz default null,
   ate                timestamptz default null,
@@ -67,9 +54,12 @@ begin
     perform public.erro(401, 'nao_autenticado');
   end if;
 
-  -- Anonimizada: 401; Suspensa: 403 sem_permissao, conta_suspensa
-  perform privado.exigir_conta_ativa();
+  if exists (select 1 from public.usuario u where u.id = v_uid and u.estado = 'anonimizada') then
+    perform public.erro(401, 'nao_autenticado');
+  end if;
 
+  -- Com `estabelecimento_id`, são os turnos da casa, e quem pergunta tem de ser membro
+  -- dela. Sem ele, são os turnos de quem chama como profissional.
   if meus_turnos.estabelecimento_id is not null then
     if not privado.eh_membro(meus_turnos.estabelecimento_id) then
       perform public.erro(403, 'sem_permissao');
@@ -77,6 +67,9 @@ begin
   else
     select p.id into v_prof from public.profissional p where p.usuario_id = v_uid;
     if v_prof is null then
+      -- Conta de contratante sem `estabelecimento_id` não tem turno nenhum como
+      -- profissional. Lista vazia, e não erro: a pergunta é válida e a resposta é
+      -- "nenhum".
       return '[]'::jsonb;
     end if;
   end if;
@@ -87,59 +80,99 @@ begin
     select jsonb_agg(item order by ordem)
       from (
         select privado.turno_em_json(t.id, v_uid) as item,
-               case
-                 when v_agora between p.inicio_em and coalesce(p.fim_em, v_agora) then 0
-                 when p.inicio_em > v_agora then 1
-                 else 2
-               end as grupo,
-               case
-                 when p.inicio_em >= v_agora then extract(epoch from p.inicio_em)
-                 else - extract(epoch from p.inicio_em)
-               end as ordem
+               -- Hoje e os próximos primeiro, do mais próximo para o mais distante; os
+               -- anteriores depois, do mais recente para o mais antigo. É a ordem da
+               -- tela: o turno de hoje é o que a pessoa abre o app para ver.
+               row_number() over (
+                 order by (p.fim_em < v_agora),
+                          case when p.fim_em < v_agora
+                               then -extract(epoch from p.inicio_em)
+                               else  extract(epoch from p.inicio_em) end) as ordem
           from public.turno t
           join public.posicao p on p.id = t.posicao_id
-          join public.vaga v on v.id = p.vaga_id
-         where (
-                 (meus_turnos.estabelecimento_id is not null and v.estabelecimento_id = meus_turnos.estabelecimento_id)
-                 or
-                 (meus_turnos.estabelecimento_id is null and p.profissional_id = v_prof)
-               )
-           and (meus_turnos.de is null or p.inicio_em >= meus_turnos.de)
+          join public.vaga g    on g.id = p.vaga_id
+         where (meus_turnos.estabelecimento_id is not null
+                  and g.estabelecimento_id = meus_turnos.estabelecimento_id
+                or meus_turnos.estabelecimento_id is null
+                  and p.profissional_id = v_prof)
+           and (meus_turnos.de  is null or p.inicio_em >= meus_turnos.de)
            and (meus_turnos.ate is null or p.inicio_em <= meus_turnos.ate)
-      ) sub
+      ) x
   ), '[]'::jsonb);
 end $$;
 
-revoke execute on function public.meus_turnos(timestamptz, timestamptz, uuid) from public, anon;
-grant  execute on function public.meus_turnos(timestamptz, timestamptz, uuid) to authenticated;
+comment on function public.meus_turnos(timestamptz, timestamptz, uuid) is
+  'Turnos do chamador como profissional, ou da casa quando vem estabelecimento_id (RF13, UC13). Hoje e os próximos primeiro. Sem telefone: o contato sai por contato_do_turno.';
 
--- ── 3. meu_perfil_profissional ────────────────────────────────────────────────
-create or replace function public.meu_perfil_profissional()
+revoke execute on function public.meus_turnos(timestamptz, timestamptz, uuid) from public, anon;
+grant execute on function public.meus_turnos(timestamptz, timestamptz, uuid) to authenticated;
+
+
+-- ── 3. perfil_publico ──────────────────────────────────────────────────────────
+create or replace function public.perfil_publico(id uuid)
 returns jsonb
 language plpgsql
-security definer set search_path = ''
+security definer
+set search_path = ''
 as $$
 declare
-  v_linha public.profissional%rowtype;
+  v_uid       uuid := (select auth.uid());
+  v_prof_user uuid;
+  v_perfil    jsonb;
 begin
-  if (select auth.uid()) is null then
+  if v_uid is null then
     perform public.erro(401, 'nao_autenticado');
   end if;
 
-  perform privado.exigir_conta_ativa();
+  if exists (select 1 from public.usuario u where u.id = v_uid and u.estado = 'anonimizada') then
+    perform public.erro(401, 'nao_autenticado');
+  end if;
 
-  select * into v_linha from public.profissional p where p.usuario_id = (select auth.uid());
-  if not found then
+  -- 1. Perfil profissional
+  v_prof_user := privado.usuario_do_profissional(perfil_publico.id);
+  if v_prof_user is not null then
+    -- RF26: bloqueio nos dois sentidos entre quem chama e o profissional,
+    -- ou entre o profissional e qualquer estabelecimento do qual quem chama é membro.
+    if exists (
+      select 1 from public.bloqueio b
+       where (b.autor_id = v_uid and b.bloqueado_id = v_prof_user)
+          or (b.autor_id = v_prof_user and b.bloqueado_id = v_uid)
+    ) or exists (
+      select 1 from public.membro_estabelecimento m
+       where m.usuario_id = v_uid
+         and privado.bloqueado_com_estabelecimento(v_prof_user, m.estabelecimento_id)
+    ) then
+      perform public.erro(404, 'nao_encontrado');
+    end if;
+
+    v_perfil := privado.perfil_publico_profissional(perfil_publico.id);
+
+  -- 2. Perfil de estabelecimento
+  elsif exists (select 1 from public.estabelecimento e where e.id = perfil_publico.id) then
+    -- RF26: bloqueio com qualquer membro do estabelecimento nos dois sentidos.
+    if privado.bloqueado_com_estabelecimento(v_uid, perfil_publico.id) then
+      perform public.erro(404, 'nao_encontrado');
+    end if;
+
+    v_perfil := privado.estabelecimento_publico(perfil_publico.id);
+  end if;
+
+  -- 3. Id que não é profissional nem estabelecimento (ou não encontrado)
+  if v_perfil is null then
     perform public.erro(404, 'nao_encontrado');
   end if;
 
-  return public.perfil_profissional_em_json(v_linha);
+  return v_perfil;
 end $$;
 
-revoke execute on function public.meu_perfil_profissional() from public, anon;
-grant  execute on function public.meu_perfil_profissional() to authenticated;
+comment on function public.perfil_publico(uuid) is
+  'Perfil público de profissional ou estabelecimento: nome, funções, positivas e total, taxa de comparecimento, turnos realizados e considerados (RF16, RN08). Nunca telefone, e-mail, nascimento, documento ou ponto base (RN10). Conta anonimizada aparece como "Conta encerrada" (RF25). Bloqueio entre as partes (nos dois sentidos ou com membro do estabelecimento) responde 404 (RF26, contrato 0.2.28).';
 
--- ── 4. meu_estabelecimento ───────────────────────────────────────────────────
+revoke execute on function public.perfil_publico(uuid) from public, anon;
+grant  execute on function public.perfil_publico(uuid) to authenticated;
+
+
+-- ── 4. meu_estabelecimento ────────────────────────────────────────────────────
 create or replace function public.meu_estabelecimento(estabelecimento_id uuid)
 returns jsonb
 language plpgsql
@@ -154,8 +187,12 @@ begin
     perform public.erro(401, 'nao_autenticado');
   end if;
 
-  perform privado.exigir_conta_ativa();
+  if exists (select 1 from public.usuario u where u.id = v_uid and u.estado = 'anonimizada') then
+    perform public.erro(401, 'nao_autenticado');
+  end if;
 
+  -- O papel é o de quem chama, nesta casa. Sem linha em `membro_estabelecimento`, não é
+  -- membro: administrador e operador leem, porque os dois publicam vaga (RF21).
   select m.papel into v_papel
     from public.membro_estabelecimento m
    where m.estabelecimento_id = meu_estabelecimento.estabelecimento_id
@@ -171,10 +208,14 @@ begin
   return privado.estabelecimento_em_json(v_linha, v_papel) - 'documento';
 end $$;
 
+comment on function public.meu_estabelecimento(uuid) is
+  'O cadastro de um estabelecimento de que a conta é membro, com o papel de quem chama (RF02, RF21; contrato 0.2.29). Endereço, região e ponto para preencher a publicação da vaga (RN02). Só membro: quem não é recebe 403 sem_permissao.';
+
 revoke execute on function public.meu_estabelecimento(uuid) from public, anon;
 grant  execute on function public.meu_estabelecimento(uuid) to authenticated;
 
--- ── 5. painel_estabelecimento ────────────────────────────────────────────────
+
+-- ── 5. painel_estabelecimento ─────────────────────────────────────────────────
 create or replace function public.painel_estabelecimento(
   estabelecimento_id uuid,
   de                 timestamptz,
@@ -198,7 +239,9 @@ begin
     perform public.erro(401, 'nao_autenticado');
   end if;
 
-  perform privado.exigir_conta_ativa();
+  if exists (select 1 from public.usuario u where u.id = v_uid and u.estado = 'anonimizada') then
+    perform public.erro(401, 'nao_autenticado');
+  end if;
 
   if v_estab is null or not privado.eh_membro(v_estab) then
     perform public.erro(403, 'sem_permissao');
@@ -320,59 +363,40 @@ comment on function public.painel_estabelecimento(uuid, timestamptz, timestamptz
 revoke execute on function public.painel_estabelecimento(uuid, timestamptz, timestamptz) from public, anon;
 grant  execute on function public.painel_estabelecimento(uuid, timestamptz, timestamptz) to authenticated;
 
--- ── 6. perfil_publico ────────────────────────────────────────────────────────
-create or replace function public.perfil_publico(id uuid)
+
+-- ── 6. meu_perfil_profissional ────────────────────────────────────────────────
+create or replace function public.meu_perfil_profissional()
 returns jsonb
 language plpgsql
-security definer
-set search_path = ''
+security definer set search_path = ''
 as $$
 declare
-  v_uid       uuid := (select auth.uid());
-  v_prof_user uuid;
-  v_perfil    jsonb;
+  v_linha public.profissional%rowtype;
 begin
-  if v_uid is null then
+  if (select auth.uid()) is null then
     perform public.erro(401, 'nao_autenticado');
   end if;
 
-  perform privado.exigir_conta_ativa();
-
-  v_prof_user := privado.usuario_do_profissional(perfil_publico.id);
-  if v_prof_user is not null then
-    if exists (
-      select 1 from public.bloqueio b
-       where (b.autor_id = v_uid and b.bloqueado_id = v_prof_user)
-          or (b.autor_id = v_prof_user and b.bloqueado_id = v_uid)
-    ) or exists (
-      select 1 from public.membro_estabelecimento m
-       where m.usuario_id = v_uid
-         and privado.bloqueado_com_estabelecimento(v_prof_user, m.estabelecimento_id)
-    ) then
-      perform public.erro(404, 'nao_encontrado');
-    end if;
-
-    v_perfil := privado.perfil_publico_profissional(perfil_publico.id);
-
-  elsif exists (select 1 from public.estabelecimento e where e.id = perfil_publico.id) then
-    if privado.bloqueado_com_estabelecimento(v_uid, perfil_publico.id) then
-      perform public.erro(404, 'nao_encontrado');
-    end if;
-
-    v_perfil := privado.estabelecimento_publico(perfil_publico.id);
+  if exists (select 1 from public.usuario u where u.id = (select auth.uid()) and u.estado = 'anonimizada') then
+    perform public.erro(401, 'nao_autenticado');
   end if;
 
-  if v_perfil is null then
+  select * into v_linha from public.profissional p where p.usuario_id = (select auth.uid());
+  if not found then
     perform public.erro(404, 'nao_encontrado');
   end if;
 
-  return v_perfil;
+  return public.perfil_profissional_em_json(v_linha);
 end $$;
 
-revoke execute on function public.perfil_publico(uuid) from public, anon;
-grant  execute on function public.perfil_publico(uuid) to authenticated;
+comment on function public.meu_perfil_profissional() is
+  'O próprio perfil de profissional, com funções, grade e reputação. 404 antes de o perfil existir — é como o app sabe que tem de mandar para o cadastro.';
 
--- ── 7. registrar_evento ──────────────────────────────────────────────────────
+revoke execute on function public.meu_perfil_profissional() from public, anon;
+grant  execute on function public.meu_perfil_profissional() to authenticated;
+
+
+-- ── 7. registrar_evento ───────────────────────────────────────────────────────
 create or replace function public.registrar_evento(
   evento      text,
   vaga_id     uuid default null,
@@ -394,7 +418,9 @@ begin
     perform public.erro(401, 'nao_autenticado');
   end if;
 
-  perform privado.exigir_conta_ativa();
+  if exists (select 1 from public.usuario u where u.id = v_usuario_id and u.estado = 'anonimizada') then
+    perform public.erro(401, 'nao_autenticado');
+  end if;
 
   if evento is null or pg_catalog.btrim(evento) = '' then
     perform public.erro(422, 'campo_obrigatorio', 'evento');
@@ -415,22 +441,26 @@ begin
     v_ocorrido := v_agora;
   end if;
 
+  if vaga_id is not null and not exists (select 1 from public.vaga where id = vaga_id) then
+    perform public.erro(422, 'campo_invalido', 'vaga_id');
+  end if;
+
+  if turno_id is not null and not exists (select 1 from public.turno where id = turno_id) then
+    perform public.erro(422, 'campo_invalido', 'turno_id');
+  end if;
+
   insert into public.evento_app (
-    usuario_id,
-    evento,
-    vaga_id,
-    turno_id,
-    ocorrido_em
+    usuario_id, evento, vaga_id, turno_id, ocorrido_em, criado_em
   ) values (
-    v_usuario_id,
-    v_evento_enum,
-    vaga_id,
-    turno_id,
-    v_ocorrido
+    v_usuario_id, v_evento_enum, vaga_id, turno_id, v_ocorrido, v_agora
   );
 
-  return jsonb_build_object('ok', true);
+  return jsonb_build_object('registrado', true);
 end $$;
+
+comment on function public.registrar_evento(text, uuid, uuid, timestamptz) is
+  'Registra um evento de telemetria do aplicativo a partir do dicionário fechado (EventoDeTelemetria). Sem campos livres (RN15). Recusa evento inválido com 422 campo_invalido e evento no futuro com 422 registro_no_futuro.';
 
 revoke execute on function public.registrar_evento(text, uuid, uuid, timestamptz) from public, anon;
 grant  execute on function public.registrar_evento(text, uuid, uuid, timestamptz) to authenticated;
+grant  execute on function public.registrar_evento(text, uuid, uuid, timestamptz) to service_role;
