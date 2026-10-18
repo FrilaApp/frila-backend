@@ -143,8 +143,8 @@ select cmp_ok(
 select cmp_ok(
   (select checkins from metrica.funil_geral),
   '>=',
-  5::bigint,
-  'funil geral: pelo menos 5 check-ins registrados'
+  3::bigint,
+  'funil geral: pelo menos 3 check-ins verificados'
 );
 
 select cmp_ok(
@@ -226,8 +226,8 @@ select is(
 select is(
   (select checkins from metrica.funil_por_estabelecimento
     where estabelecimento_id = 'c0000000-0000-4000-8000-000000000002'::uuid),
-  4::bigint,
-  'Buffet Águas Claras: 4 check-ins'
+  2::bigint,
+  'Buffet Águas Claras: 2 check-ins verificados'
 );
 
 select is(

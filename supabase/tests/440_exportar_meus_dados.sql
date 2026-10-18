@@ -17,7 +17,7 @@
 -- avaliações; Zélia (b…01) administra o Bar do Cerrado (c…01).
 
 begin;
-select plan(58);
+select plan(69);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -101,8 +101,12 @@ create temp table d as select privado.meus_dados((select ana from ids)) as j;
 
 select is(
   (select string_agg(k, ',' order by k) from jsonb_object_keys((select j from d)) k),
-  'avaliacoes_dadas,avaliacoes_recebidas,bloqueios,candidaturas,conta,despachos,disponibilidade,dispositivos,equipe_confianca,estabelecimentos,gerado_em,notificacoes,ocorrencias,pedido_de_exclusao,perfil_profissional,turnos',
-  'o corpo tem exatamente as dezesseis chaves de MeusDados, e nenhuma a mais');
+  'avaliacoes_dadas,avaliacoes_recebidas,bloqueios,candidaturas,conta,despachos,disponibilidade,dispositivos,equipe_confianca,estabelecimentos,eventos_app,gerado_em,notificacoes,ocorrencias,pedido_de_exclusao,perfil_profissional,turnos',
+  'o corpo tem exatamente as dezessete chaves de MeusDados, e nenhuma a mais');
+
+select is(
+  (select jsonb_typeof(j->'eventos_app') from d), 'array',
+  'eventos_app é array');
 
 select is(
   (select string_agg(k, ',' order by k) from jsonb_object_keys((select j->'conta' from d)) k),
@@ -245,13 +249,13 @@ insert into cobertas values
   ('notificacao',            'notificacoes'),
   ('despacho',               'despachos'),
   ('equipe_confianca',       'equipe_confianca'),
-  ('pedido_de_exclusao',     'pedido_de_exclusao');
+  ('pedido_de_exclusao',     'pedido_de_exclusao'),
+  ('evento_app',             'eventos_app');
 
 create temp table fora (t text, motivo text);
 insert into fora values
   ('evento',               'agenda da casa, e não do titular'),
-  ('entrada_demonstracao', 'conta de revisão da App Store: não há titular de dado pessoal aqui'),
-  ('evento_app',           'MeusDados não declara eventos de telemetria do app (cartão 3zsjXW60)');
+  ('entrada_demonstracao', 'conta de revisão da App Store: não há titular de dado pessoal aqui');
 
 create temp table nao_pessoais (t text, motivo text);
 insert into nao_pessoais values
@@ -283,8 +287,8 @@ select is(
 -- com dado do titular pode voltar a aparecer em `fora` sem alguém reescrever este bloco.
 select is(
   (select string_agg(t, ',' order by t) from fora),
-  'entrada_demonstracao,evento,evento_app',
-  'só três tabelas ficam de fora, e nenhuma delas guarda dado do titular');
+  'entrada_demonstracao,evento',
+  'só duas tabelas ficam de fora, e nenhuma delas guarda dado do titular');
 
 -- ── 5b. As sete coleções do contrato 0.2.27 ──────────────────────────────────
 -- Uma asserção por campo, e cada uma também cobra o que o campo NÃO leva. Sem a segunda
@@ -415,6 +419,71 @@ select is(
   (select jsonb_array_length(j->'equipe_confianca') from zec),
   0,
   'a equipe das casas que o titular administra não entra em equipe_confianca');
+
+-- ── 5d. Eventos de telemetria do app (LGPD art. 18, cartão nUpPFCpM) ────────
+-- Fixtures de telemetria para Ana e Zélia: prova isolamento entre dois usuários,
+-- que sem eventos sai lista vazia ([]) e não nulo, e que chaves internas não vazam.
+delete from public.evento_app where usuario_id in ((select ana from ids), (select zelia from ids));
+insert into public.evento_app (usuario_id, evento, ocorrido_em, criado_em) values
+  ((select ana from ids), 'app_aberto'::public.evento_de_telemetria, privado.agora() - interval '1 hour', privado.agora() - interval '1 hour'),
+  ((select zelia from ids), 'vaga_vista'::public.evento_de_telemetria, privado.agora() - interval '30 minutes', privado.agora() - interval '30 minutes');
+
+create temp table d_ev as select privado.meus_dados((select ana from ids)) as j;
+create temp table z_ev as select privado.meus_dados((select zelia from ids)) as j;
+
+select ok((select j ? 'eventos_app' from d_ev),
+  'eventos_app está no corpo');
+
+select cmp_ok(
+  (select jsonb_array_length(j->'eventos_app') from d_ev), '>=', 1,
+  'eventos_app traz ao menos um registro para medição');
+
+select is(
+  (select j->'eventos_app'->0->>'evento' from d_ev), 'app_aberto',
+  'Ana enxerga seu próprio evento app_aberto');
+
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'eventos_app') e
+      where e->>'evento' = 'vaga_vista')
+     from d_ev),
+  'Ana não enxerga evento de telemetria da Zélia (isolamento de titulares)');
+
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'eventos_app') e
+      where e ? 'usuario_id')
+     from d_ev),
+  'evento_app exportado não vaza usuario_id (redundante no corpo)');
+
+select is(
+  (select string_agg(k, ',' order by k)
+     from jsonb_object_keys((select j->'eventos_app'->0 from d_ev)) k),
+  'criado_em,evento,id,ocorrido_em,turno_id,vaga_id',
+  'cada evento traz exatamente id, evento, vaga_id, turno_id, ocorrido_em e criado_em');
+
+select is(
+  (select j->'eventos_app'->0->>'evento' from z_ev), 'vaga_vista',
+  'Zélia enxerga seu próprio evento vaga_vista');
+
+select ok(
+  (select not exists (
+     select 1 from jsonb_array_elements(j->'eventos_app') e
+      where e->>'evento' = 'app_aberto')
+     from z_ev),
+  'Zélia não enxerga evento da Ana (isolamento bidirecional)');
+
+-- Sem eventos: devolve lista vazia ([]) e não nulo
+delete from public.evento_app where usuario_id = (select zelia from ids);
+create temp table z_vazio as select privado.meus_dados((select zelia from ids)) as j;
+
+select is(
+  (select jsonb_typeof(j->'eventos_app') from z_vazio), 'array',
+  'sem eventos devolve array, não nulo');
+
+select is(
+  (select jsonb_array_length(j->'eventos_app') from z_vazio), 0,
+  'sem eventos devolve lista vazia ([])');
 
 -- ── 6. A conta de contratante, e a que não existe ────────────────────────────
 
