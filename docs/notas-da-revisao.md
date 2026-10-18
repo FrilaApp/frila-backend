@@ -164,7 +164,7 @@ do App Store Connect são do lado iOS do cartão; este arquivo é o texto que va
 nomes de botão e de tela citados no passo a passo do check-in são descritivos — quem
 preencher o campo no App Store Connect deve trocá-los pelos rótulos reais do build.
 
-## Duas coisas medidas que quem submeter precisa saber
+## Três coisas medidas que quem submeter precisa saber
 
 **A data da vaga semeada é relativa ao momento do seed.** O `seed.sql` cria a vaga aberta em
 `privado.agora() + 5 days` e o turno confirmado em `+ 2 days`. Medido em 25/09: o
@@ -179,3 +179,11 @@ janela do registro de presença abre 60 minutos antes do início do turno, e o t
 envelhece. Sem essa migração aplicada no ambiente, o passo a passo do check-in acima responde
 `422 fora_da_janela` e o revisor não alcança o meio do ciclo. Conferir antes de submeter:
 `./scripts/demonstracao.sh` mede exatamente esse caminho por HTTP.
+
+**A porta de demonstração exige `DEMONSTRACAO_ATIVA_ATE` e `DEMONSTRACAO_CODIGO` definidos no ambiente.**
+Por segurança (Opção A), a Edge Function falha fechada com `404 nao_encontrado` se
+`DEMONSTRACAO_ATIVA_ATE` (ISO-8601 com fuso) ou `DEMONSTRACAO_CODIGO` (código de no mínimo 6 dígitos)
+estiverem ausentes, vazios ou inválidos, ou se a data configurada expirar no passado. Sem essas
+variáveis definidas no `frila-dev` e no `frila-prod` via `supabase secrets set` antes do deploy,
+a porta de demonstração responde 404 em todas as requisições. O script `./scripts/demonstracao.sh`
+avalia esse comportamento por HTTP.

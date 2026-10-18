@@ -105,7 +105,8 @@ jobs:
         run: |
           cat > supabase/functions/.env.local <<'EOF'
           DEMONSTRACAO_EMAILS=revisao-contratante@frila.app,revisao-profissional@frila.app
-          DEMONSTRACAO_CODIGO=codigo-de-ci-sem-valor
+          DEMONSTRACAO_CODIGO=123456
+          DEMONSTRACAO_ATIVA_ATE=2099-12-31T23:59:00-03:00
           EOF
           printf 'AGENDADOR_SECRET=%s\n' "$AGENDADOR_SECRET" >> supabase/functions/.env.local
           supabase functions serve --env-file supabase/functions/.env.local &
