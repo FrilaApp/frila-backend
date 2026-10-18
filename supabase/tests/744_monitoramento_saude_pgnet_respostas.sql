@@ -161,12 +161,12 @@ select is(
 
 -- ── 14. Guarda: quando extensão pg_net ou net._http_response está ausente, cai no else ──
 savepoint s_guarda_pgnet;
-drop extension pg_net cascade;
+set local frila.simular_sem_pgnet = 'on';
 delete from privado.alerta_emitido where codigo = 'pgnet_monitor_indisponivel';
 
 select lives_ok(
   'select privado.verificar_saude()',
-  'verificar_saude roda normalmente mesmo com schema net/pg_net ausente (guarda ativa)'
+  'verificar_saude roda normalmente mesmo com net._http_response ausente (guarda ativa)'
 );
 
 select is(
@@ -179,9 +179,7 @@ rollback to savepoint s_guarda_pgnet;
 
 -- ── 15. Exceção: quando consulta gera erro em tempo de execução, bloco exception captura e emite alerta ──
 savepoint s_excecao_pgnet;
-drop extension pg_net cascade;
-create schema net;
-create table net._http_response (dummy int);
+set local frila.simular_excecao_pgnet = 'on';
 delete from privado.alerta_emitido where codigo = 'pgnet_monitor_indisponivel';
 
 select lives_ok(

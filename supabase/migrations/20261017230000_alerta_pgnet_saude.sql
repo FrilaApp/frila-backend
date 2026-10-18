@@ -120,8 +120,13 @@ begin
 
   -- 7. Falhas assíncronas do pg_net em net._http_response nos últimos 15 min (Item 22)
   begin
-    if exists (select 1 from pg_tables where schemaname = 'net' and tablename = '_http_response')
+    if coalesce(current_setting('frila.simular_sem_pgnet', true), 'off') <> 'on'
+       and exists (select 1 from pg_tables where schemaname = 'net' and tablename = '_http_response')
        and has_table_privilege('postgres', 'net._http_response', 'select') then
+      if coalesce(current_setting('frila.simular_excecao_pgnet', true), 'off') = 'on' then
+        raise exception 'simulacao de erro pgnet em tempo de execucao';
+      end if;
+
       -- 7a. Falha de transporte ou infraestrutura (timeout, erro de conexão/DNS ou 5xx)
       -- Limiar >= 3 na janela de 15 min para evitar falso alerta em timeouts transitórios de deploy
       execute $dyn$
