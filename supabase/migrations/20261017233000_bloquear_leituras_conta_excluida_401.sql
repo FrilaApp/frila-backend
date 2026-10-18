@@ -8,6 +8,14 @@
 -- CUIDADO DE CONTRATO (RN13 / RF24):
 -- A conta SUSPENSA mantém a capacidade de ler minha_conta() (HTTP 200) para exibir
 -- a tela de suspensão e permitir a contestação. As demais leituras operacionais exigem conta ativa (403 conta_suspensa).
+--
+-- contrato: corpo-sem-mudanca-de-superficie public.minha_conta 0.2.44
+-- contrato: corpo-sem-mudanca-de-superficie public.meus_turnos 0.2.44
+-- contrato: corpo-sem-mudanca-de-superficie public.meu_perfil_profissional 0.2.44
+-- contrato: corpo-sem-mudanca-de-superficie public.meu_estabelecimento 0.2.44
+-- contrato: corpo-sem-mudanca-de-superficie public.painel_estabelecimento 0.2.44
+-- contrato: corpo-sem-mudanca-de-superficie public.perfil_publico 0.2.44
+-- contrato: corpo-sem-mudanca-de-superficie public.registrar_evento 0.2.44
 
 -- ── 1. minha_conta ────────────────────────────────────────────────────────────
 create or replace function public.minha_conta()
