@@ -51,17 +51,19 @@ alter table public.usuario
 -- As três colunas andam juntas: ou nenhuma, ou as três — e o método é função do sinal.
 -- Sem isto, um `update` por fora deixaria "faixa sem método" ou "aparelho" num sinal de
 -- recusa, e a prova deixaria de dizer o que diz.
+--
+-- Escrito com `and`/`or`, e não com `case`, de propósito: o `pg_get_constraintdef` de um
+-- `case` sai em várias linhas, e o `mutacao.sh` lê cada alvo numa linha só — foi assim que
+-- a primeira CI deste PR parou em "RESTAURAÇÃO FALHOU" depois de derrubar esta restrição.
 alter table public.usuario
   add constraint idade_aferida_coerente
     check (
-      case
-        when sinal_idade is null then
-          idade_aferida_por is null and idade_aferida_em is null
-        when sinal_idade = 'dezoito_ou_mais' then
-          idade_aferida_por = 'aparelho' and idade_aferida_em is not null
-        else
-          idade_aferida_por = 'declaracao' and idade_aferida_em is not null
-      end);
+         (sinal_idade is null
+          and idade_aferida_por is null and idade_aferida_em is null)
+      or (sinal_idade = 'dezoito_ou_mais'
+          and idade_aferida_por = 'aparelho' and idade_aferida_em is not null)
+      or (sinal_idade is not null and sinal_idade <> 'dezoito_ou_mais'
+          and idade_aferida_por = 'declaracao' and idade_aferida_em is not null));
 
 -- ── criar_conta ───────────────────────────────────────────────────────────────
 --
