@@ -88,6 +88,11 @@ jobs:
       - name: Corridas do ciclo
         run: ./scripts/corrida-ciclo.sh
 
+      # O pgTAP roda numa sessão só e não enxerga corrida. Duas conexões de verdade:
+      # a sessão A segura linhas na fila e a sessão B consome com SKIP LOCKED sem esperar A.
+      - name: Corrida no lote de push (SKIP LOCKED)
+        run: ./scripts/corrida-push.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
