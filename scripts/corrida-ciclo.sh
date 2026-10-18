@@ -586,11 +586,11 @@ SQL
       echo ">> NOTIFICAÇÕES (livres):" >&2
       psql -c "select n.id, n.usuario_id, n.tipo, n.referencia_id, n.criada_em, n.enviada_em from public.notificacao n join public.profissional p on p.usuario_id = n.usuario_id where p.id in ($livres) order by n.id;" >&2 || true
       echo ">> PG_STAT_ACTIVITY:" >&2
-      psql -c "select pid, usename, application_name, client_addr, backend_type, wait_event_type, wait_event, state, query_start, query from pg_stat_activity where pid <> pg_backend_pid();" >&2 || true
+      psql -c "select pid, usename, application_name, client_addr, backend_type, wait_event_type, wait_event, state, query_start, regexp_replace(regexp_replace(query, '(agendador_secret[^,)]*,\s*)[^,)]+', '\1''[REDACTED]''', 'gi'), '(Bearer\s+)[^\"'']+', '\1[REDACTED]', 'gi') as query from pg_stat_activity where pid <> pg_backend_pid();" >&2 || true
       echo ">> PG_LOCKS (advisory):" >&2
       psql -c "select pid, locktype, mode, granted, classid, objid, objsubid from pg_locks where locktype = 'advisory';" >&2 || true
       echo ">> CRON.JOB_RUN_DETAILS (últimos 2 min):" >&2
-      psql -c "select jobid, runid, job_pid, database, username, command, status, return_message, start_time, end_time from cron.job_run_details where start_time >= now() - interval '2 minutes' order by runid desc limit 20;" >&2 || true
+      psql -c "select jobid, runid, job_pid, database, username, regexp_replace(regexp_replace(command, '(agendador_secret[^,)]*,\s*)[^,)]+', '\1''[REDACTED]''', 'gi'), '(Bearer\s+)[^\"'']+', '\1[REDACTED]', 'gi') as command, status, return_message, start_time, end_time from cron.job_run_details where start_time >= now() - interval '2 minutes' order by runid desc limit 20;" >&2 || true
       echo "--- [FIM DUMP DIAGNÓSTICO RODADA $r] ---" >&2
 
       ruins="$ruins
