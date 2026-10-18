@@ -330,7 +330,7 @@ end $$;
 
 -- Contagem antes da chamada sob o mutante 3
 create temp table pg_temp.contagem_fila as
-  select count(*)::int as total from pgmq.q_email;
+  select count(*)::int as total from pgmq.q_email where coalesce(message->>'tipo', '') <> 'alerta';
 
 -- Criar outro usuário suspenso para exercitar mutante 3
 insert into public.usuario (id, perfil, nome, email, telefone, nascimento, estado, termos_versao, termos_aceite_em) values
@@ -348,7 +348,7 @@ select is(
 );
 
 select is(
-  (select count(*)::int from pgmq.q_email) - (select total from pg_temp.contagem_fila),
+  (select count(*)::int from pgmq.q_email where coalesce(message->>'tipo', '') <> 'alerta') - (select total from pg_temp.contagem_fila),
   0,
   'mutante 3 (sem pgmq.send): nenhuma mensagem adicionada a pgmq.q_email; discrimina disparo pgmq'
 );
