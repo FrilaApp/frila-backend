@@ -41,8 +41,8 @@
 // O teto de tentativas contra o código fixo.
 export const JANELA_MINUTOS = 10;
 export const TETO_TENTATIVAS = 10;
-// Entropia mínima do código de demonstração: falha fechado se for menor que 20 caracteres
-export const MIN_COMPRIMENTO_CODIGO = 20;
+// Comprimento mínimo do código de demonstração: 6 dígitos (compatível com a tela de OTP do iOS)
+export const MIN_COMPRIMENTO_CODIGO = 6;
 // Limite máximo de entradas no mapa de IPs para evitar vazamento de memória
 export const MAX_IPS_EM_MEMORIA = 1000;
 
@@ -59,6 +59,7 @@ export interface HandlerDeps {
   anonKey?: string;
   emailsDeclarados?: string[];
   codigoEsperado?: string;
+  ativaAte?: string;
 }
 
 export function recusa(status: number, code: string, details: string | null = null): Response {
@@ -198,16 +199,29 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
     });
   };
 
+  // 1. Janela de demonstração (Opção A): DEMONSTRACAO_ATIVA_ATE é obrigatória (fail-closed se ausente)
+  // Fora da janela ou se ausente/inválida: fecha a porta com 404 uniforme e emite alerta operacional.
+  const ativaAte = deps.ativaAte ?? (Deno.env.get("DEMONSTRACAO_ATIVA_ATE") ?? "");
+  const limiteMs = ativaAte.trim() !== "" ? new Date(ativaAte.trim()).getTime() : NaN;
+  const janelaValida = !isNaN(limiteMs) && Date.now() <= limiteMs;
+  if (!janelaValida) {
+    console.error(
+      "[ALERTA_CONFIG_DEMONSTRACAO] DEMONSTRACAO_ATIVA_ATE ausente, invalida ou expirada",
+    );
+    return recusa(404, "nao_encontrado");
+  }
+
+  // 2. Segredo do código de demonstração: obrigatório e com no mínimo 6 dígitos (compatível com app iOS)
+  // Se ausente, vazio ou menor que 6 caracteres: falha fechado com 404 uniforme e emite alerta operacional.
   const esperado = deps.codigoEsperado ?? (Deno.env.get("DEMONSTRACAO_CODIGO") ?? "");
-  // O código fixo de demonstração DEVE ter alta entropia (mínimo 20 caracteres)
-  // para tornar inviável busca exaustiva. Se for menor ou vazio, falha fechado e emite alerta operacional.
   const codigoValidoConfigurado = esperado !== "" && esperado.length >= MIN_COMPRIMENTO_CODIGO;
   if (!codigoValidoConfigurado) {
     console.error(
-      "[ALERTA_CONFIG_DEMONSTRACAO] DEMONSTRACAO_CODIGO ausente ou com entropia insuficiente (minimo 20 caracteres)",
+      "[ALERTA_CONFIG_DEMONSTRACAO] DEMONSTRACAO_CODIGO ausente ou com comprimento insuficiente (minimo 6 caracteres)",
     );
+    return recusa(404, "nao_encontrado");
   }
-  const codigoCorreto = codigoValidoConfigurado && igualEmTempoConstante(codigo, esperado);
+  const codigoCorreto = igualEmTempoConstante(codigo, esperado);
 
   // DIRETRIZ 2.1 DA APPLE: o código CORRETO nunca é bloqueado por tentativas erradas
   // prévias nem por rate limit de IP (ataques de negação de serviço contra o revisor são neutralizados).
@@ -249,9 +263,12 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
   // Código INCORRETO:
   const ip = extrairIpCliente(req);
 
-  // 1. Teto por IP no ramo errado: se o IP já atingiu o teto na janela, recusa
-  // uniformemente sem bater no banco (atenua DoS/força bruta).
+  // 1. Teto por IP no ramo errado: se o IP já atingiu o teto na janela,
+  // emite [ALERTA_DEMONSTRACAO] e recusa uniformemente sem bater no banco (atenua DoS/força bruta).
   if (!verificarLimiteIp(ip)) {
+    console.error(
+      "[ALERTA_DEMONSTRACAO] Teto de tentativas incorretas excedido para IP na janela recente",
+    );
     return recusa(404, "nao_encontrado");
   }
 
@@ -259,7 +276,7 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
   registrarTentativaIp(ip);
 
   // 2. Contar ANTES de inserir no banco: se o e-mail já atingiu o teto na janela recente,
-  // não grava mais linhas (previne inundação da tabela) e recusa uniformemente com 404
+  // emite [ALERTA_DEMONSTRACAO], não grava mais linhas (previne inundação da tabela) e recusa com 404
   // (sem revelar 429 para não confirmar existência do e-mail na lista da Apple).
   const inicioDaJanela = new Date(Date.now() - JANELA_MINUTOS * 60_000).toISOString();
 
@@ -271,6 +288,9 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
   const tentativasErradas = await janela.json();
 
   if (Array.isArray(tentativasErradas) && tentativasErradas.length >= TETO_TENTATIVAS) {
+    console.error(
+      "[ALERTA_DEMONSTRACAO] Teto de tentativas incorretas excedido para e-mail na janela recente",
+    );
     // Teto por e-mail atingido: não grava mais no banco
     return recusa(404, "nao_encontrado");
   }

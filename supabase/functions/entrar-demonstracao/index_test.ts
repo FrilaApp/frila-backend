@@ -17,7 +17,7 @@ import {
 const MOCK_ORIGEM = "http://127.0.0.1:54321";
 const MOCK_SERVICE_ROLE = "mock-service-role-key";
 const MOCK_ANON = "mock-anon-key";
-const MOCK_CODIGO = "codigo-demonstracao-secreto-revisor-2026";
+const MOCK_CODIGO = "123456";
 const MOCK_EMAIL_REVISOR = "revisor@frila.app";
 const MOCK_EMAIL_CONTRATANTE = "contratante-demo@frila.app";
 
@@ -144,6 +144,7 @@ function depsPadrao(estado: MockState, sobrescritas: Partial<HandlerDeps> = {}):
     anonKey: MOCK_ANON,
     emailsDeclarados: [MOCK_EMAIL_REVISOR, MOCK_EMAIL_CONTRATANTE],
     codigoEsperado: MOCK_CODIGO,
+    ativaAte: "2030-01-01T00:00:00Z",
     ...sobrescritas,
   };
 }
@@ -529,9 +530,9 @@ Deno.test("entrar-demonstracao: extrairIpCliente prioriza cabecalho da borda e i
   assertEquals(extrairIpCliente(req4), "desconhecido");
 });
 
-Deno.test("entrar-demonstracao: codigo com menos de 20 caracteres falha fechado com 404 e registra alerta (Bloqueio 3)", async () => {
+Deno.test("entrar-demonstracao: codigo com menos de 6 caracteres falha fechado com 404 e registra alerta (Bloqueio 3)", async () => {
   const estado: MockState = { tentativas: [], proximoId: 1 };
-  const codigoCurto = "123456"; // 6 caracteres (< MIN_COMPRIMENTO_CODIGO)
+  const codigoCurto = "12345"; // 5 caracteres (< MIN_COMPRIMENTO_CODIGO = 6)
 
   const req = new Request("http://localhost/functions/v1/entrar-demonstracao", {
     method: "POST",
@@ -546,8 +547,7 @@ Deno.test("entrar-demonstracao: codigo com menos de 20 caracteres falha fechado 
   };
 
   try {
-    // Mesmo que o cliente envie exatamente o código configurado, se for < 20 caracteres,
-    // a função DEVE falhar fechado com 404 por falta de entropia mínima e emitir alerta operacional
+    // Se DEMONSTRACAO_CODIGO tiver menos de 6 dígitos, a função DEVE falhar fechado com 404 e emitir alerta operacional
     const res = await handler(req, depsPadrao(estado, { codigoEsperado: codigoCurto }));
     assertEquals(res.status, 404);
     const json = await res.json();
@@ -560,6 +560,134 @@ Deno.test("entrar-demonstracao: codigo com menos de 20 caracteres falha fechado 
       true,
       "Deve emitir [ALERTA_CONFIG_DEMONSTRACAO] no console.error",
     );
+  } finally {
+    console.error = consoleErrorOriginal;
+  }
+});
+
+Deno.test("entrar-demonstracao: janela DEMONSTRACAO_ATIVA_ATE expira ou ausente fecha a porta com 404 e alerta (Opcao A)", async () => {
+  const estado: MockState = { tentativas: [], proximoId: 1 };
+  const criarReq = () =>
+    new Request("http://localhost/functions/v1/entrar-demonstracao", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: MOCK_CODIGO }),
+    });
+
+  const logsErro: string[] = [];
+  const consoleErrorOriginal = console.error;
+  console.error = (...args: unknown[]) => {
+    logsErro.push(args.map(String).join(" "));
+  };
+
+  try {
+    // 1. Data no passado: a porta fecha mesmo com e-mail e código corretos
+    const resExpirada = await handler(criarReq(), depsPadrao(estado, { ativaAte: "2020-01-01T00:00:00Z" }));
+    assertEquals(resExpirada.status, 404);
+    assertEquals(await resExpirada.json(), { code: "nao_encontrado", message: "nao_encontrado", details: null });
+
+    // 2. Data vazia: fail-closed
+    const resVazia = await handler(criarReq(), depsPadrao(estado, { ativaAte: "" }));
+    assertEquals(resVazia.status, 404);
+
+    // 3. Data ausente do ambiente e de deps: fail-closed
+    const envAntigo = Deno.env.get("DEMONSTRACAO_ATIVA_ATE");
+    try {
+      Deno.env.delete("DEMONSTRACAO_ATIVA_ATE");
+      const resSemEnv = await handler(criarReq(), depsPadrao(estado, { ativaAte: undefined }));
+      assertEquals(resSemEnv.status, 404);
+
+      // 4. Data em formato inválido
+      const resInvalida = await handler(criarReq(), depsPadrao(estado, { ativaAte: "data-invalida" }));
+      assertEquals(resInvalida.status, 404);
+
+      // 5. Data válida configurada no ambiente
+      Deno.env.set("DEMONSTRACAO_ATIVA_ATE", "2035-01-01T00:00:00Z");
+      const resEnvFuturo = await handler(criarReq(), depsPadrao(estado, { ativaAte: undefined }));
+      assertEquals(resEnvFuturo.status, 200);
+    } finally {
+      if (envAntigo !== undefined) Deno.env.set("DEMONSTRACAO_ATIVA_ATE", envAntigo);
+      else Deno.env.delete("DEMONSTRACAO_ATIVA_ATE");
+    }
+
+    // 6. Data no futuro em deps: login permitido normalmente
+    const resAtiva = await handler(criarReq(), depsPadrao(estado, { ativaAte: "2030-01-01T00:00:00Z" }));
+    assertEquals(resAtiva.status, 200);
+
+    // Valida que emitiu alerta operacional para as configurações inválidas/expiradas
+    assertEquals(
+      logsErro.some((msg) => msg.includes("[ALERTA_CONFIG_DEMONSTRACAO]")),
+      true,
+      "Deve emitir [ALERTA_CONFIG_DEMONSTRACAO] para janela ausente ou expirada",
+    );
+  } finally {
+    console.error = consoleErrorOriginal;
+  }
+});
+
+Deno.test("entrar-demonstracao: emite [ALERTA_DEMONSTRACAO] quando IP ou e-mail excede o teto de tentativas incorretas", async () => {
+  resetarLimitesIp();
+  const estado: MockState = { tentativas: [], proximoId: 1 };
+  const ipAlvo = "198.51.100.77";
+
+  const logsErro: string[] = [];
+  const consoleErrorOriginal = console.error;
+  console.error = (...args: unknown[]) => {
+    logsErro.push(args.map(String).join(" "));
+  };
+
+  try {
+    // 10 tentativas erradas do mesmo IP para o e-mail do revisor
+    for (let i = 1; i <= 10; i++) {
+      const req = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "cf-connecting-ip": ipAlvo },
+        body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "codigo-errado" }),
+      });
+      const res = await handler(req, depsPadrao(estado));
+      assertEquals(res.status, 404);
+    }
+
+    // 11ª tentativa errada: bate no teto por IP e emite [ALERTA_DEMONSTRACAO]
+    const req11 = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "cf-connecting-ip": ipAlvo },
+      body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "codigo-errado" }),
+    });
+    const res11 = await handler(req11, depsPadrao(estado));
+    assertEquals(res11.status, 404);
+
+    // Valida que o alerta operacional [ALERTA_DEMONSTRACAO] foi emitido para o IP
+    assertEquals(
+      logsErro.some((msg) => msg.includes("[ALERTA_DEMONSTRACAO]") && msg.includes("IP")),
+      true,
+      "Deve emitir [ALERTA_DEMONSTRACAO] para IP excedido",
+    );
+
+    // 12ª tentativa com IP diferente mas mesmo e-mail (já tem 10 tentativas gravadas no banco):
+    // bate no teto por e-mail e emite [ALERTA_DEMONSTRACAO]
+    const reqEmailTeto = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "cf-connecting-ip": "203.0.113.99" },
+      body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "codigo-errado" }),
+    });
+    const resEmailTeto = await handler(reqEmailTeto, depsPadrao(estado));
+    assertEquals(resEmailTeto.status, 404);
+
+    assertEquals(
+      logsErro.some((msg) => msg.includes("[ALERTA_DEMONSTRACAO]") && msg.includes("e-mail")),
+      true,
+      "Deve emitir [ALERTA_DEMONSTRACAO] para e-mail excedido",
+    );
+
+    // O código CORRETO nunca é bloqueado, mesmo sob alertas e tetos excedidos
+    const reqCorreta = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "cf-connecting-ip": ipAlvo },
+      body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: MOCK_CODIGO }),
+    });
+    const resCorreta = await handler(reqCorreta, depsPadrao(estado));
+    assertEquals(resCorreta.status, 200);
   } finally {
     console.error = consoleErrorOriginal;
   }
