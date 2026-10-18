@@ -19,7 +19,7 @@ select vault.create_secret('segredo-sintetico-vault-748', 'agendador_secret');
 insert into requisicoes_vault values
   ('despacho', privado.disparar_despacho()),
   ('email', privado.disparar_email());
-select is_not(req_id, null::bigint, funcao || ': só Vault retorna requisição')
+select ok(req_id is not null, funcao || ': só Vault retorna requisição')
   from requisicoes_vault order by funcao;
 select is(q.headers->>'x-agendador-secret', 'segredo-sintetico-vault-748',
           r.funcao || ': só Vault preenche x-agendador-secret')
@@ -34,7 +34,7 @@ truncate requisicoes_vault;
 insert into requisicoes_vault values
   ('despacho', privado.disparar_despacho()),
   ('email', privado.disparar_email());
-select is_not(req_id, null::bigint, funcao || ': ambas as fontes retornam requisição')
+select ok(req_id is not null, funcao || ': ambas as fontes retornam requisição')
   from requisicoes_vault order by funcao;
 select is(q.headers->>'x-agendador-secret', 'segredo-sintetico-vault-748',
           r.funcao || ': Vault tem prioridade sobre GUC em x-agendador-secret')
@@ -49,7 +49,7 @@ truncate requisicoes_vault;
 insert into requisicoes_vault values
   ('despacho', privado.disparar_despacho()),
   ('email', privado.disparar_email());
-select is_not(req_id, null::bigint, funcao || ': fallback GUC retorna requisição')
+select ok(req_id is not null, funcao || ': fallback GUC retorna requisição')
   from requisicoes_vault order by funcao;
 select is(q.headers->>'x-agendador-secret', 'segredo-sintetico-guc-748',
           r.funcao || ': fallback GUC preenche x-agendador-secret')
