@@ -2883,6 +2883,126 @@ Deno.test(
   },
 );
 
+Deno.test(
+  "processarEnvioPush: TESTE NEGATIVO - não emite [ALERTA_CONFIG_FCM] quando erro não for NOT_FOUND estrito (ex: HTML 404 sem status NOT_FOUND)",
+  async () => {
+    const sa = await gerarContaDeServicoTeste();
+    const tokensRemovidos: string[] = [];
+    const chamadasFalha: GravarFalhaPushParams[] = [];
+
+    const sqlClient: SqlClient = {
+      notificacaoExpirada: () => Promise.resolve(false),
+      gravarFalhaPush: (p) => {
+        chamadasFalha.push(p);
+        return Promise.resolve();
+      },
+      gravarAceitePush: () => Promise.resolve(),
+      removerTokenFcm: (token) => {
+        tokensRemovidos.push(token);
+        return Promise.resolve(1);
+      },
+    };
+
+    const mockFetch = (url: string | URL | Request) => {
+      const urlStr = typeof url === "string" ? url : "url" in url ? url.url : url.toString();
+
+      if (urlStr.includes("oauth") || urlStr.includes("/token")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ access_token: "mock-token" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
+
+      if (urlStr.includes("notificacao")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                id: "a2000000-0000-4000-8000-000000000004",
+                usuario_id: "u4",
+                tipo: "vaga",
+                titulo: "Nova vaga",
+                corpo: "Vaga disponível",
+                payload: {},
+                vaga_id: "v1",
+                turno_id: null,
+                tentativas: 0,
+                estado_entrega: "pendente",
+                proxima_tentativa_em: null,
+              },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+
+      if (urlStr.includes("dispositivo")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              { id: "d4", token_fcm: "fcm_token_valido", plataforma: "ios" },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+
+      if (urlStr.includes("/messages:send")) {
+        // Responde 404 genérico em HTML sem status NOT_FOUND
+        return Promise.resolve(
+          new Response(
+            "<html><body>404 Not Found</body></html>",
+            { status: 404, headers: { "Content-Type": "text/html" } },
+          ),
+        );
+      }
+
+      return Promise.reject(new Error(`URL não tratada: ${urlStr}`));
+    };
+
+    const req = new Request("http://localhost/functions/v1/enviar-push", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-agendador-secret": SEGREDO_TESTE,
+      },
+      body: JSON.stringify({ notificacao_id: "a2000000-0000-4000-8000-000000000004" }),
+    });
+
+    const errosConsole: string[] = [];
+    const consoleErrorOriginal = console.error;
+    console.error = (...args: unknown[]) => {
+      errosConsole.push(args.map(String).join(" "));
+      consoleErrorOriginal(...args);
+    };
+
+    try {
+      const res = await processarEnvioPush(req, {
+        serviceAccount: sa,
+        fetchFn: mockFetch,
+        fcmApiUrl: "http://mock-fcm/messages:send",
+        sqlClient,
+      });
+
+      assertEquals(res.status, 200);
+      const data = await res.json();
+      assertEquals(data.relatorio[0].status, "falhou");
+
+      // PROVA NEGATIVA: NÃO deve emitir [ALERTA_CONFIG_FCM] quando não for NOT_FOUND estrito
+      assert(
+        !errosConsole.some((msg) => msg.includes("[ALERTA_CONFIG_FCM]")),
+        "NÃO deve emitir alerta [ALERTA_CONFIG_FCM] quando o erro não for NOT_FOUND estrito",
+      );
+      assertEquals(tokensRemovidos.length, 0);
+    } finally {
+      console.error = consoleErrorOriginal;
+    }
+  },
+);
+
+
 
 
 
