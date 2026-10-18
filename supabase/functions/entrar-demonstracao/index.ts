@@ -28,6 +28,15 @@
 // E-mail desconhecido, código errado e corpo malformado recebem todos o mesmo `404
 // nao_encontrado`: um `401` no código errado confirmaria que aquele endereço existe, e a
 // lista de endereços da revisão é justamente o que não deve ser descoberto.
+//
+// ── Tempo de resposta e enumeração ──────────────────────────────────────────────────
+//
+// Endereços fora da lista retornam 404 imediato sem tocar o banco (~1-5ms), enquanto
+// endereços da lista com código incorreto executam consulta e gravação no banco (~30-80ms).
+// Optou-se por documentar essa diferença e não aplicar atraso artificial (sleep):
+// a lista de e-mails de demonstração é pública no repositório e declarada abertamente
+// no App Store Connect para a equipe de revisão da Apple, tornando inócua a enumeração por
+// temporização e preservando a eficiência computacional das instâncias Edge.
 
 // O teto de tentativas contra o código fixo.
 export const JANELA_MINUTOS = 10;
@@ -85,9 +94,14 @@ export function emailsDeclarados(): string[] {
     .filter((e) => e.length > 0);
 }
 
-// Extração segura do IP do cliente: cabeçalho da borda que o cliente não consegue forjar.
-// Se houver x-forwarded-for com múltiplos IPs, o cliente controla o primeiro,
-// enquanto o proxy reverso/borda acrescenta o IP real ao final.
+// Extração segura do IP do cliente:
+// Na infraestrutura Supabase Edge Functions (Deno Deploy / Cloudflare):
+// 1. `cf-connecting-ip`: injetado pela Cloudflare com o IP público real de borda do cliente.
+//    O cliente não consegue forjar esse cabeçalho, pois a Cloudflare o substitui na borda.
+// 2. `x-real-ip`: cabeçalho de fallback fornecido pelo gateway Kong / proxy reverso.
+// 3. `x-forwarded-for`: lista encadeada onde o cliente controla o primeiro elemento,
+//    e proxies intermediários acrescentam ao final. Portanto, utiliza-se estritamente
+//    o ÚLTIMO elemento da lista para evitar IP spoofing.
 export function extrairIpCliente(req: Request): string {
   const cf = req.headers.get("cf-connecting-ip")?.trim();
   if (cf) return cf;
@@ -186,8 +200,13 @@ export async function handler(req: Request, deps: HandlerDeps = {}): Promise<Res
 
   const esperado = deps.codigoEsperado ?? (Deno.env.get("DEMONSTRACAO_CODIGO") ?? "");
   // O código fixo de demonstração DEVE ter alta entropia (mínimo 20 caracteres)
-  // para tornar inviável busca exaustiva. Se for menor ou vazio, falha fechado.
+  // para tornar inviável busca exaustiva. Se for menor ou vazio, falha fechado e emite alerta operacional.
   const codigoValidoConfigurado = esperado !== "" && esperado.length >= MIN_COMPRIMENTO_CODIGO;
+  if (!codigoValidoConfigurado) {
+    console.error(
+      "[ALERTA_CONFIG_DEMONSTRACAO] DEMONSTRACAO_CODIGO ausente ou com entropia insuficiente (minimo 20 caracteres)",
+    );
+  }
   const codigoCorreto = codigoValidoConfigurado && igualEmTempoConstante(codigo, esperado);
 
   // DIRETRIZ 2.1 DA APPLE: o código CORRETO nunca é bloqueado por tentativas erradas

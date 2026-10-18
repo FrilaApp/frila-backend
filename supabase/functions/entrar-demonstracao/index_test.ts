@@ -460,13 +460,19 @@ Deno.test("mutação: entrar-demonstracao com codigoEsperado vazio ('') nao faz 
   }
 });
 
-Deno.test("mutação: entrar-demonstracao sem DEMONSTRACAO_CODIGO no ambiente falha fechado com 404", async () => {
+Deno.test("mutação: entrar-demonstracao sem DEMONSTRACAO_CODIGO no ambiente falha fechado com 404 e registra alerta", async () => {
   const estado: MockState = { tentativas: [], proximoId: 1 };
   const req = new Request("http://localhost/functions/v1/entrar-demonstracao", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: MOCK_CODIGO }),
   });
+
+  const logsErro: string[] = [];
+  const consoleErrorOriginal = console.error;
+  console.error = (...args: unknown[]) => {
+    logsErro.push(args.map(String).join(" "));
+  };
 
   const envAntigo = Deno.env.get("DEMONSTRACAO_CODIGO");
   try {
@@ -476,7 +482,15 @@ Deno.test("mutação: entrar-demonstracao sem DEMONSTRACAO_CODIGO no ambiente fa
     const json = await res.json();
     assertEquals(json.code, "nao_encontrado");
     assertEquals(json.message, "nao_encontrado");
+
+    // Valida que o alerta operacional explícito foi emitido
+    assertEquals(
+      logsErro.some((msg) => msg.includes("[ALERTA_CONFIG_DEMONSTRACAO]")),
+      true,
+      "Deve emitir [ALERTA_CONFIG_DEMONSTRACAO] quando segredo estiver ausente",
+    );
   } finally {
+    console.error = consoleErrorOriginal;
     if (envAntigo !== undefined) Deno.env.set("DEMONSTRACAO_CODIGO", envAntigo);
     else Deno.env.delete("DEMONSTRACAO_CODIGO");
   }
@@ -515,7 +529,7 @@ Deno.test("entrar-demonstracao: extrairIpCliente prioriza cabecalho da borda e i
   assertEquals(extrairIpCliente(req4), "desconhecido");
 });
 
-Deno.test("entrar-demonstracao: codigo com menos de 20 caracteres falha fechado com 404 (Bloqueio 3)", async () => {
+Deno.test("entrar-demonstracao: codigo com menos de 20 caracteres falha fechado com 404 e registra alerta (Bloqueio 3)", async () => {
   const estado: MockState = { tentativas: [], proximoId: 1 };
   const codigoCurto = "123456"; // 6 caracteres (< MIN_COMPRIMENTO_CODIGO)
 
@@ -525,13 +539,30 @@ Deno.test("entrar-demonstracao: codigo com menos de 20 caracteres falha fechado 
     body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: codigoCurto }),
   });
 
-  // Mesmo que o cliente envie exatamente o código configurado, se for < 20 caracteres,
-  // a função DEVE falhar fechado com 404 por falta de entropia mínima contra exaustão
-  const res = await handler(req, depsPadrao(estado, { codigoEsperado: codigoCurto }));
-  assertEquals(res.status, 404);
-  const json = await res.json();
-  assertEquals(json.code, "nao_encontrado");
-  assertEquals(json.message, "nao_encontrado");
+  const logsErro: string[] = [];
+  const consoleErrorOriginal = console.error;
+  console.error = (...args: unknown[]) => {
+    logsErro.push(args.map(String).join(" "));
+  };
+
+  try {
+    // Mesmo que o cliente envie exatamente o código configurado, se for < 20 caracteres,
+    // a função DEVE falhar fechado com 404 por falta de entropia mínima e emitir alerta operacional
+    const res = await handler(req, depsPadrao(estado, { codigoEsperado: codigoCurto }));
+    assertEquals(res.status, 404);
+    const json = await res.json();
+    assertEquals(json.code, "nao_encontrado");
+    assertEquals(json.message, "nao_encontrado");
+
+    // Valida que o alerta operacional explícito foi emitido
+    assertEquals(
+      logsErro.some((msg) => msg.includes("[ALERTA_CONFIG_DEMONSTRACAO]")),
+      true,
+      "Deve emitir [ALERTA_CONFIG_DEMONSTRACAO] no console.error",
+    );
+  } finally {
+    console.error = consoleErrorOriginal;
+  }
 });
 
 Deno.test("entrar-demonstracao: controle de memoria do mapa de IPs evita vazamento sob ataque de variacao de IP", () => {
