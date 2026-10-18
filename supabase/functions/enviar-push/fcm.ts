@@ -4,6 +4,26 @@
 // A credencial NUNCA é lida de arquivo versionado: vem de segredo de ambiente
 // (Deno.env.get("FCM_SERVICE_ACCOUNT")).
 
+// Decisão provisória do cartão pCSdUOyB: 24 horas até definição do produto.
+const TTL_ANDROID = "86400s";
+const CANAIS_ANDROID_POR_TIPO = new Map<string, string>([
+  ["vaga", "canal_urgencia"],
+  ["vagas_agrupadas", "canal_urgencia"],
+  ["confirmacao", "canal_turnos"],
+  ["lembrete_24h", "canal_turnos"],
+  ["lembrete_3h", "canal_turnos"],
+  ["inicio_sem_checkin", "canal_turnos"],
+  ["atraso_15min", "canal_turnos"],
+  ["fim_sem_checkout", "canal_turnos"],
+  ["vaga_vazia", "canal_geral"],
+  ["checkin", "canal_turnos"],
+  ["checkin_manual_pendente", "canal_turnos"],
+  ["cancelamento", "canal_turnos"],
+  ["avaliacao_disponivel", "canal_turnos"],
+  ["suspensao", "canal_geral"],
+  ["reativacao", "canal_geral"],
+]);
+
 export interface FcmServiceAccount {
   project_id: string;
   client_email: string;
@@ -136,6 +156,14 @@ export async function sendFcmMessage(
         body: payload.body,
       },
       data: payload.data ?? {},
+      android: {
+        priority: "high",
+        notification: {
+          channel_id: CANAIS_ANDROID_POR_TIPO.get(payload.data?.tipo ?? "") ??
+            "canal_geral",
+        },
+        ttl: TTL_ANDROID,
+      },
       apns: {
         payload: {
           aps: {

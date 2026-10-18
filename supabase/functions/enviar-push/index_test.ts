@@ -99,7 +99,7 @@ async function gerarContaDeServicoTeste(): Promise<FcmServiceAccount> {
   };
 }
 
-Deno.test("FCM client: obtém access token com JWT assinado e envia mensagem com sucesso (200)", async () => {
+Deno.test("FCM client: envia android por tipo com TTL, data e apns intactos (200)", async () => {
   const sa = await gerarContaDeServicoTeste();
 
   let corpoFCM: any = null;
@@ -137,23 +137,63 @@ Deno.test("FCM client: obtém access token com JWT assinado e envia mensagem com
   const token = await getAccessToken(sa, mockFetch);
   assertEquals(token, "mock-google-access-token-12345");
 
-  const sendRes = await sendFcmMessage(
-    sa.project_id,
-    token,
-    {
-      token: "fcm_device_token_teste_1234567890",
-      title: "Nova vaga disponível",
-      body: "Você tem um novo turno compatível",
-    },
-    { apiUrl: "http://mock-fcm/messages:send", fetchFn: mockFetch },
-  );
+  const casos: Array<[string | undefined, string]> = [
+    ["vaga", "canal_urgencia"],
+    ["vagas_agrupadas", "canal_urgencia"],
+    ["confirmacao", "canal_turnos"],
+    ["lembrete_24h", "canal_turnos"],
+    ["lembrete_3h", "canal_turnos"],
+    ["inicio_sem_checkin", "canal_turnos"],
+    ["atraso_15min", "canal_turnos"],
+    ["fim_sem_checkout", "canal_turnos"],
+    ["vaga_vazia", "canal_geral"],
+    ["checkin", "canal_turnos"],
+    ["checkin_manual_pendente", "canal_turnos"],
+    ["cancelamento", "canal_turnos"],
+    ["avaliacao_disponivel", "canal_turnos"],
+    ["suspensao", "canal_geral"],
+    ["reativacao", "canal_geral"],
+    ["tipo_futuro", "canal_geral"],
+    [undefined, "canal_geral"],
+  ];
 
-  assertEquals(sendRes.ok, true);
-  assertEquals(sendRes.status, 200);
-  assertEquals(sendRes.messageId, "projects/frila-test-project/messages/msg_987654321");
-  assertEquals(corpoFCM?.message?.apns?.payload?.aps?.["mutable-content"], 1);
-  assertEquals(corpoFCM?.message?.apns?.payload?.aps?.sound, "default");
-  assertEquals(corpoFCM?.message?.apns?.payload?.aps?.badge, 1);
+  for (const [tipo, canal] of casos) {
+    const data = tipo === undefined ? undefined : {
+      tipo,
+      vinculo_id: "11111111-1111-4000-8000-000000000001",
+      vaga_id: "d0000000-0000-4000-8000-000000000001",
+    };
+    const sendRes = await sendFcmMessage(
+      sa.project_id,
+      token,
+      {
+        token: "fcm_device_token_teste_1234567890",
+        title: "Nova vaga disponível",
+        body: "Você tem um novo turno compatível",
+        data,
+      },
+      { apiUrl: "http://mock-fcm/messages:send", fetchFn: mockFetch },
+    );
+
+    assertEquals(sendRes.ok, true);
+    assertEquals(sendRes.status, 200);
+    assertEquals(sendRes.messageId, "projects/frila-test-project/messages/msg_987654321");
+    assertEquals(corpoFCM?.message?.android, {
+      priority: "high",
+      notification: { channel_id: canal },
+      ttl: "86400s",
+    }, `Configuração Android para ${tipo ?? "tipo ausente"}`);
+    assertEquals(corpoFCM?.message?.data, data ?? {});
+    assertEquals(corpoFCM?.message?.apns, {
+      payload: {
+        aps: {
+          sound: "default",
+          badge: 1,
+          "mutable-content": 1,
+        },
+      },
+    });
+  }
 });
 
 // ── Bloqueio 1: Autenticação estrita do agendador ─────────────────────────────
