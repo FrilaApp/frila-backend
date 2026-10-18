@@ -92,10 +92,19 @@ export function classificarErro(erro: unknown): { codigo: string; transitorio: b
   return { codigo: "erro_nao_classificado", transitorio: true };
 }
 
+// Garante que destinatário e replyTo não contenham caracteres de quebra de linha (CR/LF),
+// prevenindo ataques de injeção de cabeçalhos SMTP (AUDITORIA-EMAIL.md).
+export function validarDestinatario(email: string): boolean {
+  return typeof email === "string" && !/[\r\n]/.test(email) && email.trim().length > 0;
+}
+
 // O `denomailer` entra por importação dinâmica, e não no topo do arquivo, para que
 // `deno test` não precise de rede: os testes injetam o envio e nunca chegam aqui.
 export function criarEnvioSmtp(cfg: ConfiguracaoSmtp): Enviar {
   return async (email: Email): Promise<ResultadoEnvio> => {
+    if (!validarDestinatario(email.para) || (email.responderPara && !validarDestinatario(email.responderPara))) {
+      return { ok: false, codigo: "destinatario_invalido", transitorio: false };
+    }
     try {
       const { SMTPClient } = await import(
         "https://deno.land/x/denomailer@1.6.0/mod.ts"
