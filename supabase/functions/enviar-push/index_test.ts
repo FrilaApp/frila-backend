@@ -3217,11 +3217,113 @@ Deno.test(
   },
 );
 
+Deno.test(
+  "processarEnvioPush: PROVA DE CONCORRÊNCIA - duas execuções em lote simultâneas NÃO devem enviar push duplicado ao FCM para a mesma notificação",
+  async () => {
+    const sa = await gerarContaDeServicoTeste();
+    const fcmEnviados: string[] = [];
 
+    // Fila simulada em memória com comportamento atômico de SKIP LOCKED
+    const fila = [
+      {
+        id: "a1000000-0000-4000-8000-000000000001",
+        usuario_id: "u1",
+        tipo: "vaga",
+        titulo: "Vaga Urgente",
+        corpo: "Vaga disponível agora",
+        payload: {},
+        referencia_id: "v1",
+        tentativas: 0,
+        estado_entrega: "pendente",
+        proxima_tentativa_em: null,
+      },
+    ];
 
+    let reivindicado = false;
+    const sqlClient: SqlClient = {
+      notificacaoExpirada: () => Promise.resolve(false),
+      gravarFalhaPush: () => Promise.resolve(),
+      gravarAceitePush: () => Promise.resolve(),
+      removerTokenFcm: () => Promise.resolve(0),
+      reivindicarLotePendentes: () => {
+        if (!reivindicado) {
+          reivindicado = true;
+          return Promise.resolve(fila);
+        }
+        return Promise.resolve([]);
+      },
+    };
 
+    const mockFetch = (url: string | URL | Request) => {
+      const urlStr = typeof url === "string" ? url : "url" in url ? url.url : url.toString();
 
+      if (urlStr.includes("oauth") || urlStr.includes("/token")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ access_token: "mock-token" }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
 
+      if (urlStr.includes("dispositivo")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              { id: "d1", token_fcm: "fcm_token_1", plataforma: "ios" },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
 
+      if (urlStr.includes("/messages:send")) {
+        fcmEnviados.push("a1000000-0000-4000-8000-000000000001");
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ name: "projects/frila/messages/msg_1" }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
 
+      return Promise.reject(new Error(`URL não tratada: ${urlStr}`));
+    };
 
+    const criarReq = () =>
+      new Request("http://localhost/functions/v1/enviar-push", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-agendador-secret": SEGREDO_TESTE,
+        },
+        body: JSON.stringify({}), // lote sem notificacao_id
+      });
+
+    // Dispara 2 execuções em paralelo simulando duas chamadas simultâneas do agendador/cron
+    const [res1, res2] = await Promise.all([
+      processarEnvioPush(criarReq(), {
+        serviceAccount: sa,
+        fetchFn: mockFetch,
+        fcmApiUrl: "http://mock-fcm/messages:send",
+        sqlClient,
+      }),
+      processarEnvioPush(criarReq(), {
+        serviceAccount: sa,
+        fetchFn: mockFetch,
+        fcmApiUrl: "http://mock-fcm/messages:send",
+        sqlClient,
+      }),
+    ]);
+
+    assertEquals(res1.status, 200);
+    assertEquals(res2.status, 200);
+
+    // INVARIANTE: O FCM deve receber EXATAMENTE 1 envio para a notificação, e NUNCA 2
+    assertEquals(
+      fcmEnviados.length,
+      1,
+      `VULNERABILIDADE: Push duplicado enviado ao FCM (${fcmEnviados.length} envios) por varredura concorrente em lote`,
+    );
+  },
+);
