@@ -129,8 +129,17 @@ export async function getAccessToken(
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Falha ao obter token OAuth do Google (${res.status}): ${text}`);
+    let codigoErro = "";
+    try {
+      const data = await res.json();
+      if (typeof data?.error === "string") {
+        codigoErro = data.error.trim();
+      }
+    } catch {
+      // Ignora erro de parse: corpo não-JSON não deve vazar para logs/mensagens
+    }
+    const detalhe = codigoErro ? `: ${codigoErro}` : "";
+    throw new Error(`Falha ao obter token OAuth do Google (${res.status})${detalhe}`);
   }
 
   const json = await res.json();
