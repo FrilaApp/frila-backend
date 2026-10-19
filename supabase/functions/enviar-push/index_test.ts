@@ -99,7 +99,7 @@ async function gerarContaDeServicoTeste(): Promise<FcmServiceAccount> {
   };
 }
 
-Deno.test("FCM client: obtém access token com JWT assinado e envia mensagem com sucesso (200)", async () => {
+Deno.test("FCM client: envia android por tipo com TTL, data e apns intactos (200)", async () => {
   const sa = await gerarContaDeServicoTeste();
 
   let corpoFCM: any = null;
@@ -137,23 +137,63 @@ Deno.test("FCM client: obtém access token com JWT assinado e envia mensagem com
   const token = await getAccessToken(sa, mockFetch);
   assertEquals(token, "mock-google-access-token-12345");
 
-  const sendRes = await sendFcmMessage(
-    sa.project_id,
-    token,
-    {
-      token: "fcm_device_token_teste_1234567890",
-      title: "Nova vaga disponível",
-      body: "Você tem um novo turno compatível",
-    },
-    { apiUrl: "http://mock-fcm/messages:send", fetchFn: mockFetch },
-  );
+  const casos: Array<[string | undefined, string]> = [
+    ["vaga", "canal_urgencia"],
+    ["vagas_agrupadas", "canal_urgencia"],
+    ["confirmacao", "canal_turnos"],
+    ["lembrete_24h", "canal_turnos"],
+    ["lembrete_3h", "canal_turnos"],
+    ["inicio_sem_checkin", "canal_turnos"],
+    ["atraso_15min", "canal_turnos"],
+    ["fim_sem_checkout", "canal_turnos"],
+    ["vaga_vazia", "canal_geral"],
+    ["checkin", "canal_turnos"],
+    ["checkin_manual_pendente", "canal_turnos"],
+    ["cancelamento", "canal_turnos"],
+    ["avaliacao_disponivel", "canal_turnos"],
+    ["suspensao", "canal_geral"],
+    ["reativacao", "canal_geral"],
+    ["tipo_futuro", "canal_geral"],
+    [undefined, "canal_geral"],
+  ];
 
-  assertEquals(sendRes.ok, true);
-  assertEquals(sendRes.status, 200);
-  assertEquals(sendRes.messageId, "projects/frila-test-project/messages/msg_987654321");
-  assertEquals(corpoFCM?.message?.apns?.payload?.aps?.["mutable-content"], 1);
-  assertEquals(corpoFCM?.message?.apns?.payload?.aps?.sound, "default");
-  assertEquals(corpoFCM?.message?.apns?.payload?.aps?.badge, 1);
+  for (const [tipo, canal] of casos) {
+    const data = tipo === undefined ? undefined : {
+      tipo,
+      vinculo_id: "11111111-1111-4000-8000-000000000001",
+      vaga_id: "d0000000-0000-4000-8000-000000000001",
+    };
+    const sendRes = await sendFcmMessage(
+      sa.project_id,
+      token,
+      {
+        token: "fcm_device_token_teste_1234567890",
+        title: "Nova vaga disponível",
+        body: "Você tem um novo turno compatível",
+        data,
+      },
+      { apiUrl: "http://mock-fcm/messages:send", fetchFn: mockFetch },
+    );
+
+    assertEquals(sendRes.ok, true);
+    assertEquals(sendRes.status, 200);
+    assertEquals(sendRes.messageId, "projects/frila-test-project/messages/msg_987654321");
+    assertEquals(corpoFCM?.message?.android, {
+      priority: "high",
+      notification: { channel_id: canal },
+      ttl: "86400s",
+    }, `Configuração Android para ${tipo ?? "tipo ausente"}`);
+    assertEquals(corpoFCM?.message?.data, data ?? {});
+    assertEquals(corpoFCM?.message?.apns, {
+      payload: {
+        aps: {
+          sound: "default",
+          badge: 1,
+          "mutable-content": 1,
+        },
+      },
+    });
+  }
 });
 
 // ── Bloqueio 1: Autenticação estrita do agendador ─────────────────────────────
@@ -1166,6 +1206,23 @@ Deno.test("Ciclo do token: depois de sair da conta, nenhuma notificação sai pa
 // Os textos saem da planilha de notificações do design (proposta aprovada em 28/09):
 // vaga única, urgente e reaberta na Opção B (o banco ainda não tem a região), e a
 // agrupada na Opção A, com a quantidade interpolada no envio.
+
+Deno.test("candidatura_recusada: texto aprovado cabe no push e não interpola nomes", () => {
+  for (const [payload, variaveis] of [
+    [{}, {}],
+    [
+      { estabelecimento_id: "x", estabelecimento: "Casa de teste", vaga: "Vaga de teste" },
+      { estabelecimento: "Casa de teste", funcao: "garçom", regiao: "Região de teste" },
+    ],
+  ] as Array<[Record<string, unknown>, VariaveisDoTexto]>) {
+    const texto = titulosECorposPorTipo("candidatura_recusada", payload, variaveis);
+    assertEquals(texto, {
+      title: "Vaga preenchida",
+      body: "A vaga foi preenchida com outro profissional. Você está livre para novas vagas.",
+    });
+    assert(texto.body.length <= 110, `corpo longo: ${texto.body}`);
+  }
+});
 
 Deno.test("RN23: textos de vaga seguem a planilha (casos 01, 02 e 04)", () => {
   assertEquals(titulosECorposPorTipo("vaga", { vaga_id: "x" }), {
@@ -2996,6 +3053,164 @@ Deno.test(
         "NÃO deve emitir alerta [ALERTA_CONFIG_FCM] quando o erro não for NOT_FOUND estrito",
       );
       assertEquals(tokensRemovidos.length, 0);
+    } finally {
+      console.error = consoleErrorOriginal;
+    }
+  },
+);
+
+Deno.test(
+  "OAuth Google: getAccessToken e processarEnvioPush nao vazam corpo nem descricao de erro nos logs e mensagens de erro",
+  async () => {
+    const sa = await gerarContaDeServicoTeste();
+    const MARCADOR_SEGREDO = "SEGREDO-DE-TESTE-OAUTH-TOKEN-12345";
+    const MARCADOR_HTML = "SEGREDO-HTML-PROXY-ERROR-67890";
+
+    // 1. Teste direto de getAccessToken com JSON contendo error_description sensível
+    const mockFetchJsonErro: typeof fetch = () => {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: "invalid_grant",
+            error_description: MARCADOR_SEGREDO,
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    };
+
+    let erroLancado: Error | null = null;
+    try {
+      await getAccessToken(sa, mockFetchJsonErro);
+    } catch (e) {
+      erroLancado = e as Error;
+    }
+
+    assert(erroLancado !== null, "getAccessToken deveria ter lançado erro para status 400");
+    assertEquals(
+      erroLancado.message,
+      "Falha ao obter token OAuth do Google (400): invalid_grant",
+      "Mensagem deve conter apenas o status e o código curto do erro",
+    );
+    assert(
+      !erroLancado.message.includes(MARCADOR_SEGREDO),
+      "A mensagem de erro NÃO deve conter dados do corpo da resposta OAuth",
+    );
+    assert(
+      !erroLancado.message.includes("error_description"),
+      "A mensagem de erro NÃO deve conter o campo error_description",
+    );
+
+    // 2. Teste direto de getAccessToken com HTML/texto não-JSON
+    const mockFetchHtmlErro: typeof fetch = () => {
+      return Promise.resolve(
+        new Response(
+          `<html><body>${MARCADOR_HTML}</body></html>`,
+          { status: 502, headers: { "Content-Type": "text/html" } },
+        ),
+      );
+    };
+
+    let erroHtmlLancado: Error | null = null;
+    try {
+      await getAccessToken(sa, mockFetchHtmlErro);
+    } catch (e) {
+      erroHtmlLancado = e as Error;
+    }
+
+    assert(erroHtmlLancado !== null, "getAccessToken deveria ter lançado erro para status 502");
+    assertEquals(
+      erroHtmlLancado.message,
+      "Falha ao obter token OAuth do Google (502)",
+      "Mensagem não deve anexar corpo quando não for JSON com campo error",
+    );
+    assert(
+      !erroHtmlLancado.message.includes(MARCADOR_HTML),
+      "A mensagem de erro NÃO deve conter HTML ou texto sensível",
+    );
+
+    // 3. Teste em processarEnvioPush verificando que console.error não vaza o segredo
+    const mockFetchPush: typeof fetch = (input: RequestInfo | URL) => {
+      const urlStr = input.toString();
+      if (urlStr.includes("notificacao")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                id: "a3000000-0000-4000-8000-000000000001",
+                usuario_id: "u1",
+                tipo: "vaga",
+                titulo: "Nova vaga",
+                corpo: "Vaga disponível",
+                payload: {},
+                vaga_id: "v1",
+                turno_id: null,
+                tentativas: 0,
+                estado_entrega: "pendente",
+                proxima_tentativa_em: null,
+              },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+
+      if (urlStr === "http://mock-oauth/token") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: "invalid_grant",
+              error_description: MARCADOR_SEGREDO,
+            }),
+            { status: 400, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+
+      return Promise.reject(new Error(`URL não tratada: ${urlStr}`));
+    };
+
+    const req = new Request("http://localhost/functions/v1/enviar-push", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-agendador-secret": SEGREDO_TESTE,
+      },
+      body: JSON.stringify({ notificacao_id: "a3000000-0000-4000-8000-000000000001" }),
+    });
+
+    const logsConsoleError: string[] = [];
+    const consoleErrorOriginal = console.error;
+    console.error = (...args: unknown[]) => {
+      logsConsoleError.push(args.map(String).join(" "));
+      consoleErrorOriginal(...args);
+    };
+
+    try {
+      const res = await processarEnvioPush(req, {
+        serviceAccount: sa,
+        fetchFn: mockFetchPush,
+        sqlClient: criarMockSqlClient(),
+      });
+
+      assertEquals(res.status, 500);
+      const data = await res.json();
+      assertEquals(data.ok, false);
+      assertEquals(data.erro, "falha_oauth_google");
+
+      const logOAuth = logsConsoleError.find((msg) =>
+        msg.includes("Erro ao autenticar no Google OAuth:"),
+      );
+      assert(logOAuth !== undefined, "Deveria ter registrado log de erro ao autenticar no Google OAuth");
+
+      assert(
+        !logsConsoleError.some((msg) => msg.includes(MARCADOR_SEGREDO)),
+        `Nenhum log do console.error pode conter o marcador ${MARCADOR_SEGREDO}`,
+      );
+      assert(
+        !logsConsoleError.some((msg) => msg.includes("error_description")),
+        "Nenhum log do console.error pode conter o campo error_description",
+      );
     } finally {
       console.error = consoleErrorOriginal;
     }

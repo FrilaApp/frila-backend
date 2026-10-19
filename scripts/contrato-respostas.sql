@@ -1420,6 +1420,7 @@ values (
   '2027-01-20 10:05:00+00'::timestamptz
 );
 
+-- `eventos_app` (LGPD nUpPFCpM) já consta em MeusDados desde o contrato 0.2.45 (frila-docs#96).
 select pg_temp.guarda('exportarMeusDados',
   privado.meus_dados('cc000000-0000-4000-8000-000000000002'));
 

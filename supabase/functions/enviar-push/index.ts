@@ -335,6 +335,11 @@ export function titulosECorposPorTipo(
         body: "Novas vagas compatíveis perto de você. Toque para conferir.",
       };
     }
+    case "candidatura_recusada":
+      return {
+        title: "Vaga preenchida",
+        body: "A vaga foi preenchida com outro profissional. Você está livre para novas vagas.",
+      };
     case "confirmacao":
       return {
         title: "Turno confirmado",
