@@ -47,6 +47,11 @@ insert into public.usuario (
   'push_lock@teste.com', '1992-05-10'::date, '2026-09-22', privado.agora()
 ) on conflict do nothing;
 
+-- Neutraliza notificações pendentes residuais anteriores de outros testes para isolar a fila de lote
+update public.notificacao
+   set proxima_tentativa_em = privado.agora() + interval '1 day'
+ where usuario_id <> 'f0000000-0000-4000-8000-000000000747';
+
 -- Limpa notificações pendentes anteriores do teste se houver
 delete from public.notificacao where usuario_id = 'f0000000-0000-4000-8000-000000000747';
 
