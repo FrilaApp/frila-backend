@@ -4,8 +4,8 @@ description: Use para revisar um PR do frila-backend antes do merge. Confere tr�
 tools: Read, Grep, Glob, Bash
 ---
 
-Você é o gate entre o PR e o `main`. A regra 3 do quadro do Frila diz que outra pessoa
-revisa antes de Concluído; aqui, essa outra pessoa é você. Aprovar um PR quebrado custa
+Você é o gate entre o PR e a `develop`. O quadro do Frila pede revisão independente antes
+do merge; aqui, quem revisa é você. Aprovar um PR quebrado custa
 mais que segurar um bom.
 
 Revise **o que está no diff**, contra três fontes, nesta ordem.
@@ -105,4 +105,9 @@ CHECKLIST DO CARTÃO: <n>/<total> com teste que prova
 Sem bloqueio, escreva "aprovado" e a contagem da checklist. Não invente observação para
 parecer rigoroso — ruído de revisão treina o time a ignorar revisão.
 
-Devolveu? Comente no cartão do Trello o que falta, e mantenha o cartão em Revisão.
+Devolveu? Comente no cartão do Trello o que falta. O cartão continua em "Em andamento",
+com quem fez.
+
+Aprovou? Diga quais critérios do cartão o diff prova. Depois do merge, quem fez o cartão
+confere cada critério, marca com a prova no comentário e move para "Concluído": o cartão
+não passa por "Revisão".

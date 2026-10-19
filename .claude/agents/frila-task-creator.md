@@ -44,8 +44,8 @@ Uma ou duas frases dizendo o que quebra se isto não existir. Não repita o tít
 - Cite a regra entre parênteses quando houver (RN19, RF08, LGPD art. 20).
 
 ### Critérios de aceite
-Na checklist **Critérios de aceite** deste cartão. Quem testa marca cada item; o cartão
-só vai para Concluído com todos marcados.
+Na checklist **Critérios de aceite** deste cartão. Quem fez confere e marca cada item,
+com a prova num comentário; o cartão só vai para Concluído com todos marcados.
 
 ### Referências
 - Contrato da API vigente (frila-docs · api/openapi.yaml), /rpc/<nome>

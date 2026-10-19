@@ -51,6 +51,29 @@
 -- O `+ 7 dias` no fim garante que a âncora esteja sempre entre 7 e 13 dias no futuro,
 -- mesmo rodando numa sexta — a vaga em modo seleção precisa de mais de 24 h de
 -- antecedência (RN24), e "a próxima sexta" pode ser hoje à noite.
+--
+-- ── O instante do reset ────────────────────────────────────────────────────────
+--
+-- Todo tempo deste arquivo sai de um instante só, o parâmetro de sessão
+-- `frila.cenarios_agora`, e não de `now()` espalhado. Por padrão ele **é** o `now()`
+-- do `db reset`. A diferença é que dá para escolher outro: com o parâmetro já definido
+-- antes deste arquivo, o cenário é reconstruído como se o reset tivesse rodado
+-- naquele instante. É assim que
+-- `scripts/relogio-deslocado.sh` mede a suíte com o relógio andado (o reset foi há
+-- 8 h, há 3 dias, num sábado) sem mexer no relógio do contêiner, que é compartilhado.
+--
+-- Não confundir com `frila.agora`: aquele é o relógio do produto, sobreponível só
+-- dentro da transação de um teste (ver `privado.ambiente`, acima). Este aqui só decide
+-- quando o cenário nasceu; `privado.agora()` continua dizendo a hora de verdade.
+
+select set_config('frila.cenarios_agora',
+                  coalesce(nullif(current_setting('frila.cenarios_agora', true), ''),
+                           now()::text),
+                  false);
+
+-- Leitura por `current_setting(...)` em cada uso, e não por função auxiliar: o
+-- `db reset` manda este arquivo em lote, e no lote não há `pg_temp` onde criá-la.
+
 
 
 
@@ -67,8 +90,8 @@ insert into auth.users (instance_id, id, aud, role, email, email_confirmed_at,
                         raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
                         is_sso_user, is_anonymous)
 select '00000000-0000-0000-0000-000000000000', c.id, 'authenticated', 'authenticated',
-       c.email, now(), '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
-       now(), now(), false, false
+       c.email, current_setting('frila.cenarios_agora')::timestamptz, '{"provider":"email","providers":["email"]}'::jsonb, '{}'::jsonb,
+       current_setting('frila.cenarios_agora')::timestamptz, current_setting('frila.cenarios_agora')::timestamptz, false, false
   from (values
     ('a0000000-0000-4000-8000-000000000001'::uuid, 'ana@frila.test'),
     ('a0000000-0000-4000-8000-000000000002'::uuid, 'bruno@frila.test'),
@@ -94,26 +117,26 @@ on conflict (id) do nothing;
 insert into public.usuario (id, perfil, nome, telefone, email, nascimento, estado,
                             termos_versao, termos_aceite_em)
 values
-  ('a0000000-0000-4000-8000-000000000001','profissional','Ana Ribeiro',    '+5561999990001','ana@frila.test',    '1994-03-11','ativa',   '2026-09-22', now() - interval '60 days'),
-  ('a0000000-0000-4000-8000-000000000002','profissional','Bruno Sales',    '+5561999990002','bruno@frila.test',  '1991-07-02','ativa',   '2026-09-22', now() - interval '58 days'),
-  ('a0000000-0000-4000-8000-000000000003','profissional','Carla Nunes',    '+5561999990003','carla@frila.test',  '1999-11-23','ativa',   '2026-09-22', now() - interval '55 days'),
-  ('a0000000-0000-4000-8000-000000000004','profissional','Diego Matos',    '+5561999990004','diego@frila.test',  '1988-01-30','ativa',   '2026-09-22', now() - interval '50 days'),
+  ('a0000000-0000-4000-8000-000000000001','profissional','Ana Ribeiro',    '+5561999990001','ana@frila.test',    '1994-03-11','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '60 days'),
+  ('a0000000-0000-4000-8000-000000000002','profissional','Bruno Sales',    '+5561999990002','bruno@frila.test',  '1991-07-02','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '58 days'),
+  ('a0000000-0000-4000-8000-000000000003','profissional','Carla Nunes',    '+5561999990003','carla@frila.test',  '1999-11-23','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '55 days'),
+  ('a0000000-0000-4000-8000-000000000004','profissional','Diego Matos',    '+5561999990004','diego@frila.test',  '1988-01-30','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '50 days'),
   -- RN13: a conta suspensa continua existindo e continua lendo o próprio histórico.
-  ('a0000000-0000-4000-8000-000000000005','profissional','Elisa Prado',    '+5561999990005','elisa@frila.test',  '1996-05-19','suspensa','2026-09-22', now() - interval '48 days'),
-  ('a0000000-0000-4000-8000-000000000006','profissional','Felipe Rocha',   '+5561999990006','felipe@frila.test', '1993-09-08','ativa',   '2026-09-22', now() - interval '45 days'),
-  ('a0000000-0000-4000-8000-000000000007','profissional','Gabi Teles',     '+5561999990007','gabi@frila.test',   '2001-02-14','ativa',   '2026-09-22', now() - interval '40 days'),
-  ('a0000000-0000-4000-8000-000000000008','profissional','Heitor Lima',    '+5561999990008','heitor@frila.test', '1985-12-01','ativa',   '2026-09-22', now() - interval '38 days'),
-  ('a0000000-0000-4000-8000-000000000009','profissional','Iara Souza',     '+5561999990009','iara@frila.test',   '1997-06-27','ativa',   '2026-09-22', now() - interval '35 days'),
-  ('a0000000-0000-4000-8000-000000000010','profissional','João Vitor Sá',  '+5561999990010','joao@frila.test',   '2000-08-05','ativa',   '2026-09-22', now() - interval '30 days'),
+  ('a0000000-0000-4000-8000-000000000005','profissional','Elisa Prado',    '+5561999990005','elisa@frila.test',  '1996-05-19','suspensa','2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '48 days'),
+  ('a0000000-0000-4000-8000-000000000006','profissional','Felipe Rocha',   '+5561999990006','felipe@frila.test', '1993-09-08','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '45 days'),
+  ('a0000000-0000-4000-8000-000000000007','profissional','Gabi Teles',     '+5561999990007','gabi@frila.test',   '2001-02-14','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '40 days'),
+  ('a0000000-0000-4000-8000-000000000008','profissional','Heitor Lima',    '+5561999990008','heitor@frila.test', '1985-12-01','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '38 days'),
+  ('a0000000-0000-4000-8000-000000000009','profissional','Iara Souza',     '+5561999990009','iara@frila.test',   '1997-06-27','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '35 days'),
+  ('a0000000-0000-4000-8000-000000000010','profissional','João Vitor Sá',  '+5561999990010','joao@frila.test',   '2000-08-05','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '30 days'),
   -- Cadastrou-se ontem: é o perfil sem histórico, que RF16 manda mostrar como sem
   -- histórico e não como nota zero.
-  ('a0000000-0000-4000-8000-000000000011','profissional','Karen Dias',     '+5561999990011','karen@frila.test',  '1998-04-17','ativa',   '2026-09-22', now() - interval '1 day'),
-  ('a0000000-0000-4000-8000-000000000012','profissional','Léo Franco',     '+5561999990012','leo@frila.test',    '1992-10-09','ativa',   '2026-09-22', now() - interval '25 days'),
+  ('a0000000-0000-4000-8000-000000000011','profissional','Karen Dias',     '+5561999990011','karen@frila.test',  '1998-04-17','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '1 day'),
+  ('a0000000-0000-4000-8000-000000000012','profissional','Léo Franco',     '+5561999990012','leo@frila.test',    '1992-10-09','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '25 days'),
 
-  ('b0000000-0000-4000-8000-000000000001','contratante', 'Zélia Martins',  '+5561999990101','zelia@frila.test',  '1979-02-21','ativa',   '2026-09-22', now() - interval '61 days'),
-  ('b0000000-0000-4000-8000-000000000002','contratante', 'Ricardo Aguiar', '+5561999990102','ricardo@frila.test','1983-06-13','ativa',   '2026-09-22', now() - interval '61 days'),
-  ('b0000000-0000-4000-8000-000000000003','contratante', 'Marta Bezerra',  '+5561999990103','marta@frila.test',  '1975-09-30','ativa',   '2026-09-22', now() - interval '59 days'),
-  ('b0000000-0000-4000-8000-000000000004','contratante', 'Paulo Freitas',  '+5561999990104','paulo@frila.test',  '1990-12-04','ativa',   '2026-09-22', now() - interval '20 days')
+  ('b0000000-0000-4000-8000-000000000001','contratante', 'Zélia Martins',  '+5561999990101','zelia@frila.test',  '1979-02-21','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '61 days'),
+  ('b0000000-0000-4000-8000-000000000002','contratante', 'Ricardo Aguiar', '+5561999990102','ricardo@frila.test','1983-06-13','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '61 days'),
+  ('b0000000-0000-4000-8000-000000000003','contratante', 'Marta Bezerra',  '+5561999990103','marta@frila.test',  '1975-09-30','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '59 days'),
+  ('b0000000-0000-4000-8000-000000000004','contratante', 'Paulo Freitas',  '+5561999990104','paulo@frila.test',  '1990-12-04','ativa',   '2026-09-22', current_setting('frila.cenarios_agora')::timestamptz - interval '20 days')
 on conflict (id) do nothing;
 
 -- ── Os profissionais ───────────────────────────────────────────────────────────
@@ -247,10 +270,11 @@ on conflict do nothing;
 --   d…05  publicada   Empório · vendedor extra  · sexta seguinte 14:00–20:00 (seleção)
 --   d…06  preenchida  Buffet  · garçom          · sexta 18:00–02:00  ← cruza com a d…01
 --   d…07  encerrada   Bar     · garçom          · uma sexta passada 18:00–02:00
+--   d…08  preenchida  Buffet  · garçom          · em andamento: começou 1 h antes do reset
 
 with _quando as (
-  select ((date_trunc('day', now() at time zone 'America/Sao_Paulo')
-           + (((5 - extract(dow from now() at time zone 'America/Sao_Paulo')::int + 7) % 7) + 7)
+  select ((date_trunc('day', current_setting('frila.cenarios_agora')::timestamptz at time zone 'America/Sao_Paulo')
+           + (((5 - extract(dow from current_setting('frila.cenarios_agora')::timestamptz at time zone 'America/Sao_Paulo')::int + 7) % 7) + 7)
                * interval '1 day'
            + interval '18 hours') at time zone 'America/Sao_Paulo') as sexta_18h
 )
@@ -276,7 +300,7 @@ select x.id::uuid, x.estab::uuid, f.id, x.inicio, x.fim, x.local, x.ponto::exten
      16000::bigint, 2::smallint, true, false, false, 'Zélia, no caixa',
      'Camisa preta e calça preta', true,
      'Casa cheia de sexta. Entrada pelos fundos.',
-     'urgencia', 'publicada', now() - interval '2 days',
+     'urgencia', 'publicada', current_setting('frila.cenarios_agora')::timestamptz - interval '2 days',
      '11110000-0000-4000-8000-000000000001'),
 
     ('d0000000-0000-4000-8000-000000000002','c0000000-0000-4000-8000-000000000001','bartender',
@@ -284,7 +308,7 @@ select x.id::uuid, x.estab::uuid, f.id, x.inicio, x.fim, x.local, x.ponto::exten
      'CLN 208, Bloco B, Asa Norte', 'POINT(-47.8869 -15.7620)',
      22000::bigint, 1::smallint, true, true, false, 'Zélia, no caixa',
      'Camisa preta', true, null,
-     'urgencia', 'preenchida', now() - interval '5 days',
+     'urgencia', 'preenchida', current_setting('frila.cenarios_agora')::timestamptz - interval '5 days',
      '11110000-0000-4000-8000-000000000002'),
 
     -- As duas vagas do passado descontam **21** dias da âncora: a âncora está
@@ -296,7 +320,7 @@ select x.id::uuid, x.estab::uuid, f.id, x.inicio, x.fim, x.local, x.ponto::exten
      'Salão de festas, Águas Claras', 'POINT(-48.0286 -15.8345)',
      14000::bigint, 5::smallint, true, true, true, 'Ricardo, na portaria',
      null, false, 'Casamento de 200 pessoas. Material fornecido pelo buffet.',
-     'selecao', 'encerrada', now() - interval '20 days',
+     'selecao', 'encerrada', current_setting('frila.cenarios_agora')::timestamptz - interval '20 days',
      '11110000-0000-4000-8000-000000000003'),
 
     ('d0000000-0000-4000-8000-000000000004','c0000000-0000-4000-8000-000000000003','repositor de gôndola',
@@ -305,7 +329,7 @@ select x.id::uuid, x.estab::uuid, f.id, x.inicio, x.fim, x.local, x.ponto::exten
      'SHIS QI 11, Lago Sul', 'POINT(-47.8400 -15.8300)',
      11000::bigint, 2::smallint, false, false, false, 'Marta, no estoque',
      'Camiseta da loja, fornecida', null, null,
-     'urgencia', 'cancelada', now() - interval '6 days',
+     'urgencia', 'cancelada', current_setting('frila.cenarios_agora')::timestamptz - interval '6 days',
      '11110000-0000-4000-8000-000000000004'),
 
     ('d0000000-0000-4000-8000-000000000005','c0000000-0000-4000-8000-000000000003','vendedor extra',
@@ -314,7 +338,7 @@ select x.id::uuid, x.estab::uuid, f.id, x.inicio, x.fim, x.local, x.ponto::exten
      'SHIS QI 11, Lago Sul', 'POINT(-47.8400 -15.8300)',
      13000::bigint, 3::smallint, false, true, false, 'Marta, no estoque',
      null, null, 'Semana de liquidação.',
-     'selecao', 'publicada', now() - interval '1 day',
+     'selecao', 'publicada', current_setting('frila.cenarios_agora')::timestamptz - interval '1 day',
      '11110000-0000-4000-8000-000000000005'),
 
     ('d0000000-0000-4000-8000-000000000006','c0000000-0000-4000-8000-000000000002','garçom',
@@ -322,7 +346,7 @@ select x.id::uuid, x.estab::uuid, f.id, x.inicio, x.fim, x.local, x.ponto::exten
      'Salão de festas, Águas Claras', 'POINT(-48.0286 -15.8345)',
      18000::bigint, 1::smallint, true, true, false, 'Ricardo, na portaria',
      'Social completo', true, null,
-     'urgencia', 'preenchida', now() - interval '4 days',
+     'urgencia', 'preenchida', current_setting('frila.cenarios_agora')::timestamptz - interval '4 days',
      '11110000-0000-4000-8000-000000000006'),
 
     ('d0000000-0000-4000-8000-000000000007','c0000000-0000-4000-8000-000000000001','garçom',
@@ -330,8 +354,23 @@ select x.id::uuid, x.estab::uuid, f.id, x.inicio, x.fim, x.local, x.ponto::exten
      'CLN 208, Bloco B, Asa Norte', 'POINT(-47.8869 -15.7620)',
      16000::bigint, 2::smallint, true, false, false, 'Zélia, no caixa',
      'Camisa preta e calça preta', true, null,
-     'urgencia', 'encerrada', now() - interval '12 days',
-     '11110000-0000-4000-8000-000000000007')
+     'urgencia', 'encerrada', current_setting('frila.cenarios_agora')::timestamptz - interval '12 days',
+     '11110000-0000-4000-8000-000000000007'),
+
+    -- A única vaga que não pende da âncora da sexta, e de propósito: o check-in manual
+    -- esperando a casa confirmar só existe **durante** o turno. No fim, sem o toque da
+    -- casa, `privado.fechar_turnos_passados()` o vira `nao_verificado` (critério 1 da
+    -- decisão 8zLfn0mt), e o pg_cron roda esse fechamento a cada cinco minutos. Um
+    -- pendente num turno do passado seria desfeito pelo agendador minutos depois do
+    -- reset. Este vence 7 h depois do `db reset`; depois disso, outro reset o devolve.
+    ('d0000000-0000-4000-8000-000000000008','c0000000-0000-4000-8000-000000000002','garçom',
+     date_trunc('minute', current_setting('frila.cenarios_agora')::timestamptz) - interval '1 hour',
+     date_trunc('minute', current_setting('frila.cenarios_agora')::timestamptz) + interval '7 hours',
+     'Salão de festas, Águas Claras', 'POINT(-48.0286 -15.8345)',
+     18000::bigint, 1::smallint, true, true, false, 'Ricardo, na portaria',
+     'Social completo', true, 'Formatura. Entrada pela lateral.',
+     'urgencia', 'preenchida', current_setting('frila.cenarios_agora')::timestamptz - interval '3 days',
+     '11110000-0000-4000-8000-000000000008')
   ) as x(id, estab, funcao, inicio, fim, local, ponto, valor, posicoes, refeicao, transporte,
          material, responsavel, traje, rateio, obs, modo, estado, publicado, chave)
   join public.funcao f on f.nome = x.funcao
@@ -345,7 +384,7 @@ on conflict (id) do nothing;
 insert into public.posicao (id, vaga_id, estado, profissional_id, confirmado_em, falta,
                             inicio_em, fim_em)
 select x.id::uuid, x.vaga::uuid, x.estado::public.estado_posicao, x.prof::uuid,
-       case when x.confirmado_ha is null then null else now() - x.confirmado_ha end,
+       case when x.confirmado_ha is null then null else current_setting('frila.cenarios_agora')::timestamptz - x.confirmado_ha end,
        x.falta, v.inicio_em, v.fim_em
   from (values
     -- d…01, a vaga de referência: as duas posições continuam abertas.
@@ -373,7 +412,9 @@ select x.id::uuid, x.vaga::uuid, x.estado::public.estado_posicao, x.prof::uuid,
     ('f1000000-0000-4000-8000-000000000601','d0000000-0000-4000-8000-000000000006','confirmada','e0000000-0000-4000-8000-000000000007',  interval '2 days',       false),
     -- d…07: a Ana cumpriu; a segunda posição nunca foi preenchida e fechou com a vaga.
     ('f1000000-0000-4000-8000-000000000701','d0000000-0000-4000-8000-000000000007','cumprida',  'e0000000-0000-4000-8000-000000000001',  interval '14 days',      false),
-    ('f1000000-0000-4000-8000-000000000702','d0000000-0000-4000-8000-000000000007','cancelada',  null,                                   null,                    false)
+    ('f1000000-0000-4000-8000-000000000702','d0000000-0000-4000-8000-000000000007','cancelada',  null,                                   null,                    false),
+    -- d…08: o Heitor no turno que está acontecendo agora.
+    ('f1000000-0000-4000-8000-000000000801','d0000000-0000-4000-8000-000000000008','confirmada','e0000000-0000-4000-8000-000000000008',  interval '2 days',       false)
   ) as x(id, vaga, estado, prof, confirmado_ha, falta)
   join public.vaga v on v.id = x.vaga::uuid
 on conflict (id) do nothing;
@@ -385,12 +426,12 @@ on conflict (id) do nothing;
 
 insert into public.candidatura (posicao_id, profissional_id, estado, criada_em)
 values
-  ('f1000000-0000-4000-8000-000000000101','e0000000-0000-4000-8000-000000000001','pendente', now() - interval '2 days'),
-  ('f1000000-0000-4000-8000-000000000101','e0000000-0000-4000-8000-000000000008','pendente', now() - interval '1 day'),
-  ('f1000000-0000-4000-8000-000000000102','e0000000-0000-4000-8000-000000000011','pendente', now() - interval '6 hours'),
-  ('f1000000-0000-4000-8000-000000000501','e0000000-0000-4000-8000-000000000011','pendente', now() - interval '3 hours'),
+  ('f1000000-0000-4000-8000-000000000101','e0000000-0000-4000-8000-000000000001','pendente', current_setting('frila.cenarios_agora')::timestamptz - interval '2 days'),
+  ('f1000000-0000-4000-8000-000000000101','e0000000-0000-4000-8000-000000000008','pendente', current_setting('frila.cenarios_agora')::timestamptz - interval '1 day'),
+  ('f1000000-0000-4000-8000-000000000102','e0000000-0000-4000-8000-000000000011','pendente', current_setting('frila.cenarios_agora')::timestamptz - interval '6 hours'),
+  ('f1000000-0000-4000-8000-000000000501','e0000000-0000-4000-8000-000000000011','pendente', current_setting('frila.cenarios_agora')::timestamptz - interval '3 hours'),
   -- Uma retirada, para a lista do contratante não ser só de pendentes.
-  ('f1000000-0000-4000-8000-000000000502','e0000000-0000-4000-8000-000000000012','retirada', now() - interval '20 hours')
+  ('f1000000-0000-4000-8000-000000000502','e0000000-0000-4000-8000-000000000012','retirada', current_setting('frila.cenarios_agora')::timestamptz - interval '20 hours')
 on conflict (posicao_id, profissional_id) do nothing;
 
 -- ── Os turnos ──────────────────────────────────────────────────────────────────
@@ -421,10 +462,16 @@ select x.id::uuid, x.posicao::uuid,
     -- Manual confirmado pelo contratante: vale como presença verificada.
     ('f2000000-0000-4000-8000-000000000302','f1000000-0000-4000-8000-000000000302',
      interval '10 minutes','manual',      null, interval '35 minutes', interval '8 hours',           null,'verificado',    14000),
-    -- Manual sem confirmação: o contratante não respondeu. Fica pendente, e não vira
-    -- presença por decurso de prazo — quem avalia precisa de prova, não de silêncio.
+    -- Manual sem confirmação: o contratante não respondeu até o fim do turno. Não vira
+    -- presença por decurso de prazo — quem avalia precisa de prova, não de silêncio —,
+    -- e vira `nao_verificado`, que é o que `privado.fechar_turnos_passados()` faria
+    -- (critério 1 da decisão 8zLfn0mt).
     ('f2000000-0000-4000-8000-000000000303','f1000000-0000-4000-8000-000000000303',
-     interval '25 minutes','manual',      null, null,                interval '8 hours',           null,'pendente',      14000),
+     interval '25 minutes','manual',      null, null,                interval '8 hours',           null,'nao_verificado',14000),
+    -- Manual esperando a casa, no turno que está acontecendo: o único momento em que
+    -- `pendente` com check-in manual é um estado legítimo.
+    ('f2000000-0000-4000-8000-000000000801','f1000000-0000-4000-8000-000000000801',
+     interval '25 minutes','manual',      null, null,                null,                         null,'pendente',      18000),
     -- Sem check-in nenhum: o turno terminou e não há prova de que alguém esteve lá.
     ('f2000000-0000-4000-8000-000000000304','f1000000-0000-4000-8000-000000000304',
      null,                  null,         null, null,                null,                         null,'nao_verificado',14000),
@@ -477,7 +524,7 @@ on conflict (turno_id, autor_id) do nothing;
 
 insert into public.bloqueio (autor_id, bloqueado_id, criado_em)
 values ('b0000000-0000-4000-8000-000000000001','a0000000-0000-4000-8000-000000000006',
-        now() - interval '18 days')
+        current_setting('frila.cenarios_agora')::timestamptz - interval '18 days')
 on conflict (autor_id, bloqueado_id) do nothing;
 
 -- ── As ocorrências ─────────────────────────────────────────────────────────────
@@ -500,12 +547,12 @@ values
    'denuncia', null, 'a0000000-0000-4000-8000-000000000006',
    'b0000000-0000-4000-8000-000000000001',
    'Tratamento agressivo com a equipe de salão durante o turno.',
-   now() - interval '18 days', 'Bloqueio aplicado entre as partes.', now() - interval '17 days'),
+   current_setting('frila.cenarios_agora')::timestamptz - interval '18 days', 'Bloqueio aplicado entre as partes.', current_setting('frila.cenarios_agora')::timestamptz - interval '17 days'),
   ('f3000000-0000-4000-8000-000000000002',
    'cancelamento', 'f1000000-0000-4000-8000-000000000401', null,
    'b0000000-0000-4000-8000-000000000003',
    'Liquidação adiada pela matriz; a loja não abre no domingo.',
-   now() - interval '5 days', null, null)
+   current_setting('frila.cenarios_agora')::timestamptz - interval '5 days', null, null)
 on conflict (id) do nothing;
 
 -- ── Os aparelhos ───────────────────────────────────────────────────────────────

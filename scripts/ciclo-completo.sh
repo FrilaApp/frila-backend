@@ -81,6 +81,28 @@ fi
 ok()    { printf '  ✓ %s\n' "$1"; }
 falhou(){ printf '  ✗ %s\n' "$1" >&2; exit 1; }
 
+echo "▸ Versão mínima do app (sem sessão)"
+# O app chama configuracao_do_app antes de qualquer interação, sem sessão, para saber se
+# precisa bloquear o uso por defeito grave e levar à loja (RNF12, contrato 0.2.16).
+tmp_cfg=$(mktemp)
+http_cfg=$(curl -s -o "$tmp_cfg" -w '%{http_code}' -G "$URL/rest/v1/rpc/configuracao_do_app" \
+  -H "apikey: $ANON" --data-urlencode "plataforma=ios")
+corpo_cfg=$(cat "$tmp_cfg")
+rm -f "$tmp_cfg"
+
+[ "$http_cfg" = "200" ] || falhou "GET configuracao_do_app?plataforma=ios como anon devolveu $http_cfg: $corpo_cfg"
+versao_min=$(printf '%s' "$corpo_cfg" | python3 -c "import json,sys; print(json.load(sys.stdin).get('versao_minima',''))" 2>/dev/null || true)
+[ -n "$versao_min" ] || falhou "configuracao_do_app não devolveu versao_minima: $corpo_cfg"
+ok "GET configuracao_do_app?plataforma=ios como anon → 200 (mínima: $versao_min)"
+
+# Recusa de plataforma inválida como anon (422 campo_invalido)
+http_err=$(curl -s -o /dev/null -w '%{http_code}' -G "$URL/rest/v1/rpc/configuracao_do_app" \
+  -H "apikey: $ANON" --data-urlencode "plataforma=invalida")
+[ "$http_err" = "422" ] || falhou "GET configuracao_do_app com plataforma inválida devolveu $http_err, esperado 422"
+ok "GET configuracao_do_app com plataforma inválida → 422"
+
+echo
+
 # Um endereço novo por execução: o script não pode depender de estado deixado pela
 # execução anterior, senão passa na segunda vez por motivo errado.
 # `date +%s` colide se o script rodar duas vezes no mesmo segundo, e aí a segunda
@@ -327,6 +349,36 @@ printf '%s' "$corpo" | grep -qiE 'telefone|email|documento|endereco|latitude|lon
   && falhou "meus_estabelecimentos vazou dado de contato ou de cadastro: $corpo"
 ok "RN10: nenhum contato, documento ou coordenada em meus_estabelecimentos"
 
+# `meu_estabelecimento` (contrato 0.2.29) é de onde o app tira o endereço, a região e o
+# ponto da casa para preencher a publicação. Por GET, como o contrato manda, e só para
+# membro: o id que não é de nenhuma casa da conta responde 403.
+tmp=$(mktemp)
+http=$(curl -s -o "$tmp" -w '%{http_code}' -G "$URL/rest/v1/rpc/meu_estabelecimento" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "estabelecimento_id=$ESTAB")
+corpo=$(cat "$tmp"); rm -f "$tmp"
+[ "$http" = "200" ] || falhou "GET meu_estabelecimento devolveu $http: $corpo"
+achou=$(printf '%s' "$corpo" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+ponto = d.get('ponto') or {}
+ok = d.get('id') == sys.argv[1] and d.get('papel') == 'administrador' and d.get('endereco') \
+     and d.get('regiao_administrativa') and 'latitude' in ponto and 'longitude' in ponto
+print('sim' if ok else 'nao')" "$ESTAB" 2>/dev/null || true)
+[ "$achou" = "sim" ] \
+  || falhou "meu_estabelecimento não trouxe o cadastro da casa criada: $corpo"
+ok "GET meu_estabelecimento → 200, com endereço, região e ponto da casa"
+
+tmp=$(mktemp)
+http=$(curl -s -o "$tmp" -w '%{http_code}' -G "$URL/rest/v1/rpc/meu_estabelecimento" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode "estabelecimento_id=00000000-0000-4000-8000-000000000000")
+corpo=$(cat "$tmp"); rm -f "$tmp"
+code=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || true)
+[ "$http" = "403" ] && [ "$code" = "sem_permissao" ] \
+  || falhou "meu_estabelecimento de casa alheia: HTTP $http code '$code', esperado 403 sem_permissao"
+ok "GET meu_estabelecimento de casa alheia → 403 sem_permissao"
+
 echo
 echo "▸ A vaga"
 #
@@ -382,9 +434,32 @@ recusa "RN18: valor zero" 422 campo_invalido \
   "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"valor_centavos":0')" \
   publicar_vaga
 
-recusa "v1.0: modo seleção não existe" 422 campo_invalido \
-  "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"modo":"selecao"')" \
+# Modo seleção (contrato 0.2.24): a vaga que começa em 3 dias entra; a que começa em
+# 20 h nasceria fechada, porque o modo fecha sozinho 24 h antes (RN24).
+PERTO_INI=$(python3 -c "
+import datetime as d; print((d.datetime.now(d.timezone.utc)+d.timedelta(hours=20)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+PERTO_FIM=$(python3 -c "
+import datetime as d; print((d.datetime.now(d.timezone.utc)+d.timedelta(hours=26)).strftime('%Y-%m-%dT%H:%M:%SZ'))")
+recusa "RN24: seleção com menos de 24 h" 422 selecao_sem_antecedencia \
+  "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ",\"modo\":\"selecao\",\"inicio_em\":\"$PERTO_INI\",\"fim_em\":\"$PERTO_FIM\"")" \
   publicar_vaga
+
+selecao=$(curl -s -X POST "$URL/rest/v1/rpc/publicar_vaga" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"modo":"selecao"')")
+VAGA_SELECAO=$(printf '%s' "$selecao" | python3 -c "import json,sys; print(json.load(sys.stdin).get('vaga_id',''))" 2>/dev/null || true)
+[ -n "$VAGA_SELECAO" ] || falhou "publicar_vaga em modo seleção com 3 dias de antecedência: $selecao"
+ok "RN24: seleção com mais de 24 h → publicada"
+
+# Cancelada na hora: a vaga de seleção é não urgente e, despachada, gastaria o teto da RN23
+# dos profissionais do seed, que o pgTAP da mutação espera livres (260, 360). O despacho
+# pula vaga que não está publicada.
+cancelada=$(curl -s -X POST "$URL/rest/v1/rpc/cancelar_vaga" \
+  -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d "{\"vaga_id\":\"$VAGA_SELECAO\",\"motivo\":\"vaga de seleção do ciclo\"}" \
+  | python3 -c "import json,sys; print(json.load(sys.stdin).get('estado',''))" 2>/dev/null || true)
+[ "$cancelada" = "cancelada" ] || falhou "cancelar_vaga da vaga de seleção devolveu '$cancelada'"
+ok "a vaga de seleção cancelada sai do despacho"
 
 recusa "diretriz 1.2: termo bloqueado em observações" 422 campo_invalido \
   "$(vaga_corpo "$(python3 -c 'import uuid; print(uuid.uuid4())')" ',"observacoes":"Nada de caralho aqui"')" \
@@ -665,6 +740,45 @@ code=$(printf '%s' "$corpo" | python3 -c "import json,sys; print(json.load(sys.s
 [ "$http" = "404" ] && [ "$code" = "nao_encontrado" ] \
   || falhou "perfil_publico de id inexistente: HTTP $http code '$code', esperado 404 nao_encontrado"
 ok "GET perfil_publico de id inexistente → 404 nao_encontrado"
+
+echo
+echo "▸ O limite de escrita por conta"
+#
+# Por último, porque deixa a conta sem escrever até o minuto virar. O limite mora no
+# `db_pre_request` do PostgREST, e o pgTAP chama a função direto: só aqui se prova que o
+# PostgREST a chama de verdade e que a recusa chega como 429. A conta já escreveu neste
+# minuto nos passos de cima, então a conta exata do teto é do pgTAP; aqui vale que a
+# rajada, de uma escrita idempotente e barata, esbarra no teto antes de passar dele.
+TETO=$(docker exec -i "${DB_CONTAINER:-supabase_db_frila-backend}" \
+  psql -U postgres -d postgres -tAc 'select privado.limite_de_escrita_por_minuto()')
+[ -n "$TETO" ] || falhou "não li o teto de escrita no banco"
+
+# A janela é o minuto do relógio: se a rajada atravessa a virada, a contagem recomeça no
+# meio dela. Com 2 × teto + 2 tentativas, uma virada só (a rajada leva segundos) não
+# impede a recusa; com teto + 1, a rajada que cruzasse o minuto passaria sem 429.
+aceitas=0; recusa_http=""; recusa_corpo=""
+for _ in $(seq 1 $((2 * TETO + 2))); do
+  tmp=$(mktemp)
+  http=$(curl -s -o "$tmp" -w '%{http_code}' -X POST "$URL/rest/v1/rpc/registrar_dispositivo" \
+    -H "apikey: $ANON" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -d '{"token_fcm":"ciclo-completo-rajada","plataforma":"ios"}')
+  corpo=$(cat "$tmp"); rm -f "$tmp"
+  if [ "$http" = "200" ]; then aceitas=$((aceitas + 1)); continue; fi
+  recusa_http="$http"; recusa_corpo="$corpo"; break
+done
+
+[ -n "$recusa_http" ] || falhou "$((2 * TETO + 2)) escritas seguidas e nenhuma recusa: o teto de $TETO não segurou"
+[ "$recusa_http" = "429" ] || falhou "a rajada parou em HTTP $recusa_http, esperado 429: $recusa_corpo"
+code=$(printf '%s' "$recusa_corpo" | python3 -c "import json,sys; print(json.load(sys.stdin).get('code',''))" 2>/dev/null || true)
+[ "$code" = "limite_excedido" ] || falhou "a recusa veio com code '$code', e o contrato pede limite_excedido"
+[ "$aceitas" -gt 0 ] || falhou "nenhuma escrita passou antes da recusa: o teto está recusando cedo demais"
+ok "rajada de escrita → $aceitas aceitas, depois 429 limite_excedido (teto $TETO por minuto)"
+
+# Leitura não conta: a mesma conta, já no teto, continua lendo. Pelo verbo do contrato,
+# GET — que o PostgREST roda em transação só de leitura. Toda leitura do contrato é GET.
+resp=$(get_rpc minha_conta)
+[ "${resp%% *}" = "200" ] || falhou "GET minha_conta com a conta no teto de escrita devolveu ${resp%% *}"
+ok "no teto de escrita, a leitura por GET segue → 200"
 
 echo
 echo "▸ O que ainda não existe"

@@ -138,7 +138,9 @@ if [ -n "$SECO" ]; then
   echo "— seco: daqui para baixo nada seria escrito. O que rodaria:"
   echo "    supabase secrets set DEMONSTRACAO_EMAILS=… DEMONSTRACAO_CODIGO=… --project-ref $REF"
   echo "    supabase functions deploy entrar-demonstracao --project-ref $REF"
+  echo "    POST /v1/projects/$REF/database/query: select privado.renovar_dados_demonstracao()"
   echo "    SUPABASE_URL=$URL_REMOTA … ./scripts/demonstracao.sh"
+  echo "    POST /v1/projects/$REF/database/query: select privado.renovar_dados_demonstracao()"
   exit 0
 fi
 
@@ -158,6 +160,14 @@ supabase functions deploy entrar-demonstracao --project-ref "$REF" >/dev/null \
   || falhou "supabase functions deploy falhou"
 ok "entrar-demonstracao no ar em $REF"
 
+echo "▸ Renovação dos dados de demonstração (vagas e turnos à frente do relógio)"
+curl -s -X POST -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"query":"select privado.renovar_dados_demonstracao()"}' \
+     "https://api.supabase.com/v1/projects/$REF/database/query" >/dev/null \
+  || falhou "falha ao renovar dados de demonstração no remoto"
+ok "dados de demonstração renovados no $AMBIENTE"
+
 echo
 echo "▸ A conferência, que é o motivo deste script"
 echo
@@ -171,5 +181,14 @@ SUPABASE_SERVICE_ROLE_KEY="$SR_REMOTA" \
 DB_CONTAINER=nenhum-no-remoto \
   ./scripts/demonstracao.sh
 
+# demonstracao.sh consome o turno semeado no teste do ciclo de presença.
+# Restauramos o turno via renovação para que a revisão da Apple o encontre aberto/pendente de check-in.
+curl -s -X POST -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"query":"select privado.renovar_dados_demonstracao()"}' \
+     "https://api.supabase.com/v1/projects/$REF/database/query" >/dev/null || true
+ok "turno e vagas restaurados para a revisão da Apple (pendente de check-in)"
+
 echo
 echo "A porta da revisão está de pé no $AMBIENTE ($REF), e medida por HTTP."
+

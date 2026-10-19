@@ -10,3 +10,5 @@ supabase/.branches/
 *service-account*.json
 *firebase*.json
 *fcm*.json
+__pycache__/
+*.pyc

@@ -40,33 +40,44 @@ select columns_are('public', 'vaga', array[
   'id','estabelecimento_id','evento_id','funcao_id','inicio_em','fim_em','local','ponto',
   'valor_centavos','posicoes','inclui_refeicao','inclui_transporte','exige_material_proprio',
   'responsavel_local','traje','participa_rateio','observacoes','modo','alerta_antecedencia',
-  'estado','publicado_em','chave_cliente','publicado_por'
-], 'vaga tem exatamente as colunas da Modelagem, mais quem publicou');
+  'estado','publicado_em','chave_cliente','publicado_por','regiao_administrativa',
+  'rodada_despacho','republicada_de'
+], 'vaga tem exatamente as colunas da Modelagem, mais quem publicou, regiao_administrativa, rodada_despacho e republicada_de');
 
 -- `checkin_recebido_em` e `checkout_recebido_em` não estão na Modelagem: nasceram com
 -- o registro de presença. `checkin_em` é a hora do toque e `checkin_recebido_em` a hora
 -- em que o servidor recebeu — sem as duas, um turno registrado às 18:00 e sincronizado
 -- às 23:00 seria indistinguível de um registrado às 23:00. Divergência em ESTADO.md.
+-- `a_caminho_em` também não: é o aviso "estou a caminho" (US14, contrato 0.2.25), um
+-- instante e nunca uma localização.
 select columns_are('public', 'turno', array[
   'id','posicao_id','checkin_em','checkin_tipo','checkin_distancia_m','checkin_confirmado_em',
   'checkin_recebido_em','checkout_em','checkout_distancia_m','checkout_recebido_em',
-  'verificacao','valor_acordado_centavos'
-], 'turno tem exatamente as colunas da Modelagem, mais a hora em que o servidor recebeu');
+  'verificacao','valor_acordado_centavos','a_caminho_em'
+], 'turno tem exatamente as colunas da Modelagem, mais a hora em que o servidor recebeu e o aviso a caminho');
 
+-- `reaberta_por_atraso_de` não está na Modelagem: veio de `reabrir_por_atraso` (cartão
+-- e8XpOZJN), que precisa saber qual posição aceita candidato depois do início e qual
+-- posição nova já nasceu de uma falta. Divergência registrada em docs/ESTADO.md.
 select columns_are('public', 'posicao', array[
-  'id','vaga_id','estado','profissional_id','confirmado_em','falta','inicio_em','fim_em'
-], 'posicao tem exatamente as colunas da Modelagem');
+  'id','vaga_id','estado','profissional_id','confirmado_em','falta','inicio_em','fim_em',
+  'reaberta_por_atraso_de'
+], 'posicao tem exatamente as colunas da Modelagem, mais a marca da reabertura por atraso');
 
 -- `termos_versao` e `termos_aceite_em` não estão na Modelagem: vieram do cartão da
 -- entrada por código, que manda gravar o aceite. Guardar "aceitou" como booleano não
 -- responde a pergunta que a LGPD e a App Store fazem, que é *o que* e *quando*.
 -- `demonstracao` também não está na Modelagem: é a marca da conta de revisão da App
 -- Store (diretrizes 2.1 e 4.2), e existe para que as duas populações dividam o banco
--- sem se enxergar. Divergência registrada em docs/ESTADO.md.
+-- sem se enxergar. `sinal_idade`, `idade_aferida_por` e `idade_aferida_em` também não:
+-- são a prova de como a idade foi aferida no cadastro (ECA Digital, cartão LQlwDaYZ) —
+-- só a faixa que o aparelho respondeu, o método e o instante, nunca data ou identificador
+-- do aparelho. Divergência registrada em docs/ESTADO.md.
 select columns_are('public', 'usuario', array[
   'id','perfil','nome','telefone','email','nascimento','estado','criado_em','anonimizado_em',
-  'termos_versao','termos_aceite_em','demonstracao'
-], 'usuario tem exatamente as colunas da Modelagem, mais o aceite dos termos e a marca de demonstração');
+  'termos_versao','termos_aceite_em','demonstracao',
+  'sinal_idade','idade_aferida_por','idade_aferida_em'
+], 'usuario tem exatamente as colunas da Modelagem, mais o aceite dos termos, a marca de demonstração e o sinal de idade');
 
 -- `perfil` repetido aqui é RN25: a coluna existe para a chave estrangeira composta
 -- apontar para o par (id, perfil) de usuario. Remover "porque é redundante" desliga a
@@ -85,8 +96,8 @@ select columns_are('public', 'avaliacao', array[
 ], 'avaliacao tem exatamente as colunas da Modelagem');
 
 select columns_are('public', 'estabelecimento', array[
-  'id','nome','documento','tipo','endereco','ponto','criado_em','aval_positivas','aval_total'
-], 'estabelecimento tem exatamente as colunas da Modelagem');
+  'id','nome','documento','tipo','endereco','ponto','criado_em','aval_positivas','aval_total','regiao_administrativa'
+], 'estabelecimento tem exatamente as colunas da Modelagem, mais regiao_administrativa');
 
 -- ── O que NÃO pode existir ─────────────────────────────────────────────────────
 --

@@ -42,6 +42,8 @@ order by quantidade desc;
 
 -- ── 3. RNF03: Envio ao provedor em até 30 s da publicação da vaga ───────────────
 -- A notificação da vaga deve ser enviada ao provedor em até 30 s após a publicação.
+-- Só as que não esperaram o teto da RN23: a que saiu no fim da janela esperou de
+-- propósito, e medi-la aqui acusaria a regra de ser lentidão.
 
 select
   v.id as vaga_id,
@@ -58,5 +60,6 @@ from public.notificacao n
 join public.despacho d on d.notificacao_id = n.id
 join public.vaga v on v.id = d.vaga_id
 where n.tipo in ('vaga', 'vagas_agrupadas')
+  and not n.esperou_teto
   and n.enviada_em >= privado.agora() - interval '7 days'
 order by n.enviada_em desc;

@@ -156,6 +156,12 @@ create temp table horarios as select
   timestamptz '2026-10-03 18:00:00-03' as t2_inicio,
   timestamptz '2026-10-03 23:00:00-03' as t2_fim;
 
+-- O relógio do produto fica antes da vaga 1: sem isto, `candidatar` lia o relógio real e a
+-- vaga de 02/10 às 18h virava `vaga_encerrada` para sempre depois dessa hora (o teste
+-- passou a falhar em toda execução, e a CI da develop ficou vermelha). Mais adiante o
+-- relógio é movido para cada horário do cenário.
+select set_config('frila.agora', '2026-10-02 12:00:00-03', true);
+
 -- Vaga 1 (Turno verificado)
 insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
                          valor_centavos, posicoes, inclui_refeicao, inclui_transporte,

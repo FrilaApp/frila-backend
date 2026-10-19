@@ -11,7 +11,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(20);
+select plan(30);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -126,14 +126,17 @@ select is(
 
 select is(
   (select array_agg(k order by k) from lista, jsonb_object_keys((select j->0 from lista)) k),
-  array['checkin_confirmado_em','checkin_distancia_m','checkin_em','checkin_tipo',
-        'checkout_distancia_m','checkout_em','contato_visivel_ate','contraparte','id',
+  array['a_caminho_em','avaliacao','cancelamento','checkin_confirmado_em','checkin_distancia_m','checkin_em','checkin_tipo',
+        'checkout_distancia_m','checkout_em','contato_visivel_ate','contraparte','estado','id',
         'pode_avaliar','posicao_id','vaga','valor_acordado_centavos','verificacao'],
   'cada turno traz exatamente os campos do schema Turno do contrato');
 
+select is((select j->0->'cancelamento' from lista), 'null'::jsonb,
+  'turno confirmado traz cancelamento nulo (0.2.32)');
+
 select is(
   (select array_agg(k order by k) from lista, jsonb_object_keys((select j->0->'vaga' from lista)) k),
-  array['fim_em','funcao','id','inicio_em','local','valor_centavos'],
+  array['fim_em','funcao','id','inicio_em','local','regiao_administrativa','valor_centavos'],
   'e a vaga vem como VagaResumo, com a função pelo nome');
 
 -- RN10: o telefone tem porta própria, e uma lista que já o trouxesse tornaria o prazo
@@ -235,6 +238,76 @@ select is(
     where e->>'id' = (select proximo from t1)::text),
   true,
   'RN07: depois do fim e com presença verificada, pode avaliar');
+
+-- ── Contrato 0.2.31: estado e avaliacao em Turno ──────────────────────────────
+select is(
+  (select e->>'estado'
+     from jsonb_array_elements(pg_temp.como('ad000000-0000-4000-8000-0000000000e1',
+            $$ select public.meus_turnos() $$)) e
+    where e->>'id' = (select distante from t1)::text),
+  'confirmada',
+  '0.2.31: turno de pé tem estado confirmada');
+
+select is(
+  (select e->'avaliacao'
+     from jsonb_array_elements(pg_temp.como('ad000000-0000-4000-8000-0000000000e1',
+            $$ select public.meus_turnos() $$)) e
+    where e->>'id' = (select proximo from t1)::text),
+  'null'::jsonb,
+  '0.2.31: avaliacao é null antes de avaliar');
+
+update public.posicao set estado = 'cumprida'
+ where id = (select posicao_id from public.turno where id = (select proximo from t1));
+
+select is(
+  (select e->>'estado'
+     from jsonb_array_elements(pg_temp.como('ad000000-0000-4000-8000-0000000000e1',
+            $$ select public.meus_turnos() $$)) e
+    where e->>'id' = (select proximo from t1)::text),
+  'cumprida',
+  '0.2.31: turno encerrado com check-in tem estado cumprida');
+
+select is(
+  (pg_temp.como('ad000000-0000-4000-8000-0000000000e1',
+     format($$ select public.avaliar(%L::uuid, true) $$, (select proximo from t1)))->>'resposta'),
+  'true',
+  '0.2.31: avaliacao realizada com sucesso');
+
+select is(
+  (select (e->>'pode_avaliar')::boolean
+     from jsonb_array_elements(pg_temp.como('ad000000-0000-4000-8000-0000000000e1',
+            $$ select public.meus_turnos() $$)) e
+    where e->>'id' = (select proximo from t1)::text),
+  false,
+  '0.2.31: com avaliacao preenchida, pode_avaliar é falso');
+
+select is(
+  (select (e->'avaliacao'->>'resposta')::boolean
+     from jsonb_array_elements(pg_temp.como('ad000000-0000-4000-8000-0000000000e1',
+            $$ select public.meus_turnos() $$)) e
+    where e->>'id' = (select proximo from t1)::text),
+  true,
+  '0.2.31: avaliacao preenchida no Turno');
+
+select ok(
+  (select (pg_temp.como('ad000000-0000-4000-8000-0000000000e1',
+     format($$ select public.cancelar_posicao(%L::uuid, 'Imprevisto no turno distante') $$,
+            (select posicao_id from public.turno where id = (select distante from t1))))->>'falta') is not null),
+  '0.2.31: cancelamento de posicao executado');
+
+select is(
+  (select jsonb_array_length(pg_temp.como('ad000000-0000-4000-8000-0000000000e1',
+     $$ select public.meus_turnos() $$))),
+  2,
+  '0.2.31: a quantidade de turnos devolvidos não muda ao cancelar');
+
+select is(
+  (select e->>'estado'
+     from jsonb_array_elements(pg_temp.como('ad000000-0000-4000-8000-0000000000e1',
+            $$ select public.meus_turnos() $$)) e
+    where e->>'id' = (select distante from t1)::text),
+  'cancelada',
+  '0.2.31: turno cancelado tem estado cancelada');
 
 select set_config('frila.agora', '', true);
 

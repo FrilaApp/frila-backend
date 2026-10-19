@@ -12,7 +12,7 @@
 -- envelope inteiro, que fixa `code` e `details`.
 
 begin;
-select plan(45);
+select plan(50);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb
 language plpgsql as $$
@@ -298,11 +298,36 @@ select is(
   '[false, true]'::jsonb,
   'pode_avaliar é por lado, como no contrato: a operadora já não vê o botão, a Ana ainda vê');
 
+select is(
+  (privado.turno_em_json('f7000000-0000-4000-8000-000000000001', 'f2000000-0000-4000-8000-000000000001')->'avaliacao'->>'resposta')::boolean,
+  true,
+  '0.2.31: administrador vê a avaliação que a casa deu');
+
+select is(
+  (privado.turno_em_json('f7000000-0000-4000-8000-000000000001', 'f2000000-0000-4000-8000-000000000002')->'avaliacao'->>'resposta')::boolean,
+  true,
+  '0.2.31: operadora da mesma casa vê a avaliação que a casa deu');
+
+select is(
+  privado.turno_em_json('f7000000-0000-4000-8000-000000000001', 'f1000000-0000-4000-8000-000000000001')->'avaliacao',
+  'null'::jsonb,
+  '0.2.31: profissional não vê a avaliação que a casa deu (ainda é null deste lado)');
+
 -- O outro lado: a Ana responde não sobre o bar.
 select is(
   pg_temp.avaliar('f1000000-0000-4000-8000-000000000001','f7000000-0000-4000-8000-000000000001', false)->>'resposta',
   'false',
   'RN07: o profissional avalia o estabelecimento, no mesmo turno');
+
+select is(
+  (privado.turno_em_json('f7000000-0000-4000-8000-000000000001', 'f1000000-0000-4000-8000-000000000001')->'avaliacao'->>'resposta')::boolean,
+  false,
+  '0.2.31: profissional agora vê a avaliação que ela deu (false)');
+
+select is(
+  (privado.turno_em_json('f7000000-0000-4000-8000-000000000001', 'f2000000-0000-4000-8000-000000000001')->'avaliacao'->>'resposta')::boolean,
+  true,
+  '0.2.31: e a casa continua vendo a avaliação da casa (true), nunca a que o profissional deu');
 
 select is(
   pg_temp.perfil('f1000000-0000-4000-8000-000000000001','f4000000-0000-4000-8000-000000000001')

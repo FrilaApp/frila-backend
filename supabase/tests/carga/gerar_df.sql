@@ -25,6 +25,12 @@ declare
   v_funcoes uuid[];
   v_usuarios_existentes bigint;
   v_server_ip inet;
+  v_base_data timestamptz := date_trunc('day', privado.agora()) + interval '1 day';
+  v_escala int := coalesce(nullif(current_setting('frila.carga_escala', true), ''), '1')::int;
+  v_n_contratantes int := 30000 * v_escala;
+  v_n_estabelecimentos int := 30000 * v_escala;
+  v_n_profissionais int := 100000 * v_escala;
+  v_n_vagas int := 20000 * v_escala;
 begin
   -- ── Proteção estrita contra execução fora do ambiente local ──────────────────
   v_server_ip := inet_server_addr();
@@ -42,7 +48,10 @@ begin
     raise exception 'Tabela public.funcao está vazia. Aplique o seed antes de rodar a carga.';
   end if;
 
-  raise notice '1. Gerando 30.000 contas de contratantes em public.usuario...';
+  raise notice 'Iniciando carga com escala %x (% contratantes, % profissionais, % vagas)...',
+    v_escala, v_n_contratantes, v_n_profissionais, v_n_vagas;
+
+  raise notice '1. Gerando % contas de contratantes em public.usuario...', v_n_contratantes;
   insert into public.usuario (
     id, perfil, nome, telefone, email, nascimento, estado, demonstracao, termos_versao, termos_aceite_em
   )
@@ -56,13 +65,13 @@ begin
          false,
          'v1.0',
          now()
-    from generate_series(1, 30000) i
+    from generate_series(1, v_n_contratantes) i
   on conflict (id) do nothing;
   t1 := clock_timestamp();
-  raise notice '   30.000 contratantes gerados em %', (t1 - t0);
+  raise notice '   % contratantes gerados em %', v_n_contratantes, (t1 - t0);
   t0 := t1;
 
-  raise notice '2. Gerando 30.000 estabelecimentos no DF em public.estabelecimento...';
+  raise notice '2. Gerando % estabelecimentos no DF em public.estabelecimento...', v_n_estabelecimentos;
   insert into public.estabelecimento (
     id, nome, documento, tipo, endereco, ponto
   )
@@ -79,10 +88,10 @@ begin
              -16.00 + ((i * 7) % 450) * 0.001
            ), 4326
          )::extensions.geography
-    from generate_series(1, 30000) i
+    from generate_series(1, v_n_estabelecimentos) i
   on conflict (id) do nothing;
   t1 := clock_timestamp();
-  raise notice '   30.000 estabelecimentos gerados em %', (t1 - t0);
+  raise notice '   % estabelecimentos gerados em %', v_n_estabelecimentos, (t1 - t0);
   t0 := t1;
 
   raise notice '3. Vinculando proprietários em public.membro_estabelecimento...';
@@ -93,13 +102,13 @@ begin
          'contratante',
          ('e0000000-0000-0000-0000-' || lpad(to_hex(i::bigint), 12, '0'))::uuid,
          'administrador'
-    from generate_series(1, 30000) i
+    from generate_series(1, v_n_estabelecimentos) i
   on conflict (usuario_id, estabelecimento_id) do nothing;
   t1 := clock_timestamp();
-  raise notice '   30.000 membros vinculados em %', (t1 - t0);
+  raise notice '   % membros vinculados em %', v_n_estabelecimentos, (t1 - t0);
   t0 := t1;
 
-  raise notice '4. Gerando 100.000 contas de profissionais em public.usuario...';
+  raise notice '4. Gerando % contas de profissionais em public.usuario...', v_n_profissionais;
   insert into public.usuario (
     id, perfil, nome, telefone, email, nascimento, estado, demonstracao, termos_versao, termos_aceite_em
   )
@@ -113,13 +122,13 @@ begin
          false,
          'v1.0',
          now()
-    from generate_series(1, 100000) i
+    from generate_series(1, v_n_profissionais) i
   on conflict (id) do nothing;
   t1 := clock_timestamp();
-  raise notice '   100.000 usuarios profissionais gerados em %', (t1 - t0);
+  raise notice '   % usuarios profissionais gerados em %', v_n_profissionais, (t1 - t0);
   t0 := t1;
 
-  raise notice '5. Gerando 100.000 profissionais com ponto base no DF em public.profissional...';
+  raise notice '5. Gerando % profissionais com ponto base no DF em public.profissional...', v_n_profissionais;
   insert into public.profissional (
     id, usuario_id, perfil, ponto_base
   )
@@ -132,56 +141,56 @@ begin
              -16.00 + ((i * 17) % 450) * 0.001
            ), 4326
          )::extensions.geography
-    from generate_series(1, 100000) i
+    from generate_series(1, v_n_profissionais) i
   on conflict (id) do nothing;
   t1 := clock_timestamp();
-  raise notice '   100.000 profissionais gerados em %', (t1 - t0);
+  raise notice '   % profissionais gerados em %', v_n_profissionais, (t1 - t0);
   t0 := t1;
 
-  raise notice '6. Atribuindo funções do catálogo aos profissionais (~200.000 vínculos)...';
+  raise notice '6. Atribuindo funções do catálogo aos profissionais...';
   insert into public.profissional_funcao (profissional_id, funcao_id)
   select ('b0000000-0000-0000-0000-' || lpad(to_hex(i::bigint), 12, '0'))::uuid,
          v_funcoes[(i % cardinality(v_funcoes)) + 1]
-    from generate_series(1, 100000) i
+    from generate_series(1, v_n_profissionais) i
   union all
   select ('b0000000-0000-0000-0000-' || lpad(to_hex(i::bigint), 12, '0'))::uuid,
          v_funcoes[((i + 7) % cardinality(v_funcoes)) + 1]
-    from generate_series(1, 100000) i
+    from generate_series(1, v_n_profissionais) i
    where (i % cardinality(v_funcoes)) <> ((i + 7) % cardinality(v_funcoes))
   on conflict do nothing;
   t1 := clock_timestamp();
   raise notice '   profissional_funcao gerado em %', (t1 - t0);
   t0 := t1;
 
-  raise notice '7. Gerando grade semanal de disponibilidade (~200.000 janelas)...';
+  raise notice '7. Gerando grade semanal de disponibilidade...';
   insert into public.disponibilidade (profissional_id, dia_semana, hora_inicio, hora_fim)
   select ('b0000000-0000-0000-0000-' || lpad(to_hex(i::bigint), 12, '0'))::uuid,
          (i % 7)::smallint,
          '18:00'::time,
          '02:00'::time
-    from generate_series(1, 100000) i
+    from generate_series(1, v_n_profissionais) i
   union all
   select ('b0000000-0000-0000-0000-' || lpad(to_hex(i::bigint), 12, '0'))::uuid,
          ((i + 2) % 7)::smallint,
          '08:00'::time,
          '16:00'::time
-    from generate_series(1, 100000) i
+    from generate_series(1, v_n_profissionais) i
   on conflict do nothing;
   t1 := clock_timestamp();
   raise notice '   disponibilidade gerada em %', (t1 - t0);
   t0 := t1;
 
-  raise notice '8. Gerando 20.000 vagas publicadas no DF em public.vaga...';
+  raise notice '8. Gerando % vagas publicadas no DF em public.vaga...', v_n_vagas;
   insert into public.vaga (
     id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
     valor_centavos, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio,
     responsavel_local, modo, estado, publicado_por, chave_cliente
   )
   select ('c0000000-0000-0000-0000-' || lpad(to_hex(i::bigint), 12, '0'))::uuid,
-         ('e0000000-0000-0000-0000-' || lpad(to_hex((((i - 1) % 30000) + 1)::bigint), 12, '0'))::uuid,
+         ('e0000000-0000-0000-0000-' || lpad(to_hex((((i - 1) % v_n_estabelecimentos) + 1)::bigint), 12, '0'))::uuid,
          v_funcoes[(i % cardinality(v_funcoes)) + 1],
-         '2026-10-01 18:00:00+00'::timestamptz + ((i % 14) || ' days')::interval + ((i % 5) || ' hours')::interval,
-         '2026-10-01 18:00:00+00'::timestamptz + ((i % 14) || ' days')::interval + ((i % 5) || ' hours')::interval + interval '6 hours',
+         v_base_data + ((i % 14) || ' days')::interval + ((18 + (i % 5)) || ' hours')::interval,
+         v_base_data + ((i % 14) || ' days')::interval + ((18 + (i % 5)) || ' hours')::interval + interval '6 hours',
          'Local DF ' || i,
          extensions.ST_SetSRID(
            extensions.ST_MakePoint(
@@ -197,15 +206,15 @@ begin
          'Responsável ' || i,
          'urgencia',
          'publicada',
-         ('a0000000-0000-0000-0000-' || lpad(to_hex((((i - 1) % 30000) + 1)::bigint), 12, '0'))::uuid,
+         ('a0000000-0000-0000-0000-' || lpad(to_hex((((i - 1) % v_n_contratantes) + 1)::bigint), 12, '0'))::uuid,
          gen_random_uuid()
-    from generate_series(1, 20000) i
+    from generate_series(1, v_n_vagas) i
   on conflict (id) do nothing;
   t1 := clock_timestamp();
-  raise notice '   20.000 vagas geradas em %', (t1 - t0);
+  raise notice '   % vagas geradas em %', v_n_vagas, (t1 - t0);
   t0 := t1;
 
-  raise notice '9. Gerando 20.000 posições abertas em public.posicao...';
+  raise notice '9. Gerando % posições abertas em public.posicao...', v_n_vagas;
   insert into public.posicao (vaga_id, estado, inicio_em, fim_em)
   select v.id,
          'aberta',
@@ -213,10 +222,10 @@ begin
          v.fim_em
     from public.vaga v
    where v.id >= 'c0000000-0000-0000-0000-000000000001'::uuid
-     and v.id <= 'c0000000-0000-0000-0000-000000004e20'::uuid
+     and v.id <= ('c0000000-0000-0000-0000-' || lpad(to_hex(v_n_vagas::bigint), 12, '0'))::uuid
   on conflict do nothing;
   t1 := clock_timestamp();
-  raise notice '   20.000 posições abertas geradas em %', (t1 - t0);
+  raise notice '   % posições abertas geradas em %', v_n_vagas, (t1 - t0);
   t0 := t1;
 
   raise notice '10. Atualizando estatísticas do planejador (ANALYZE)...';

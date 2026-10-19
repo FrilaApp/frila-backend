@@ -4,6 +4,26 @@
 // A credencial NUNCA é lida de arquivo versionado: vem de segredo de ambiente
 // (Deno.env.get("FCM_SERVICE_ACCOUNT")).
 
+// Decisão provisória do cartão pCSdUOyB: 24 horas até definição do produto.
+const TTL_ANDROID = "86400s";
+const CANAIS_ANDROID_POR_TIPO = new Map<string, string>([
+  ["vaga", "canal_urgencia"],
+  ["vagas_agrupadas", "canal_urgencia"],
+  ["confirmacao", "canal_turnos"],
+  ["lembrete_24h", "canal_turnos"],
+  ["lembrete_3h", "canal_turnos"],
+  ["inicio_sem_checkin", "canal_turnos"],
+  ["atraso_15min", "canal_turnos"],
+  ["fim_sem_checkout", "canal_turnos"],
+  ["vaga_vazia", "canal_geral"],
+  ["checkin", "canal_turnos"],
+  ["checkin_manual_pendente", "canal_turnos"],
+  ["cancelamento", "canal_turnos"],
+  ["avaliacao_disponivel", "canal_turnos"],
+  ["suspensao", "canal_geral"],
+  ["reativacao", "canal_geral"],
+]);
+
 export interface FcmServiceAccount {
   project_id: string;
   client_email: string;
@@ -109,8 +129,17 @@ export async function getAccessToken(
   });
 
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Falha ao obter token OAuth do Google (${res.status}): ${text}`);
+    let codigoErro = "";
+    try {
+      const data = await res.json();
+      if (typeof data?.error === "string") {
+        codigoErro = data.error.trim();
+      }
+    } catch {
+      // Ignora erro de parse: corpo não-JSON não deve vazar para logs/mensagens
+    }
+    const detalhe = codigoErro ? `: ${codigoErro}` : "";
+    throw new Error(`Falha ao obter token OAuth do Google (${res.status})${detalhe}`);
   }
 
   const json = await res.json();
@@ -136,11 +165,20 @@ export async function sendFcmMessage(
         body: payload.body,
       },
       data: payload.data ?? {},
+      android: {
+        priority: "high",
+        notification: {
+          channel_id: CANAIS_ANDROID_POR_TIPO.get(payload.data?.tipo ?? "") ??
+            "canal_geral",
+        },
+        ttl: TTL_ANDROID,
+      },
       apns: {
         payload: {
           aps: {
             sound: "default",
             badge: 1,
+            "mutable-content": 1,
           },
         },
       },
@@ -175,8 +213,11 @@ export async function sendFcmMessage(
       // ignore
     }
 
+    // Documentação FCM HTTP v1 (HTTP v1 error codes):
+    // 404 puro (NOT_FOUND) ocorre quando o project_id ou a rota está incorreta (falha de configuração).
+    // O desregistro de token é identificado estritamente quando errorCode === "UNREGISTERED" nos details (geralmente HTTP 404) ou HTTP 410 Gone.
+    // Tokens NUNCA devem ser removidos por 404 genérico sem errorCode "UNREGISTERED", evitando que uma credencial/projeto incorreto apague os tokens de todo o parque.
     const isUnregistered =
-      status === 404 ||
       status === 410 ||
       errCode === "UNREGISTERED";
 

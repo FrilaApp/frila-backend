@@ -234,10 +234,23 @@ select cmp_ok((select count(*)::int from public.turno
                   and verificacao = 'verificado'),
   '>', 0, 'há turno com check-in manual confirmado pelo contratante');
 
-select cmp_ok((select count(*)::int from public.turno
-                where checkin_tipo = 'manual' and checkin_confirmado_em is null
-                  and verificacao = 'pendente'),
-  '>', 0, 'há turno com check-in manual esperando confirmação');
+-- O check-in manual esperando a casa só é estado legítimo **durante** o turno, e por
+-- isso é o único cenário que envelhece: a d…08 começa 1 h antes do reset e termina 7 h
+-- depois dele, e a partir daí o pg_cron (`fechar_turnos_e_vagas`, a cada 5 min) o
+-- fecha como `nao_verificado`. Contar "há um pendente" era bomba-relógio: verde logo
+-- depois do reset, vermelho para quem rodasse a suíte 8 h mais tarde, sem nada ter
+-- quebrado (achado do revisor do #61, reproduzido por `scripts/relogio-deslocado.sh`).
+--
+-- A asserção é sobre o turno do cenário, e vale em qualquer hora: é o check-in manual
+-- sem o toque da casa, pendente enquanto o turno não acabou; acabado, pendente só até
+-- a próxima passada do agendador, e fechado como `nao_verificado` — nunca como
+-- `verificado`, que é o que o produto mais teme (critério 1 da decisão 8zLfn0mt).
+select ok((select t.checkin_tipo = 'manual' and t.checkin_confirmado_em is null
+                  and (t.verificacao = 'pendente'
+                       or (t.verificacao = 'nao_verificado' and p.fim_em <= privado.agora()))
+             from public.turno t join public.posicao p on p.id = t.posicao_id
+            where t.id = 'f2000000-0000-4000-8000-000000000801'),
+  'há turno com check-in manual esperando confirmação, pendente enquanto dura e fechado sem prova depois');
 
 select cmp_ok((select count(*)::int from public.turno where verificacao = 'nao_verificado'),
   '>', 0, 'e há turno que terminou sem prova nenhuma de presença');

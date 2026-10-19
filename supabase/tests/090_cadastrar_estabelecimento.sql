@@ -112,11 +112,11 @@ select is(
   (select round((j->'ponto'->>'longitude')::numeric, 4) from r), -47.8822::numeric,
   'e com a mesma longitude');
 
--- O schema `Estabelecimento` do contrato tem sete campos. A linha inteira vazaria a
+-- O schema `Estabelecimento` do contrato tem oito campos. A linha inteira vazaria a
 -- reputação crua e a data de criação.
 select is(
   (select array_agg(k order by k) from r, jsonb_object_keys(r.j) k),
-  array['documento','endereco','id','nome','papel','ponto','tipo'],
+  array['documento','endereco','id','nome','papel','ponto','regiao_administrativa','tipo'],
   'a resposta traz exatamente os campos do schema Estabelecimento do contrato');
 
 -- ── Idempotência pela chave natural ────────────────────────────────────────────

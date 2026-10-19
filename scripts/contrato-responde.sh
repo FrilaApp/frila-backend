@@ -44,10 +44,10 @@ estado=$?
 
 # Harness que falha é portão **não rodado**, e não portão limpo. Sair 0 aqui seria dizer
 # "as respostas casam" sobre respostas que ninguém colheu.
-if [ $estado -ne 0 ] || ! printf '%s' "$colheita" | grep -q '^{'; then
+if [ $estado -ne 0 ] || ! grep -q '^{' <<< "$colheita"; then
   echo "✗ O harness SQL não colheu resposta nenhuma." >&2
   printf '%s\n' "$colheita" >&2
   exit 1
 fi
 
-printf '%s\n' "$colheita" | "$VENV/bin/python" scripts/contrato_responde.py
+printf '%s\n' "$colheita" | "$VENV/bin/python" scripts/contrato_responde.py --falhar-vazias "$@"

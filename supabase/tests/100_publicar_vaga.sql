@@ -380,11 +380,11 @@ select throws_ok(
   '{"code" : "campo_invalido", "message" : "campo_invalido", "details" : "responsavel_local", "hint" : null}',
   'diretriz 1.2: e alcança o responsável pelo local');
 
--- ── RN24 na v1.0: o modo seleção não existe ainda ──────────────────────────────
+-- ── RN24: modo seleção só com mais de 24 h ────────────────────────────────────
 --
--- A v1.0 tem só o modo urgência (escopo do MVP). O código é `campo_invalido` com
--- `details = modo`, e não `selecao_sem_antecedencia`: este último é a regra das 24 h,
--- que só faz sentido quando o modo passar a existir, na v1.1.
+-- Desde o contrato 0.2.24 o modo seleção existe (cartão d3A1WjG3), e a recusa é a regra
+-- das 24 h: a vaga de seleção fecha sozinha 24 h antes do início, então uma que começa
+-- em 20 h nasceria fechada. O caminho feliz do modo está em `480_modo_selecao.sql`.
 select throws_ok(
   format($$ select pg_temp.como('f0000000-0000-4000-8000-0000000000d1',
        $x$ select public.publicar_vaga(%L, %L, %L, %L, 'SCLN 406, Asa Norte',
@@ -392,10 +392,10 @@ select throws_ok(
              18000, 1, true, true, false, 'Seu Zé', 'selecao',
              '44444444-4444-4444-8444-444444444444'::uuid) $x$) $$,
          (select id from bar), (select id from cat),
-         (select inicio from quando), (select fim from quando)),
+         privado.agora() + interval '20 hours', privado.agora() + interval '26 hours'),
   'PGRST',
-  '{"code" : "campo_invalido", "message" : "campo_invalido", "details" : "modo", "hint" : null}',
-  'v1.0: modo seleção é campo_invalido com details = modo');
+  '{"code" : "selecao_sem_antecedencia", "message" : "selecao_sem_antecedencia", "details" : null, "hint" : null}',
+  'RN24: modo seleção com menos de 24 h é selecao_sem_antecedencia');
 
 -- ── Nada sobrou de recusa nenhuma ──────────────────────────────────────────────
 --

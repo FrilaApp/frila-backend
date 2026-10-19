@@ -56,8 +56,9 @@ on conflict (nome) do update set categoria = excluded.categoria;
 -- termo com acento ou maiúscula, porque um termo mal gravado não casa com nada e o
 -- filtro passa a parecer instalado sem estar.
 --
--- **Lista de partida [H].** Precisa da revisão da Júlia antes de valer como pronta: uma
--- lista de bloqueio é decisão de produto e de jurídico, não de quem escreve o SQL.
+-- Revisão ggEzge6h de 13/10/2026 aprovada por João Paulo (decisões J1 a J6):
+-- 81 termos bloqueados cobrindo palavrão, inglês, insulto, ódio, fora de escopo,
+-- golpe/fraude e exigência discriminatória racial.
 --
 -- ── O que está deliberadamente FORA ──────────────────────────────────────────
 --
@@ -65,59 +66,109 @@ on conflict (nome) do update set categoria = excluded.categoria;
 -- comparação é por palavra inteira, o que já resolve `cu` dentro de Cunha — mas não
 -- resolve o termo que **é** o sobrenome de alguém.
 --
---   pinto     sobrenome comuníssimo, e nome de rua
---   pau       "pau de arara", "meio-pau", e sobrenome
---   rola      verbo de uso diário: "a fila rola"
---   boceta    grafia de uso regional para caixinha, em contexto de artesanato
+--   pinto          sobrenome comuníssimo, e nome de rua
+--   pau            "pau de arara", "meio-pau", e sobrenome
+--   rola           verbo de uso diário: "a fila rola"
+--   boceta         grafia de uso regional para caixinha, em contexto de artesanato
+--   foda           isolada é gíria elogiosa corrente ("você é foda"); entra apenas "foda se"
+--   acompanhante   isolada é legítima em vagas ("acompanhante de idosos")
+--   programa       isolada é legítima em vagas ("programa de treinamento")
+--   sexo           descritor comum em anúncios ("sexo feminino")
+--   paraiba        estado, rio e sobrenome frequente (risco alto de falso positivo)
+--   louco          adjetivo de uso corrente informal
+--   piranha        peixe e prato da culinária
+--   ameaça         frases de ameaça puniriam quem relata o que ouviu; coberto por denúncia/bloqueio
 --
--- Recusar esses quatro custaria cadastro de gente real todo dia, e o que eles deixam
+-- Recusar esses termos custaria cadastro de gente real todo dia, e o que eles deixam
 -- passar tem denúncia e bloqueio atrás (RF26). Se algum entrar depois, que entre com o
 -- caso que justificou.
 
+-- Termos tirados em 13/10/2026 (revisão ggEzge6h). O seed é upsert: sem este delete,
+-- um banco já semeado continuaria recusando "pagamento retardado" e "frango crioulo".
+delete from privado.termo_bloqueado where termo in ('retardado', 'crioulo', 'corno');
+
 insert into privado.termo_bloqueado (termo, categoria) values
-  -- Palavrão explícito, no nome ou no texto da vaga
-  ('caralho',      'palavrao'),
-  ('porra',        'palavrao'),
-  ('buceta',       'palavrao'),
-  ('foda se',      'palavrao'),
-  ('vai se foder', 'palavrao'),
-  ('filho da puta','palavrao'),
-  ('puta que pariu','palavrao'),
-  ('cu',           'palavrao'),
-  ('cuzao',        'palavrao'),
-  ('merda',        'palavrao'),
-  ('bosta',        'palavrao'),
-  ('punheta',      'palavrao'),
-
-  -- Insulto direto a pessoa. O produto existe para gente se contratar; xingamento no
-  -- campo que a contraparte lê é o começo do problema que RF26 fecha depois.
-  ('otario',       'insulto'),
-  ('babaca',       'insulto'),
-  ('imbecil',      'insulto'),
-  ('escroto',      'insulto'),
-  ('vagabunda',    'insulto'),
-  ('corno',        'insulto'),
-
-  -- Discriminação. Estes não são palavrão: são o motivo de a diretriz 1.2 existir, e
-  -- saem da lista só com decisão registrada.
-  ('viado',        'odio'),
-  ('bicha',        'odio'),
-  ('sapatao',      'odio'),
-  ('traveco',      'odio'),
-  ('macaco',       'odio'),
-  ('crioulo',      'odio'),
-  ('preto imundo', 'odio'),
-  ('favelado',     'odio'),
-  ('retardado',    'odio'),
-  ('mongoloide',   'odio'),
-  ('aleijado',     'odio'),
-  ('nordestino burro', 'odio'),
-
-  -- Fora do escopo do trabalho anunciado. A vaga é de turno avulso em serviço; texto
-  -- oferecendo outra coisa não é um mal-entendido, é outro produto.
-  ('acompanhante de luxo', 'fora_de_escopo'),
-  ('programa sexual',      'fora_de_escopo'),
-  ('garota de programa',   'fora_de_escopo')
+  ('caralho',                     'palavrao'),
+  ('porra',                       'palavrao'),
+  ('buceta',                      'palavrao'),
+  ('foda se',                     'palavrao'),
+  ('vai se foder',                'palavrao'),
+  ('filho da puta',               'palavrao'),
+  ('puta que pariu',              'palavrao'),
+  ('cu',                          'palavrao'),
+  ('cuzao',                       'palavrao'),
+  ('merda',                       'palavrao'),
+  ('bosta',                       'palavrao'),
+  ('punheta',                     'palavrao'),
+  ('puta',                        'palavrao'),
+  ('putaria',                     'palavrao'),
+  ('foder',                       'palavrao'),
+  ('fodido',                      'palavrao'),
+  ('fodida',                      'palavrao'),
+  ('arrombado',                   'palavrao'),
+  ('arrombada',                   'palavrao'),
+  ('fdp',                         'palavrao'),
+  ('pqp',                         'palavrao'),
+  ('vtnc',                        'palavrao'),
+  ('vsf',                         'palavrao'),
+  ('fuck',                        'ingles'),
+  ('fucking',                     'ingles'),
+  ('shit',                        'ingles'),
+  ('bitch',                       'ingles'),
+  ('nigger',                      'ingles'),
+  ('faggot',                      'ingles'),
+  ('otario',                      'insulto'),
+  ('babaca',                      'insulto'),
+  ('imbecil',                     'insulto'),
+  ('escroto',                     'insulto'),
+  ('vagabunda',                   'insulto'),
+  ('vagabundo',                   'insulto'),
+  ('vadia',                       'insulto'),
+  ('viado',                       'odio'),
+  ('bicha',                       'odio'),
+  ('sapatao',                     'odio'),
+  ('traveco',                     'odio'),
+  ('macaco',                      'odio'),
+  ('preto imundo',                'odio'),
+  ('favelado',                    'odio'),
+  ('mongoloide',                  'odio'),
+  ('aleijado',                    'odio'),
+  ('nordestino burro',            'odio'),
+  ('veado',                       'odio'),
+  ('viadinho',                    'odio'),
+  ('bichona',                     'odio'),
+  ('sapatona',                    'odio'),
+  ('baitola',                     'odio'),
+  ('boiola',                      'odio'),
+  ('retardado mental',            'odio'),
+  ('debil mental',                'odio'),
+  ('macumbeiro',                  'odio'),
+  ('macumbeira',                  'odio'),
+  ('negro imundo',                'odio'),
+  ('preto sujo',                  'odio'),
+  ('negro sujo',                  'odio'),
+  ('acompanhante de luxo',        'fora_de_escopo'),
+  ('programa sexual',             'fora_de_escopo'),
+  ('garota de programa',          'fora_de_escopo'),
+  ('garoto de programa',          'fora_de_escopo'),
+  ('mulher de programa',          'fora_de_escopo'),
+  ('acompanhante sexual',         'fora_de_escopo'),
+  ('sugar daddy',                 'fora_de_escopo'),
+  ('sugar baby',                  'fora_de_escopo'),
+  ('onlyfans',                    'fora_de_escopo'),
+  ('nudes',                       'fora_de_escopo'),
+  ('massagem com final feliz',    'fora_de_escopo'),
+  ('pix antecipado',              'golpe_fraude'),
+  ('deposito antecipado',         'golpe_fraude'),
+  ('taxa de inscricao',           'golpe_fraude'),
+  ('taxa de cadastro',            'golpe_fraude'),
+  ('taxa de adesao',              'golpe_fraude'),
+  ('pague para trabalhar',        'golpe_fraude'),
+  ('dinheiro facil',              'golpe_fraude'),
+  ('nao aceitamos negros',        'exigencia_discriminatoria'),
+  ('nao aceitamos pretos',        'exigencia_discriminatoria'),
+  ('apenas pessoas brancas',      'exigencia_discriminatoria'),
+  ('somente pessoas brancas',     'exigencia_discriminatoria')
 on conflict (termo) do update set categoria = excluded.categoria;
 
 
@@ -179,9 +230,9 @@ select p.id, f.id
    and f.nome in ('garçom','bartender')
 on conflict do nothing;
 
-insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto)
+insert into public.estabelecimento (id, nome, documento, tipo, endereco, regiao_administrativa, ponto)
 values ('de000000-0000-4000-8000-000000000010','Bar da Revisão','19131243000197',
-        'food_service','CLS 405, Asa Sul, Brasília',
+        'food_service','CLS 405, Asa Sul, Brasília','Plano Piloto',
         'POINT(-47.8880 -15.8020)'::extensions.geography)
 on conflict (id) do nothing;
 
@@ -192,37 +243,6 @@ on conflict do nothing;
 
 -- Uma vaga aberta, para a lista não nascer vazia (diretriz 4.2), e uma vaga já preenchida
 -- que vira o turno confirmado — é nele que o revisor vê o contato liberado e o check-in.
-insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
-                         valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
-                         exige_material_proprio, responsavel_local, modo, estado,
-                         chave_cliente, publicado_por)
-select v.id, 'de000000-0000-4000-8000-000000000010',
-       (select id from public.funcao where nome = 'garçom'),
-       privado.agora() + v.daqui, privado.agora() + v.daqui + interval '6 h',
-       'CLS 405, Asa Sul', 'POINT(-47.8880 -15.8020)'::extensions.geography,
-       18000, 1, true, true, false, 'Gerente da Revisão', 'urgencia', v.estado,
-       v.id, 'de000000-0000-4000-8000-000000000001'
-  from (values
-    ('de000000-0000-4000-8000-000000000020'::uuid, interval '5 days',  'publicada'::public.estado_vaga),
-    ('de000000-0000-4000-8000-000000000021'::uuid, interval '2 days',  'preenchida'::public.estado_vaga)
-  ) as v(id, daqui, estado)
-on conflict (id) do nothing;
+-- Semeados e renovados via rotina idempotente e parametrizada (cartão RzllRo3o, item 6).
+select privado.renovar_dados_demonstracao();
 
-insert into public.posicao (id, vaga_id, estado, profissional_id, confirmado_em, inicio_em, fim_em)
-select 'de000000-0000-4000-8000-000000000030', 'de000000-0000-4000-8000-000000000020',
-       'aberta', null, null, v.inicio_em, v.fim_em
-  from public.vaga v where v.id = 'de000000-0000-4000-8000-000000000020'
-on conflict (id) do nothing;
-
-insert into public.posicao (id, vaga_id, estado, profissional_id, confirmado_em, inicio_em, fim_em)
-select 'de000000-0000-4000-8000-000000000031', 'de000000-0000-4000-8000-000000000021',
-       'confirmada',
-       (select id from public.profissional
-         where usuario_id = 'de000000-0000-4000-8000-000000000002'),
-       privado.agora(), v.inicio_em, v.fim_em
-  from public.vaga v where v.id = 'de000000-0000-4000-8000-000000000021'
-on conflict (id) do nothing;
-
-insert into public.turno (posicao_id, valor_acordado_centavos)
-values ('de000000-0000-4000-8000-000000000031', 18000)
-on conflict (posicao_id) do nothing;

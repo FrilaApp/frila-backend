@@ -167,7 +167,9 @@ with amostras as (
     extract(epoch from (min(n.aceita_em) - v.publicado_em)) as latencia_fcm_s
   from public.vaga v
   join public.despacho d on d.vaga_id = v.id
-  left join public.notificacao n on n.id = d.notificacao_id
+  -- RN23: a notificação que esperou o teto saiu tarde de propósito; a RNF03 mede só as
+  -- que não esperaram.
+  left join public.notificacao n on n.id = d.notificacao_id and not n.esperou_teto
   where v.estado in ('publicada', 'preenchida', 'concluida')
   group by v.id, v.publicado_em
   order by v.publicado_em desc

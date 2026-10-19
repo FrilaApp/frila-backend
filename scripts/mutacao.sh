@@ -2,13 +2,13 @@
 # Prova que os testes cobrem as regras do banco, em vez de apenas rodarem ao lado delas.
 #
 # Uma suíte verde não diz nada sobre o que ela protege. Este script derruba cada
-# `CHECK`, cada `EXCLUDE` e cada trigger do esquema, um por vez, roda o pgTAP e exige
-# que ele fique **vermelho**. Regra que sobrevive à própria remoção sem nenhum teste
-# reclamar é regra que a próxima refatoração remove de graça.
+# `CHECK`, cada `EXCLUDE`, cada restrição de unicidade e cada trigger do esquema, um por
+# vez, roda o pgTAP e exige que ele fique **vermelho**. Regra que sobrevive à própria
+# remoção sem nenhum teste reclamar é regra que a próxima refatoração remove de graça.
 #
 # Escrito depois de uma revisão medir que 11 de 31 restrições estavam nessa situação.
 #
-# Três defesas contra o próprio script mentir, porque agora ele é um portão de CI e o
+# Quatro defesas contra o próprio script mentir, porque agora ele é um portão de CI e o
 # time vai parar de conferir à mão:
 #
 #   1. **Linha de base.** A suíte tem que estar verde antes de mutar. Sem isso, uma
@@ -18,6 +18,21 @@
 #      `exit 1` por qualquer motivo não conta como detecção.
 #   3. **Restauração obrigatória.** Se a regra não voltar, o script aborta em vez de
 #      seguir mutando um banco já mutilado — modo de falha observado em revisão.
+#   4. **Devolução no caminho interrompido.** Entre derrubar e restaurar há uma suíte
+#      inteira, que leva minutos. `Ctrl-C`, `SIGTERM` ou timeout de CI nesse intervalo
+#      deixavam o esquema sem o objeto, em silêncio e sem registro de qual era.
+#
+# O placar tem DOIS baldes de cobertura, e isso é deliberado: há alvo cuja única
+# asserção possível é de catálogo, porque nenhum dado o viola. Contá-lo junto com os
+# outros faria o número dizer "comportamento coberto" sobre regra que nenhuma asserção de
+# comportamento vigia — o mesmo pecado, com um total por cima. A lista `estruturais`
+# declara quais são, e cita onde o comportamento de cada regra é testado.
+#
+# E o total de alvos é impresso, por categoria, antes da primeira mutação. Até aqui o
+# número não existia em nenhuma linha da saída: só a soma implícita de
+# cobertas + sem cobertura + não medidas, no fim. Regra nova em categoria que ninguém
+# varre só se denuncia por um total que não sobe, e um total que não se lê não denuncia
+# nada.
 #
 # Uso:  ./scripts/mutacao.sh              tudo
 #       ./scripts/mutacao.sh sem_turno    só o que casa com o texto
@@ -29,14 +44,44 @@ filtro="${1:-}"
 
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
 
+# Nomes dos arquivos de teste que falharam, extraídos de uma saída de `supabase test db`
+# lida da entrada padrão, um por linha.
+#
+# A saída entra por stdin, e não rodando a suíte aqui dentro, de propósito: quem precisa do
+# nome já tem a saída da rodada que reprovou, e rodar de novo para descobrir o nome dá a
+# resposta de **outra** rodada. Neste repositório isso não é hipótese — há teste que passa
+# em banco limpo e cai na segunda passada, depois que os scripts de corrida e de
+# demonstração deixam dado atrás.
+nomes_falhados() { sed -n 's|.*/supabase/tests/\([0-9a-z_]*\)\.sql.*Failed.*|\1|p;
+                           s|^/.*tests/\([0-9a-z_]*\)\.sql .*Dubious.*|\1|p' | sort -u; }
+
 # Nomes dos arquivos de teste que falharam nesta rodada, um por linha.
-falhas() { supabase test db 2>&1 | sed -n 's|.*/supabase/tests/\([0-9a-z_]*\)\.sql.*Failed.*|\1|p;
-                                           s|^/.*tests/\([0-9a-z_]*\)\.sql .*Dubious.*|\1|p' | sort -u; }
+falhas() { supabase test db 2>&1 | nomes_falhados; }
 
 # ── Defesa 1: a linha de base ──────────────────────────────────────────────────
+#
+# A saída é guardada, e não descartada em `/dev/null`. Descartá-la custou caro: em 29/09 a
+# suíte ficou vermelha em três branches ao mesmo tempo e este portão dizia apenas "SUÍTE JÁ
+# VERMELHA", sem o nome do teste. O passo `pgTAP` do mesmo job passava, então nem o log da
+# CI tinha o vermelho em outro lugar — descobrir qual teste era exigiu banco na mão. Um
+# portão que sabe que está vermelho e joga fora a única informação que resolve é o mesmo
+# pecado que ele existe para pegar.
 printf '▸ Linha de base... '
-if ! supabase test db >/dev/null 2>&1; then
+if ! base=$(supabase test db 2>&1); then
   echo "SUÍTE JÁ VERMELHA"
+  echo
+  vermelhos=$(printf '%s\n' "$base" | nomes_falhados)
+  if [ -n "$vermelhos" ]; then
+    echo "Vermelho em:"
+    printf '%s\n' "$vermelhos" | sed 's/^/    /'
+  else
+    # Sem nome extraído, a suíte provavelmente morreu antes de rodar teste algum — banco
+    # fora do ar, migração que não aplica. A cauda crua diz isso; "SUÍTE JÁ VERMELHA"
+    # sozinho, não.
+    echo "Nenhum arquivo de teste foi nomeado na saída: a suíte pode ter morrido antes de"
+    echo "rodar. As últimas 20 linhas:"
+    printf '%s\n' "$base" | tail -20 | sed 's/^/    /'
+  fi
   echo
   echo "Mutação não diz nada com a suíte quebrada: toda regra pareceria coberta."
   echo "Rode 'supabase test db' e conserte antes."
@@ -66,6 +111,90 @@ adicionar < <(psql -tAc "
     join pg_namespace n on n.oid = t.relnamespace
    where n.nspname in ('public','privado') and c.contype in ('c','x')
    order by c.conname")
+
+# Restrição de unicidade, em bloco próprio e não junto do `c`/`x` acima.
+#
+# Nove das dezesseis são o que torna uma RPC idempotente — candidatura por vaga e
+# profissional, denúncia por chave do cliente, publicação por chave do cliente, avaliação
+# por lado (RN07) — e `usuario_id_perfil` é RN25 inteira. Até aqui nenhuma delas era
+# varrida: o filtro era `contype in ('c','x')` e 'u' não aparecia no arquivo.
+#
+# Bloco separado porque o comando de restauração **não** é o mesmo do `CHECK`:
+#
+#   · Derrubar uma unique derruba o índice por trás dela, e `add constraint ... UNIQUE
+#     (cols)` constrói um índice novo com o nome da constraint. Isso é equivalente aqui
+#     e não é equivalente num banco de produção, onde o índice pode ter sido criado
+#     `concurrently`. Este portão só roda em banco de teste.
+#
+#   · Uma chave estrangeira pode depender do índice da unique, e aí o `drop` simples é
+#     recusado pelo Postgres — medido em `usuario_id_perfil`, de quem dependem
+#     `so_conta_de_profissional` e `so_conta_de_contratante`. Sem `cascade` a unique de
+#     RN25 cairia em "não consegui mutar" para sempre, e um balde que não conta é o mesmo
+#     pecado do "71 de 71". Com `cascade`, a restauração precisa devolver as três
+#     constraints, e as definições das dependentes são colhidas **aqui**, antes do drop:
+#     depois do drop elas não existem mais para serem lidas.
+#
+#   · A restauração vai dentro de `begin; … commit;`. DDL em Postgres é transacional, e
+#     medido que `psql -c` com várias instruções reverte tudo se uma falhar. Sem isso um
+#     restore de três passos teria dois estados intermediários em que o esquema está pela
+#     metade, e a Defesa 3 só enxerga o resultado final.
+#
+# `cascade` só entra quando **todos** os dependentes são chaves estrangeiras, que são as
+# únicas que esta consulta sabe devolver. Se algum dia algo mais depender do índice, a
+# contagem não fecha, o `cascade` não é emitido, o `drop` simples é recusado e o alvo sai
+# como "não medido" — ruidoso, em vez de um objeto perdido em silêncio.
+adicionar < <(psql -tAc "
+  select 'unicidade|' || c.conname || '|' ||
+         'alter table ' || c.conrelid::regclass || ' drop constraint ' || quote_ident(c.conname) ||
+           case when d.todos > 0 and d.todos = d.estrangeiras then ' cascade' else '' end || '|' ||
+         'begin; ' ||
+         'alter table ' || c.conrelid::regclass || ' add constraint ' ||
+           quote_ident(c.conname) || ' ' || pg_get_constraintdef(c.oid) || '; ' ||
+         coalesce(d.devolve, '') ||
+         'commit;'
+    from pg_constraint c
+    join pg_class t on t.oid = c.conrelid
+    join pg_namespace n on n.oid = t.relnamespace
+    left join lateral (
+      select count(*) as todos,
+             count(*) filter (where f.contype = 'f') as estrangeiras,
+             string_agg('alter table ' || f.conrelid::regclass || ' add constraint ' ||
+                          quote_ident(f.conname) || ' ' || pg_get_constraintdef(f.oid) || '; ',
+                        '' order by f.conname) filter (where f.contype = 'f') as devolve
+        from pg_depend p
+        left join pg_constraint f
+               on f.oid = p.objid and p.classid = 'pg_constraint'::regclass
+       where p.refobjid = c.conindid
+         and p.refclassid = 'pg_class'::regclass
+         and p.deptype = 'n') d on true
+   where n.nspname in ('public','privado') and c.contype = 'u'
+   order by c.conname")
+
+# Índice único, que **não** é constraint: não tem `contype`, não está em `pg_constraint` e
+# por isso estava fora do portão por dois motivos independentes — nem o filtro nem a
+# tabela consultada o alcançavam.
+#
+# Os três da develop são parciais, e a cláusula `where` é a regra inteira:
+# `usuario_email_ativo` só vale na conta não anonimizada (RF25 manda anonimizar em vez de
+# apagar, e unicidade total trancaria o e-mail de quem encerrou a conta para sempre);
+# `notificacao_marca_de_envio` só nos tipos que têm marca de envio; e
+# `posicao_uma_reabertura_por_falta` só onde a coluna não é nula. Um restore que montasse
+# o `create unique index` à mão perderia o `where` e **apertaria** a regra em silêncio —
+# que é pior do que não medir, porque envenena todos os alvos seguintes com um esquema
+# que ninguém sabe que mudou. `pg_get_indexdef` devolve a instrução completa, com o
+# `where`, e é por isso que ela é o restore.
+adicionar < <(psql -tAc "
+  select 'índice|' || i.relname || '|' ||
+         'drop index ' || quote_ident(n.nspname) || '.' || quote_ident(i.relname) || '|' ||
+         pg_get_indexdef(x.indexrelid)
+    from pg_index x
+    join pg_class i on i.oid = x.indexrelid
+    join pg_class t on t.oid = x.indrelid
+    join pg_namespace n on n.oid = t.relnamespace
+   where n.nspname in ('public','privado')
+     and x.indisunique
+     and not exists (select 1 from pg_constraint c where c.conindid = x.indexrelid)
+   order by i.relname")
 
 # Trigger não se derruba e se recria de graça — desabilitar basta e é reversível.
 adicionar < <(psql -tAc "
@@ -125,9 +254,104 @@ adicionar < <(psql -tAc "
    where n.nspname = 'public'
    order by p.polname")
 
+# ── O total, por categoria ─────────────────────────────────────────────────────
+#
+# Impresso antes de mutar, e não só somado no fim. O caso de 23/09 é o argumento: a
+# primeira tabela de `privado` com restrição entrou sem que o total subisse, o
+# verificador continuou dizendo 71 de 71, e ninguém teve de onde desconfiar. Um total que
+# aparece é a única asserção que o portão faz sobre a própria cobertura.
+echo "Alvos montados: ${#alvos[@]}"
+printf '%s\n' ${alvos[@]+"${alvos[@]}"} | cut -d'|' -f1 | sort | uniq -c |
+  sort -rn | sed 's/^ */    /'
+if [ -n "$filtro" ]; then
+  echo
+  echo "Filtro '$filtro': só os alvos cujo nome o contém são mutados."
+fi
+echo
+
+# ── Alvos de cobertura ESTRUTURAL, declarados aqui e em nenhum outro lugar ─────
+#
+# Dois dos alvos não são violáveis por dado nenhum. A asserção que morre quando eles
+# caem é de catálogo — ela afirma que o objeto existe, não que o comportamento dele vale
+# — e somar isso ao mesmo balde das outras faria o placar dizer "comportamento coberto"
+# sobre uma regra que nenhuma asserção de comportamento vigia.
+#
+# Isso seria o pecado que este portão existe para pegar, agora com um número por cima:
+# "regra sem cobertura que se apresenta como coberta". Daí os dois baldes. O alvo CONTA,
+# e continua reprovando o portão se sobreviver; o que muda é que a natureza da cobertura
+# dele fica declarada, com nome e razão, em vez de desaparecer dentro de um total.
+#
+# Entrar nesta lista não é desconto. É a afirmação de que o comportamento está coberto em
+# OUTRO lugar, e esse lugar está citado. Quem acrescentar um nome aqui sem a citação está
+# usando a lista para o oposto do que ela serve.
+estruturais=(
+  # `unique (id, perfil)` sobre tabela cuja chave primária é `id`: duas linhas com o
+  # mesmo `id` não existem, logo não há insert que a viole. Ela existe para ser o alvo
+  # das chaves estrangeiras compostas de RN25, e derrubá-la exige `cascade`, que leva as
+  # duas junto — o vermelho que o portão vê vem delas, por 23503, e não da unicidade.
+  # Comportamento de RN25 coberto em supabase/tests/010_identidade.sql:36 (o trigger de
+  # perfil imutável), :48 e :59 (a chave estrangeira composta, nos dois sentidos) e
+  # supabase/tests/050_restricoes_restantes.sql:43 e :51 (o CHECK de coluna, de
+  # propósito separado da chave estrangeira).
+  usuario_id_perfil
+
+  # `unique (turno_id, autor_id)`: o gatilho `avaliacao_rn07` amarra o autor ao lado — o
+  # profissional do turno só escreve `alvo_tipo = 'estabelecimento'`, um membro da casa
+  # só escreve 'profissional' — e RN25 proíbe a mesma conta ser as duas partes. Logo
+  # (turno, autor) determina o lado, e `um_voto_por_lado` recusa primeiro: toda violação
+  # alcançável de uma passa pela outra. Comportamento coberto em
+  # supabase/tests/030_turno_e_avaliacao.sql:152 e
+  # supabase/tests/180_avaliar_e_perfil_publico.sql:366 (um voto por lado, na tabela),
+  # :271 e :278 (409 `avaliacao_ja_registrada`, pela RPC) e :360 (o gatilho recusando
+  # quem não é parte do turno).
+  avaliacao_turno_id_autor_id_key
+)
+
+e_estrutural() {
+  local n
+  for n in ${estruturais[@]+"${estruturais[@]}"}; do
+    [ "$n" = "$1" ] && return 0
+  done
+  return 1
+}
+
 sobreviventes=()
+estrutura=()
 pulados=()
 mortos=0
+
+# ── Defesa 4: a janela entre derrubar e restaurar ──────────────────────────────
+#
+# A linha que derruba e a que restaura têm uma suíte pgTAP inteira entre elas, que leva
+# minutos por alvo. Interrupção nesse intervalo — `Ctrl-C`, `SIGTERM`, timeout de CI,
+# janela fechada — deixava o esquema sem o objeto, sem aviso, e sem nada no disco dizendo
+# qual era. A Defesa 3 cobre "a restauração falhou"; não cobria "a restauração nunca foi
+# tentada", e este portão passou de 117 para 136 alvos, o que é 19 janelas novas.
+#
+# Deliberadamente sem arquivo de trava e sem estado entre execuções: uma trava contra
+# execução dupla trocaria "perde um alvo" por "não roda nunca mais, em silêncio", que é o
+# modo de falha caro. No caminho normal `restaurar_pendente` está vazio quando o trap
+# roda, e ele não imprime nada.
+restaurar_pendente=''
+restaurar_nome=''
+
+devolver() {
+  [ -z "$restaurar_pendente" ] && return 0
+  local comando="$restaurar_pendente"
+  restaurar_pendente=''
+  echo
+  if psql -q -c "$comando" >/dev/null 2>&1; then
+    echo "Interrompido durante a mutação de '$restaurar_nome' — o objeto foi devolvido."
+  else
+    echo "ATENÇÃO: o banco ficou SEM '$restaurar_nome' e a devolução também falhou."
+    echo "Nada medido neste banco vale enquanto isso não for consertado:"
+    echo "rode 'supabase db reset'."
+  fi
+}
+
+trap devolver EXIT
+trap 'devolver; exit 130' INT
+trap 'devolver; exit 143' TERM
 
 for alvo in ${alvos[@]+"${alvos[@]}"}; do
   IFS='|' read -r tipo nome derrubar restaurar <<< "$alvo"
@@ -145,10 +369,18 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
     continue
   fi
 
+  # Armada só depois de o drop ter dado certo: armar antes faria o trap tentar
+  # restaurar um objeto que nunca saiu.
+  restaurar_pendente="$restaurar"
+  restaurar_nome="$nome"
+
   quem=$(falhas)
 
   # ── Defesa 3: a restauração é obrigatória ────────────────────────────────────
   if ! psql -q -c "$restaurar" >/dev/null 2>&1; then
+    # Este ramo já diz tudo o que o trap diria, e com mais contexto. Desarmar evita a
+    # mensagem em dobro no EXIT.
+    restaurar_pendente=''
     echo "RESTAURAÇÃO FALHOU"
     echo
     echo "O banco ficou sem '$nome' e o script parou aqui de propósito: seguir mutando"
@@ -156,11 +388,17 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
     echo "Restaure com 'supabase db reset'."
     exit 1
   fi
+  restaurar_pendente=''
 
   # ── Defesa 2: identidade do que falhou ───────────────────────────────────────
   if [ -z "$quem" ]; then
     echo "SOBREVIVEU — nenhum teste reclamou"
     sobreviventes+=("$tipo $nome")
+  elif e_estrutural "$nome"; then
+    # Morreu, mas por asserção de catálogo. Balde separado para que a linha por alvo
+    # também seja legível sozinha: quem lê "estrutura ✓" não lê "comportamento coberto".
+    echo "estrutura ✓  ($(echo "$quem" | tr '\n' ' ' | sed 's/ $//'))"
+    estrutura+=("$tipo $nome")
   else
     echo "morreu ✓  ($(echo "$quem" | tr '\n' ' ' | sed 's/ $//'))"
     mortos=$((mortos + 1))
@@ -168,9 +406,44 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
 done
 
 echo
-echo "cobertas: $mortos · sem cobertura: ${#sobreviventes[@]} · não medidas: ${#pulados[@]}"
+echo "comportamento: $mortos · estrutura: ${#estrutura[@]}" \
+     "· sem cobertura: ${#sobreviventes[@]} · não medidas: ${#pulados[@]}" \
+     "· de ${#alvos[@]} alvos"
 
 falta=0
+
+if [ "${#estrutura[@]}" -gt 0 ]; then
+  echo
+  echo "Cobertura ESTRUTURAL — o que morre é asserção de catálogo, não de comportamento."
+  echo "Não leia estes como comportamento coberto. A razão de cada um, e onde o"
+  echo "comportamento da regra é testado, está na lista 'estruturais' deste arquivo:"
+  printf '  %s\n' "${estrutura[@]}"
+fi
+
+# A declaração não pode envelhecer em silêncio. Nome declarado que não casa com alvo
+# nenhum é objeto renomeado ou objeto que saiu do esquema, e nos dois casos a lista
+# passou a mentir — exatamente o modo de falha de 23/09, de novo. Conferido contra a
+# lista inteira de alvos, e não contra o subconjunto filtrado, para que rodar com filtro
+# não esconda o envelhecimento.
+declarados_sem_alvo=()
+for n in ${estruturais[@]+"${estruturais[@]}"}; do
+  achou=0
+  for alvo in ${alvos[@]+"${alvos[@]}"}; do
+    case "$alvo" in *"|$n|"*) achou=1; break;; esac
+  done
+  [ "$achou" = 0 ] && declarados_sem_alvo+=("$n")
+done
+
+if [ "${#declarados_sem_alvo[@]}" -gt 0 ]; then
+  echo
+  echo "Declarado como estrutural, mas não existe alvo com esse nome:"
+  printf '  %s\n' "${declarados_sem_alvo[@]}"
+  echo
+  echo "A lista 'estruturais' está desatualizada. Um nome que não casa com nada é um"
+  echo "desconto concedido a um objeto que ninguém varre — conserte a lista ou remova"
+  echo "o nome."
+  falta=1
+fi
 
 if [ "${#sobreviventes[@]}" -gt 0 ]; then
   echo

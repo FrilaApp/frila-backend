@@ -51,12 +51,17 @@ Membros: `cauecarneiroc`, `joaopauloalbuquerque7`, `juliavasconcelos82`,
    cuja dependência ainda está no sprint é trabalho que vai encalhar.
 4. **Cartão que o código já cumpriu.** Compare a checklist com o repositório: se a
    migração existe, a RPC existe e o pgTAP passa, o cartão está pronto e ninguém moveu.
-   **Não mova sozinho** — reporte, porque a regra do quadro é que quem testa marca.
+   Se o cartão é de quem conduz a sessão, reporte como **para fechar agora**: conferir
+   cada critério, marcar com a prova e mover para Concluído. Se é de outra pessoa, não
+   mova: reporte, e sugira comentar no cartão o que foi medido.
 5. **Etiqueta faltando.** Todo cartão de execução tem frente (Backend, iOS, Design,
    Infra, QA, Produto, Pesquisa, Jurídico, Marketing, Academy), sprint (Sprint 0 a 4) e
    prioridade (MUST, SHOULD, COULD).
 6. **Mais de dois cartões em andamento** para a mesma pessoa. É regra do quadro.
 7. **Prazo vencido** em cartão que não está em Concluído.
+8. **Cartão parado em "Revisão".** Revisão é só para PR aberto esperando outra pessoa.
+   Cartão lá com todos os PRs mesclados, ou sem PR nenhum, está na coluna errada: reporte
+   o que falta para Concluído, ou o que falta e de quem para voltar a "Em andamento".
 
 ## O próximo cartão a pegar
 
@@ -93,6 +98,7 @@ Sem achado, escreva "Quadro consistente" e só. Não invente problema para parec
 ## O que você não faz
 
 - Não cria cartão. Isso é do `frila-task-creator`.
-- Não move cartão para Concluído. Quem testa marca a checklist.
+- Não move cartão para Concluído. Quem fecha é quem fez o cartão, depois de conferir
+  cada critério.
 - Não apaga cartão. Reporta a duplicata e deixa a decisão para quem está conduzindo.
 - Não afirma que um cartão está pronto sem ter rodado o teste que a checklist pede.

@@ -13,7 +13,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(16);
+select plan(19);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -211,6 +211,41 @@ select is(
     format($$ select public.contato_do_turno(%L) $$, (select id from t)))->>'telefone',
   '+5561955550001',
   'e nada foi gravado: com o relógio de volta, o contato volta');
+
+-- ── Conta anonimizada / excluída (B10, RNF08 / LGPD) ─────────────────────────
+--
+-- Um JWT emitido antes da exclusão não pode ler telefones (RF25). A verificação
+-- de conta ativa roda antes de qualquer leitura no banco.
+update public.usuario
+   set estado = 'anonimizada',
+       anonimizado_em = now()
+ where id = 'ae000000-0000-4000-8000-0000000000e1';
+
+select throws_ok(
+  format($$ select pg_temp.como('ae000000-0000-4000-8000-0000000000e1',
+       $x$ select public.contato_do_turno(%L) $x$) $$, (select id from t)),
+  'PGRST',
+  '{"code" : "nao_autenticado", "message" : "nao_autenticado", "details" : null, "hint" : null}',
+  'B10: token de conta excluída/anonimizada não lê contato do turno (401 nao_autenticado)');
+
+-- A outra parte (conta ativa) continua com acesso garantido ao contato do turno
+select is(
+  pg_temp.como('ae000000-0000-4000-8000-0000000000d1',
+    format($$ select public.contato_do_turno(%L) $$, (select id from t)))->>'telefone',
+  '+5561955550011',
+  'a contraparte ativa continua conseguindo consultar o contato do turno');
+
+-- Conta suspensa recebe 403 sem_permissao (RF24, RN13)
+update public.usuario
+   set estado = 'suspensa'
+ where id = 'ae000000-0000-4000-8000-0000000000d1';
+
+select throws_ok(
+  format($$ select pg_temp.como('ae000000-0000-4000-8000-0000000000d1',
+       $x$ select public.contato_do_turno(%L) $x$) $$, (select id from t)),
+  'PGRST',
+  '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : "conta_suspensa", "hint" : null}',
+  'B10: token de conta suspensa não lê contato do turno (403 sem_permissao/conta_suspensa)');
 
 select * from finish();
 rollback;

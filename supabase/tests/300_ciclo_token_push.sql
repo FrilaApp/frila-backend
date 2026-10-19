@@ -8,7 +8,7 @@
 -- Prefixo 300.
 
 begin;
-select plan(37);
+select plan(39);
 
 insert into privado.ambiente (eh_teste) values (true);
 select set_config('frila.agora', '2026-10-20 12:00:00-03', true);
@@ -117,8 +117,9 @@ select is(pg_temp.aparelhos('c3000000-0000-4000-8000-000000000001'), 1,
 
 -- A conta B entra no mesmo iPhone sem que a A tenha chamado remover_dispositivo
 -- (app morto, sem rede no signOut): o registro de B toma o token.
-select pg_temp.como('c3000000-0000-4000-8000-000000000002',
-  $$ select public.registrar_dispositivo('fcm_token_aparelho_compartilhado_0001', 'ios') $$);
+create temp table res_reg_b as
+  select pg_temp.como('c3000000-0000-4000-8000-000000000002',
+    $$ select public.registrar_dispositivo('fcm_token_aparelho_compartilhado_0001', 'ios') $$) as res;
 
 select is(pg_temp.aparelhos('c3000000-0000-4000-8000-000000000002'), 1,
   'Troca de dono: conta B passa a ter o aparelho');
@@ -171,6 +172,24 @@ select is(
     $$ select public.remover_dispositivo('fcm_token_aparelho_compartilhado_0001') $$),
   '{"removido": false}'::jsonb,
   'Idempotente: repetir a saída devolve removido false, sem erro');
+
+-- Re-registro da Conta B após remoção: recebe um novo vinculo_id (RN15, 0.2.30)
+create temp table res_reg_b_novo as
+  select pg_temp.como('c3000000-0000-4000-8000-000000000002',
+    $$ select public.registrar_dispositivo('fcm_token_aparelho_compartilhado_0001', 'ios') $$) as res;
+
+select ok(
+  (select (res->>'vinculo_id') is not null from res_reg_b_novo),
+  'Re-registro após remoção traz vinculo_id preenchido');
+
+select isnt(
+  (select res->>'vinculo_id' from res_reg_b_novo),
+  (select res->>'vinculo_id' from res_reg_b),
+  'remover_dispositivo encerra o vínculo: registro seguinte da mesma conta recebe id novo (0.2.30)');
+
+-- Remove novamente para manter estado limpo para os próximos testes
+select pg_temp.como('c3000000-0000-4000-8000-000000000002',
+  $$ select public.remover_dispositivo('fcm_token_aparelho_compartilhado_0001') $$);
 
 select is(
   pg_temp.como('c3000000-0000-4000-8000-000000000001',
