@@ -130,7 +130,7 @@ select is(
 );
 
 -- 6. Gravação de aceite libera notificação para enviada
-perform privado.gravar_aceite_push('74700000-0000-4000-8000-000000000001');
+select privado.gravar_aceite_push('74700000-0000-4000-8000-000000000001');
 
 select is(
   (select estado_entrega from public.notificacao where id = '74700000-0000-4000-8000-000000000001'),
