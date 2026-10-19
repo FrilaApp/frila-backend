@@ -3059,6 +3059,165 @@ Deno.test(
   },
 );
 
+Deno.test(
+  "OAuth Google: getAccessToken e processarEnvioPush nao vazam corpo nem descricao de erro nos logs e mensagens de erro",
+  async () => {
+    const sa = await gerarContaDeServicoTeste();
+    const MARCADOR_SEGREDO = "SEGREDO-DE-TESTE-OAUTH-TOKEN-12345";
+    const MARCADOR_HTML = "SEGREDO-HTML-PROXY-ERROR-67890";
+
+    // 1. Teste direto de getAccessToken com JSON contendo error_description sensível
+    const mockFetchJsonErro: typeof fetch = () => {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: "invalid_grant",
+            error_description: MARCADOR_SEGREDO,
+          }),
+          { status: 400, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    };
+
+    let erroLancado: Error | null = null;
+    try {
+      await getAccessToken(sa, mockFetchJsonErro);
+    } catch (e) {
+      erroLancado = e as Error;
+    }
+
+    assert(erroLancado !== null, "getAccessToken deveria ter lançado erro para status 400");
+    assertEquals(
+      erroLancado.message,
+      "Falha ao obter token OAuth do Google (400): invalid_grant",
+      "Mensagem deve conter apenas o status e o código curto do erro",
+    );
+    assert(
+      !erroLancado.message.includes(MARCADOR_SEGREDO),
+      "A mensagem de erro NÃO deve conter dados do corpo da resposta OAuth",
+    );
+    assert(
+      !erroLancado.message.includes("error_description"),
+      "A mensagem de erro NÃO deve conter o campo error_description",
+    );
+
+    // 2. Teste direto de getAccessToken com HTML/texto não-JSON
+    const mockFetchHtmlErro: typeof fetch = () => {
+      return Promise.resolve(
+        new Response(
+          `<html><body>${MARCADOR_HTML}</body></html>`,
+          { status: 502, headers: { "Content-Type": "text/html" } },
+        ),
+      );
+    };
+
+    let erroHtmlLancado: Error | null = null;
+    try {
+      await getAccessToken(sa, mockFetchHtmlErro);
+    } catch (e) {
+      erroHtmlLancado = e as Error;
+    }
+
+    assert(erroHtmlLancado !== null, "getAccessToken deveria ter lançado erro para status 502");
+    assertEquals(
+      erroHtmlLancado.message,
+      "Falha ao obter token OAuth do Google (502)",
+      "Mensagem não deve anexar corpo quando não for JSON com campo error",
+    );
+    assert(
+      !erroHtmlLancado.message.includes(MARCADOR_HTML),
+      "A mensagem de erro NÃO deve conter HTML ou texto sensível",
+    );
+
+    // 3. Teste em processarEnvioPush verificando que console.error não vaza o segredo
+    const mockFetchPush: typeof fetch = (input: RequestInfo | URL) => {
+      const urlStr = input.toString();
+      if (urlStr.includes("notificacao")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify([
+              {
+                id: "a3000000-0000-4000-8000-000000000001",
+                usuario_id: "u1",
+                tipo: "vaga",
+                titulo: "Nova vaga",
+                corpo: "Vaga disponível",
+                payload: {},
+                vaga_id: "v1",
+                turno_id: null,
+                tentativas: 0,
+                estado_entrega: "pendente",
+                proxima_tentativa_em: null,
+              },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+
+      if (urlStr === "http://mock-oauth/token") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: "invalid_grant",
+              error_description: MARCADOR_SEGREDO,
+            }),
+            { status: 400, headers: { "Content-Type": "application/json" } },
+          ),
+        );
+      }
+
+      return Promise.reject(new Error(`URL não tratada: ${urlStr}`));
+    };
+
+    const req = new Request("http://localhost/functions/v1/enviar-push", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-agendador-secret": SEGREDO_TESTE,
+      },
+      body: JSON.stringify({ notificacao_id: "a3000000-0000-4000-8000-000000000001" }),
+    });
+
+    const logsConsoleError: string[] = [];
+    const consoleErrorOriginal = console.error;
+    console.error = (...args: unknown[]) => {
+      logsConsoleError.push(args.map(String).join(" "));
+      consoleErrorOriginal(...args);
+    };
+
+    try {
+      const res = await processarEnvioPush(req, {
+        serviceAccount: sa,
+        fetchFn: mockFetchPush,
+        sqlClient: criarMockSqlClient(),
+      });
+
+      assertEquals(res.status, 500);
+      const data = await res.json();
+      assertEquals(data.ok, false);
+      assertEquals(data.erro, "falha_oauth_google");
+
+      const logOAuth = logsConsoleError.find((msg) =>
+        msg.includes("Erro ao autenticar no Google OAuth:"),
+      );
+      assert(logOAuth !== undefined, "Deveria ter registrado log de erro ao autenticar no Google OAuth");
+
+      assert(
+        !logsConsoleError.some((msg) => msg.includes(MARCADOR_SEGREDO)),
+        `Nenhum log do console.error pode conter o marcador ${MARCADOR_SEGREDO}`,
+      );
+      assert(
+        !logsConsoleError.some((msg) => msg.includes("error_description")),
+        "Nenhum log do console.error pode conter o campo error_description",
+      );
+    } finally {
+      console.error = consoleErrorOriginal;
+    }
+  },
+);
+
+
 
 
 
