@@ -8,6 +8,7 @@ import {
   JANELA_MINUTOS,
   MAX_IPS_EM_MEMORIA,
   MIN_COMPRIMENTO_CODIGO,
+  parseLimiteJanela,
   registrarTentativaIp,
   resetarLimitesIp,
   TETO_TENTATIVAS,
@@ -608,24 +609,39 @@ Deno.test("entrar-demonstracao: janela DEMONSTRACAO_ATIVA_ATE expira ou ausente 
       const resSemEnv = await handler(criarReq(), depsPadrao(estado, { ativaAte: undefined }));
       assertEquals(resSemEnv.status, 404);
 
-      // 4. Data em formato inválido
+      // 4. Data em formato inválido ou sem fuso horário explícito
       const resInvalida = await handler(criarReq(), depsPadrao(estado, { ativaAte: "data-invalida" }));
       assertEquals(resInvalida.status, 404);
 
-      // 5. Data válida configurada no ambiente
+      // 4b. Data sem 'T' ou sem fuso (rejeitada para evitar ambiguidades UTC vs BRT)
+      const resSemFuso1 = await handler(criarReq(), depsPadrao(estado, { ativaAte: "2099-12-31" }));
+      assertEquals(resSemFuso1.status, 404);
+
+      const resSemFuso2 = await handler(criarReq(), depsPadrao(estado, { ativaAte: "2099-12-31T23:59:00" }));
+      assertEquals(resSemFuso2.status, 404);
+
+      // 5. Data válida configurada no ambiente com fuso Z
       Deno.env.set("DEMONSTRACAO_ATIVA_ATE", "2035-01-01T00:00:00Z");
       const resEnvFuturo = await handler(criarReq(), depsPadrao(estado, { ativaAte: undefined }));
       assertEquals(resEnvFuturo.status, 200);
+
+      // 5b. Data válida configurada com fuso de offset brasileiro (-03:00)
+      Deno.env.set("DEMONSTRACAO_ATIVA_ATE", "2099-12-31T23:59:00-03:00");
+      const resEnvOffset = await handler(criarReq(), depsPadrao(estado, { ativaAte: undefined }));
+      assertEquals(resEnvOffset.status, 200);
     } finally {
       if (envAntigo !== undefined) Deno.env.set("DEMONSTRACAO_ATIVA_ATE", envAntigo);
       else Deno.env.delete("DEMONSTRACAO_ATIVA_ATE");
     }
 
-    // 6. Data no futuro em deps: login permitido normalmente
+    // 6. Data no futuro em deps com fuso Z ou offset: login permitido normalmente
     const resAtiva = await handler(criarReq(), depsPadrao(estado, { ativaAte: "2030-01-01T00:00:00Z" }));
     assertEquals(resAtiva.status, 200);
 
-    // Valida que emitiu alerta operacional para as configurações inválidas/expiradas
+    const resAtivaOffset = await handler(criarReq(), depsPadrao(estado, { ativaAte: "2099-12-31T23:59:00-03:00" }));
+    assertEquals(resAtivaOffset.status, 200);
+
+    // Valida que emitiu alerta operacional para as configurações inválidas/expiradas/sem fuso
     assertEquals(
       logsErro.some((msg) => msg.includes("[ALERTA_CONFIG_DEMONSTRACAO]")),
       true,
@@ -725,6 +741,26 @@ Deno.test("entrar-demonstracao: controle de memoria do mapa de IPs evita vazamen
   // Após expirar a janela (10 minutos), o IP é liberado
   const dezMinDepois = agora + JANELA_MINUTOS * 60_000 + 1000;
   assertEquals(verificarLimiteIp(ipNovo, dezMinDepois), true);
+});
+
+Deno.test("entrar-demonstracao: parseLimiteJanela exige formato ISO-8601 estrito com fuso explicito", () => {
+  // Rejeita formatos sem fuso horário (ambíguos entre UTC e horário local)
+  assertEquals(isNaN(parseLimiteJanela("")), true);
+  assertEquals(isNaN(parseLimiteJanela("   ")), true);
+  assertEquals(isNaN(parseLimiteJanela("2026-10-30")), true);
+  assertEquals(isNaN(parseLimiteJanela("2026-10-30T23:59:00")), true);
+  assertEquals(isNaN(parseLimiteJanela("30/10/2026 23:59:00")), true);
+  assertEquals(isNaN(parseLimiteJanela("invalido")), true);
+
+  // Aceita formatos com fuso UTC ('Z')
+  assertEquals(isNaN(parseLimiteJanela("2030-01-01T00:00:00Z")), false);
+  assertEquals(isNaN(parseLimiteJanela("2030-01-01T00:00Z")), false);
+  assertEquals(isNaN(parseLimiteJanela("2030-01-01T00:00:00.000Z")), false);
+
+  // Aceita formatos com offset numérico explícito (+HH:MM ou -HH:MM)
+  assertEquals(isNaN(parseLimiteJanela("2026-10-30T23:59:00-03:00")), false);
+  assertEquals(isNaN(parseLimiteJanela("2026-10-30T23:59:00+00:00")), false);
+  assertEquals(isNaN(parseLimiteJanela("2026-10-30T23:59:00+02:00")), false);
 });
 
 
