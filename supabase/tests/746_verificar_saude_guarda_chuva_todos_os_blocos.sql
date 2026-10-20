@@ -1,4 +1,4 @@
--- Teste pgTAP guarda-chuva: Prova que verificar_saude() contém INTEGRALMENTE todos os 12 blocos de monitoramento operacional
+-- Teste pgTAP guarda-chuva: Prova que verificar_saude() contém INTEGRALMENTE todos os 13 blocos de monitoramento operacional
 -- Se qualquer refatoração futura sobrescrever verificar_saude() e omitir qualquer um dos blocos, este teste reprova na CI.
 --
 -- Blocos vigiados:
@@ -14,9 +14,10 @@
 -- 10. contestacao_vencida
 -- 11. pgnet_falha_transporte
 -- 12. pgnet_resposta_recusada
+-- 13. demonstracao_sob_ataque
 
 begin;
-select plan(12);
+select plan(13);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -246,6 +247,21 @@ select is(
   'Bloco 12 presente: pgnet_resposta_recusada emite alerta para resposta 401/403/404 na janela'
 );
 delete from net._http_response;
+
+-- ── 13. Bloco 13: demonstracao_sob_ataque ──────────────────────────────────────
+delete from public.entrada_demonstracao;
+insert into public.entrada_demonstracao (email, aceita, em)
+select 'demo@test.local', false, privado.agora() - (g || ' minutes')::interval
+  from generate_series(1, 10) as g;
+
+delete from privado.alerta_emitido where codigo = 'demonstracao_sob_ataque';
+select privado.verificar_saude();
+select is(
+  (select count(*)::int from privado.alerta_emitido where codigo = 'demonstracao_sob_ataque'),
+  1,
+  'Bloco 13 presente: demonstracao_sob_ataque emite alerta para >= 10 tentativas recusadas na janela'
+);
+delete from public.entrada_demonstracao;
 
 select * from finish();
 rollback;
