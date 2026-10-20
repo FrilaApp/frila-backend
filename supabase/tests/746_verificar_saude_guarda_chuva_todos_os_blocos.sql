@@ -84,7 +84,19 @@ select is(
 delete from cron.job_run_details;
 
 -- ── 5. Bloco 5: notificacao_push_falhou ─────────────────────────────────────────
-delete from public.notificacao;
+-- Escopado ao usuário de fixture deste bloco, e não a tabela inteira: um
+-- `delete from public.notificacao` sem filtro quebra com FK
+-- (despacho_notificacao_id_fkey) quando já existe notificação real ligada a um
+-- despacho — exatamente o que os scripts de corrida e `ciclo-completo.sh` deixam no
+-- banco antes deste arquivo rodar na CI. Medido no PR #310 (cartão `5boVdM0t`):
+-- `supabase test db` sozinho (banco limpo) passa; rodado de novo depois de
+-- corrida-ciclo.sh/corrida-push.sh/ciclo-completo.sh, este bloco falha com
+-- "update or delete on table notificacao violates foreign key constraint
+-- despacho_notificacao_id_fkey". O alerta não perde cobertura por restringir ao
+-- próprio usuário de fixture: `privado.alerta_emitido` é único por `codigo` (teto de
+-- 1/hora em `privado.emitir_alerta`), então uma notificação real e falha por acaso
+-- dentro da mesma hora ainda deixaria a asserção abaixo em 1, não mais.
+delete from public.notificacao where usuario_id = '74600000-0000-4000-8000-000000000001';
 insert into public.usuario (id, nome, email, telefone, perfil, estado, nascimento, termos_versao, termos_aceite_em)
 values ('74600000-0000-4000-8000-000000000001', 'Usuário Push Falha', 'pushfalha@test.local', '+5561911117462', 'profissional', 'ativa', '1995-01-01', '1.0', now())
 on conflict (id) do nothing;
@@ -98,10 +110,11 @@ select is(
   1,
   'Bloco 5 presente: notificacao_push_falhou emite alerta para push com falha na última hora'
 );
-delete from public.notificacao;
+delete from public.notificacao where usuario_id = '74600000-0000-4000-8000-000000000001';
 
 -- ── 6. Bloco 6: fcm_configuracao_suspeita ──────────────────────────────────────
-delete from public.notificacao;
+-- Mesmo escopo do bloco 5, pelo mesmo motivo (FK despacho_notificacao_id_fkey).
+delete from public.notificacao where usuario_id = '74600000-0000-4000-8000-000000000002';
 insert into public.usuario (id, nome, email, telefone, perfil, estado, nascimento, termos_versao, termos_aceite_em)
 values ('74600000-0000-4000-8000-000000000002', 'Usuário FCM NOT_FOUND', 'fcmfalha@test.local', '+5561911117463', 'profissional', 'ativa', '1995-01-01', '1.0', now())
 on conflict (id) do nothing;
@@ -115,7 +128,7 @@ select is(
   1,
   'Bloco 6 presente: fcm_configuracao_suspeita emite alerta para motivo NOT_FOUND nos últimos 15 min'
 );
-delete from public.notificacao;
+delete from public.notificacao where usuario_id = '74600000-0000-4000-8000-000000000002';
 
 -- ── 7. Bloco 7: despacho_esperando_alem_do_teto ────────────────────────────────
 do $$
