@@ -142,6 +142,14 @@ jobs:
       - name: Lint do plpgsql sem achado novo
         run: ./scripts/lint-conhecido.sh
 
+      # Cartão `5boVdM0t`: `demonstracao-remoto.sh` gravava só EMAILS e CODIGO no
+      # `frila-dev`. Uma janela DEMONSTRACAO_ATIVA_ATE setada manualmente uma vez (fora
+      # deste script) e nunca renovada apaga a porta de demonstração em silêncio — 404
+      # idêntico para e-mail certo e código certo, sem log que distinga o motivo. Roda
+      # sem rede e sem Postgres: só valida a função pura via `source`.
+      - name: Deploy da demonstração exige janela válida
+        run: ./scripts/teste-demonstracao-remoto.sh
+
       # `privado.agora()` é o relógio do produto. Com `now()` no meio do caminho, todo
       # prazo vira decoração dentro de um teste que controla o relógio: o teste passa e a
       # regra some. O portão pergunta ao `pg_proc`, e não aos arquivos de migração —
