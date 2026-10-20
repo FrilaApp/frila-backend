@@ -247,7 +247,7 @@ ok "429 limite_excedido depois de repetir o código errado"
 # Restauramos o turno e limpamos o registro de tentativas para deixar o banco limpo
 # para testes subsequentes (como a suíte pgTAP e mutacao.sh) e para a revisão da Apple.
 if docker exec -i "$DB" psql -U postgres -d postgres -q -c \
-     'select privado.renovar_dados_demonstracao()' >/dev/null 2>&1; then
+     'truncate public.entrada_demonstracao; select privado.renovar_dados_demonstracao();' >/dev/null 2>&1; then
   ok "dados de demonstração restaurados após o teste"
 elif [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
   curl -s -X POST \
@@ -256,6 +256,11 @@ elif [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
        -H 'Content-Type: application/json' \
        -d '{}' \
        "$URL/rest/v1/rpc/renovar_dados_demonstracao" >/dev/null 2>&1 || true
+  curl -s -X DELETE \
+       "$URL/rest/v1/entrada_demonstracao?id=gt.0" \
+       -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+       -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+       -H 'Prefer: return=minimal' >/dev/null 2>&1 || true
   ok "dados de demonstração restaurados via service_role após o teste"
 fi
 

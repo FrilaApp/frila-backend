@@ -1,67 +1,118 @@
 #!/usr/bin/env bash
-# Semeia vagas futuras abertas para o estabelecimento de demonstração do contratante
-# (Bar da Revisão), no frila-dev. Cartão `5boVdM0t`, critério 4.
+# Semeia vagas futuras abertas de demonstração pós-06/11 para o Bar da Revisão
+# (cartão 5boVdM0t, critério 4):
 #
-# Chama `public.publicar_vaga` pela REST do PostgREST, autenticado como
-# `revisao-contratante@frila.app` — a mesma conta que a revisão da Apple usa. A sessão
-# nasce do jeito que a Edge Function `entrar-demonstracao` nasce a dela (dois passos de
-# Auth Admin, `generate_link` + `verify`), só que aqui com `service_role` direto, porque
-# a porta de demonstração no frila-dev está com a janela (`DEMONSTRACAO_ATIVA_ATE`)
-# vencida/ausente — bloqueio `2` da vila (token de Management API 401), fora do alcance
-# deste script. Quando alguém destravar o token e reaplicar os segredos, este caminho
-# deixa de ser necessário; ele continua funcionando igual, porque é a mesma RPC.
-#
-# Idempotente por chave_cliente (RF04): rodar de novo com as mesmas datas devolve as
-# vagas já existentes em vez de duplicar. Datas diferentes (ou `--a-partir-de`
-# diferente) sempre criam vagas novas.
+#   - Vagas abertas para Bar da Revisão / revisao-contratante;
+#   - Posições abertas configuráveis (padrão 20 por vaga para destravar o teste "Detalhe 20x");
+#   - Quantidade de vagas configurável (padrão 5 para destravar o teste "Lista cheia");
+#   - Datas pós-06/11 (padrão a partir de 2026-11-20).
+#   - Idempotente por chave_cliente (RF04): rodar de novo com as mesmas datas não duplica.
 #
 # Uso:
-#   ./scripts/semear-vagas-demonstracao.sh <quantidade> [--a-partir-de AAAA-MM-DD]
+#   ./scripts/semear-vagas-demonstracao.sh <quantidade> [--a-partir-de AAAA-MM-DD]    # remoto (frila-dev)
+#   ./scripts/semear-vagas-demonstracao.sh local [<quantidade>] [--posicoes N]       # local (contêiner Docker)
+#   ./scripts/semear-vagas-demonstracao.sh dev [<quantidade>] [--a-partir-de DATA]   # remoto explícito
+#   ./scripts/semear-vagas-demonstracao.sh prod <quantidade>                         # produção (exige confirmação)
 #
-# Sem --a-partir-de, começa em 2026-11-20 (bem depois da submissão de 06/11 — RN da
-# revisão da Apple não pode achar a vaga vencida no meio da revisão). Uma vaga por dia,
-# em dias consecutivos, para que "lista cheia" e "detalhe" tenham o que listar mesmo que
-# a revisão leve alguns dias.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-set -a; source .env; set +a
+[ -f .env ] && { set -a; source .env; set +a; }
 
-QUANTIDADE="${1:?uso: semear-vagas-demonstracao.sh <quantidade> [--a-partir-de AAAA-MM-DD]}"
-shift || true
+AMBIENTE="dev"
+QUANTIDADE=""
 A_PARTIR_DE="2026-11-20"
+POSICOES="20"
+SECO=""
+
+# Verifica se o primeiro argumento é o identificador de ambiente
+if [ $# -gt 0 ]; then
+  case "$1" in
+    local|dev|prod)
+      AMBIENTE="$1"
+      shift
+      ;;
+  esac
+fi
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --a-partir-de) A_PARTIR_DE="${2:?--a-partir-de precisa da data}"; shift 2 ;;
-    *) echo "opção desconhecida: $1" >&2; exit 2 ;;
+    --local) AMBIENTE="local"; shift ;;
+    --dev)   AMBIENTE="dev"; shift ;;
+    --prod)  AMBIENTE="prod"; shift ;;
+    --a-partir-de|--inicio) A_PARTIR_DE="$2"; shift 2 ;;
+    --quantidade) QUANTIDADE="$2"; shift 2 ;;
+    --posicoes)   POSICOES="$2"; shift 2 ;;
+    --seco)       SECO=1; shift ;;
+    [0-9]*)
+      if [ -z "$QUANTIDADE" ]; then
+        QUANTIDADE="$1"; shift
+      else
+        echo "argumento inesperado: $1" >&2; exit 2
+      fi
+      ;;
+    *)
+      echo "opção desconhecida: $1" >&2; exit 2
+      ;;
   esac
 done
+
+QUANTIDADE="${QUANTIDADE:-5}"
 
 case "$QUANTIDADE" in
   ''|*[!0-9]*) echo "quantidade precisa ser um inteiro positivo: $QUANTIDADE" >&2; exit 2 ;;
 esac
 [ "$QUANTIDADE" -ge 1 ] || { echo "quantidade precisa ser >= 1" >&2; exit 2; }
 
-for par in "URL:${FRILA_DEV_URL:-}" "ANON:${FRILA_DEV_ANON_KEY:-}" "SERVICE_ROLE:${FRILA_DEV_SERVICE_ROLE_KEY:-}"; do
-  [ -n "${par#*:}" ] || { echo "falta ${par%%:*} do frila-dev no .env" >&2; exit 1; }
+falhou() { printf '  ✗ %s\n' "$1" >&2; exit 1; }
+ok()     { printf '  ✓ %s\n' "$1"; }
+
+if [ "$AMBIENTE" = "local" ]; then
+  DB="${DB_CONTAINER:-supabase_db_frila-backend}"
+  INICIO_BASE="'${A_PARTIR_DE}T18:00:00Z'::timestamptz"
+  QUERY="select privado.semear_vagas_demonstracao($QUANTIDADE, $INICIO_BASE, $POSICOES);"
+  echo "▸ Semeadura de $QUANTIDADE vaga(s) de demonstração no ambiente local ($POSICOES posições/vaga)"
+  if [ -n "$SECO" ]; then
+    echo "  [seco] docker exec -i $DB psql -U postgres -d postgres -c \"$QUERY\""
+    exit 0
+  fi
+  docker exec -i "$DB" psql -U postgres -d postgres -q -c "$QUERY" >/dev/null \
+    || falhou "falha ao executar semeadura no contêiner $DB"
+  ok "vagas de demonstração semeadas no contêiner local com sucesso"
+  exit 0
+fi
+
+# ── Execução Remota (dev ou prod via REST / PostgREST) ─────────────────────────
+if [ "$AMBIENTE" = "prod" ]; then
+  [ "${EU_SEI_QUE_E_PRODUCAO:-}" = "1" ] || falhou \
+    "prod recusado. A semeadura altera dados no banco de produção. Se é isso mesmo, execute com EU_SEI_QUE_E_PRODUCAO=1"
+  BASE_URL="${FRILA_PROD_URL:-}"
+  ANON_KEY="${FRILA_PROD_ANON_KEY:-}"
+  SERVICE_ROLE="${FRILA_PROD_SERVICE_ROLE_KEY:-}"
+else
+  BASE_URL="${FRILA_DEV_URL:-}"
+  ANON_KEY="${FRILA_DEV_ANON_KEY:-}"
+  SERVICE_ROLE="${FRILA_DEV_SERVICE_ROLE_KEY:-}"
+fi
+
+if [ -n "$SECO" ]; then
+  echo "  [seco] semeadura remota no $AMBIENTE: $QUANTIDADE vaga(s) a partir de $A_PARTIR_DE ($POSICOES posições)"
+  exit 0
+fi
+
+for par in "URL:${BASE_URL}" "ANON:${ANON_KEY}" "SERVICE_ROLE:${SERVICE_ROLE}"; do
+  [ -n "${par#*:}" ] || { echo "falta ${par%%:*} para $AMBIENTE no .env" >&2; exit 1; }
 done
 
-EMAIL_CONTRATANTE="revisao-contratante@frila.app"
-ESTABELECIMENTO_BAR_DA_REVISAO="de000000-0000-4000-8000-000000000010"
-
-# funcao.id nasce de gen_random_uuid() em supabase/seed.sql: muda por ambiente e por
-# reset. Resolver pelo nome em tempo de execução em vez de fixar o uuid evita cair
-# exatamente no candidato 1 do cartão `5boVdM0t` (422 campo_invalido/funcao_id por id de
-# outro ambiente).
-FUNCAO_GARCOM=$(curl -s "$FRILA_DEV_URL/rest/v1/funcao?nome=eq.gar%C3%A7om&select=id" \
-  -H "apikey: $FRILA_DEV_SERVICE_ROLE_KEY" \
-  -H "Authorization: Bearer $FRILA_DEV_SERVICE_ROLE_KEY" \
+FUNCAO_GARCOM=$(curl -s "$BASE_URL/rest/v1/funcao?nome=eq.gar%C3%A7om&select=id" \
+  -H "apikey: $SERVICE_ROLE" \
+  -H "Authorization: Bearer $SERVICE_ROLE" \
   | python3 -c "import json,sys;d=json.load(sys.stdin);print(d[0]['id'] if d else '')")
-[ -n "$FUNCAO_GARCOM" ] || { echo "✗ função 'garçom' não encontrada no catálogo do frila-dev" >&2; exit 1; }
+[ -n "$FUNCAO_GARCOM" ] || { echo "✗ função 'garçom' não encontrada no catálogo de $AMBIENTE" >&2; exit 1; }
 
-echo "▸ Sessão para $EMAIL_CONTRATANTE (bypass da porta de demonstração, mesma RPC de login)"
-LINK=$(curl -s -X POST "$FRILA_DEV_URL/auth/v1/admin/generate_link" \
-  -H "apikey: $FRILA_DEV_SERVICE_ROLE_KEY" \
-  -H "Authorization: Bearer $FRILA_DEV_SERVICE_ROLE_KEY" \
+echo "▸ Sessão para $EMAIL_CONTRATANTE em $AMBIENTE (bypass da porta de demonstração, mesma RPC de login)"
+LINK=$(curl -s -X POST "$BASE_URL/auth/v1/admin/generate_link" \
+  -H "apikey: $SERVICE_ROLE" \
+  -H "Authorization: Bearer $SERVICE_ROLE" \
   -H "Content-Type: application/json" \
   -d "{\"type\":\"magiclink\",\"email\":\"$EMAIL_CONTRATANTE\"}")
 OTP=$(printf '%s' "$LINK" | python3 -c "import json,sys;print(json.load(sys.stdin).get('email_otp',''))")
@@ -70,8 +121,8 @@ if [ -z "$OTP" ]; then
   exit 1
 fi
 
-SESSAO=$(curl -s -X POST "$FRILA_DEV_URL/auth/v1/verify" \
-  -H "apikey: $FRILA_DEV_ANON_KEY" \
+SESSAO=$(curl -s -X POST "$BASE_URL/auth/v1/verify" \
+  -H "apikey: $ANON_KEY" \
   -H "Content-Type: application/json" \
   -d "{\"type\":\"magiclink\",\"email\":\"$EMAIL_CONTRATANTE\",\"token\":\"$OTP\"}")
 ACCESS_TOKEN=$(printf '%s' "$SESSAO" | python3 -c "import json,sys;print(json.load(sys.stdin).get('access_token',''))")
@@ -81,7 +132,7 @@ if [ -z "$ACCESS_TOKEN" ]; then
 fi
 echo "  ✓ sessão obtida (access_token presente, não impresso)"
 
-echo "▸ Publicando $QUANTIDADE vaga(s), a partir de $A_PARTIR_DE, um dia cada"
+echo "▸ Publicando $QUANTIDADE vaga(s), a partir de $A_PARTIR_DE, um dia cada ($POSICOES posições/vaga)"
 for i in $(seq 0 $((QUANTIDADE - 1))); do
   DIA=$(python3 -c "
 import datetime
@@ -90,8 +141,7 @@ print((base + datetime.timedelta(days=$i)).isoformat())
 ")
   CHAVE=$(python3 -c "
 import uuid
-# chave_cliente determinística por dia: reroda sem duplicar vaga do mesmo dia.
-print(uuid.uuid5(uuid.NAMESPACE_URL, 'frila-dev:demonstracao:bar-da-revisao:' + '$DIA'))
+print(uuid.uuid5(uuid.NAMESPACE_URL, '$AMBIENTE:demonstracao:bar-da-revisao:' + '$DIA'))
 ")
   PAYLOAD=$(python3 -c "
 import json
@@ -103,7 +153,7 @@ print(json.dumps({
   'local': 'Bar da Revisao - salao principal',
   'ponto': {'latitude': -15.7801, 'longitude': -47.9292},
   'valor_centavos': 14000,
-  'posicoes': 3,
+  'posicoes': int('$POSICOES'),
   'inclui_refeicao': True,
   'inclui_transporte': False,
   'exige_material_proprio': False,
@@ -113,9 +163,9 @@ print(json.dumps({
   'alerta_antecedencia_min': 180,
 }))
 ")
-  RESP=$(curl -s -w "\n%{http_code}" -X POST "$FRILA_DEV_URL/rest/v1/rpc/publicar_vaga" \
+  RESP=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/rest/v1/rpc/publicar_vaga" \
     -H "Content-Type: application/json" \
-    -H "apikey: $FRILA_DEV_ANON_KEY" \
+    -H "apikey: $ANON_KEY" \
     -H "Authorization: Bearer $ACCESS_TOKEN" \
     -d "$PAYLOAD")
   STATUS=$(printf '%s' "$RESP" | tail -n1)
@@ -129,4 +179,4 @@ print(json.dumps({
 done
 
 echo
-echo "Semeadas $QUANTIDADE vaga(s) para Bar da Revisão, a partir de $A_PARTIR_DE."
+echo "Semeadas $QUANTIDADE vaga(s) para Bar da Revisão em $AMBIENTE, a partir de $A_PARTIR_DE ($POSICOES posições/vaga)."
