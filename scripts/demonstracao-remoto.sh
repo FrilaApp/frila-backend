@@ -94,6 +94,31 @@ PY
   ok "$(printf '%s' "$DEMONSTRACAO_EMAILS" | tr ',' '\n' | wc -l | tr -d ' ') endereço(s) declarado(s), código não é o de exemplo, e a janela (ATIVA_ATE) é válida e futura"
 }
 
+# Grava os três segredos da demonstração no projeto remoto via `supabase secrets set`.
+#
+# Extraída à parte (achado do portão ANBU no cartão `5boVdM0t`, PR #310): um teste que só
+# chama `validar_segredos_demonstracao` não prova que `DEMONSTRACAO_ATIVA_ATE` chega até o
+# `secrets set` de verdade — a mutação que apagou essa única linha do `secrets set`
+# passava no teste de antes mesmo assim. Isolar a gravação numa função chamável por nome
+# deixa o terceiro argumento verificável sem precisar de rede: quem testar dubla
+# `supabase` como função de shell (que o bash resolve antes do binário do PATH) e lê o
+# que ela recebeu.
+#
+# `set +x` dentro do subshell é a garantia de que o código não vaza nem por acidente de
+# quem estiver depurando com `set -x` ligado por fora.
+gravar_segredos_demonstracao() {
+  local arquivo="${1:?gravar_segredos_demonstracao precisa do arquivo de segredos}"
+  local ref="${2:?gravar_segredos_demonstracao precisa do --project-ref}"
+  set -a; source "$arquivo"; set +a
+  ( set +x
+    supabase secrets set \
+      "DEMONSTRACAO_EMAILS=$DEMONSTRACAO_EMAILS" \
+      "DEMONSTRACAO_CODIGO=$DEMONSTRACAO_CODIGO" \
+      "DEMONSTRACAO_ATIVA_ATE=$DEMONSTRACAO_ATIVA_ATE" \
+      --project-ref "$ref" >/dev/null
+  )
+}
+
 main() {
 AMBIENTE="${1:?uso: demonstracao-remoto.sh <dev|prod> [--segredos <arquivo>] [--seco]}"
 shift || true
@@ -189,21 +214,11 @@ if [ -n "$SECO" ]; then
   exit 0
 fi
 
-# `secrets set` recebe os valores pela linha de comando, então o `set -x` de quem estiver
-# depurando vazaria o código. O subshell com +x é a garantia de que não vaza nem por
-# acidente.
-#
 # DEMONSTRACAO_ATIVA_ATE entra aqui desde o cartão `5boVdM0t`: antes só EMAILS e CODIGO
 # eram gravados por este script, e uma janela setada manualmente (fora dele) e nunca
 # renovada apagava a porta em silêncio — 404 idêntico para e-mail certo e código certo,
 # sem nenhuma linha em `entrada_demonstracao` para distinguir o motivo.
-( set +x
-  supabase secrets set \
-    "DEMONSTRACAO_EMAILS=$DEMONSTRACAO_EMAILS" \
-    "DEMONSTRACAO_CODIGO=$DEMONSTRACAO_CODIGO" \
-    "DEMONSTRACAO_ATIVA_ATE=$DEMONSTRACAO_ATIVA_ATE" \
-    --project-ref "$REF" >/dev/null
-) || falhou "supabase secrets set falhou"
+gravar_segredos_demonstracao "$ARQUIVO_SEGREDOS" "$REF" || falhou "supabase secrets set falhou"
 ok "segredos gravados no $AMBIENTE"
 
 echo "▸ O deploy"
