@@ -494,8 +494,7 @@ begin
   end if;
 
   -- 10. Zera registro de tentativas das contas de demonstração
-  delete from public.entrada_demonstracao
-   where lower(email) in ('revisao-contratante@frila.app', 'revisao-profissional@frila.app');
+  delete from public.entrada_demonstracao;
 
   return jsonb_build_object(
     'sucesso', true,
