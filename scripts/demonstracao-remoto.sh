@@ -34,8 +34,67 @@
 # quem está lendo isto, não deste script.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-set -a; source .env; set +a
 
+falhou() { printf '  ✗ %s\n' "$1" >&2; exit 1; }
+ok()     { printf '  ✓ %s\n' "$1"; }
+
+# Valida o arquivo de segredos da demonstração (EMAILS, CODIGO e ATIVA_ATE).
+#
+# ATIVA_ATE é exigida aqui pelo mesmo motivo que levou ao cartão `5boVdM0t`: a Edge
+# Function `entrar-demonstracao` falha fechada com 404 idêntico, para QUALQUER e-mail e
+# QUALQUER código, se `DEMONSTRACAO_ATIVA_ATE` estiver ausente, mal formada ou no passado
+# (ver `supabase/functions/entrar-demonstracao/index.ts`, `parseLimiteJanela`). Antes desta
+# função, este script só gravava EMAILS e CODIGO — nunca ATIVA_ATE — então uma janela
+# setada manualmente uma vez (fora deste script) e nunca renovada apaga a porta em
+# silêncio: a conta de demonstração perde o login sem nenhum código de erro que distinga
+# o caso de "código errado" ou "e-mail desconhecido". Medido contra o frila-dev em 20/10/2026.
+#
+# Imprime em stdout/stderr com os helpers `ok`/`falhou` (por isso `falhou` termina o
+# processo com `exit 1` — quem precisar só do código de saída, sem matar o shell, deve
+# chamar isto num subshell `( validar_segredos_demonstracao ... )`).
+validar_segredos_demonstracao() {
+  local arquivo="${1:?validar_segredos_demonstracao precisa do arquivo de segredos}"
+
+  [ -f "$arquivo" ] || falhou "não achei $arquivo"
+  set -a; source "$arquivo"; set +a
+  : "${DEMONSTRACAO_EMAILS:?falta DEMONSTRACAO_EMAILS em $arquivo}"
+  : "${DEMONSTRACAO_CODIGO:?falta DEMONSTRACAO_CODIGO em $arquivo}"
+  : "${DEMONSTRACAO_ATIVA_ATE:?falta DEMONSTRACAO_ATIVA_ATE em $arquivo}"
+
+  # O `.env.exemplo` e a CI trazem códigos de mentira de propósito. Subir um deles para um
+  # projeto remoto é publicar a porta: o código está num arquivo versionado.
+  case "$DEMONSTRACAO_CODIGO" in
+    troque-este-codigo|codigo-de-ci-sem-valor)
+      falhou "DEMONSTRACAO_CODIGO é o valor de exemplo (\"$DEMONSTRACAO_CODIGO\"), que está em arquivo versionado. Use um código de verdade" ;;
+  esac
+  [ "${#DEMONSTRACAO_CODIGO}" -ge 8 ] || falhou \
+    "DEMONSTRACAO_CODIGO tem ${#DEMONSTRACAO_CODIGO} caracteres. O teto de tentativas é 10 por 10 minutos, o que segura pouco contra um código curto que nunca expira"
+
+  # Mesma validação de formato (ISO-8601 com fuso explícito) e fail-closed que a Edge
+  # Function aplica, para o script recusar ANTES do deploy em vez de a função recusar
+  # depois, em silêncio, para todo mundo.
+  python3 - "$DEMONSTRACAO_ATIVA_ATE" <<'PY' || falhou "DEMONSTRACAO_ATIVA_ATE (\"$DEMONSTRACAO_ATIVA_ATE\") não é ISO-8601 com fuso explícito e no futuro"
+import re, sys, datetime
+valor = sys.argv[1].strip()
+padrao = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$",
+    re.IGNORECASE,
+)
+if not padrao.match(valor):
+    sys.exit(1)
+valor_normalizado = valor[:-1] + "+00:00" if valor.upper().endswith("Z") else valor
+try:
+    quando = datetime.datetime.fromisoformat(valor_normalizado)
+except ValueError:
+    sys.exit(1)
+agora = datetime.datetime.now(datetime.timezone.utc)
+sys.exit(0 if quando > agora else 1)
+PY
+
+  ok "$(printf '%s' "$DEMONSTRACAO_EMAILS" | tr ',' '\n' | wc -l | tr -d ' ') endereço(s) declarado(s), código não é o de exemplo, e a janela (ATIVA_ATE) é válida e futura"
+}
+
+main() {
 AMBIENTE="${1:?uso: demonstracao-remoto.sh <dev|prod> [--segredos <arquivo>] [--seco]}"
 shift || true
 
@@ -49,8 +108,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-falhou() { printf '  ✗ %s\n' "$1" >&2; exit 1; }
-ok()     { printf '  ✓ %s\n' "$1"; }
+set -a; source .env; set +a
 
 case "$AMBIENTE" in
   dev)
@@ -118,25 +176,12 @@ else
 fi
 
 echo "▸ Os segredos"
-[ -f "$ARQUIVO_SEGREDOS" ] || falhou "não achei $ARQUIVO_SEGREDOS"
-set -a; source "$ARQUIVO_SEGREDOS"; set +a
-: "${DEMONSTRACAO_EMAILS:?falta DEMONSTRACAO_EMAILS em $ARQUIVO_SEGREDOS}"
-: "${DEMONSTRACAO_CODIGO:?falta DEMONSTRACAO_CODIGO em $ARQUIVO_SEGREDOS}"
-
-# O `.env.exemplo` e a CI trazem códigos de mentira de propósito. Subir um deles para um
-# projeto remoto é publicar a porta: o código está num arquivo versionado.
-case "$DEMONSTRACAO_CODIGO" in
-  troque-este-codigo|codigo-de-ci-sem-valor)
-    falhou "DEMONSTRACAO_CODIGO é o valor de exemplo (\"$DEMONSTRACAO_CODIGO\"), que está em arquivo versionado. Use um código de verdade" ;;
-esac
-[ "${#DEMONSTRACAO_CODIGO}" -ge 8 ] || falhou \
-  "DEMONSTRACAO_CODIGO tem ${#DEMONSTRACAO_CODIGO} caracteres. O teto de tentativas é 10 por 10 minutos, o que segura pouco contra um código curto que nunca expira"
-ok "$(printf '%s' "$DEMONSTRACAO_EMAILS" | tr ',' '\n' | wc -l | tr -d ' ') endereço(s) declarado(s), e o código não é o de exemplo"
+validar_segredos_demonstracao "$ARQUIVO_SEGREDOS"
 
 if [ -n "$SECO" ]; then
   echo
   echo "— seco: daqui para baixo nada seria escrito. O que rodaria:"
-  echo "    supabase secrets set DEMONSTRACAO_EMAILS=… DEMONSTRACAO_CODIGO=… --project-ref $REF"
+  echo "    supabase secrets set DEMONSTRACAO_EMAILS=… DEMONSTRACAO_CODIGO=… DEMONSTRACAO_ATIVA_ATE=… --project-ref $REF"
   echo "    supabase functions deploy entrar-demonstracao --project-ref $REF"
   echo "    POST /v1/projects/$REF/database/query: select privado.renovar_dados_demonstracao()"
   echo "    SUPABASE_URL=$URL_REMOTA … ./scripts/demonstracao.sh"
@@ -147,10 +192,16 @@ fi
 # `secrets set` recebe os valores pela linha de comando, então o `set -x` de quem estiver
 # depurando vazaria o código. O subshell com +x é a garantia de que não vaza nem por
 # acidente.
+#
+# DEMONSTRACAO_ATIVA_ATE entra aqui desde o cartão `5boVdM0t`: antes só EMAILS e CODIGO
+# eram gravados por este script, e uma janela setada manualmente (fora dele) e nunca
+# renovada apagava a porta em silêncio — 404 idêntico para e-mail certo e código certo,
+# sem nenhuma linha em `entrada_demonstracao` para distinguir o motivo.
 ( set +x
   supabase secrets set \
     "DEMONSTRACAO_EMAILS=$DEMONSTRACAO_EMAILS" \
     "DEMONSTRACAO_CODIGO=$DEMONSTRACAO_CODIGO" \
+    "DEMONSTRACAO_ATIVA_ATE=$DEMONSTRACAO_ATIVA_ATE" \
     --project-ref "$REF" >/dev/null
 ) || falhou "supabase secrets set falhou"
 ok "segredos gravados no $AMBIENTE"
@@ -191,4 +242,12 @@ ok "turno e vagas restaurados para a revisão da Apple (pendente de check-in)"
 
 echo
 echo "A porta da revisão está de pé no $AMBIENTE ($REF), e medida por HTTP."
+}
+
+# Guarda de execução: permite `source scripts/demonstracao-remoto.sh` (por exemplo do
+# `scripts/teste-demonstracao-remoto.sh`) para reusar `validar_segredos_demonstracao` sem
+# disparar o `main` (que exige `$1` e faz chamadas de rede reais).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
 
