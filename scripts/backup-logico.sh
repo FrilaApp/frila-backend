@@ -34,7 +34,7 @@ trap 'falhar "backup interrompido."' HUP INT TERM
 case "$BACKUP_DB_URL" in postgres://*|postgresql://*) ;; *) falhar 'BACKUP_DB_URL deve ser uma conexão PostgreSQL.' ;; esac
 retencao="${BACKUP_KEEP:-14}"
 [[ "$retencao" =~ ^[1-9][0-9]{0,5}$ ]] || falhar 'BACKUP_KEEP deve ser um inteiro entre 1 e 999999.'
-for comando in pg_dump psql git; do
+for comando in pg_dump psql git tar; do
   command -v "$comando" >/dev/null 2>&1 || falhar "dependência ausente: $comando."
 done
 etapa='consultar versão do servidor (somente leitura)'
@@ -95,36 +95,77 @@ cifrar /dev/null "$temporario/verificacao"
 rm -- "$temporario/verificacao"
 
 inicio=$SECONDS
-etapa='gerar dump (confira conexão, permissões e versão do pg_dump)'
-# Não usa Docker, link do Supabase ou credencial guardada no repositório.
-# O formato custom inclui esquema, dados, sequências, ACLs e large objects.
+etapa='gerar dump e suplemento de extensões no mesmo snapshot'
+# A sessão psql mantém o snapshot vivo enquanto seu filho pg_dump o utiliza.
+# O catálogo define o suplemento; só o log transitório autorizado é excluído.
+export BACKUP_WORK_DIR="$temporario"
 PGSSLMODE="${PGSSLMODE:-require}" PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-15}" \
-  pg_dump --dbname "$BACKUP_DB_URL" --no-password --format=custom \
-    --file "$temporario/banco.dump" >/dev/null 2>&1
+  psql -X -qAt --no-password --set ON_ERROR_STOP=1 --dbname "$BACKUP_DB_URL" \
+    --set suplemento="$temporario/extensoes.sql" >/dev/null 2>&1 <<'SQL'
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SET LOCAL DateStyle = 'ISO';
+SET LOCAL IntervalStyle = 'postgres';
+SET LOCAL extra_float_digits = 3;
+SET LOCAL bytea_output = 'hex';
+SET LOCAL client_encoding = 'UTF8';
+SET LOCAL row_security = off;
+SELECT pg_export_snapshot() AS snapshot \gset
+\setenv BACKUP_SNAPSHOT :snapshot
+\o :suplemento
+SELECT 'SET DateStyle = ''ISO''; SET IntervalStyle = ''postgres''; SET client_encoding = ''UTF8'';';
+SELECT format('SELECT %L; COPY (SELECT %s FROM ONLY %I.%I) TO STDOUT; SELECT %L;',
+    format('TRUNCATE ONLY %I.%I; COPY %I.%I (%s) FROM stdin;',
+      n.nspname, c.relname, n.nspname, c.relname, colunas.lista),
+    colunas.lista, n.nspname, c.relname, E'\\.')
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.objid = c.oid
+    AND d.refclassid = 'pg_extension'::regclass AND d.deptype = 'e'
+JOIN pg_extension e ON e.oid = d.refobjid
+CROSS JOIN LATERAL (
+    SELECT string_agg(format('%I', a.attname), ', ' ORDER BY a.attnum) AS lista
+    FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0
+      AND NOT a.attisdropped AND a.attgenerated = ''
+) colunas
+WHERE c.relkind = 'r' AND NOT c.oid = ANY(coalesce(e.extconfig, ARRAY[]::oid[]))
+  AND NOT (n.nspname = 'net' AND c.relname = '_http_response')
+  AND ((xpath('/row/tem/text()', query_to_xml(
+    format('SELECT EXISTS(SELECT 1 FROM ONLY %I.%I) AS tem', n.nspname, c.relname),
+    false, true, '')))[1]::text)::boolean
+ORDER BY n.nspname, c.relname
+\gexec
+\o
+\! pg_dump --dbname "$BACKUP_DB_URL" --no-password --format=custom --snapshot="$BACKUP_SNAPSHOT" --exclude-table-data=net._http_response --file "$BACKUP_WORK_DIR/banco.dump" >/dev/null 2>&1 && touch "$BACKUP_WORK_DIR/dump-concluido"
+COMMIT;
+SQL
+[[ -f "$temporario/dump-concluido" ]] || falhar 'pg_dump falhou; suplemento não publicado.'
 [[ -s "$temporario/banco.dump" ]] || falhar 'pg_dump não gerou conteúdo.'
 tempo_dump=$((SECONDS - inicio))
 
-etapa='cifrar dump'
+etapa='empacotar dump e suplemento'
+printf 'frila-backup-v2\n' > "$temporario/formato.txt"
+tar --no-mac-metadata -cf "$temporario/backup.tar" -C "$temporario" formato.txt banco.dump extensoes.sql 2>/dev/null
+etapa='cifrar pacote'
 inicio_cifra=$SECONDS
 extensao=age
 [[ "$cifra" != openssl ]] || extensao=cms
-cifrar "$temporario/banco.dump" "$temporario/backup.cifrado"
+cifrar "$temporario/backup.tar" "$temporario/backup.cifrado"
 [[ -s "$temporario/backup.cifrado" ]] || falhar 'a cifra não gerou conteúdo.'
 tempo_cifra=$((SECONDS - inicio_cifra))
 etapa='apagar dump em claro'
-rm -- "$temporario/banco.dump"
+rm -- "$temporario/banco.dump" "$temporario/extensoes.sql" "$temporario/backup.tar"
 
 etapa='publicar arquivo cifrado'
-nome="frila-backup-$(date -u +%Y%m%dT%H%M%SZ)-${temporario##*.}.dump.$extensao"
+nome="frila-backup-$(date -u +%Y%m%dT%H%M%SZ)-${temporario##*.}.tar.$extensao"
 [[ ! -e "$destino/$nome" ]] || falhar 'nome de backup já existe; tente novamente.'
 mv -- "$temporario/backup.cifrado" "$destino/$nome"
 
 etapa='aplicar retenção'
 arquivos=()
 shopt -s nullglob
-for arquivo in "$destino"/frila-backup-*.dump.*; do
+for arquivo in "$destino"/frila-backup-*.*.*; do
   base=${arquivo##*/}
-  if [[ -f "$arquivo" && ! -L "$arquivo" && "$base" =~ ^frila-backup-[0-9]{8}T[0-9]{6}Z-[a-zA-Z0-9]{6}\.dump\.(age|cms)$ ]]; then
+  if [[ -f "$arquivo" && ! -L "$arquivo" && "$base" =~ ^frila-backup-[0-9]{8}T[0-9]{6}Z-[a-zA-Z0-9]{6}\.(dump|tar)\.(age|cms)$ ]]; then
     arquivos+=("$arquivo")
   fi
 done

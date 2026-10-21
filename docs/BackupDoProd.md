@@ -1,13 +1,14 @@
 # Backup lógico cifrado
 
-`scripts/backup-logico.sh` gera um arquivo custom do `pg_dump` com esquema e dados,
-cifra com chave pública, publica apenas o arquivo cifrado e remove o dump em claro.
+`scripts/backup-logico.sh` gera um pacote v2 com `banco.dump` (pg_dump custom),
+`extensoes.sql` (suplemento de dados de extensão) e `formato.txt`. Cifra o pacote
+com chave pública, publica apenas `.tar.age`/`.tar.cms` e remove todos os claros.
 Não usa Docker nem Supabase CLI. Complementa o ensaio local existente em
 `scripts/ensaio-restauracao.sh`, que depende de Docker.
 
 ## Configuração e execução manual
 
-Use Bash do macOS, Git, `psql` e `pg_dump` compatível com a versão do servidor.
+Use Bash e bsdtar do macOS, Git, `psql` e `pg_dump` compatível com o servidor.
 O script consulta `server_version_num` em transação **READ ONLY**, compara a versão
 principal do `pg_dump` e recusa cliente mais antigo antes de criar pasta/dump.
 Use a mesma instalação de `psql`/`pg_dump` no PATH. Para o dev PostgreSQL 17, use
@@ -57,8 +58,9 @@ de credenciais. SSL é exigido por padrão; configure validação de certificado
 conexão para o ambiente remoto. Apenas o ensaio descartável usou `sslmode=disable`.
 
 Use uma pasta por ambiente. A retenção considera mtime, mantém o backup recém
-gerado e só remove nomes próprios `frila-backup-*.dump.age`/`.dump.cms` com formato
-validado. Só roda após dump, cifra e remoção do claro bem-sucedidos. Arquivo cifrado
+gerado e só remove nomes próprios `frila-backup-*.tar.age`/`.tar.cms` e legados
+`.dump.age`/`.dump.cms`, com formato validado. Só roda após dump, suplemento,
+cifra e remoção dos claros bem-sucedidos. Arquivo cifrado
 com permissão `0600`, pasta `0700`. Falha retorna código não zero; saída sensível dos
 subprocessos é suprimida. Não rode com rastreamento/depuração de ambiente.
 
@@ -86,16 +88,29 @@ umask 077
 tmp_restore=$(mktemp -d)
 trap 'rm -rf -- "$tmp_restore"' EXIT
 
-# Escolha UM comando, conforme a extensão do arquivo:
+# Escolha UM comando, conforme a extensão da cifra:
 age --decrypt --identity "$CHAVE_PRIVADA" \
-  --output "$tmp_restore/banco.dump" "$ARQUIVO_CIFRADO" >/dev/null 2>&1
+  --output "$tmp_restore/pacote" "$ARQUIVO_CIFRADO" >/dev/null 2>&1
 # Ou, para .cms, em vez do comando age:
 # openssl cms -decrypt -binary -inform DER -in "$ARQUIVO_CIFRADO" \
 #   -recip "$CERTIFICADO_PUBLICO" -inkey "$CHAVE_PRIVADA" \
-#   -out "$tmp_restore/banco.dump" >/dev/null 2>&1
+#   -out "$tmp_restore/pacote" >/dev/null 2>&1
+
+case "$ARQUIVO_CIFRADO" in
+  *.tar.age|*.tar.cms)
+    tar -xf "$tmp_restore/pacote" -C "$tmp_restore" formato.txt banco.dump extensoes.sql
+    [[ "$(cat "$tmp_restore/formato.txt")" == frila-backup-v2 ]]
+    ;;
+  *.dump.age|*.dump.cms) mv "$tmp_restore/pacote" "$tmp_restore/banco.dump" ;;
+  *) exit 1 ;;
+esac
 
 pg_restore --exit-on-error --single-transaction --no-owner \
   --dbname "$RESTORE_DB_URL" "$tmp_restore/banco.dump" >/dev/null 2>&1
+if [[ -f "$tmp_restore/extensoes.sql" ]]; then
+  psql -X --no-password --set ON_ERROR_STOP=1 --single-transaction \
+    --dbname "$RESTORE_DB_URL" --file "$tmp_restore/extensoes.sql" >/dev/null 2>&1
+fi
 unset RESTORE_DB_URL
 ```
 
@@ -103,6 +118,22 @@ Se algum comando falhar, encerre a sessão de ensaio e investigue sem publicar s
 crua, que pode conter conexão ou conteúdo de linhas. Depois confira contagens,
 hashes dos dados, constraints, índices, políticas RLS, sequências e permissões com
 consultas que não exponham dados pessoais. Remova o destino descartável ao concluir.
+
+O suplemento consulta `pg_depend`, `pg_extension.extconfig`, `pg_class` e
+`pg_attribute`: seleciona tabelas ordinárias pertencentes a extensões, fora de
+`extconfig`, com linhas, sem lista fixa de tabelas de filas. Usa `COPY TO STDOUT`
+com colunas explícitas, sem colunas geradas, e gera `COPY FROM stdin` para restaurar.
+O dump e o suplemento compartilham o snapshot de uma transação READ ONLY mantida
+pela sessão psql; o pg_dump filho recebe `--snapshot`. `row_security=off` evita
+exportação silenciosamente filtrada por políticas. Qualquer erro de leitura/COPY/dump
+impede publicar o pacote. O suplemento limpa com `TRUNCATE ONLY` cada tabela que
+reporá; rode só no destino descartável após o dump. Se constraints impedirem o
+suplemento, descarte o destino e investigue; não considere restauração parcial aprovada.
+
+**Perda aceita por Nick Fury em 20/10 às 23h:** `net._http_response` é log transitório
+de respostas HTTP do pg_net e fica fora do dump e do suplemento. Sua divergência de linhas
+é esperada; não é dado necessário para reconstruir as filas. Backups legados
+`.dump.*` não possuem suplemento e não recuperam `pgmq.meta`.
 
 O archive guarda ACLs e definições de RLS, mas `pg_dump` não exporta roles globais,
 senhas de roles, configuração do projeto, chaves do Vault, Edge Functions ou arquivos
@@ -119,12 +150,12 @@ certificado/chave de ensaio RSA 3072, CMS AES-256-GCM + RSA-OAEP.
 
 | Etapa | Tempo medido | Tamanho |
 | --- | ---: | ---: |
-| `pg_dump` custom | 0,0698 s | 297.028 bytes |
-| Cifrar | 0,0074 s | 297.597 bytes |
-| Decifrar | 0,0091 s | 297.028 bytes |
-| `pg_restore` em banco vazio | 0,0572 s | 60.000 linhas |
+| `pg_dump` custom | 0,0657 s | 297.028 bytes |
+| Cifrar | 0,0068 s | 304.697 bytes |
+| Decifrar | 0,0090 s | Pacote v2 |
+| `pg_restore` em banco vazio | 0,0538 s | 60.000 linhas |
 
-Backup completo com validação do destinatário e limpeza: **0,6390 s**. Medições por
+Backup completo com validação do destinatário e limpeza: **0,3769 s**. Medições por
 relógio monotônico externo ao script; a saída operacional do script usa segundos
 inteiros. Hashes e estrutura restaurados conferidos, adulteração da cifra recusada,
 retenção 14/2, falhas de dump/cifra e limpeza conferidas. Cluster desligado e
@@ -135,8 +166,9 @@ a base sintética; não estimam duração nem recuperabilidade do Supabase real.
 pooler foi carregada em memória/ambiente a partir de `~/.config/frila/dev-db-url`,
 com autorização de Cauê, sem imprimir ou registrar seu conteúdo. A origem foi
 usada apenas para SELECTs em transação `REPEATABLE READ READ ONLY` e `pg_dump`.
-As contagens e o dump compartilham um snapshot exportado dessa transação; o
-wrapper de medição passa `--snapshot` ao cliente, sem alterar o script operacional.
+O script exporta o snapshot dessa transação para o pg_dump filho. O medidor
+importa esse mesmo snapshot para conferir as contagens, sem substituí-lo; o
+suplemento é extraído pela sessão que mantém o snapshot vivo.
 
 O destino usa PostgreSQL **17.11 Homebrew**, com cópia temporária dos binários,
 headers, bibliotecas e arquivos de extensão. A árvore de diretórios preserva o
@@ -152,35 +184,42 @@ do archive. A restauração usa `--no-owner --single-transaction --exit-on-error
 Isso não reproduz atributos globais, membership, autenticação ou ownership de
 produção. Nenhuma role do dev foi criada ou alterada.
 
-Medições finais com age **1.3.2** (relógio monotônico externo ao script):
+**Correção das extensões, aceita para ensaio em 20/10 às 23h.** O pacote v2
+acrescenta o suplemento dinâmico. Medições finais com age **1.3.2** (relógio
+monotônico externo ao script):
 
 | Etapa real | Tempo medido | Tamanho |
 | --- | ---: | ---: |
-| `pg_dump` 17 custom | 50,8667 s | 2.818.278 bytes |
-| Cifrar com age | 0,0097 s | 2.819.166 bytes |
-| Decifrar com age | 0,0099 s | 2.818.278 bytes |
-| `pg_restore` transacional | 1,7204 s | Código 0 |
-| `initdb` isolado | 1,3239 s | Cluster novo |
+| `pg_dump` 17 custom | 53,2899 s | 2.820.466 bytes |
+| Suplemento descoberto pelo catálogo | Incluído no backup | 277 bytes, 1 tabela |
+| Pacote v2 antes da cifra | Incluído no backup | 2.827.264 bytes |
+| Cifrar pacote com age | 0,0086 s | 2.828.152 bytes |
+| Decifrar pacote com age | 0,0096 s | 2.827.264 bytes |
+| `pg_restore` transacional | 1,2700 s | Código 0 |
+| Restaurar suplemento com psql | 0,0212 s | Código 0 |
+| `initdb` isolado | 0,4122 s | Cluster novo |
 
-Backup completo, incluindo preflight e limpeza: **52,0039 s**. Todos os
-comandos de dump/cifra/decifra/restauração terminaram com código zero.
-O TOC contém **81 itens TABLE DATA**; as extensões também criam tabelas.
-Foram comparadas individualmente as **85 tabelas** do dev e do restaurado:
-nenhuma ausente ou extra, **83 contagens iguais** e **2 divergentes**.
-Total: **77.232 linhas no snapshot do dev**, **76.858 no restaurado**.
-No schema `public`: **22 tabelas, 137 linhas em cada lado, zero divergências**.
+Backup completo com preflight, contagens da instrumentação, suplemento e limpeza:
+**55,5415 s**. Dump/cifra/decifra/restaurações terminaram com código zero.
+O TOC contém **81 itens TABLE DATA**, incluindo **2 tabelas de filas do pgmq**.
+As 81 tabelas identificadas no TOC tiveram contagens iguais. As extensões também
+criam tabelas; por isso a comparação integral cobre **85 tabelas** em cada lado,
+sem ausentes ou extras: **84 contagens iguais**, com uma diferença aceita abaixo.
+Total: **77.342 linhas no snapshot do dev**, **76.970 no restaurado**.
+Em `public`: **22 tabelas, 137 linhas em cada lado, zero divergências**.
 
-| Divergência | Linhas no dev | Linhas restauradas | Causa |
-| --- | ---: | ---: | --- |
-| `net._http_response` | 372 | 0 | Tabela da extensão pg_net sem registro em `extconfig` |
-| `pgmq.meta` | 2 | 0 | Tabela da extensão pgmq sem registro em `extconfig` |
+| Prova das filas e exceção aceita | Dev | Restaurado |
+| --- | ---: | ---: |
+| `pgmq.meta` | 2 linhas | 0 após dump; **2 após suplemento** |
+| Tabelas das filas incluídas no archive | 2 | 2 presentes após restauração |
+| `pgmq.list_queues()` no destino | Não altera origem | **2 filas retornadas** |
+| `net._http_response` (log transitório, perda aceita) | 372 linhas | 0 |
 
-**Resultado parcial:** restauração do archive executada e dados de `public`
-conferidos; recuperação completa do banco/filas **não aprovada** devido às
-omissões acima. Nenhum metadado foi fabricado nem reposto consultando linhas
-reais da origem para mascarar a diferença. Um suplemento cifrado desses dados
-ou outra estratégia validada precisa ser definido antes de usar como backup
-completo. As contagens são do snapshot do ensaio, sem estimar duração do prod.
+**Bloqueio das extensões fechado:** dados de `pgmq.meta` vêm do suplemento
+cifrado, descoberto pelo catálogo, e as filas são listadas no destino. Nenhum
+metadado foi fabricado. A única divergência é o log transitório autorizado;
+`--exclude-table-data=net._http_response` também o exclui explicitamente do dump.
+Os números são do snapshot deste ensaio e não estimam duração do prod.
 
 Cluster desligado com `pg_ctl stop`; diretório temporário, cópia do servidor,
 dumps claros/cifrados e chave age temporária apagados. GEOS, PROJ, pkgconf e
@@ -211,13 +250,21 @@ A versão anterior do cliente (16.13) foi recusada pelo novo preflight contra o
 servidor 17.6, antes de criar pasta de saída. O caminho OpenSSL foi testado
 novamente com dados sintéticos e passou; age **1.3.2** foi usado no ensaio real.
 
-**Limite confirmado antes de adotar como backup completo:** tabelas pertencentes
-a uma extensão só têm dados incluídos automaticamente se a extensão as registrar
-como configuração, conforme a [documentação do PostgreSQL](https://www.postgresql.org/docs/17/extend-extensions.html#EXTEND-EXTENSIONS-CONFIG-TABLES).
-No dev, `pgmq.meta` e as tabelas do `pg_net` não estão registradas assim. A prova de
-restauração comparou todas as tabelas, inclusive essas, e encontrou as divergências acima;
-não preencher metadados artificialmente para declarar recuperação completa.
-Chaves do Vault e binários do Storage também continuam fora do dump lógico.
+**Cobertura e limites:** o pg_dump omite dados de tabelas pertencentes a extensões
+fora de `extconfig`, conforme a [documentação do PostgreSQL](https://www.postgresql.org/docs/17/extend-extensions.html#EXTEND-EXTENSIONS-CONFIG-TABLES).
+O pacote v2 cobre essas tabelas ordinárias com linhas pelo suplemento; neste dev,
+a única selecionada foi `pgmq.meta`. O log `net._http_response` é excluído de forma
+explícita e aceita. Chaves do Vault, roles globais, autenticação do projeto,
+ownership e arquivos binários do Storage continuam fora do escopo validado.
+As ACLs são aplicadas com roles auxiliares; não equivalem à configuração de segurança
+do ambiente gerenciado. A compatibilidade deve ser reavaliada ao mudar extensões.
+
+Além do ensaio real, uma extensão sintética instalada apenas na cópia temporária
+provou descoberta sem lista fixa, cópia de quatro linhas com aspas, barra,
+quebra de linha, NULL e Unicode, valores de identity e coluna gerada, com hash igual.
+Um usuário sujeito a RLS foi recusado sem publicar backup. A regressão OpenSSL
+com pacote v2 passou, incluindo falha SQL do suplemento e retenção entre formatos
+novos e legados. O bsdtar usa `--no-mac-metadata` para empacotar só os três arquivos.
 
 Com as dependências resolvidas, um operador autorizado pode carregar a conexão
 sem colocá-la no histórico e executar o comando da seção inicial:
