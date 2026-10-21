@@ -3327,3 +3327,42 @@ Deno.test(
     );
   },
 );
+
+Deno.test(
+  "sendFcmMessage: nao vaza corpo nem texto cru da resposta do FCM quando o erro nao contiver codigo estruturado",
+  async () => {
+    const sa = await gerarContaDeServicoTeste();
+    const MARCADOR_SENTINELA = "SENTINELA-SECRETO-CORPO-FCM-998877";
+
+    const mockFetchHtml: typeof fetch = () => {
+      return Promise.resolve(
+        new Response(
+          `<html><body>${MARCADOR_SENTINELA}</body></html>`,
+          { status: 502, headers: { "Content-Type": "text/html" } },
+        ),
+      );
+    };
+
+    const res = await sendFcmMessage(
+      sa.project_id,
+      "mock-access-token",
+      {
+        token: "fcm_token_teste",
+        title: "Teste",
+        body: "Corpo de teste",
+      },
+      {
+        apiUrl: "http://mock-fcm/messages:send",
+        fetchFn: mockFetchHtml,
+      },
+    );
+
+    assertEquals(res.ok, false);
+    assertEquals(res.status, 502);
+    assertEquals(res.error, "HTTP 502", "Mensagem de erro deve registrar apenas status HTTP sem corpo cru");
+    assert(
+      !res.error?.includes(MARCADOR_SENTINELA),
+      "O campo error do FCM NÃO deve vazar o corpo da resposta",
+    );
+  },
+);
