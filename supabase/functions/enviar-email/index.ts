@@ -19,6 +19,7 @@
 // (caixa inexistente) arquiva na hora: insistir cinco vezes num 550 não muda o 550.
 
 import postgres from "npm:postgres@3.4.4";
+import { segredoAgendadorValido } from "../_compartilhado/auth.ts";
 import {
   criarEnvioSmtp,
   Email,
@@ -74,15 +75,6 @@ export interface Dependencias {
   caixaDaEquipe?: string;
 }
 
-function igualEmTempoConstante(a: string, b: string): boolean {
-  const x = new TextEncoder().encode(a);
-  const y = new TextEncoder().encode(b);
-  let diferenca = x.length ^ y.length;
-  const n = Math.max(x.length, y.length);
-  for (let i = 0; i < n; i++) diferenca |= (x[i] ?? 0) ^ (y[i] ?? 0);
-  return diferenca === 0;
-}
-
 const AGENDADOR_SECRET = Deno.env.get("AGENDADOR_SECRET");
 if (!AGENDADOR_SECRET || AGENDADOR_SECRET.trim() === "") {
   throw new Error("AGENDADOR_SECRET é obrigatório e deve estar configurado no ambiente.");
@@ -90,14 +82,7 @@ if (!AGENDADOR_SECRET || AGENDADOR_SECRET.trim() === "") {
 
 function segredoValido(req: Request, agendadorSecret?: string): boolean {
   const secret = agendadorSecret || AGENDADOR_SECRET;
-  if (!secret || secret.trim() === "") return false;
-
-  const cabecalho = req.headers.get("x-agendador-secret");
-  if (cabecalho && igualEmTempoConstante(cabecalho, secret)) return true;
-
-  const auth = req.headers.get("Authorization") ?? "";
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  return Boolean(m && igualEmTempoConstante(m[1], secret));
+  return segredoAgendadorValido(req, secret ?? "");
 }
 
 // A caixa da Equipe Frila é segredo de ambiente, e não linha de tabela: ela não é dado

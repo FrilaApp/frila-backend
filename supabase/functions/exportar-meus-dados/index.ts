@@ -26,6 +26,7 @@
 // mesmo caso. A lacuna está registrada no PR: é o contrato que precisa declarar o 404.
 
 import postgres from "npm:postgres@3.4.4";
+import { validarFormatoBearer } from "../_compartilhado/auth.ts";
 
 export interface Erro {
   code: string;
@@ -92,7 +93,7 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   }
 
   const autorizacao = req.headers.get("Authorization") ?? "";
-  if (!/^Bearer\s+\S+$/i.test(autorizacao)) {
+  if (!validarFormatoBearer(autorizacao)) {
     return erro(401, "nao_autenticado");
   }
 
