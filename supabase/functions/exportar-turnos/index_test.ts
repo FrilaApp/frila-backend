@@ -966,6 +966,44 @@ Deno.test("seguranca csv: textos legítimos (hífen no meio, etc.) NÃO são alt
   assert(!csv.includes("'-'"), "Marcador '-' do sistema não deve ser alterado");
 });
 
+Deno.test("seguranca csv (0g): neutralizarFormulaCsv e escaparCelulaCsv cobrem =HYPERLINK(...), +1, -1+1, @SUM e valor normal intacto", () => {
+  // 1. =HYPERLINK(...)
+  const hyperlinkFormula = '=HYPERLINK("http://evil.com", "clique")';
+  assertEquals(neutralizarFormulaCsv(hyperlinkFormula), `'=HYPERLINK("http://evil.com", "clique")`);
+  assertEquals(escaparCelulaCsv(hyperlinkFormula), `"'=HYPERLINK(""http://evil.com"", ""clique"")"`);
+
+  // 2. +1
+  assertEquals(neutralizarFormulaCsv("+1"), "'+1");
+  assertEquals(escaparCelulaCsv("+1"), "'+1");
+
+  // 3. -1+1
+  assertEquals(neutralizarFormulaCsv("-1+1"), "'-1+1");
+  assertEquals(escaparCelulaCsv("-1+1"), "'-1+1");
+
+  // 4. @SUM
+  assertEquals(neutralizarFormulaCsv("@SUM"), "'@SUM");
+  assertEquals(escaparCelulaCsv("@SUM"), "'@SUM");
+  assertEquals(neutralizarFormulaCsv("@SUM(1+1)"), "'@SUM(1+1)");
+  assertEquals(escaparCelulaCsv("@SUM(1+1)"), "'@SUM(1+1)");
+
+  // 5. Valores normais intactos
+  assertEquals(neutralizarFormulaCsv("Garçom"), "Garçom");
+  assertEquals(escaparCelulaCsv("Garçom"), "Garçom");
+
+  assertEquals(neutralizarFormulaCsv("Bar do Zé"), "Bar do Zé");
+  assertEquals(escaparCelulaCsv("Bar do Zé"), "Bar do Zé");
+
+  assertEquals(neutralizarFormulaCsv("-"), "-");
+  assertEquals(escaparCelulaCsv("-"), "-");
+
+  assertEquals(neutralizarFormulaCsv("123"), "123");
+  assertEquals(escaparCelulaCsv("123"), "123");
+
+  // Valor normal com vírgula (RFC 4180) intacto sem apóstrofo indevido
+  assertEquals(neutralizarFormulaCsv("R$ 150,00"), "R$ 150,00");
+  assertEquals(escaparCelulaCsv("R$ 150,00"), '"R$ 150,00"');
+});
+
 Deno.test("seguranca csv: CSV inicia com BOM UTF-8 (\\uFEFF) para compatibilidade com acentos no Excel", () => {
   const csv = gerarCsv(TURNOS_MOCK);
   assert(csv.startsWith("\uFEFF"), "CSV deve iniciar com BOM UTF-8 (\\uFEFF)");
