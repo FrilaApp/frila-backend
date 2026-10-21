@@ -105,7 +105,7 @@ de ownership é omitida no exemplo; as roles citadas em ACLs precisam existir. N
 Supabase gerenciado, permissões, extensões e objetos de sistema ainda precisam do
 ensaio real. Não exclua esquemas silenciosamente para contornar erro de permissão.
 
-## Ensaio executado e pendência do dev
+## Ensaio sintético e tentativa no dev real
 
 Em 20/10/2026, Postgres **16.13 Homebrew**, porta alta livre, escuta exclusivamente
 em `127.0.0.1`, dados sintéticos: 10.000 clientes e 50.000 turnos. OpenSSL **3.6.4**,
@@ -125,12 +125,49 @@ retenção 14/2, falhas de dump/cifra e limpeza conferidas. Cluster desligado e
 diretório temporário, dumps e chaves de ensaio apagados. Esses números medem apenas
 a base sintética; não estimam duração nem recuperabilidade do Supabase real.
 
-**NÃO EXECUTADO: frila-dev real.** Falta Cauê provisionar a conexão em
-`~/.config/frila/dev-db-url` e um destino descartável seguro. Agentes só conferem
-existência/tamanho com `ls -l` e `wc -c`; não leem esse arquivo. Depois de Cauê
-carregar a conexão em `BACKUP_DB_URL`, o comando de backup está pronto na seção
-acima; a restauração segue a seção anterior, com conexão distinta. Compatibilidade
-do `pg_dump`/ACLs com o dev remoto e caminho age não foram medidos (age ausente).
+**TENTADO E BLOQUEADO: frila-dev real, em 20/10/2026.** Após autorização de Cauê,
+a conexão do session pooler foi carregada de `~/.config/frila/dev-db-url` somente
+para uso em memória/ambiente, sem imprimir ou registrar seu conteúdo. Executados
+apenas SELECTs de metadados e uma tentativa do script com `pg_dump`; nenhuma
+escrita no dev e nenhum acesso ao prod.
+
+O servidor informou **PostgreSQL 17.6**; o cliente instalado é **16.13 Homebrew**.
+O `pg_dump` recusou o servidor por incompatibilidade de versão, com código **1**:
+
+| Etapa no dev real | Tempo medido | Resultado |
+| --- | ---: | --- |
+| Tentativa de `pg_dump` custom | 0,3665 s | Código 1; 0 bytes |
+| Script completo, incluindo preflight da cifra e limpeza | 1,0238 s | Código 1; pasta de saída vazia |
+| Cifrar/decifrar dump real | Não executado | Nenhum dump gerado |
+| Restaurar dados reais em destino descartável | Não executado | Depende do dump |
+
+Preflight OpenSSL executado com certificado temporário. Temporários, certificado
+e chave de ensaio removidos; nenhum cluster adicional foi iniciado nesta tentativa.
+A limpeza e a saída sem credencial foram conferidas. O ensaio sintético acima é
+a única restauração concluída; seus tempos não representam o dev real.
+
+Para retomar, provisionar **pg_dump 17 ou superior compatível com o servidor** e
+um destino descartável compatível. O Postgres 16 puro do brew não comprova essa
+compatibilidade: o dev tem `supabase_vault` 0.3.1, `postgis` 3.3.7, `pg_net` 0.20.4,
+`pgmq` 1.5.1 e `pg_cron` 1.6.4, além das extensões comuns. É necessário validar
+essas extensões e as roles/ACLs no destino isolado; não foi feita tentativa de
+restauração nem afirmada uma falha específica dessas extensões. Não filtrar o
+archive nem criar substitutos silenciosamente para declarar restauração completa.
+
+Com as dependências resolvidas, Cauê ou um operador autorizado pode carregar a
+conexão sem colocá-la no histórico e executar o comando da seção inicial:
+
+```bash
+set +x
+export BACKUP_DB_URL="$(cat "$HOME/.config/frila/dev-db-url")"
+# Ajuste PATH para o cliente compatível, pasta externa e certificado público.
+./scripts/backup-logico.sh
+unset BACKUP_DB_URL
+```
+
+Depois, decifrar e restaurar conforme a seção anterior, exclusivamente no destino
+descartável. Medir e conferir os dados antes de considerar o ensaio aprovado.
+O caminho age também não foi executado, pois age não está instalado.
 
 ## Configuração futura do prod e agendamento sugerido
 
