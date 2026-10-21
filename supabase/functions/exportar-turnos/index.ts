@@ -399,7 +399,9 @@ export function tratarErroBanco(err: unknown): Response {
       }
       return respostaJson(status, corpoErro);
     } catch {
-      return erro(400, erroPg.message);
+      // Mensagem não é JSON: trata como erro interno sem ecoar texto cru do banco (RN15 / AUDITORIA-EDGE-SEG.md)
+      console.error("exportar-turnos: erro interno ao consultar turnos");
+      return erro(500, "erro_interno");
     }
   }
   // Sem vazar mensagens de erro do Postgres (RN15)

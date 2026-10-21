@@ -68,9 +68,12 @@ export function tratarErroBanco(err: unknown): Response {
       }
       return resposta(status, corpoErro);
     } catch {
-      return resposta(400, { code: erroPg.message, message: erroPg.message, details: null });
+      // Mensagem não é JSON: trata como erro interno sem ecoar texto cru do banco (RN15 / AUDITORIA-EDGE-SEG.md)
+      console.error("excluir-conta: erro interno ao executar operacao no banco");
+      return resposta(500, { code: "erro_interno", message: "erro_interno", details: null });
     }
   }
+  console.error("excluir-conta: erro interno ao executar operacao no banco");
   return resposta(500, { code: "erro_interno", message: "erro_interno", details: null });
 }
 

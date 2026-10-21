@@ -23,6 +23,7 @@ insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
 select set_config('frila.agora', '2026-09-29 11:00:00-03', true);
+select set_config('privado.retencao', 'on', true);
 
 create temp table ids as select
   'a0000000-0000-4000-8000-000000000001'::uuid as ana,
@@ -84,7 +85,12 @@ select is(
 -- ── 3. O corpo casa com o schema MeusDados do contrato ───────────────────────
 
 -- Notificação para o titular é fixture deste arquivo, para as asserções de notificacoes
--- medirem dado real e não passarem sobre array vazio.
+-- medirem dado real e não passarem sobre array vazio. Remove despachos residuais
+-- antes de deletar a notificação para não violar a FK despacho_notificacao_id_fkey quando
+-- a suíte já rodou scripts de corrida ou de ciclo anteriormente.
+delete from public.despacho
+ where notificacao_id in (select id from public.notificacao where usuario_id = (select ana from ids))
+    or profissional_id = (select ana_prof from ids);
 delete from public.notificacao where usuario_id = (select ana from ids);
 insert into public.notificacao (usuario_id, tipo, referencia_id, payload, urgente, enviada_em, entregue_em)
 values (
