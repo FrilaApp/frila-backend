@@ -25,6 +25,8 @@ import {
   Enviar,
   lerConfiguracaoSmtp,
   ResultadoEnvio,
+  validarDestinatario,
+  validarTextoCabecalhoSmtp,
 } from "./provedor.ts";
 import {
   alertaParaEquipe,
@@ -204,6 +206,11 @@ async function processarAlerta(
     ? pedido.mensagem.valor
     : undefined;
   const modelo = alertaParaEquipe(codigo, valor);
+  if (!validarDestinatario(equipe) || !validarTextoCabecalhoSmtp(modelo.assunto)) {
+    await sql.concluir(pedido.msg_id);
+    return { msg_id: pedido.msg_id, status: "arquivado", detalhe: "destinatario_invalido" };
+  }
+
   const r = await enviar({ para: equipe, assunto: modelo.assunto, texto: modelo.texto });
 
   if (r.ok) {
@@ -262,13 +269,25 @@ async function processarOcorrencia(
       return { msg_id: pedido.msg_id, status: "arquivado", detalhe: "tipo_desconhecido" };
     }
 
+    const responderPara = destino === "autor" ? equipe : undefined;
+
+    if (
+      !validarDestinatario(para) ||
+      (responderPara && !validarDestinatario(responderPara)) ||
+      !validarTextoCabecalhoSmtp(modelo.assunto)
+    ) {
+      await sql.registrarFalha(ocorrenciaId, "destinatario_invalido");
+      await sql.concluir(pedido.msg_id);
+      return { msg_id: pedido.msg_id, status: "arquivado", detalhe: "destinatario_invalido" };
+    }
+
     const email: Email = {
       para,
       assunto: modelo.assunto,
       texto: modelo.texto,
       // A Equipe Frila só responde por e-mail: a resposta de quem recebeu o protocolo
       // tem de cair na caixa dela, e não no remetente que não lê.
-      responderPara: destino === "autor" ? equipe : undefined,
+      responderPara,
     };
 
     const r = await enviar(email);

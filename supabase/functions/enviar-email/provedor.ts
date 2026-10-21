@@ -47,7 +47,7 @@ export function lerConfiguracaoSmtp(): ConfiguracaoSmtp | null {
   // código de entrada. Dois nomes para o mesmo endereço custaria um e-mail que não sai
   // porque a variável certa tem o nome do outro arquivo.
   const remetente = (Deno.env.get("EMAIL_REMETENTE") || Deno.env.get("SMTP_SENDER"))?.trim();
-  if (!host || !remetente) return null;
+  if (!host || !remetente || !validarDestinatario(remetente) || !validarTextoCabecalhoSmtp(host)) return null;
 
   const porta = Number(Deno.env.get("SMTP_PORT") ?? "587");
   return {
@@ -92,10 +92,28 @@ export function classificarErro(erro: unknown): { codigo: string; transitorio: b
   return { codigo: "erro_nao_classificado", transitorio: true };
 }
 
+// Garante que campos de cabeçalho SMTP não contenham caracteres de quebra de linha (CR/LF)
+// ou suas variantes codificadas (%0d, %0a), prevenindo injeção de cabeçalhos SMTP (AUDITORIA-EMAIL.md).
+export function validarTextoCabecalhoSmtp(texto: string): boolean {
+  return typeof texto === "string" && !/[\r\n]|%0[ad]/i.test(texto) && texto.trim().length > 0;
+}
+
+export function validarDestinatario(email: string): boolean {
+  return validarTextoCabecalhoSmtp(email);
+}
+
 // O `denomailer` entra por importação dinâmica, e não no topo do arquivo, para que
 // `deno test` não precise de rede: os testes injetam o envio e nunca chegam aqui.
 export function criarEnvioSmtp(cfg: ConfiguracaoSmtp): Enviar {
   return async (email: Email): Promise<ResultadoEnvio> => {
+    if (
+      !validarDestinatario(email.para) ||
+      (email.responderPara && !validarDestinatario(email.responderPara)) ||
+      !validarTextoCabecalhoSmtp(email.assunto) ||
+      !validarDestinatario(cfg.remetente)
+    ) {
+      return { ok: false, codigo: "destinatario_invalido", transitorio: false };
+    }
     try {
       const { SMTPClient } = await import(
         "https://deno.land/x/denomailer@1.6.0/mod.ts"

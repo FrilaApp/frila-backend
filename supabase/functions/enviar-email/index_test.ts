@@ -21,7 +21,14 @@ import {
   SqlClient,
   TETO_DE_LEITURAS,
 } from "./index.ts";
-import { Email, classificarErro, lerConfiguracaoSmtp, ResultadoEnvio } from "./provedor.ts";
+import {
+  Email,
+  classificarErro,
+  criarEnvioSmtp,
+  lerConfiguracaoSmtp,
+  ResultadoEnvio,
+  validarDestinatario,
+} from "./provedor.ts";
 import {
   alertaParaEquipe,
   categoria,
@@ -1040,6 +1047,116 @@ Deno.test("mutação: falha_de_autenticacao em alerta operacional arquiva imedia
 
   // Arquivado imediatamente no pgmq sem queimar retentativas
   assertEquals(e.arquivados, [540]);
+});
+
+Deno.test("segurança (AUDITORIA-EMAIL.md): validarDestinatario recusa strings com CR, LF, CRLF e %0d%0a", () => {
+  // Casos maliciosos de injeção de cabeçalhos SMTP com CR, LF, CRLF
+  assertEquals(validarDestinatario("ana@frila.test\r\nBcc: evil@attacker.com"), false);
+  assertEquals(validarDestinatario("ana@frila.test\nSubject: Injetado"), false);
+  assertEquals(validarDestinatario("ana@frila.test\rTo: outro@frila.test"), false);
+  assertEquals(validarDestinatario("\rana@frila.test"), false);
+  assertEquals(validarDestinatario("ana@frila.test\n"), false);
+  assertEquals(validarDestinatario(""), false);
+  assertEquals(validarDestinatario("   "), false);
+
+  // Casos com variantes codificadas em URL (%0d, %0a, %0d%0a, maiúsculas %0D%0A)
+  assertEquals(validarDestinatario("ana@frila.test%0d%0aBcc:evil@attacker.com"), false);
+  assertEquals(validarDestinatario("ana@frila.test%0D%0ABcc:evil@attacker.com"), false);
+  assertEquals(validarDestinatario("ana@frila.test%0aSubject:Injetado"), false);
+  assertEquals(validarDestinatario("ana@frila.test%0dTo:outro@frila.test"), false);
+
+  // Casos legítimos (subdomínios, tags +, maiúsculas, formatos válidos)
+  assertEquals(validarDestinatario("ana@frila.test"), true);
+  assertEquals(validarDestinatario("equipe@frila.app"), true);
+  assertEquals(validarDestinatario("usuario.valido+tag@sub.dominio.com.br"), true);
+  assertEquals(validarDestinatario("Usuario.Com.Maiusculas@DOMINIO.COM"), true);
+  assertEquals(validarDestinatario("user+filtro.especial@empresa.co.uk"), true);
+});
+
+Deno.test("segurança (AUDITORIA-EMAIL.md): tentativa de injeção de CR/LF em autor_email é arquivada como destinatario_invalido", async () => {
+  const d = dados({
+    autor_email: "ana@frila.test\r\nBcc: espião@hacker.com",
+    equipe_pendente: false,
+    autor_pendente: true,
+  });
+  const e = espiao([pedido({ msg_id: 601 })], d);
+
+  const res = await chamar(e, () => Promise.resolve({ ok: true }));
+  assertEquals(res.status, 200);
+
+  const corpo = await res.json();
+  assertEquals(corpo.relatorio, [
+    { msg_id: 601, status: "arquivado", detalhe: "destinatario_invalido" },
+  ]);
+
+  // Nenhum e-mail enviado ao provedor
+  assertEquals(e.enviados.length, 0);
+  // Registra falha no banco com código padronizado
+  assertEquals(e.falhas, [{ ocorrencia: OCORRENCIA, codigo: "destinatario_invalido" }]);
+  // Pedido arquivado na fila sem insistir
+  assertEquals(e.arquivados, [601]);
+});
+
+Deno.test("segurança (AUDITORIA-EMAIL.md): criarEnvioSmtp recusa envio se para, responderPara, remetente ou assunto contiverem CR, LF ou %0d%0a", async () => {
+  const cfg = {
+    host: "smtp.teste.local",
+    porta: 587,
+    remetente: "noreply@frila.app",
+    tls: false,
+  };
+  const enviar = criarEnvioSmtp(cfg);
+
+  // Injeção no campo para com CRLF
+  const rPara = await enviar({
+    para: "vitima@frila.app\r\nCc: bisbilhoteiro@frila.app",
+    assunto: "Teste",
+    texto: "Conteúdo",
+  });
+  assertEquals(rPara, { ok: false, codigo: "destinatario_invalido", transitorio: false });
+
+  // Injeção no campo para com %0d%0a
+  const rParaEncoded = await enviar({
+    para: "vitima@frila.app%0d%0aBcc:hacker@frila.app",
+    assunto: "Teste",
+    texto: "Conteúdo",
+  });
+  assertEquals(rParaEncoded, { ok: false, codigo: "destinatario_invalido", transitorio: false });
+
+  // Injeção no campo responderPara com CRLF
+  const rReply = await enviar({
+    para: "vitima@frila.app",
+    assunto: "Teste",
+    texto: "Conteúdo",
+    responderPara: "equipe@frila.app\r\nBcc: vazamento@frila.app",
+  });
+  assertEquals(rReply, { ok: false, codigo: "destinatario_invalido", transitorio: false });
+
+  // Injeção no campo responderPara com %0d%0a
+  const rReplyEncoded = await enviar({
+    para: "vitima@frila.app",
+    assunto: "Teste",
+    texto: "Conteúdo",
+    responderPara: "equipe@frila.app%0D%0ABcc:vazamento@frila.app",
+  });
+  assertEquals(rReplyEncoded, { ok: false, codigo: "destinatario_invalido", transitorio: false });
+
+  // Injeção no campo assunto com CRLF
+  const rAssunto = await enviar({
+    para: "vitima@frila.app",
+    assunto: "Assunto Injetado\r\nBcc: atacante@frila.app",
+    texto: "Conteúdo",
+  });
+  assertEquals(rAssunto, { ok: false, codigo: "destinatario_invalido", transitorio: false });
+
+  // Injeção no campo remetente
+  const cfgInjetada = { ...cfg, remetente: "noreply@frila.app\r\nBcc: espião@frila.app" };
+  const enviarCfgInjetada = criarEnvioSmtp(cfgInjetada);
+  const rRemetente = await enviarCfgInjetada({
+    para: "vitima@frila.app",
+    assunto: "Teste",
+    texto: "Conteúdo",
+  });
+  assertEquals(rRemetente, { ok: false, codigo: "destinatario_invalido", transitorio: false });
 });
 
 
