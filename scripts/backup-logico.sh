@@ -34,9 +34,25 @@ trap 'falhar "backup interrompido."' HUP INT TERM
 case "$BACKUP_DB_URL" in postgres://*|postgresql://*) ;; *) falhar 'BACKUP_DB_URL deve ser uma conexão PostgreSQL.' ;; esac
 retencao="${BACKUP_KEEP:-14}"
 [[ "$retencao" =~ ^[1-9][0-9]{0,5}$ ]] || falhar 'BACKUP_KEEP deve ser um inteiro entre 1 e 999999.'
-for comando in pg_dump git; do
+for comando in pg_dump psql git; do
   command -v "$comando" >/dev/null 2>&1 || falhar "dependência ausente: $comando."
 done
+etapa='consultar versão do servidor (somente leitura)'
+versao_servidor=$(PGSSLMODE="${PGSSLMODE:-require}" PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-15}" \
+  psql -X -qAt --no-password --set ON_ERROR_STOP=1 --dbname "$BACKUP_DB_URL" \
+    --command "BEGIN READ ONLY; SELECT current_setting('server_version_num'); COMMIT;" 2>/dev/null)
+[[ "$versao_servidor" =~ ^[0-9]{5,6}$ ]] || falhar 'não foi possível validar a versão do servidor.'
+etapa='consultar versão do pg_dump'
+versao_cliente=$(pg_dump --version 2>/dev/null)
+[[ "$versao_cliente" =~ PostgreSQL\)\ ([0-9]+)\.([0-9]+) ]] || falhar 'não foi possível validar a versão do pg_dump.'
+cliente_principal=${BASH_REMATCH[1]}
+cliente_secundaria=${BASH_REMATCH[2]}
+servidor_principal=$((versao_servidor / 10000))
+if (( servidor_principal < 10 )); then
+  servidor_principal=$((versao_servidor / 100))
+  cliente_principal=$((cliente_principal * 100 + cliente_secundaria))
+fi
+(( cliente_principal >= servidor_principal )) || falhar 'pg_dump mais antigo que o servidor; instale um cliente com versão principal igual ou superior.'
 cifra="${BACKUP_CIPHER:-auto}"
 if [[ "$cifra" == auto ]]; then
   if command -v age >/dev/null 2>&1; then cifra=age; else cifra=openssl; fi

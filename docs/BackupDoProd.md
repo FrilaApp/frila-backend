@@ -7,9 +7,14 @@ Não usa Docker nem Supabase CLI. Complementa o ensaio local existente em
 
 ## Configuração e execução manual
 
-Use Bash do macOS, Git e `pg_dump` compatível com a versão do servidor (cliente mais
-antigo não exporta servidor mais novo). No brew, o cliente 16 fica em
-`/opt/homebrew/opt/postgresql@16/bin`. Precisa de conexão PostgreSQL com permissão
+Use Bash do macOS, Git, `psql` e `pg_dump` compatível com a versão do servidor.
+O script consulta `server_version_num` em transação **READ ONLY**, compara a versão
+principal do `pg_dump` e recusa cliente mais antigo antes de criar pasta/dump.
+Use a mesma instalação de `psql`/`pg_dump` no PATH. Para o dev PostgreSQL 17, use
+`/opt/homebrew/opt/postgresql@17/bin`. Conforme a [documentação do pg_dump](https://www.postgresql.org/docs/17/app-pgdump.html),
+cliente mais antigo não exporta servidor mais novo; a comparação é de versão
+principal (17.11 atende servidor 17.6), sem exigir igualdade de patch.
+Precisa de conexão PostgreSQL com permissão
 para exportar todos os objetos; token da API Supabase não substitui essa conexão.
 
 | Variável | Valor |
@@ -36,17 +41,18 @@ imprimir ou colocar a conexão no histórico:
 
 ```bash
 set +x
-export PATH="/opt/homebrew/opt/postgresql@16/bin:/opt/homebrew/bin:$PATH"
+export PATH="/opt/homebrew/opt/postgresql@17/bin:/opt/homebrew/bin:$PATH"
 export BACKUP_DIR="$HOME/Backups/frila-dev"
-export BACKUP_CIPHER=openssl
-export BACKUP_PUBLIC_KEY="$HOME/.config/frila/backup/publica.pem"
+export BACKUP_CIPHER=age
+export BACKUP_PUBLIC_KEY="$(cat "$HOME/.config/frila/backup/destinatario.age")"
 export BACKUP_KEEP=14
 ./scripts/backup-logico.sh
 unset BACKUP_DB_URL
 ```
 
-Para age, selecione `BACKUP_CIPHER=age` e carregue o destinatário público em
-`BACKUP_PUBLIC_KEY`. O script exige a conexão em `BACKUP_DB_URL`; não lê arquivos
+`destinatario.age` contém somente o destinatário público produzido por `age-keygen -y`.
+Para o fallback, selecione `BACKUP_CIPHER=openssl` e defina `BACKUP_PUBLIC_KEY` como
+o caminho do certificado público PEM RSA. O script exige a conexão em `BACKUP_DB_URL`; não lê arquivos
 de credenciais. SSL é exigido por padrão; configure validação de certificado na
 conexão para o ambiente remoto. Apenas o ensaio descartável usou `sslmode=disable`.
 
@@ -105,7 +111,7 @@ de ownership é omitida no exemplo; as roles citadas em ACLs precisam existir. N
 Supabase gerenciado, permissões, extensões e objetos de sistema ainda precisam do
 ensaio real. Não exclua esquemas silenciosamente para contornar erro de permissão.
 
-## Ensaio sintético e tentativa no dev real
+## Ensaios sintético e no dev real
 
 Em 20/10/2026, Postgres **16.13 Homebrew**, porta alta livre, escuta exclusivamente
 em `127.0.0.1`, dados sintéticos: 10.000 clientes e 50.000 turnos. OpenSSL **3.6.4**,
@@ -125,49 +131,106 @@ retenção 14/2, falhas de dump/cifra e limpeza conferidas. Cluster desligado e
 diretório temporário, dumps e chaves de ensaio apagados. Esses números medem apenas
 a base sintética; não estimam duração nem recuperabilidade do Supabase real.
 
-**TENTADO E BLOQUEADO: frila-dev real, em 20/10/2026.** Após autorização de Cauê,
-a conexão do session pooler foi carregada de `~/.config/frila/dev-db-url` somente
-para uso em memória/ambiente, sem imprimir ou registrar seu conteúdo. Executados
-apenas SELECTs de metadados e uma tentativa do script com `pg_dump`; nenhuma
-escrita no dev e nenhum acesso ao prod.
+**Ensaio real com PostgreSQL 17 e age — 20/10/2026.** A conexão do session
+pooler foi carregada em memória/ambiente a partir de `~/.config/frila/dev-db-url`,
+com autorização de Cauê, sem imprimir ou registrar seu conteúdo. A origem foi
+usada apenas para SELECTs em transação `REPEATABLE READ READ ONLY` e `pg_dump`.
+As contagens e o dump compartilham um snapshot exportado dessa transação; o
+wrapper de medição passa `--snapshot` ao cliente, sem alterar o script operacional.
 
-O servidor informou **PostgreSQL 17.6**; o cliente instalado é **16.13 Homebrew**.
-O `pg_dump` recusou o servidor por incompatibilidade de versão, com código **1**:
+O destino usa PostgreSQL **17.11 Homebrew**, com cópia temporária dos binários,
+headers, bibliotecas e arquivos de extensão. A árvore de diretórios preserva o
+layout relativo do brew para que `pg_config` e o servidor resolvam os arquivos
+**na cópia**, sem instalar extensões na instalação do PostgreSQL do Mac.
+`initdb` cria um cluster novo; `pg_ctl` usa porta alta livre, escuta somente em
+`127.0.0.1` e socket Unix desativado. Nenhum serviço brew é iniciado ou alterado.
+Logs de SQL/erros do servidor não são gravados; saídas de ferramentas ficam
+capturadas em memória, sem publicar conteúdo de linhas ou credenciais.
 
-| Etapa no dev real | Tempo medido | Resultado |
-| --- | ---: | --- |
-| Tentativa de `pg_dump` custom | 0,3665 s | Código 1; 0 bytes |
-| Script completo, incluindo preflight da cifra e limpeza | 1,0238 s | Código 1; pasta de saída vazia |
-| Cifrar/decifrar dump real | Não executado | Nenhum dump gerado |
-| Restaurar dados reais em destino descartável | Não executado | Depende do dump |
+Foram criadas **15 roles auxiliares NOLOGIN**, sem senhas, para resolver as ACLs
+do archive. A restauração usa `--no-owner --single-transaction --exit-on-error`.
+Isso não reproduz atributos globais, membership, autenticação ou ownership de
+produção. Nenhuma role do dev foi criada ou alterada.
 
-Preflight OpenSSL executado com certificado temporário. Temporários, certificado
-e chave de ensaio removidos; nenhum cluster adicional foi iniciado nesta tentativa.
-A limpeza e a saída sem credencial foram conferidas. O ensaio sintético acima é
-a única restauração concluída; seus tempos não representam o dev real.
+Medições finais com age **1.3.2** (relógio monotônico externo ao script):
 
-Para retomar, provisionar **pg_dump 17 ou superior compatível com o servidor** e
-um destino descartável compatível. O Postgres 16 puro do brew não comprova essa
-compatibilidade: o dev tem `supabase_vault` 0.3.1, `postgis` 3.3.7, `pg_net` 0.20.4,
-`pgmq` 1.5.1 e `pg_cron` 1.6.4, além das extensões comuns. É necessário validar
-essas extensões e as roles/ACLs no destino isolado; não foi feita tentativa de
-restauração nem afirmada uma falha específica dessas extensões. Não filtrar o
-archive nem criar substitutos silenciosamente para declarar restauração completa.
+| Etapa real | Tempo medido | Tamanho |
+| --- | ---: | ---: |
+| `pg_dump` 17 custom | 50,8667 s | 2.818.278 bytes |
+| Cifrar com age | 0,0097 s | 2.819.166 bytes |
+| Decifrar com age | 0,0099 s | 2.818.278 bytes |
+| `pg_restore` transacional | 1,7204 s | Código 0 |
+| `initdb` isolado | 1,3239 s | Cluster novo |
 
-Com as dependências resolvidas, Cauê ou um operador autorizado pode carregar a
-conexão sem colocá-la no histórico e executar o comando da seção inicial:
+Backup completo, incluindo preflight e limpeza: **52,0039 s**. Todos os
+comandos de dump/cifra/decifra/restauração terminaram com código zero.
+O TOC contém **81 itens TABLE DATA**; as extensões também criam tabelas.
+Foram comparadas individualmente as **85 tabelas** do dev e do restaurado:
+nenhuma ausente ou extra, **83 contagens iguais** e **2 divergentes**.
+Total: **77.232 linhas no snapshot do dev**, **76.858 no restaurado**.
+No schema `public`: **22 tabelas, 137 linhas em cada lado, zero divergências**.
+
+| Divergência | Linhas no dev | Linhas restauradas | Causa |
+| --- | ---: | ---: | --- |
+| `net._http_response` | 372 | 0 | Tabela da extensão pg_net sem registro em `extconfig` |
+| `pgmq.meta` | 2 | 0 | Tabela da extensão pgmq sem registro em `extconfig` |
+
+**Resultado parcial:** restauração do archive executada e dados de `public`
+conferidos; recuperação completa do banco/filas **não aprovada** devido às
+omissões acima. Nenhum metadado foi fabricado nem reposto consultando linhas
+reais da origem para mascarar a diferença. Um suplemento cifrado desses dados
+ou outra estratégia validada precisa ser definido antes de usar como backup
+completo. As contagens são do snapshot do ensaio, sem estimar duração do prod.
+
+Cluster desligado com `pg_ctl stop`; diretório temporário, cópia do servidor,
+dumps claros/cifrados e chave age temporária apagados. GEOS, PROJ, pkgconf e
+libxml2, instalados só para o build, também removidos. PostgreSQL 16/17 e age
+provisionados por Cauê permanecem disponíveis. Prod não foi acessado.
+
+| Extensão adicional no destino | Tratamento executado |
+| --- | --- |
+| `supabase_vault` 0.3.1 | Compilada da tag oficial v0.3.1, somente na cópia temporária; sem ler chave mestre do dev |
+| `pg_net` 0.20.4 | Compilada da tag oficial v0.20.4; worker configurado para banco inexistente, sem enviar requisições restauradas |
+| `pgmq` 1.5.1 | SQL oficial da tag v1.5.1 instalado como extensão real |
+| `pg_cron` release v1.6.4 | Compilado da tag oficial; versão SQL local `1.6`, origem informa `1.6.4`; jobs desativados por `cron.launch_active_jobs=off` |
+| `postgis` 3.3.7 | Compilado da distribuição oficial 3.3.7; sem raster/topology/SFCGAL, extensões que o dev não utiliza |
+
+`plpgsql`, `pg_stat_statements`, `uuid-ossp`, `pgcrypto`, `btree_gist` e `citext`
+usaram os arquivos do PostgreSQL 17 copiado. Não houve stubs, exclusão de schemas
+nem filtragem do archive para contornar incompatibilidades. Os ajustes de build
+no macOS foram caminho do SDK do Xcode, headers/libs gettext/libsodium e helper
+`install-sh`; nenhuma definição SQL de aplicação foi alterada.
+
+Fontes das extensões: [Vault](https://github.com/supabase/vault/tree/v0.3.1),
+[pg_net](https://github.com/supabase/pg_net/tree/v0.20.4),
+[pgmq](https://github.com/pgmq/pgmq/tree/v1.5.1),
+[pg_cron](https://github.com/citusdata/pg_cron/tree/v1.6.4),
+[PostGIS](https://postgis.net/docs/manual-3.3/postgis_installation.html).
+
+A versão anterior do cliente (16.13) foi recusada pelo novo preflight contra o
+servidor 17.6, antes de criar pasta de saída. O caminho OpenSSL foi testado
+novamente com dados sintéticos e passou; age **1.3.2** foi usado no ensaio real.
+
+**Limite confirmado antes de adotar como backup completo:** tabelas pertencentes
+a uma extensão só têm dados incluídos automaticamente se a extensão as registrar
+como configuração, conforme a [documentação do PostgreSQL](https://www.postgresql.org/docs/17/extend-extensions.html#EXTEND-EXTENSIONS-CONFIG-TABLES).
+No dev, `pgmq.meta` e as tabelas do `pg_net` não estão registradas assim. A prova de
+restauração comparou todas as tabelas, inclusive essas, e encontrou as divergências acima;
+não preencher metadados artificialmente para declarar recuperação completa.
+Chaves do Vault e binários do Storage também continuam fora do dump lógico.
+
+Com as dependências resolvidas, um operador autorizado pode carregar a conexão
+sem colocá-la no histórico e executar o comando da seção inicial:
 
 ```bash
 set +x
 export BACKUP_DB_URL="$(cat "$HOME/.config/frila/dev-db-url")"
-# Ajuste PATH para o cliente compatível, pasta externa e certificado público.
 ./scripts/backup-logico.sh
 unset BACKUP_DB_URL
 ```
 
 Depois, decifrar e restaurar conforme a seção anterior, exclusivamente no destino
 descartável. Medir e conferir os dados antes de considerar o ensaio aprovado.
-O caminho age também não foi executado, pois age não está instalado.
 
 ## Configuração futura do prod e agendamento sugerido
 
