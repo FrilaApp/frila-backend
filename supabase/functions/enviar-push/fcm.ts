@@ -232,7 +232,7 @@ export async function sendFcmMessage(
       status,
       unregistered: isUnregistered,
       transient: isTransient,
-      error: errCode || `HTTP ${status}: ${errText.slice(0, 200)}`,
+      error: errCode || `HTTP ${status}`,
     };
   } catch (netErr) {
     return {
