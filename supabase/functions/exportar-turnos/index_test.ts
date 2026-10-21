@@ -527,12 +527,13 @@ Deno.test("formatarHoraLocal e formatarDataLocal tratam dados inválidos com seg
   assertEquals(formatarDataLocal("data-invalida-xyz"), "data-invalida-xyz");
 });
 
-Deno.test("tratarErroBanco com erro PGRST e mensagem em texto simples devolve 400", async () => {
-  const err = { code: "PGRST", message: "texto_simples_nao_json" };
+Deno.test("tratarErroBanco com erro PGRST e mensagem em texto simples devolve 500 erro_interno sem ecoar mensagem crua (RN15 / AUDITORIA-EDGE-SEG.md)", async () => {
+  const err = { code: "PGRST", message: "texto_simples_nao_json_com_detalhes_internos" };
   const res = tratarErroBanco(err);
-  assertEquals(res.status, 400);
+  assertEquals(res.status, 500);
   const json = await res.json();
-  assertEquals(json.code, "texto_simples_nao_json");
+  assertEquals(json.code, "erro_interno");
+  assertEquals(json.message, "erro_interno");
 });
 
 Deno.test("tratarErroBanco com erro PGRST e detail sem status numérico mantém 400", async () => {

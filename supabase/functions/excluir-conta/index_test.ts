@@ -443,6 +443,19 @@ Deno.test("mapeamento de erros do banco: tratarErroBanco lida com PGRST e erros 
   assertEquals(resp500.status, 500);
   const corpo500 = await resp500.json();
   assertEquals(corpo500.code, "erro_interno");
+
+  // 4. Erro PGRST com mensagem que não é JSON devolve 500 erro_interno sem ecoar mensagem crua (RN15 / AUDITORIA-EDGE-SEG.md)
+  const erroPgNaoJson = {
+    code: "PGRST",
+    message: "syntax error at or near 'SELECT table_name FROM ...'",
+    detail: "internal database schema info",
+  };
+  const respNaoJson = tratarErroBanco(erroPgNaoJson);
+  assertEquals(respNaoJson.status, 500);
+  const corpoNaoJson = await respNaoJson.json();
+  assertEquals(corpoNaoJson.code, "erro_interno");
+  assertEquals(corpoNaoJson.message, "erro_interno");
+  assertEquals(corpoNaoJson.details, null);
 });
 
 // ── SHUDSozj: o pedido de exclusão deixa rastro ───────────────────────────────
