@@ -696,7 +696,8 @@ export async function processarEnvioPush(
       try {
         notificacoes = await sqlClient.reivindicarLotePendentes(limite);
       } catch (err) {
-        console.error("Erro ao reivindicar lote com SKIP LOCKED:", err);
+        const errMensagem = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        console.error("Erro ao reivindicar lote com SKIP LOCKED:", errMensagem);
         return new Response(
           JSON.stringify({ ok: false, erro: "erro_ao_buscar_pendentes" }),
           { status: 500, headers: { "Content-Type": "application/json" } },
