@@ -26,6 +26,7 @@ import {
   lerConfiguracaoSmtp,
   ResultadoEnvio,
   validarDestinatario,
+  validarTextoCabecalhoSmtp,
 } from "./provedor.ts";
 import {
   alertaParaEquipe,
@@ -205,7 +206,7 @@ async function processarAlerta(
     ? pedido.mensagem.valor
     : undefined;
   const modelo = alertaParaEquipe(codigo, valor);
-  if (!validarDestinatario(equipe)) {
+  if (!validarDestinatario(equipe) || !validarTextoCabecalhoSmtp(modelo.assunto)) {
     await sql.concluir(pedido.msg_id);
     return { msg_id: pedido.msg_id, status: "arquivado", detalhe: "destinatario_invalido" };
   }
@@ -270,7 +271,11 @@ async function processarOcorrencia(
 
     const responderPara = destino === "autor" ? equipe : undefined;
 
-    if (!validarDestinatario(para) || (responderPara && !validarDestinatario(responderPara))) {
+    if (
+      !validarDestinatario(para) ||
+      (responderPara && !validarDestinatario(responderPara)) ||
+      !validarTextoCabecalhoSmtp(modelo.assunto)
+    ) {
       await sql.registrarFalha(ocorrenciaId, "destinatario_invalido");
       await sql.concluir(pedido.msg_id);
       return { msg_id: pedido.msg_id, status: "arquivado", detalhe: "destinatario_invalido" };
