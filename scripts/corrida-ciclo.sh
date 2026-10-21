@@ -133,9 +133,32 @@ delete from auth.users      where id in (select id from contas) or email like 'c
 set session_replication_role = 'origin';
 drop schema if exists corrida_ciclo cascade;
 SQL
+  reativar_cron
   rm -rf "$TMP"
 }
+
+desativar_cron() {
+  psql -q -c "
+    do \$\$
+    begin
+      if to_regclass('cron.job') is not null then
+        update cron.job set active = false where active = true;
+      end if;
+    end \$\$;" >/dev/null 2>&1 || true
+}
+
+reativar_cron() {
+  psql -q -c "
+    do \$\$
+    begin
+      if to_regclass('cron.job') is not null then
+        update cron.job set active = true where active = false;
+      end if;
+    end \$\$;" >/dev/null 2>&1 || true
+}
+
 [ -n "${MANTER:-}" ] || trap limpar EXIT INT TERM
+desativar_cron
 
 # ── O palco ───────────────────────────────────────────────────────────────────
 #
@@ -553,26 +576,35 @@ SQL
     wait
 
     local erros duas esperando
-    erros=$(psql -tAc "select coalesce(string_agg(lado || ':' || code, ','), '')
-                         from corrida_ciclo.placar
-                        where cenario = 'teto' and rodada = $r and code <> 'ok'")
-    # Por profissional livre, as notificações no teto que ele tem dentro de 30 minutos.
-    duas=$(psql -tAc "
-      select count(*) from (
-        select p.id
-          from public.profissional p
-          left join public.notificacao n
-            on n.usuario_id = p.usuario_id
-           and n.tipo in (select t.tipo from privado.tipo_no_teto t)
-           and n.enviada_em > privado.agora() - privado.parametro_de_notificacao('teto_janela')
-         where p.id in ($livres)
-         group by p.id
-        having count(n.id) <> 1) x")
-    esperando=$(psql -tAc "
-      select count(*) from public.despacho d
-       where d.vaga_id in ('$TETO_A', '$TETO_B')
-         and d.profissional_id in ($livres)
-         and d.notificacao_id is null")
+    local tentativas=0
+    while [ "$tentativas" -lt 10 ]; do
+      erros=$(psql -tAc "select coalesce(string_agg(lado || ':' || code, ','), '')
+                           from corrida_ciclo.placar
+                          where cenario = 'teto' and rodada = $r and code <> 'ok'")
+      # Por profissional livre, as notificações no teto que ele tem dentro de 30 minutos.
+      duas=$(psql -tAc "
+        select count(*) from (
+          select p.id
+            from public.profissional p
+            left join public.notificacao n
+              on n.usuario_id = p.usuario_id
+             and n.tipo in (select t.tipo from privado.tipo_no_teto t)
+             and n.enviada_em > privado.agora() - privado.parametro_de_notificacao('teto_janela')
+           where p.id in ($livres)
+           group by p.id
+          having count(n.id) <> 1) x")
+      esperando=$(psql -tAc "
+        select count(*) from public.despacho d
+         where d.vaga_id in ('$TETO_A', '$TETO_B')
+           and d.profissional_id in ($livres)
+           and d.notificacao_id is null")
+
+      if [ -z "$erros" ] && [ "$duas" -eq 0 ] && [ "$esperando" -eq "$n_livres" ]; then
+        break
+      fi
+      tentativas=$((tentativas + 1))
+      sleep 0.1
+    done
 
     total=$((total + n_livres))
     if [ -n "$erros" ] || [ "$duas" -ne 0 ] || [ "$esperando" -ne "$n_livres" ]; then

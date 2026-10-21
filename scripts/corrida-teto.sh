@@ -38,9 +38,32 @@ delete from public.notificacao where referencia_id in ('$VAGA_A', '$VAGA_B');
 delete from public.vaga where id in ('$VAGA_A', '$VAGA_B');
 set session_replication_role = 'origin';
 SQL
+  reativar_cron
   rm -rf "$TMP"
 }
+
+desativar_cron() {
+  psql -q -c "
+    do \$\$
+    begin
+      if to_regclass('cron.job') is not null then
+        update cron.job set active = false where active = true;
+      end if;
+    end \$\$;" >/dev/null 2>&1 || true
+}
+
+reativar_cron() {
+  psql -q -c "
+    do \$\$
+    begin
+      if to_regclass('cron.job') is not null then
+        update cron.job set active = true where active = false;
+      end if;
+    end \$\$;" >/dev/null 2>&1 || true
+}
+
 trap limpar EXIT
+desativar_cron
 limpar; TMP=$(mktemp -d)
 
 echo "▸ Montando o cenário: duas vagas no horário da vaga de referência do seed"
