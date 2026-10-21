@@ -136,23 +136,29 @@ const CARACTERES_FORMULA_INICIO = ["=", "+", "-", "@", "\t", "\r"];
  */
 export function neutralizarFormulaCsv(texto: string): string {
   if (!texto) return "";
+  if (texto === "-" || texto === "--") return texto;
   const primeiroChar = texto.charAt(0);
   if (CARACTERES_FORMULA_INICIO.includes(primeiroChar)) {
-    return `'${texto}`;
+    if (!texto.startsWith("'")) {
+      return `'${texto}`;
+    }
   }
   return texto;
 }
 
 /**
- * Escapa uma célula segundo a RFC 4180.
+ * Escapa uma célula segundo a RFC 4180 e neutraliza injeção de fórmulas (OWASP CSV Injection).
+ * Prefixa apóstrofo (') se o texto iniciar por =, +, -, @, \t ou \r (exceto o marcador "-" de ausência).
  * Envolve em aspas duplas se contiver vírgula (,), aspas duplas ("), line feed (\n)
  * ou carriage return (\r), duplicando aspas duplas internas.
  */
 export function escaparCelulaCsv(val: string): string {
-  if (val.includes(",") || val.includes('"') || val.includes("\n") || val.includes("\r")) {
-    return `"${val.replace(/"/g, '""')}"`;
+  if (!val) return "";
+  const texto = neutralizarFormulaCsv(val);
+  if (texto.includes(",") || texto.includes('"') || texto.includes("\n") || texto.includes("\r")) {
+    return `"${texto.replace(/"/g, '""')}"`;
   }
-  return val;
+  return texto;
 }
 
 export function gerarCsv(turnos: TurnoExportacao[]): string {
