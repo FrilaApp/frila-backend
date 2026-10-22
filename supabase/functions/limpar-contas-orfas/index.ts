@@ -8,6 +8,7 @@
 // 4. Executa a retenção de 15 dias e a higienização de tabelas no Postgres via privado.executar_retencao_diaria().
 
 import postgres from "npm:postgres@3.4.4";
+import { segredoAgendadorValido } from "../_compartilhado/auth.ts";
 
 export interface Erro {
   code: string;
@@ -44,21 +45,8 @@ function obterVariavel(nome: string, injetada?: string): string {
   return valor;
 }
 
-function igualEmTempoConstante(a: string, b: string): boolean {
-  const x = new TextEncoder().encode(a);
-  const y = new TextEncoder().encode(b);
-  let diferenca = x.length ^ y.length;
-  const n = Math.max(x.length, y.length);
-  for (let i = 0; i < n; i++) diferenca |= (x[i] ?? 0) ^ (y[i] ?? 0);
-  return diferenca === 0;
-}
-
 function segredoValido(req: Request, segredoEsperado: string): boolean {
-  const secretHeader = req.headers.get("x-agendador-secret");
-  if (secretHeader && igualEmTempoConstante(secretHeader, segredoEsperado)) {
-    return true;
-  }
-  return false;
+  return segredoAgendadorValido(req, segredoEsperado, { permitirBearer: false });
 }
 
 function criarSqlClient(deps?: HandlerDeps): SqlClient {

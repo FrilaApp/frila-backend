@@ -7,6 +7,7 @@
 // 4. Apaga a credencial em auth.users via Admin API com service_role.
 
 import postgres from "npm:postgres@3.4.4";
+import { validarFormatoBearer } from "../_compartilhado/auth.ts";
 
 export interface Erro {
   code: string;
@@ -116,7 +117,7 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   }
 
   const autorizacao = req.headers.get("Authorization") ?? "";
-  if (!/^Bearer\s+\S+$/i.test(autorizacao)) {
+  if (!validarFormatoBearer(autorizacao)) {
     return resposta(401, { code: "nao_autenticado", message: "nao_autenticado", details: null });
   }
 

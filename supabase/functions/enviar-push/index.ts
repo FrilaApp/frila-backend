@@ -10,6 +10,7 @@
 //    - Não reenvia se a vaga ou turno já tiver iniciado, nem antes de proxima_tentativa_em.
 
 import postgres from "npm:postgres@3.4.4";
+import { segredoAgendadorValido } from "../_compartilhado/auth.ts";
 import {
   FcmServiceAccount,
   getAccessToken,
@@ -70,15 +71,6 @@ export interface Dependencias {
   sqlClient?: SqlClient;
 }
 
-function igualEmTempoConstante(a: string, b: string): boolean {
-  const x = new TextEncoder().encode(a);
-  const y = new TextEncoder().encode(b);
-  let diferenca = x.length ^ y.length;
-  const n = Math.max(x.length, y.length);
-  for (let i = 0; i < n; i++) diferenca |= (x[i] ?? 0) ^ (y[i] ?? 0);
-  return diferenca === 0;
-}
-
 const AGENDADOR_SECRET = Deno.env.get("AGENDADOR_SECRET");
 if (!AGENDADOR_SECRET || AGENDADOR_SECRET.trim() === "") {
   throw new Error("AGENDADOR_SECRET é obrigatório e deve estar configurado no ambiente.");
@@ -86,22 +78,7 @@ if (!AGENDADOR_SECRET || AGENDADOR_SECRET.trim() === "") {
 
 function segredoValido(req: Request, agendadorSecret?: string): boolean {
   const secret = agendadorSecret || AGENDADOR_SECRET;
-  if (!secret || secret.trim() === "") {
-    return false;
-  }
-
-  const secretHeader = req.headers.get("x-agendador-secret");
-  if (secretHeader && igualEmTempoConstante(secretHeader, secret)) {
-    return true;
-  }
-
-  const authHeader = req.headers.get("Authorization") ?? "";
-  const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (match && igualEmTempoConstante(match[1], secret)) {
-    return true;
-  }
-
-  return false;
+  return segredoAgendadorValido(req, secret ?? "");
 }
 
 export function carregarContaDeServico(): FcmServiceAccount | null {

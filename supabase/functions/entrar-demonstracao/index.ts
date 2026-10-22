@@ -75,17 +75,9 @@ export function recusa(status: number, code: string, details: string | null = nu
   });
 }
 
-// Comparação que não entrega o prefixo certo pelo tempo que leva para falhar. O
-// `localeCompare` e o `===` de string saem no primeiro byte diferente; com um código
-// fixo e um teto alto de tentativas isso é explorável.
-export function igualEmTempoConstante(a: string, b: string): boolean {
-  const x = new TextEncoder().encode(a);
-  const y = new TextEncoder().encode(b);
-  let diferenca = x.length ^ y.length;
-  const n = Math.max(x.length, y.length);
-  for (let i = 0; i < n; i++) diferenca |= (x[i] ?? 0) ^ (y[i] ?? 0);
-  return diferenca === 0;
-}
+// Comparação que não entrega o prefixo certo pelo tempo que leva para falhar (mitigação timing attack).
+import { igualEmTempoConstante } from "../_compartilhado/auth.ts";
+export { igualEmTempoConstante };
 
 // Os endereços declarados no App Store Connect, separados por vírgula no segredo.
 //
