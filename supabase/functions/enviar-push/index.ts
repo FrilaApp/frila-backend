@@ -841,6 +841,10 @@ export async function processarEnvioPush(
       if (disp.vinculo_id) {
         dataParaDispositivo.vinculo_id = disp.vinculo_id;
       }
+      if (disp.plataforma === "android") {
+        dataParaDispositivo.titulo = title;
+        dataParaDispositivo.corpo = body;
+      }
       const resultado: FcmSendResult = await sendFcmMessage(
         sa.project_id,
         accessToken,

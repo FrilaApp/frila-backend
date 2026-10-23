@@ -6,23 +6,6 @@
 
 // Decisão provisória do cartão pCSdUOyB: 24 horas até definição do produto.
 const TTL_ANDROID = "86400s";
-const CANAIS_ANDROID_POR_TIPO = new Map<string, string>([
-  ["vaga", "canal_urgencia"],
-  ["vagas_agrupadas", "canal_urgencia"],
-  ["confirmacao", "canal_turnos"],
-  ["lembrete_24h", "canal_turnos"],
-  ["lembrete_3h", "canal_turnos"],
-  ["inicio_sem_checkin", "canal_turnos"],
-  ["atraso_15min", "canal_turnos"],
-  ["fim_sem_checkout", "canal_turnos"],
-  ["vaga_vazia", "canal_geral"],
-  ["checkin", "canal_turnos"],
-  ["checkin_manual_pendente", "canal_turnos"],
-  ["cancelamento", "canal_turnos"],
-  ["avaliacao_disponivel", "canal_turnos"],
-  ["suspensao", "canal_geral"],
-  ["reativacao", "canal_geral"],
-]);
 
 export interface FcmServiceAccount {
   project_id: string;
@@ -157,33 +140,39 @@ export async function sendFcmMessage(
     options?.apiUrl ??
     `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
 
-  const body: Record<string, unknown> = {
-    message: {
-      token: payload.token,
-      notification: {
-        title: payload.title,
-        body: payload.body,
-      },
-      data: payload.data ?? {},
-      android: {
-        priority: "high",
-        notification: {
-          channel_id: CANAIS_ANDROID_POR_TIPO.get(payload.data?.tipo ?? "") ??
-            "canal_geral",
-        },
-        ttl: TTL_ANDROID,
-      },
-      apns: {
-        payload: {
-          aps: {
-            sound: "default",
-            badge: 1,
-            "mutable-content": 1,
+  const data: Record<string, string> = { ...(payload.data ?? {}) };
+  if (payload.plataforma === "android") {
+    if (payload.title && !data.titulo) {
+      data.titulo = payload.title;
+    }
+    if (payload.body && !data.corpo) {
+      data.corpo = payload.body;
+    }
+  }
+
+  const message: Record<string, unknown> = {
+    token: payload.token,
+    data,
+    android: {
+      priority: "high",
+      ttl: TTL_ANDROID,
+    },
+    apns: {
+      payload: {
+        aps: {
+          alert: {
+            title: payload.title,
+            body: payload.body,
           },
+          sound: "default",
+          badge: 1,
+          "mutable-content": 1,
         },
       },
     },
   };
+
+  const body: Record<string, unknown> = { message };
 
   try {
     const res = await fetchFn(url, {
