@@ -137,27 +137,27 @@ Deno.test("FCM client: envia android por tipo com TTL, data e apns intactos (200
   const token = await getAccessToken(sa, mockFetch);
   assertEquals(token, "mock-google-access-token-12345");
 
-  const casos: Array<[string | undefined, string]> = [
-    ["vaga", "canal_urgencia"],
-    ["vagas_agrupadas", "canal_urgencia"],
-    ["confirmacao", "canal_turnos"],
-    ["lembrete_24h", "canal_turnos"],
-    ["lembrete_3h", "canal_turnos"],
-    ["inicio_sem_checkin", "canal_turnos"],
-    ["atraso_15min", "canal_turnos"],
-    ["fim_sem_checkout", "canal_turnos"],
-    ["vaga_vazia", "canal_geral"],
-    ["checkin", "canal_turnos"],
-    ["checkin_manual_pendente", "canal_turnos"],
-    ["cancelamento", "canal_turnos"],
-    ["avaliacao_disponivel", "canal_turnos"],
-    ["suspensao", "canal_geral"],
-    ["reativacao", "canal_geral"],
-    ["tipo_futuro", "canal_geral"],
-    [undefined, "canal_geral"],
+  const tipos: Array<string | undefined> = [
+    "vaga",
+    "vagas_agrupadas",
+    "confirmacao",
+    "lembrete_24h",
+    "lembrete_3h",
+    "inicio_sem_checkin",
+    "atraso_15min",
+    "fim_sem_checkout",
+    "vaga_vazia",
+    "checkin",
+    "checkin_manual_pendente",
+    "cancelamento",
+    "avaliacao_disponivel",
+    "suspensao",
+    "reativacao",
+    "tipo_futuro",
+    undefined,
   ];
 
-  for (const [tipo, canal] of casos) {
+  for (const tipo of tipos) {
     const data = tipo === undefined ? undefined : {
       tipo,
       vinculo_id: "11111111-1111-4000-8000-000000000001",
@@ -178,15 +178,22 @@ Deno.test("FCM client: envia android por tipo com TTL, data e apns intactos (200
     assertEquals(sendRes.ok, true);
     assertEquals(sendRes.status, 200);
     assertEquals(sendRes.messageId, "projects/frila-test-project/messages/msg_987654321");
+    // RN15: Sem bloco notification na raiz da mensagem FCM (Android não pode pular onMessageReceived)
+    assertEquals(corpoFCM?.message?.notification, undefined);
+    // Android data-only: sem bloco notification interno (sem channel_id), mantendo prioridade alta e TTL
     assertEquals(corpoFCM?.message?.android, {
       priority: "high",
-      notification: { channel_id: canal },
       ttl: "86400s",
     }, `Configuração Android para ${tipo ?? "tipo ausente"}`);
     assertEquals(corpoFCM?.message?.data, data ?? {});
+    // iOS: alerta segue estruturado em apns.payload.aps.alert com mutable-content
     assertEquals(corpoFCM?.message?.apns, {
       payload: {
         aps: {
+          alert: {
+            title: "Nova vaga disponível",
+            body: "Você tem um novo turno compatível",
+          },
           sound: "default",
           badge: 1,
           "mutable-content": 1,
@@ -889,7 +896,8 @@ Deno.test("Envio: cancelamento com ocorrência reabertura_por_atraso sai com o t
     }
     if (url.includes("/messages:send")) {
       const corpo = JSON.parse(String(init?.body));
-      enviado = corpo.message.notification;
+      assertEquals(corpo.message.notification, undefined);
+      enviado = corpo.message.apns?.payload?.aps?.alert;
       return json({ name: "projects/frila-test-project/messages/1" });
     }
     if (url.includes("/rest/v1/rpc/")) return json(null);
@@ -981,8 +989,9 @@ Deno.test("Lembretes 24h e 3h: interpolação Opção A homologada (k5R4tzjC)", 
   if (!fcmEnviado) {
     throw new Error("fcmEnviado não deveria ser nulo");
   }
-  assertEquals(fcmEnviado.message.notification.title, "Lembrete de turno amanhã");
-  assertEquals(fcmEnviado.message.notification.body, "Garçom em Bar Beirute amanhã às 11:00.");
+  assertEquals(fcmEnviado.message.notification, undefined);
+  assertEquals(fcmEnviado.message.apns?.payload?.aps?.alert?.title, "Lembrete de turno amanhã");
+  assertEquals(fcmEnviado.message.apns?.payload?.aps?.alert?.body, "Garçom em Bar Beirute amanhã às 11:00.");
 });
 
 Deno.test("Lembretes 24h e 3h: caminho de reserva (Opção B) para profissional e contratante", () => {
@@ -1075,8 +1084,9 @@ Deno.test("Lembretes 24h e 3h: envio com fallback para contratante usa textos da
     throw new Error("fcmEnviado não deveria ser nulo");
   }
   // Garante que contratante recebe "Turno em 3 horas" e NÃO "Seu turno começa em 3 horas"
-  assertEquals(fcmEnviado.message.notification.title, "Turno em 3 horas");
-  assertEquals(fcmEnviado.message.notification.body, "Turno confirmado começa em 3 horas. Acompanhe pelo app.");
+  assertEquals(fcmEnviado.message.notification, undefined);
+  assertEquals(fcmEnviado.message.apns?.payload?.aps?.alert?.title, "Turno em 3 horas");
+  assertEquals(fcmEnviado.message.apns?.payload?.aps?.alert?.body, "Turno confirmado começa em 3 horas. Acompanhe pelo app.");
 });
 
 // ── Ciclo de vida do token (cartão wpNabtCO) ──────────────────────────────────
@@ -1303,7 +1313,8 @@ Deno.test("RN23: o envio da agrupada lê a contagem e usa no corpo do push", asy
     }
     if (url.includes("/messages:send")) {
       const msg = JSON.parse(String(init?.body ?? "{}"));
-      corpos.push(msg?.message?.notification?.body ?? "");
+      assertEquals(msg?.message?.notification, undefined);
+      corpos.push(msg?.message?.apns?.payload?.aps?.alert?.body ?? "");
       return json({ name: "projects/p/messages/1" });
     }
     return Promise.reject(new Error(`URL não tratada: ${url}`));
@@ -1371,7 +1382,8 @@ Deno.test("vaga_vazia: a enviar-push lê função e horário da posição e mand
   const sa = await gerarContaDeServicoTeste();
   const POSICAO = "c3400000-0000-4000-8000-000000000041";
   const VAGA = "c3400000-0000-4000-8000-000000000031";
-  const enviado: { mensagem?: { notification: { title: string; body: string }; data: Record<string, string> } } = {};
+  // deno-lint-ignore no-explicit-any
+  const enviado: { mensagem?: any } = {};
   let consultaPosicao = "";
 
   const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1427,8 +1439,9 @@ Deno.test("vaga_vazia: a enviar-push lê função e horário da posição e mand
   assertEquals(res.status, 200);
   assertMatch(consultaPosicao, new RegExp(`id=eq\\.${POSICAO}`));
   assert(enviado.mensagem !== undefined, "o FCM foi chamado");
-  assertEquals(enviado.mensagem!.notification.title, "Vaga ainda em aberto");
-  assertEquals(enviado.mensagem!.notification.body,
+  assertEquals(enviado.mensagem!.notification, undefined);
+  assertEquals(enviado.mensagem!.apns.payload.aps.alert.title, "Vaga ainda em aberto");
+  assertEquals(enviado.mensagem!.apns.payload.aps.alert.body,
     "A posição de Garçom das 18:00 ainda não foi preenchida.");
   // O destino do toque: Minhas vagas com a vaga em alerta. Só ids (RN15).
   assertEquals(enviado.mensagem!.data, { tipo: "vaga_vazia", vaga_id: VAGA, posicao_id: POSICAO });
@@ -1436,7 +1449,8 @@ Deno.test("vaga_vazia: a enviar-push lê função e horário da posição e mand
 
 Deno.test("vaga_vazia: se a leitura da posição falha, o push sai com a Op. B", async () => {
   const sa = await gerarContaDeServicoTeste();
-  const enviado: { mensagem?: { notification: { title: string; body: string }; data: Record<string, string> } } = {};
+  // deno-lint-ignore no-explicit-any
+  const enviado: { mensagem?: any } = {};
 
   const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
@@ -1481,7 +1495,8 @@ Deno.test("vaga_vazia: se a leitura da posição falha, o push sai com a Op. B",
   );
 
   assertEquals(res.status, 200);
-  assertEquals(enviado.mensagem!.notification.body,
+  assertEquals(enviado.mensagem!.notification, undefined);
+  assertEquals(enviado.mensagem!.apns.payload.aps.alert.body,
     "Sua vaga ainda possui posição em aberto próxima ao horário.");
 });
 
@@ -1855,8 +1870,9 @@ Deno.test("x0jkygj0: processarEnvioPush envia lembrete com {estabelecimento} ({r
   if (!fcmEnviado) {
     throw new Error("fcmEnviado não deveria ser nulo");
   }
-  assertEquals(fcmEnviado.message.notification.title, "Lembrete de turno amanhã");
-  assertEquals(fcmEnviado.message.notification.body, "Garçom em Bar Beirute (Asa Sul) amanhã às 19:00.");
+  assertEquals(fcmEnviado.message.notification, undefined);
+  assertEquals(fcmEnviado.message.apns?.payload?.aps?.alert?.title, "Lembrete de turno amanhã");
+  assertEquals(fcmEnviado.message.apns?.payload?.aps?.alert?.body, "Garçom em Bar Beirute (Asa Sul) amanhã às 19:00.");
 });
 
 
@@ -2280,9 +2296,11 @@ Deno.test("Cartão h6RoObK6: corpo enviado ao FCM traz apns.payload.aps['mutable
   assertEquals(corpoEnviado.message.data?.tipo, "vaga");
   assertEquals(corpoEnviado.message.data?.vaga_id, "d0000000-0000-4000-8000-000000000001");
 
-  // 4. Nenhum dado pessoal novo no payload
+  // 4. Alerta com título e corpo no APNs para iOS, e nenhum dado pessoal novo no payload
+  assertEquals(corpoEnviado.message.notification, undefined);
+  assertEquals(corpoEnviado.message.apns?.payload?.aps?.alert?.title, "Nova vaga no Frila");
   const apsChaves = Object.keys(corpoEnviado.message.apns.payload.aps).sort();
-  assertEquals(apsChaves, ["badge", "mutable-content", "sound"]);
+  assertEquals(apsChaves, ["alert", "badge", "mutable-content", "sound"]);
 
   const dadosPessoaisProibidos = [
     "nome", "cpf", "rg", "telefone", "email", "endereco", "chave_pix",
@@ -3366,3 +3384,154 @@ Deno.test(
     );
   },
 );
+
+// ── Android data-only e RN15: isolamento em aparelho compartilhado ───────────
+
+Deno.test("RN15 / Android data-only: aparelho Android recebe titulo e corpo em data, sem notification na raiz e sem channel_id", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  // deno-lint-ignore no-explicit-any
+  let corpoEnviado: any = null;
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+
+    if (url.includes("/token")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "b4000000-0000-4000-8000-000000000099",
+              usuario_id: "c4000000-0000-4000-8000-000000000001",
+              tipo: "vaga",
+              referencia_id: "d4000000-0000-4000-8000-000000000001",
+              payload: {
+                vaga_id: "d4000000-0000-4000-8000-000000000001",
+              },
+              tentativas: 0,
+              estado_entrega: "pendente",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "disp-android-1",
+              token_fcm: "fcm_token_pixel_android_12345",
+              plataforma: "android",
+              vinculo_id: "44444444-4444-4000-8000-000000000001",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    if (url.includes("/messages:send") && init?.body) {
+      corpoEnviado = JSON.parse(init.body as string);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ name: "projects/frila-test/messages/msg-android-data-only" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+
+    return Promise.reject(new Error(`URL não tratada no mock: ${url}`));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+    body: JSON.stringify({ notificacao_id: "b4000000-0000-4000-8000-000000000099" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient: criarMockSqlClient(),
+  });
+
+  assertEquals(res.status, 200);
+  assert(corpoEnviado !== null, "mensagem FCM deve ter sido enviada");
+
+  // 1. Sem bloco notification na raiz da mensagem FCM (RN15: obriga execução do onMessageReceived no Android)
+  assertEquals(corpoEnviado.message.notification, undefined);
+
+  // 2. android não contém notification nem channel_id, apenas prioridade e ttl
+  assertEquals(corpoEnviado.message.android, {
+    priority: "high",
+    ttl: "86400s",
+  });
+  assertEquals(corpoEnviado.message.android.notification, undefined);
+
+  // 3. data contém titulo e corpo para que o app Android construa a notificação após validar vinculo_id
+  assertEquals(corpoEnviado.message.data?.titulo, "Nova vaga no Frila");
+  assert(typeof corpoEnviado.message.data?.corpo === "string" && corpoEnviado.message.data.corpo.length > 0);
+  assertEquals(corpoEnviado.message.data?.vinculo_id, "44444444-4444-4000-8000-000000000001");
+  assertEquals(corpoEnviado.message.data?.tipo, "vaga");
+  assertEquals(corpoEnviado.message.data?.vaga_id, "d4000000-0000-4000-8000-000000000001");
+
+  // 4. RN15: nenhum dado pessoal no payload data
+  const dadosPessoaisProibidos = [
+    "nome", "cpf", "rg", "telefone", "email", "endereco", "chave_pix",
+    "usuario_id", "profissional_id", "senha", "token", "token_fcm",
+  ];
+  for (const campo of dadosPessoaisProibidos) {
+    assert(
+      !(campo in corpoEnviado.message.data),
+      `Campo sensível proibido '${campo}' encontrado no data payload do FCM`,
+    );
+  }
+});
+
+Deno.test("sendFcmMessage: data-only puro para plataforma android injeta titulo e corpo em data se ausentes", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  // deno-lint-ignore no-explicit-any
+  let capturado: any = null;
+
+  const mockFetch: typeof fetch = (_input: RequestInfo | URL, init?: RequestInit) => {
+    capturado = JSON.parse(init?.body as string);
+    return Promise.resolve(
+      new Response(JSON.stringify({ name: "projects/p/messages/android-direct" }), { status: 200 }),
+    );
+  };
+
+  const res = await sendFcmMessage(
+    sa.project_id,
+    "mock-token",
+    {
+      token: "device-token-android-12345",
+      title: "Título de teste",
+      body: "Corpo de teste",
+      data: { tipo: "confirmacao", vaga_id: "d0000000-0000-4000-8000-000000000001" },
+      plataforma: "android",
+    },
+    {
+      apiUrl: "http://mock-fcm/messages:send",
+      fetchFn: mockFetch,
+    },
+  );
+
+  assertEquals(res.ok, true);
+  assertEquals(capturado.message.notification, undefined);
+  assertEquals(capturado.message.android, { priority: "high", ttl: "86400s" });
+  assertEquals(capturado.message.data.titulo, "Título de teste");
+  assertEquals(capturado.message.data.corpo, "Corpo de teste");
+  assertEquals(capturado.message.data.tipo, "confirmacao");
+});
