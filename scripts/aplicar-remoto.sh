@@ -26,9 +26,11 @@ API="https://api.supabase.com/v1/projects/$REF/database/query"
 
 # Executa SQL e devolve a resposta crua. Aborta no primeiro erro da API.
 rodar() {
-  local sql="$1" resposta
-  resposta=$(python3 - "$sql" <<'PY'
-import json, os, sys, urllib.request
+  local sql="$1"
+  local resposta
+  if ! resposta=$(python3 - "$sql" <<'PY'
+import json, os, sys, time, urllib.error, urllib.request
+
 sql = sys.argv[1]
 req = urllib.request.Request(
     os.environ["API"],
@@ -36,12 +38,27 @@ req = urllib.request.Request(
     headers={"Authorization": "Bearer " + os.environ["SUPABASE_ACCESS_TOKEN"],
              "Content-Type": "application/json"},
     method="POST")
-try:
-    print(urllib.request.urlopen(req, timeout=180).read().decode())
-except urllib.error.HTTPError as e:
-    print("ERRO_HTTP " + e.read().decode()); sys.exit(1)
+
+tentativas = 4
+for i in range(tentativas):
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            print(resp.read().decode())
+            sys.exit(0)
+    except urllib.error.HTTPError as e:
+        corpo = e.read().decode()
+        print("ERRO_HTTP " + corpo)
+        sys.exit(1)
+    except Exception as e:
+        if i == tentativas - 1:
+            print(f"ERRO_HTTP Erro de rede definitivo após {tentativas} tentativas: {e}")
+            sys.exit(1)
+        time.sleep(2 ** i)
 PY
-)
+); then
+    printf '%s\n' "$resposta" >&2
+    return 1
+  fi
   if printf '%s' "$resposta" | grep -q '^ERRO_HTTP\|"message":"Failed to run sql'; then
     printf '%s\n' "$resposta" >&2
     return 1
