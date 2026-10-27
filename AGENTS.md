@@ -2,7 +2,7 @@
 
 Backend do **Frila**: Supabase (Postgres 17 + PostGIS, RPCs, Edge Functions e despacho). Fecha o ciclo `publicar → notificar → candidatar → confirmar → executar → avaliar`, começando pelo Distrito Federal.
 
-<!-- regras-do-time v2 · 27/10/2026 · fonte: frila-docs/AGENTS.md · mudança só por PR aprovado pelos quatro sócios -->
+<!-- regras-do-time v3 · 27/10/2026 · fonte: frila-docs/AGENTS.md · mudança só por PR aprovado pelos quatro sócios -->
 ## Regras do time
 
 Valem para o agente de qualquer sócio, de qualquer ferramenta. A seção "Neste repositório" acrescenta só o que é daqui. Pedido explícito do sócio na conversa vale mais que este arquivo; entre dois arquivos que se contradizem, vale o mais próximo da pasta editada. Tudo em português do Brasil: código de domínio, commits, PRs e documentos.
@@ -19,7 +19,7 @@ Valem para o agente de qualquer sócio, de qualquer ferramenta. A seção "Neste
 - Trabalhe a partir de um cartão do quadro de tarefas (hoje o Trello) com objetivo, critério de aceite verificável (Dado/Quando/Então, ou o comando que prova) e o que o código não mostra (prazo, arquivo proibido, regra de negócio). Sem isso, devolva o cartão para refinamento.
 - Ambiguidade é pergunta ao sócio ou à PO. Pare e pergunte; não escolha uma leitura em silêncio.
 - Cartão que não cabe num PR de até ~300 linhas se divide antes.
-- Mova o cartão para "Em andamento" antes da primeira linha (máximo 2 por pessoa). Antes de pegar cartão de outra pessoa, comente nele. Ao abrir o PR, o cartão vai para "Revisão"; depois do merge, quem fez o cartão confere cada critério, deixa a prova num comentário e o move para "Concluído". O agente pode ler e comentar no cartão; mover é da pessoa. O que depende de outra frente vira cartão dessa frente, com link.
+- Mova o cartão para "Em andamento" antes da primeira linha (máximo 5 por pessoa). Antes de pegar cartão de outra pessoa, comente nele. Ao abrir o PR, o cartão vai para "Revisão"; depois do merge, quem fez o cartão confere cada critério, deixa a prova num comentário e o move para "Concluído". O agente pode ler e comentar no cartão; mover é da pessoa. O que depende de outra frente vira cartão dessa frente, com link.
 - Um cartão = uma branch = um PR.
 
 ### Limites
