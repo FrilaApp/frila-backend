@@ -12,6 +12,13 @@ Lembrete: a base do PR é SEMPRE develop (`gh pr create --base develop`). Nunca 
 
 https://trello.com/c/
 
+## Quem responde e qual IA ajudou
+
+<!-- Pelo nome: o sócio que responde por este PR e, se houve, a IA (ferramenta e modelo). -->
+
+Quem responde: 
+IA: 
+
 ## O que muda, e por quê
 
 <!--

@@ -7,10 +7,10 @@ Backend do **Frila**: Supabase (Postgres 17 + PostGIS, RPCs, Edge Functions e de
 
 Valem para o agente de qualquer sócio, de qualquer ferramenta. A seção "Neste repositório" acrescenta só o que é daqui. Pedido explícito do sócio na conversa vale mais que este arquivo; entre dois arquivos que se contradizem, vale o mais próximo da pasta editada. Tudo em português do Brasil: código de domínio, commits, PRs e documentos.
 
-**Quem é quem.** Os quatro sócios têm comando total do Frila: Cauê (`cauecarneiro`, líder), Fabrício (`fbtostadev`, design e produto), Jota (`jotape12-Dev`) e Matheus (`silvaaszx`), devs. Júlia Clovandi (`JuhClovandi`) é a PO: produto, pesquisa e jurídico; decide o que trava o código.
+**Quem é quem.** Os quatro sócios têm comando total do Frila: Cauê (`cauecarneiro`, líder), Fabrício (`fbtostadev`, design e produto), Jota (`jotape12-Dev`) e Matheus (`silvaaszx`), devs. A PO do projeto cuida de produto, pesquisa e jurídico e decide o que trava o código.
 
 ### Princípios
-1. **Quem commita responde pelo código** e só commita o que sabe explicar. O agente trabalha para o sócio: não assina, não aprova nem mescla em nome dele.
+1. **Quem commita responde pelo código** e só commita o que sabe explicar. O agente trabalha para o sócio: não aprova nem mescla em nome dele. Pessoa e IA aparecem pelo nome, sem esconder nenhuma das duas (veja "Como trabalhar").
 2. **A IA amplifica o que já existe.** Com teste fraco e PR grande ela só entrega o erro mais rápido. Por isso: lote pequeno, teste que prova, revisão de verdade.
 3. **Executado é o que você rodou e viu.** O que foi conferido só lendo o código vai como "não executado". "Deve", "provavelmente" e "parece" não são prova.
 4. **Escopo cirúrgico.** Faça o que o cartão pede. Não invente regra, campo, tela nem refatoração.
@@ -32,8 +32,8 @@ Valem para o agente de qualquer sócio, de qualquer ferramenta. A seção "Neste
 ### Como trabalhar
 - Branch curta, nascida da principal remota, integrada em dias e não em semanas.
 - **PR pequeno:** um assunto só, ~100 linhas ideal, ~300 aceitável; acima de ~1000, divida, mesmo que a IA tenha gerado tudo em minutos. Refatoração vai em PR separado. Lógica nova entra com teste.
-- Abra como rascunho até o gate local do repositório ficar verde. Corpo do PR: o porquê (1 ou 2 frases), como testei (comando e resumo da saída), risco, o que não fiz e, numa linha, se um agente escreveu.
-- Commit em português, no imperativo e específico (`fix(candidatura): impede confirmação dupla`); o corpo explica o porquê. Nunca "ajustes".
+- Abra como rascunho até o gate local do repositório ficar verde. Corpo do PR: o porquê (1 ou 2 frases), como testei (comando e resumo da saída), risco, o que não fiz e uma linha com **quem responde** (o sócio, pelo nome) e **qual IA ajudou** (ferramenta e modelo), se houve.
+- Commit em português, no imperativo e específico (`fix(candidatura): impede confirmação dupla`); o corpo explica o porquê. Nunca "ajustes". O trailer `Co-Authored-By: <IA> <noreply@…>` é permitido e bem-vindo quando a IA escreveu parte do commit.
 - Duas correções seguidas sem resolver: pare, mude de abordagem ou peça ajuda. CI vermelha tem causa; "CI instável" não é diagnóstico.
 
 ### Pronto
@@ -69,6 +69,7 @@ Revise o pedido, não só o código, em dois eixos: **missão** (o diff cumpre c
 - Decisão cara de reverter (dados, contrato, autenticação, dependência grande) ganha um ADR de uma página em `frila-docs/arquitetura/`.
 - Fato, número e fonte: toda afirmação tem a fonte que você abriu; conta sua vai marcada "Inferência:"; o que não achou vai como "não encontrado (buscado em: …)". Inventar fonte é a falha mais grave.
 - Este arquivo é curto de propósito. Acrescente uma regra só depois que um agente errou duas vezes pelo mesmo motivo, e apague a que o agente já deduz do código. Regra que não admite exceção vira hook ou check de CI.
+<!-- /regras-do-time -->
 
 ---
 
@@ -96,10 +97,10 @@ O gate local do PR são os seis primeiros. A CI leva ~50 min, então suba só co
 | O quê | Onde |
 |---|---|
 | Contrato da API | `contrato/openapi.yaml`, espelho de `frila-docs/api/openapi.yaml`. Nome de campo, código de erro e status HTTP saem daqui |
-| Modelagem de banco (DDL, RLS, taxa de comparecimento) | `frila-docs/banco-de-dados/Modelagem de Banco de Dados.pdf` |
+| Modelagem de banco (DDL, RLS, taxa de comparecimento) | `frila-docs/banco-de-dados/Modelagem de Banco de Dados.md` (o `.pdf` ao lado é a versão para leitura). Onde o desenho e uma migração divergem, vale a migração |
 | Escopo e sprints | `frila-docs/produto/05-ESCOPO-DO-MVP.md` |
 | Requisitos (RN, RF, RNF, UC) | `frila-docs/requisitos/Frila_Documento_de_Requisitos.docx` |
-| Decisões técnicas D1 a D13 | `Pendências Técnicas Para Codar.md`, hoje no vault da Bancada (copiar para `frila-docs` antes de a Bancada acabar) |
+| Decisões técnicas D1 a D13 | `frila-docs/arquitetura/Pendências Técnicas Para Codar.md` |
 | Termos bloqueados e moderação | `supabase/operacao/lista-de-termos.md` |
 | Quadro | https://trello.com/b/0eyqvbRJ/frila |
 
@@ -183,4 +184,4 @@ Ausência por decisão, não por lacuna. Não crie tabela para isto:
 | Corrida testada só em pgTAP | RN19 precisa de `pgbench` com 20 conexões |
 | Política de escrita ou de coluna | Política de `select` que abre `usuario` ou `profissional` para outra pessoa é bloqueio: RLS filtra linha, não coluna |
 
-Agentes de apoio do Claude Code ficam em `.claude/agents/` (`frila-coder`, `frila-reviewer`, `frila-investigator`, `frila-task-auditor`, `frila-task-creator`). São opcionais e dependem de ferramenta; a regra é a deste arquivo.
+Agentes de apoio do Claude Code ficam em `.claude/agents/` (`frila-coder`, `frila-reviewer`, `frila-investigator`, `frila-task-auditor`, `frila-task-creator`). São opcionais e dependem de ferramenta; a regra é a deste arquivo. O `frila-reviewer` só recomenda: aprovar é de uma pessoa.
