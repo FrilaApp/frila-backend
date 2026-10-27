@@ -234,31 +234,39 @@ def achar_vault(explicito: str | None, raiz_backend: str) -> str:
 
 
 def tabela_t25(cartoes, listas, etiqueta) -> str:
-    """O estado dos cartões da etiqueta, em tabela, para a T-0025.
+    """O estado dos cartões da etiqueta que ainda não fecharam, em tabela, para a T-0025.
 
-    Dado, não narrativa: lista atual, cartão, título e quem está nele. Quem escreve o que
-    isso significou continua sendo gente.
+    Dado, não narrativa: lista atual, cartão, título e etiquetas. Quem escreve o que isso
+    significou continua sendo gente.
+
+    Cartão em Concluído fica de fora, e só é contado. Medido em 27/10/2026: com ele
+    dentro, a tabela saía com 88 linhas, 81 delas de cartão fechado — e o histórico dos
+    concluídos, com data do movimento e PR, já está na própria T-0025, escrito à mão.
+    Tabela que repete o que já existe é tabela que ninguém lê até ela mentir.
     """
-    linhas = [
-        "| lista | cartão | título | etiquetas |",
-        "|---|---|---|---|",
-    ]
-    interessa = [
-        c
-        for c in cartoes
-        if any(etiqueta in l["name"] for l in c.get("labels", []))
-        and listas.get(c["idList"], "") not in ("", None)
-    ]
+    da_etiqueta = [c for c in cartoes if any(etiqueta in l["name"] for l in c.get("labels", []))]
+    def lista_de(c):
+        return listas.get(c["idList"], "")
+    fechados = [c for c in da_etiqueta if sem_acento(lista_de(c)).startswith("concluido")]
+    abertos = [c for c in da_etiqueta if c not in fechados and lista_de(c)]
+
     ordem = {"Em andamento": 0, "Revisão": 1, "Teste": 2}
-    interessa.sort(
-        key=lambda c: (ordem.get(listas.get(c["idList"], ""), 9), listas.get(c["idList"], ""), c["name"])
-    )
-    for c in interessa:
+    abertos.sort(key=lambda c: (ordem.get(lista_de(c), 9), lista_de(c), c["name"]))
+
+    linhas = ["| lista | cartão | título | etiquetas |", "|---|---|---|---|"]
+    for c in abertos:
         rotulos = ", ".join(l["name"] for l in c.get("labels", []))
         linhas.append(
-            f"| {listas.get(c['idList'],'?')} | `{c['shortLink']}` | "
+            f"| {lista_de(c)} | `{c['shortLink']}` | "
             f"{c['name'].replace('|','/')} | {rotulos} |"
         )
+    if not abertos:
+        linhas.append("| — | — | nenhum cartão aberto com esta etiqueta | — |")
+    linhas.append("")
+    linhas.append(
+        f"{len(fechados)} cartão(ões) com etiqueta {etiqueta} em Concluído não entram nesta "
+        f"tabela; o histórico deles, com data do movimento e PR, está na seção acima."
+    )
     return "\n".join(linhas)
 
 
