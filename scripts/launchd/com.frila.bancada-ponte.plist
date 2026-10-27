@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Agendador da ponte da Bancada. Roda `scripts/bancada-ponte-diaria.sh` todo dia às 22:30.
+
+  Instalar (uma vez, à mão — o script não se instala sozinho de propósito):
+
+    cp scripts/launchd/com.frila.bancada-ponte.plist ~/Library/LaunchAgents/
+    # troque CAMINHO_DO_REPO abaixo pelo caminho real antes de carregar
+    launchctl load -w ~/Library/LaunchAgents/com.frila.bancada-ponte.plist
+    launchctl list | grep bancada-ponte          # confirma que está carregado
+    launchctl start com.frila.bancada-ponte      # força uma passagem agora
+
+  Desinstalar:
+
+    launchctl unload -w ~/Library/LaunchAgents/com.frila.bancada-ponte.plist
+
+  Por que 22:30: o job não publica nada — só escreve fato no working tree do vault e
+  avisa. Rodar no fim do dia é o que o CLAUDE.md do backend já pedia à mão, e deixa o
+  aviso na tela de quem ainda está na máquina para dar o `git push` com Touch ID.
+
+  `RunAtLoad` fica falso: carregar o agente no meio da tarde não deve disparar uma
+  passagem que ninguém pediu. Quem quiser disparar usa `launchctl start`.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.frila.bancada-ponte</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>cd CAMINHO_DO_REPO &amp;&amp; ./scripts/bancada-ponte-diaria.sh --dias 3</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>CAMINHO_DO_REPO</string>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>22</integer>
+    <key>Minute</key><integer>30</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- A saída fica em arquivo porque um job sem log é um job que ninguém audita. -->
+  <key>StandardOutPath</key>
+  <string>/tmp/bancada-ponte.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/bancada-ponte.erro.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- Filtro de autor da recuperação de commits. Vazio registra o time todo. -->
+    <key>BANCADA_AUTOR</key>
+    <string>Matheus</string>
+  </dict>
+</dict>
+</plist>
