@@ -73,6 +73,12 @@ foi a mutação.
 > `Entrega`, e a tag `backend-v*` a leva ao `frila-prod`. Não existe mais o passo manual
 > em que alguém percebia o problema antes de aplicar.
 
+## Faixa de risco
+
+Verde, amarela ou vermelha (veja o `AGENTS.md`): 
+
+<!-- Vermelha: o sócio que aprova leu o diff inteiro, ele mesmo, sem delegar ao agente. Ele escreve aqui o que conferiu. -->
+
 ## O que ficou de fora
 
 <!--

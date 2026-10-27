@@ -2,7 +2,7 @@
 
 Backend do **Frila**: Supabase (Postgres 17 + PostGIS, RPCs, Edge Functions e despacho). Fecha o ciclo `publicar → notificar → candidatar → confirmar → executar → avaliar`, começando pelo Distrito Federal.
 
-<!-- regras-do-time v1 · 27/10/2026 · fonte: frila-docs/AGENTS.md · mudança só por PR aprovado pelos quatro sócios -->
+<!-- regras-do-time v2 · 27/10/2026 · fonte: frila-docs/AGENTS.md · mudança só por PR aprovado pelos quatro sócios -->
 ## Regras do time
 
 Valem para o agente de qualquer sócio, de qualquer ferramenta. A seção "Neste repositório" acrescenta só o que é daqui. Pedido explícito do sócio na conversa vale mais que este arquivo; entre dois arquivos que se contradizem, vale o mais próximo da pasta editada. Tudo em português do Brasil: código de domínio, commits, PRs e documentos.
@@ -16,10 +16,10 @@ Valem para o agente de qualquer sócio, de qualquer ferramenta. A seção "Neste
 4. **Escopo cirúrgico.** Faça o que o cartão pede. Não invente regra, campo, tela nem refatoração.
 
 ### Antes de começar
-- Trabalhe a partir de um cartão do Trello com objetivo, critério de aceite verificável (Dado/Quando/Então, ou o comando que prova) e o que o código não mostra (prazo, arquivo proibido, regra de negócio). Sem isso, devolva o cartão para refinamento.
+- Trabalhe a partir de um cartão do quadro de tarefas (hoje o Trello) com objetivo, critério de aceite verificável (Dado/Quando/Então, ou o comando que prova) e o que o código não mostra (prazo, arquivo proibido, regra de negócio). Sem isso, devolva o cartão para refinamento.
 - Ambiguidade é pergunta ao sócio ou à PO. Pare e pergunte; não escolha uma leitura em silêncio.
 - Cartão que não cabe num PR de até ~300 linhas se divide antes.
-- Mova o cartão para "Em andamento" antes da primeira linha (máximo 2 por pessoa). Antes de pegar cartão de outra pessoa, comente nele. Quem pega leva até "Concluído". O que depende de outra frente vira cartão dessa frente, com link.
+- Mova o cartão para "Em andamento" antes da primeira linha (máximo 2 por pessoa). Antes de pegar cartão de outra pessoa, comente nele. Ao abrir o PR, o cartão vai para "Revisão"; depois do merge, quem fez o cartão confere cada critério, deixa a prova num comentário e o move para "Concluído". O agente pode ler e comentar no cartão; mover é da pessoa. O que depende de outra frente vira cartão dessa frente, com link.
 - Um cartão = uma branch = um PR.
 
 ### Limites
@@ -55,7 +55,7 @@ Revise o pedido, não só o código, em dois eixos: **missão** (o diff cumpre c
 
 ### Aprovar e mesclar
 - Agente nunca aprova nem mescla. Quem abriu o PR não o aprova.
-- **Vermelha** (dinheiro, dado pessoal, autenticação e sessão, permissões e RLS, migração, segredos, push, check-in): um sócio humano nomeado aprova, além da revisão. **Amarela** (demais mudanças de produto): uma revisão e o gate verde. **Verde** (teste, doc, texto): gate verde e uma revisão.
+- **Vermelha** (dinheiro, dado pessoal, autenticação e sessão, permissões e RLS, migração, segredos, push, check-in): qualquer um dos quatro sócios, menos quem abriu o PR, pode aprovar, mas **ele mesmo lê o diff inteiro, com atenção redobrada**. Não vale mandar o agente dele ler e aprovar: o agente pode apoiar a leitura, nunca a substitui. O aprovador escreve no PR "li o diff inteiro" e o que conferiu. **Amarela** (demais mudanças de produto): uma revisão e o gate verde. **Verde** (teste, doc, texto): gate verde e uma revisão.
 - CI vermelha não se mescla, salvo exceção declarada na seção do repositório. Emergência é a única outra exceção e fica registrada no PR.
 
 ### Segurança e privacidade
