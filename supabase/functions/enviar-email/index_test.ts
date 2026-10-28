@@ -28,6 +28,7 @@ import {
   lerConfiguracaoSmtp,
   ResultadoEnvio,
   validarDestinatario,
+  validarTextoCabecalhoSmtp,
 } from "./provedor.ts";
 import {
   alertaParaEquipe,
@@ -1158,6 +1159,43 @@ Deno.test("segurança (AUDITORIA-EMAIL.md): criarEnvioSmtp recusa envio se para,
   });
   assertEquals(rRemetente, { ok: false, codigo: "destinatario_invalido", transitorio: false });
 });
+
+Deno.test("segurança (AUDITORIA-EMAIL.md): validarTextoCabecalhoSmtp recusa caracteres CR, LF, CRLF e codificações percent-encoded", () => {
+  // Injeções literais de quebra de linha
+  assertEquals(validarTextoCabecalhoSmtp("Assunto\r\nBcc: atacante@frila.app"), false);
+  assertEquals(validarTextoCabecalhoSmtp("Assunto\nSubject: Injetado"), false);
+  assertEquals(validarTextoCabecalhoSmtp("Assunto\rTo: outro@frila.app"), false);
+  assertEquals(validarTextoCabecalhoSmtp("\rAssunto"), false);
+  assertEquals(validarTextoCabecalhoSmtp("Assunto\n"), false);
+
+  // Injeções percent-encoded case-insensitive (%0d, %0a, %0D, %0A)
+  assertEquals(validarTextoCabecalhoSmtp("Assunto%0d%0aBcc:atacante@frila.app"), false);
+  assertEquals(validarTextoCabecalhoSmtp("Assunto%0D%0ABcc:atacante@frila.app"), false);
+  assertEquals(validarTextoCabecalhoSmtp("Assunto%0aSubject:Injetado"), false);
+  assertEquals(validarTextoCabecalhoSmtp("Assunto%0dTo:outro@frila.app"), false);
+  assertEquals(validarTextoCabecalhoSmtp("smtp.servidor.com%0d%0a"), false);
+});
+
+Deno.test("segurança: validarTextoCabecalhoSmtp recusa valores vazios, apenas espaços ou tipos não-string", () => {
+  assertEquals(validarTextoCabecalhoSmtp(""), false);
+  assertEquals(validarTextoCabecalhoSmtp("   "), false);
+  assertEquals(validarTextoCabecalhoSmtp("\t"), false);
+  // deno-lint-ignore no-explicit-any
+  assertEquals(validarTextoCabecalhoSmtp(null as any), false);
+  // deno-lint-ignore no-explicit-any
+  assertEquals(validarTextoCabecalhoSmtp(undefined as any), false);
+  // deno-lint-ignore no-explicit-any
+  assertEquals(validarTextoCabecalhoSmtp(12345 as any), false);
+});
+
+Deno.test("segurança: validarTextoCabecalhoSmtp aceita cabeçalhos e assuntos legítimos com acentos e pontuação", () => {
+  assertEquals(validarTextoCabecalhoSmtp("Protocolo #12345: Confirmação de Denúncia"), true);
+  assertEquals(validarTextoCabecalhoSmtp("Notificação: vaga urgente para garçom (Águas Claras / DF)"), true);
+  assertEquals(validarTextoCabecalhoSmtp("smtp.frila.app"), true);
+  assertEquals(validarTextoCabecalhoSmtp("mail-relay-01.us-east-1.aws.com"), true);
+  assertEquals(validarTextoCabecalhoSmtp("equipe+suporte-frila@dominio.com.br"), true);
+});
+
 
 
 
