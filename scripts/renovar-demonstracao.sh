@@ -39,26 +39,13 @@ ok()     { printf '  ✓ %s\n' "$1"; }
 formatar_erro_api() {
   local ambiente="$1"
   local status="$2"
-  local body="$3"
-  python3 -c "
-import json, sys
-ambiente = sys.argv[1]
-status = sys.argv[2]
-body = sys.argv[3]
-msg = ''
-try:
-    d = json.loads(body)
-    if isinstance(d, dict) and 'message' in d and d['message']:
-        msg = str(d['message']).strip().replace('\n', ' ')[:200]
-except Exception:
-    pass
-
-status_str = f'HTTP {status}' if status and status != '000' else 'falha de conexao'
-texto = f'falha ao renovar dados de demonstracao no {ambiente} ({status_str}); consulte o painel/log do Supabase'
-if msg:
-    texto += f' — {msg}'
-print(texto)
-" "$ambiente" "$status" "$body"
+  local status_str
+  if [ -n "$status" ] && [ "$status" != "000" ]; then
+    status_str="HTTP $status"
+  else
+    status_str="falha de conexao"
+  fi
+  printf 'falha ao renovar dados de demonstracao no %s (%s); consulte o painel/log do Supabase\n' "$ambiente" "$status_str"
 }
 
 QUERY="select privado.renovar_dados_demonstracao($DATA_REF);"
@@ -90,9 +77,8 @@ case "$AMBIENTE" in
          -d "{\"query\":\"$QUERY\"}" \
          "$API_URL/projects/$REF/database/query" 2>/dev/null || printf '\n000')
     STATUS=$(printf '%s\n' "$RESP" | tail -n1)
-    BODY=$(printf '%s\n' "$RESP" | sed '$d')
     if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
-      falhou "$(formatar_erro_api "frila-dev" "$STATUS" "$BODY")"
+      falhou "$(formatar_erro_api "frila-dev" "$STATUS")"
     fi
     ok "dados de demonstração renovados no frila-dev"
     ;;
@@ -113,9 +99,8 @@ case "$AMBIENTE" in
          -d "{\"query\":\"$QUERY\"}" \
          "$API_URL/projects/$REF/database/query" 2>/dev/null || printf '\n000')
     STATUS=$(printf '%s\n' "$RESP" | tail -n1)
-    BODY=$(printf '%s\n' "$RESP" | sed '$d')
     if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
-      falhou "$(formatar_erro_api "frila-prod" "$STATUS" "$BODY")"
+      falhou "$(formatar_erro_api "frila-prod" "$STATUS")"
     fi
     ok "dados de demonstração renovados no frila-prod"
     ;;
