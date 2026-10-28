@@ -159,8 +159,10 @@ OC_DENUNCIA=""
 
 limpar() {
   local code=$?
+  local erro_limpeza=0
+
   if [ "$CRIOU_FIXTURES" -eq 1 ]; then
-    psql_cmd -c "
+    if ! psql_cmd -c "
       begin;
       set local privado.retencao = 'on';
       delete from privado.texto_da_vaga_ocultado where vaga_id = '$VAGA_ID';
@@ -178,23 +180,36 @@ limpar() {
       delete from privado.conta_equipe where usuario_id = '$OPERADOR_ID';
       delete from public.usuario where id in ('$OPERADOR_ID', '$ALVO_ID', '$PUB_ID');
       commit;
-    " >/dev/null 2>&1 || true
+    " >/dev/null; then
+      echo "✗ Falha ao limpar fixtures de teste no banco." >&2
+      erro_limpeza=1
+    fi
   fi
 
   # Se configurou o agendador_secret, restaura o valor prévio ou faz reset
   if [ "$CONFIGUROU_AGENDADOR" -eq 1 ]; then
     if [ -n "$VALOR_PREVIO_AGENDADOR" ]; then
-      docker exec -e PGPASSWORD=postgres -i "$DB" \
+      if ! docker exec -e PGPASSWORD=postgres -i "$DB" \
         psql -U supabase_admin -d postgres -X -q \
-        -c "alter database postgres set frila.agendador_secret = '$VALOR_PREVIO_AGENDADOR';" >/dev/null 2>&1 || true
+        -c "alter database postgres set frila.agendador_secret = '$VALOR_PREVIO_AGENDADOR';" >/dev/null; then
+        echo "✗ Falha ao restaurar frila.agendador_secret prévio." >&2
+        erro_limpeza=1
+      fi
     else
-      docker exec -e PGPASSWORD=postgres -i "$DB" \
+      if ! docker exec -e PGPASSWORD=postgres -i "$DB" \
         psql -U supabase_admin -d postgres -X -q \
-        -c "alter database postgres reset frila.agendador_secret;" >/dev/null 2>&1 || true
+        -c "alter database postgres reset frila.agendador_secret;" >/dev/null; then
+        echo "✗ Falha ao resetar frila.agendador_secret no banco." >&2
+        erro_limpeza=1
+      fi
     fi
   fi
 
-  exit "$code"
+  if [ "$code" -ne 0 ]; then
+    exit "$code"
+  elif [ "$erro_limpeza" -ne 0 ]; then
+    exit 1
+  fi
 }
 
 # Trap ativo ANTES de qualquer alteração ou configuração
