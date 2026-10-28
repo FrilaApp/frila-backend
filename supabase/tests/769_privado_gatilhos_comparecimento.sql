@@ -120,6 +120,8 @@ select is(pg_temp.estado('76900000-0000-4000-8000-0000000000c1'), '99/0.500',
   'SET verificacao = verificacao (sem mudança) não recalcula');
 
 -- Outra coluna do turno no SET: o `OF verificacao` descarta o gatilho (teste de coluna vizinha).
+-- A condição `old.verificacao is distinct from new.verificacao` da função também barraria este caso,
+-- mas ela nunca é alcançada aqui: quem barra é o filtro de coluna. A condição é medida no teste anterior.
 select pg_temp.sujar();
 update public.turno set valor_acordado_centavos = 13000 where id = (select turno from w1);
 select is(pg_temp.estado('76900000-0000-4000-8000-0000000000c1'), '99/0.500',

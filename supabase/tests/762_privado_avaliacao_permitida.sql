@@ -6,6 +6,7 @@
 -- Mutantes que estes testes matam (ver PR):
 --   M1  remover o bloco "autor e alvo são as duas partes"     -> testes 3, 4, 5 e 11 ficam vermelhos
 --   M2  trocar `<` por `>` em `agora < v_fim`                  -> testes 1, 2, 6, 7, 9 e 10 ficam vermelhos
+--   M2b trocar `<` por `<=` em `agora < v_fim`                 -> só o teste 10 (fronteira exata) fica vermelho
 --   M3  remover a checagem `v_verificacao is distinct from`    -> teste 7 fica vermelho
 --   M4  trocar `new.alvo_id = v_estab` por `new.alvo_id = v_prof_conta`
 --       (ramo em que o alvo é o estabelecimento)               -> testes 1, 6, 7 e 10 ficam vermelhos

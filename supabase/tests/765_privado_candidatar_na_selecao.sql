@@ -151,8 +151,8 @@ select is(
   (select id::text from public.candidatura where profissional_id = '76500000-0000-4000-8000-0000000000c1'),
   'o reenvio devolve a mesma candidatura');
 select is(
-  (select array[count(*)::text, min(criada_em)::text] from public.candidatura where profissional_id = '76500000-0000-4000-8000-0000000000c1'),
-  array['1', '2026-10-20 12:00:00+00'],
+  (select row(count(*), min(criada_em)) from public.candidatura where profissional_id = '76500000-0000-4000-8000-0000000000c1'),
+  row(1::bigint, '2026-10-20 12:00:00+00'::timestamptz),
   'o reenvio não cria outra linha nem reescreve criada_em');
 
 -- 7. RN21 já na candidatura: turno confirmado sobreposto é 422 inelegivel / turno_sobreposto.

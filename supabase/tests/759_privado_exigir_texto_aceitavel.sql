@@ -10,7 +10,7 @@
 --   M1  remover o `if not privado.texto_aceitavel(v)`        -> teste 3 fica vermelho
 --   M2  remover o `if privado.contem_contato_ou_link(v)`     -> testes 4, 5 e 6 ficam vermelhos
 --   M3  trocar `k` por texto fixo no `details`               -> testes 3, 4, 5 e 6 ficam vermelhos
---   M4  parar o laço depois da primeira chave (`exit`)       -> testes 6 e 9 ficam vermelhos
+--   M4  parar o laço depois da primeira chave (`exit`)       -> só o teste 6 fica vermelho
 --
 -- Atenção à ordem: jsonb guarda as chaves por tamanho e depois em ordem alfabética, e não na
 -- ordem em que foram escritas. "O campo ruim não é o primeiro" só vale se isso for medido
