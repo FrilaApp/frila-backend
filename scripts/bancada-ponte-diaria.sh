@@ -52,17 +52,43 @@ PY
 # Quantos fatos existiam antes, para o aviso dizer número e não impressão.
 antes=$(grep -rh '^- `' "$VAULT/05 - Registros" 2>/dev/null | grep -c . || true)
 
+# As duas pernas usam `set -euo pipefail`: exit 0 já cobre "rodou e não achou nada
+# novo" (caso normal, tratado dentro de cada uma). Exit != 0 é erro de verdade —
+# data inválida, .env ausente, falha da API do Trello — e não pode ser confundido
+# com "sem fato novo". Por isso o código de saída de cada perna é guardado, nunca
+# descartado com `|| true`.
+FALHAS=()
+
 echo "═══ 1. Commits do frila-backend"
-./scripts/bancada-recuperar.sh --desde "$DESDE" --ate "$HOJE" --autor "$AUTOR" ${SECO:+--seco} || true
+if ! ./scripts/bancada-recuperar.sh --desde "$DESDE" --ate "$HOJE" --autor "$AUTOR" ${SECO:+--seco}; then
+  FALHAS+=("recuperação de commits (bancada-recuperar.sh)")
+fi
 
 echo
 echo "═══ 2. Quadro do Trello"
-./scripts/bancada-trello.sh --desde "$DESDE" --ate "$HOJE" ${SECO:+--seco} || true
+if ! ./scripts/bancada-trello.sh --desde "$DESDE" --ate "$HOJE" ${SECO:+--seco}; then
+  FALHAS+=("quadro do Trello (bancada-trello.sh)")
+fi
 
 depois=$(grep -rh '^- `' "$VAULT/05 - Registros" 2>/dev/null | grep -c . || true)
 novos=$((depois - antes))
 
 echo
+if [ "${#FALHAS[@]}" -gt 0 ]; then
+  echo "═══ 3. A ponte falhou"
+  for falha in "${FALHAS[@]}"; do
+    echo "  ✗ $falha — ver saída acima."
+  done
+  echo "  Não é 'sem fato novo': é erro. Agendador deve registrar isso como falha."
+  # Mesmo aviso visível que o caminho feliz usa. `|| true` porque num agendador sem
+  # sessão gráfica o osascript falha, e falhar em avisar não pode mascarar o exit != 0.
+  osascript -e "display notification \"Falhou: ${FALHAS[*]}\" \
+    with title \"Bancada\" subtitle \"ponte diária\"" >/dev/null 2>&1 || true
+  echo
+  echo "  Fatos no acervo: $antes → $depois"
+  exit 1
+fi
+
 echo "═══ 3. O que falta de gente"
 if [ "$novos" -gt 0 ]; then
   echo "  $novos fato(s) novo(s) no working tree do vault, ainda não publicados."
