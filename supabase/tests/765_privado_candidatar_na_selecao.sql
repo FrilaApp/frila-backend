@@ -9,9 +9,11 @@
 --   M3  remover a checagem de turno sobreposto (RN21)              -> teste 7 fica vermelho
 --   M4  retirada/recusada não voltam a `pendente`                  -> teste 10 fica vermelho
 --   M5  não recusar vaga sem posição aberta                        -> teste 11 fica vermelho
+--   M6  intervalo fechado `[]` no teste de sobreposição (adjacente conflita) -> teste 13 fica vermelho
+--   M7  qualquer estado de posição bloqueia (cancelada sobreposta conflita)  -> teste 14 fica vermelho
 
 begin;
-select plan(12);
+select plan(14);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -92,6 +94,22 @@ select pg_temp.vaga('76500000-0000-4000-8000-0000000000d2', 'urgencia', '2026-10
 insert into public.posicao (vaga_id, estado, profissional_id, confirmado_em, inicio_em, fim_em) values
   ('76500000-0000-4000-8000-0000000000d2', 'confirmada', '76500000-0000-4000-8000-0000000000c3',
    '2026-10-19 12:00+00', '2026-10-22 17:00+00', '2026-10-22 21:00+00');
+
+-- c4 tem turno confirmado de 14h às 18h: TERMINA no instante em que a vaga de seleção começa (adjacente).
+-- c5 tem uma posição CANCELADA de 17h às 21h, sobreposta ao horário: cancelada não ocupa a agenda.
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, estado, termos_versao, termos_aceite_em) values
+  ('76500000-0000-4000-8000-0000000000b4', 'profissional', 'Pro quatro 765', '+556197650005', 'pro4-765@t.test', '1992-01-01', 'ativa', '2026-09-22', '2026-09-22 12:00:00+00'),
+  ('76500000-0000-4000-8000-0000000000b5', 'profissional', 'Pro cinco 765',  '+556197650006', 'pro5-765@t.test', '1991-01-01', 'ativa', '2026-09-22', '2026-09-22 12:00:00+00');
+insert into public.profissional (id, usuario_id, ponto_base) values
+  ('76500000-0000-4000-8000-0000000000c4', '76500000-0000-4000-8000-0000000000b4', 'POINT(-47.88 -15.79)'::extensions.geography),
+  ('76500000-0000-4000-8000-0000000000c5', '76500000-0000-4000-8000-0000000000b5', 'POINT(-47.88 -15.79)'::extensions.geography);
+select pg_temp.vaga('76500000-0000-4000-8000-0000000000d4', 'urgencia', '2026-10-22 14:00+00', '2026-10-22 18:00+00');
+insert into public.posicao (vaga_id, estado, profissional_id, confirmado_em, inicio_em, fim_em) values
+  ('76500000-0000-4000-8000-0000000000d4', 'confirmada', '76500000-0000-4000-8000-0000000000c4',
+   '2026-10-19 12:00+00', '2026-10-22 14:00+00', '2026-10-22 18:00+00');
+insert into public.posicao (vaga_id, estado, profissional_id, inicio_em, fim_em) values
+  ('76500000-0000-4000-8000-0000000000d2', 'cancelada', '76500000-0000-4000-8000-0000000000c5',
+   '2026-10-22 17:00+00', '2026-10-22 21:00+00');
 
 -- Vaga de seleção SEM nenhuma posição aberta.
 select pg_temp.vaga('76500000-0000-4000-8000-0000000000d3', 'selecao', '2026-10-27 18:00+00', '2026-10-27 22:00+00');
@@ -175,6 +193,16 @@ select is(
   (select criada_em from public.candidatura where profissional_id = '76500000-0000-4000-8000-0000000000c2'),
   '2026-10-20 15:00:00+00'::timestamptz,
   'a candidatura reaberta leva criada_em = agora do reenvio');
+
+-- 13. Turno adjacente (termina quando a vaga começa) não é sobreposição: o intervalo é [início, fim).
+select lives_ok(
+  $$ select pg_temp.cand('76500000-0000-4000-8000-0000000000d1', '76500000-0000-4000-8000-0000000000c4', '2026-10-20 12:00+00') $$,
+  'RN21: turno que termina às 18h não impede candidatura a vaga que começa às 18h');
+
+-- 14. Posição cancelada sobreposta não ocupa a agenda: só confirmada e cumprida contam.
+select lives_ok(
+  $$ select pg_temp.cand('76500000-0000-4000-8000-0000000000d1', '76500000-0000-4000-8000-0000000000c5', '2026-10-20 12:00+00') $$,
+  'RN21: posição cancelada no mesmo horário não bloqueia a candidatura');
 
 select * from finish();
 rollback;

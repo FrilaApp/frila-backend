@@ -4,13 +4,16 @@
 -- depois do fim, só com presença verificada.
 --
 -- Mutantes que estes testes matam (ver PR):
---   M1  remover o bloco "autor e alvo são as duas partes"     -> testes 3, 4 e 5 ficam vermelhos
+--   M1  remover o bloco "autor e alvo são as duas partes"     -> testes 3, 4, 5 e 11 ficam vermelhos
 --   M2  trocar `<` por `>` em `agora < v_fim`                  -> testes 1, 2, 6, 7, 9 e 10 ficam vermelhos
 --   M3  remover a checagem `v_verificacao is distinct from`    -> teste 7 fica vermelho
---   M4  trocar `v_estab` por `v_prof_conta` no ramo do alvo    -> testes 1, 6, 7 e 10 ficam vermelhos
+--   M4  trocar `new.alvo_id = v_estab` por `new.alvo_id = v_prof_conta`
+--       (ramo em que o alvo é o estabelecimento)               -> testes 1, 6, 7 e 10 ficam vermelhos
+--   M5  remover `new.alvo_id = v_prof` (ramo em que o alvo é o profissional)
+--                                                              -> teste 11 fica vermelho
 
 begin;
-select plan(10);
+select plan(11);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -67,6 +70,12 @@ insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto) 
    'POINT(-47.8822 -15.7942)'::extensions.geography);
 insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel) values
   ('76200000-0000-4000-8000-0000000000a2', '76200000-0000-4000-8000-0000000000e2', 'administrador');
+
+-- Um profissional que NÃO é o do turno, para o alvo errado do lado do profissional.
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, estado, termos_versao, termos_aceite_em) values
+  ('76200000-0000-4000-8000-0000000000b2', 'profissional', 'Pro dois 762', '+556197620003', 'pro2-762@t.test', '1994-01-01', 'ativa', '2026-09-22', '2026-09-22 12:00:00+00');
+insert into public.profissional (id, usuario_id, ponto_base) values
+  ('76200000-0000-4000-8000-0000000000c2', '76200000-0000-4000-8000-0000000000b2', 'POINT(-47.88 -15.79)'::extensions.geography);
 
 create temp table t as select
   pg_temp.montar('2026-10-19 10:00+00', '2026-10-19 14:00+00')              as encerrado,
@@ -153,6 +162,16 @@ select lives_ok(
      select em_curso, '76200000-0000-4000-8000-0000000000b1', 'estabelecimento',
             '76200000-0000-4000-8000-0000000000e1', true from t $$,
   'fronteira: no instante exato do fim a avaliação é liberada');
+
+-- Membro da casa certa, alvo 'profissional' com o id de OUTRO profissional: o alvo tem de ser o
+-- profissional DO turno, e não qualquer um (a trava vale nos dois lados, não só no do estabelecimento).
+select throws_ok(
+  $$ insert into public.avaliacao (turno_id, autor_id, alvo_tipo, alvo_id, resposta)
+     select encerrado, '76200000-0000-4000-8000-0000000000a1', 'profissional',
+            '76200000-0000-4000-8000-0000000000c2', true from t $$,
+  '23514',
+  'autor e alvo da avaliação têm de ser as duas partes do turno (RN07)',
+  'o membro da casa não avalia um profissional que não é o do turno');
 
 select * from finish();
 rollback;

@@ -10,9 +10,14 @@
 --   M1  remover o `if not privado.texto_aceitavel(v)`        -> teste 3 fica vermelho
 --   M2  remover o `if privado.contem_contato_ou_link(v)`     -> testes 4, 5 e 6 ficam vermelhos
 --   M3  trocar `k` por texto fixo no `details`               -> testes 3, 4, 5 e 6 ficam vermelhos
+--   M4  parar o laço depois da primeira chave (`exit`)       -> testes 6 e 9 ficam vermelhos
+--
+-- Atenção à ordem: jsonb guarda as chaves por tamanho e depois em ordem alfabética, e não na
+-- ordem em que foram escritas. "O campo ruim não é o primeiro" só vale se isso for medido
+-- (teste 9), e não presumido do literal.
 
 begin;
-select plan(8);
+select plan(9);
 
 -- 1. Caso feliz: todos os campos limpos.
 select lives_ok(
@@ -46,12 +51,12 @@ select throws_ok(
   '{"code" : "campo_invalido", "message" : "campo_invalido", "details" : "traje", "hint" : null}',
   'telefone no texto é campo_invalido, com o campo certo em details');
 
--- 6. Um campo ruim entre campos bons: a recusa aponta o campo ruim, não o primeiro.
+-- 6. O campo ruim vem DEPOIS de um campo bom na iteração ("traje" tem 5 letras, "observacoes" 11).
 select throws_ok(
-  $$ select privado.exigir_texto_aceitavel('{"traje":"camisa preta","local":"entre em https://exemplo.com.br/x"}'::jsonb) $$,
+  $$ select privado.exigir_texto_aceitavel('{"traje":"camisa preta","observacoes":"entre em https://exemplo.com.br/x"}'::jsonb) $$,
   'PGRST',
-  '{"code" : "campo_invalido", "message" : "campo_invalido", "details" : "local", "hint" : null}',
-  'link no segundo campo: details nomeia o campo reprovado');
+  '{"code" : "campo_invalido", "message" : "campo_invalido", "details" : "observacoes", "hint" : null}',
+  'link no segundo campo: details nomeia o campo reprovado, não o primeiro');
 
 -- 7. Falsos positivos que a moderação não pode barrar: horário, valor e data são texto de vaga.
 select lives_ok(
@@ -62,6 +67,13 @@ select lives_ok(
 select lives_ok(
   $$ select privado.exigir_texto_aceitavel('{"traje":null}'::jsonb) $$,
   'campo nulo (opcional) passa');
+
+-- 9. A premissa do teste 6, medida: o campo reprovado ("observacoes") NÃO é a primeira chave que
+--    o laço enxerga.
+select is(
+  (select array_agg(k) from jsonb_object_keys('{"traje":"camisa preta","observacoes":"x"}'::jsonb) k),
+  array['traje', 'observacoes'],
+  'a ordem de iteração do jsonb põe "observacoes" depois de "traje" (premissa do teste 6)');
 
 select * from finish();
 rollback;

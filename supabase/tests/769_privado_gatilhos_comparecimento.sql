@@ -24,9 +24,10 @@
 --   P4  UPDATE da posição ignora a mudança de `falta`                 -> teste 10 fica vermelho
 --   P5  UPDATE da posição ignora a mudança de `estado`                -> teste 12 fica vermelho
 --   P6  UPDATE da posição recalcula sem mudança (`falta` sempre "mudou") -> teste 11 fica vermelho
+--   P7  apagar o ramo `elsif TG_OP = 'INSERT'` do gatilho da posição  -> teste 17 fica vermelho
 
 begin;
-select plan(16);
+select plan(17);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -210,6 +211,15 @@ select is(
       and not tgisinternal),
   array['posicao_recalcula_comparecimento', 'turno_recalcula_comparecimento'],
   'os dois gatilhos estão ligados às suas tabelas');
+
+-- Ramo INSERT com falta: posição já nasce faltosa (cancelada com falta = true) e recalcula. Estado de
+-- partida sujo; c1 tem 2 verificados e, com a falta de p_cancelada mais esta, 2 faltas => 2/0.500.
+select pg_temp.sujar();
+insert into public.posicao (vaga_id, estado, profissional_id, falta, inicio_em, fim_em)
+select vaga_id, 'cancelada', '76900000-0000-4000-8000-0000000000c1', true, inicio_em, fim_em
+  from public.posicao where id = (select id from w3);
+select is(pg_temp.estado('76900000-0000-4000-8000-0000000000c1'), '2/0.500',
+  'INSERT de posição já com falta = true recalcula o profissional: 2 verificados e 2 faltas = 0.500');
 
 select * from finish();
 rollback;
