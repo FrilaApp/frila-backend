@@ -36,6 +36,31 @@ done
 falhou() { printf '  ✗ %s\n' "$1" >&2; exit 1; }
 ok()     { printf '  ✓ %s\n' "$1"; }
 
+formatar_erro_api() {
+  local ambiente="$1"
+  local status="$2"
+  local body="$3"
+  python3 -c "
+import json, sys
+ambiente = sys.argv[1]
+status = sys.argv[2]
+body = sys.argv[3]
+msg = ''
+try:
+    d = json.loads(body)
+    if isinstance(d, dict) and 'message' in d and d['message']:
+        msg = str(d['message']).strip().replace('\n', ' ')[:200]
+except Exception:
+    pass
+
+status_str = f'HTTP {status}' if status and status != '000' else 'falha de conexao'
+texto = f'falha ao renovar dados de demonstracao no {ambiente} ({status_str}); consulte o painel/log do Supabase'
+if msg:
+    texto += f' — {msg}'
+print(texto)
+" "$ambiente" "$status" "$body"
+}
+
 QUERY="select privado.renovar_dados_demonstracao($DATA_REF);"
 
 case "$AMBIENTE" in
@@ -58,13 +83,16 @@ case "$AMBIENTE" in
       echo "  [seco] POST $API_URL/projects/$REF/database/query: $QUERY"
       exit 0
     fi
-    [ -n "${FRILA_DEV_PROJECT_REF:-}" ] || falhou "falta FRILA_DEV_PROJECT_REF no .env"
+    [ -n "${FRILA_DEV_PROJECT_REF:-}" ] || falhou "falha ao renovar dados de demonstração no frila-dev: falta FRILA_DEV_PROJECT_REF no .env"
     : "${SUPABASE_ACCESS_TOKEN:?falta SUPABASE_ACCESS_TOKEN no .env}"
-    if ! RESPOSTA=$(curl -sS --fail-with-body -X POST -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+    RESP=$(curl -sS -w "\n%{http_code}" -X POST -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
          -H 'Content-Type: application/json' \
          -d "{\"query\":\"$QUERY\"}" \
-         "$API_URL/projects/$REF/database/query" 2>&1); then
-      falhou "falha ao renovar dados de demonstração no frila-dev: $RESPOSTA"
+         "$API_URL/projects/$REF/database/query" 2>/dev/null || printf '\n000')
+    STATUS=$(printf '%s\n' "$RESP" | tail -n1)
+    BODY=$(printf '%s\n' "$RESP" | sed '$d')
+    if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
+      falhou "$(formatar_erro_api "frila-dev" "$STATUS" "$BODY")"
     fi
     ok "dados de demonstração renovados no frila-dev"
     ;;
@@ -78,13 +106,16 @@ case "$AMBIENTE" in
     fi
     [ "${EU_SEI_QUE_E_PRODUCAO:-}" = "1" ] || falhou \
       "prod recusado. A renovação altera dados no banco de produção. Se é isso mesmo, execute com EU_SEI_QUE_E_PRODUCAO=1"
-    [ -n "${FRILA_PROD_PROJECT_REF:-}" ] || falhou "falta FRILA_PROD_PROJECT_REF no .env"
+    [ -n "${FRILA_PROD_PROJECT_REF:-}" ] || falhou "falha ao renovar dados de demonstração no frila-prod: falta FRILA_PROD_PROJECT_REF no .env"
     : "${SUPABASE_ACCESS_TOKEN:?falta SUPABASE_ACCESS_TOKEN no .env}"
-    if ! RESPOSTA=$(curl -sS --fail-with-body -X POST -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+    RESP=$(curl -sS -w "\n%{http_code}" -X POST -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
          -H 'Content-Type: application/json' \
          -d "{\"query\":\"$QUERY\"}" \
-         "$API_URL/projects/$REF/database/query" 2>&1); then
-      falhou "falha ao renovar dados de demonstração no frila-prod: $RESPOSTA"
+         "$API_URL/projects/$REF/database/query" 2>/dev/null || printf '\n000')
+    STATUS=$(printf '%s\n' "$RESP" | tail -n1)
+    BODY=$(printf '%s\n' "$RESP" | sed '$d')
+    if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
+      falhou "$(formatar_erro_api "frila-prod" "$STATUS" "$BODY")"
     fi
     ok "dados de demonstração renovados no frila-prod"
     ;;

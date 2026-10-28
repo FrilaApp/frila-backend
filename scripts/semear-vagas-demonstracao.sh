@@ -25,8 +25,8 @@ A_PARTIR_DE="2026-11-20"
 POSICOES="20"
 SECO=""
 
-# Valores padrão de demonstração (DEMONSTRACAO_EMAILS em supabase/functions/entrar-demonstracao/index.ts
-# e migração renovar_dados_demonstracao para Bar da Revisão)
+# Valores padrão canônicos de demonstração (migrações 20261004160000_renovacao_dados_demonstracao.sql
+# linhas 42 e 64, 20261020150000_publicar_vaga_demonstracao_resiliencia.sql e supabase/seed.sql)
 EMAIL_CONTRATANTE="${EMAIL_CONTRATANTE:-revisao-contratante@frila.app}"
 ESTABELECIMENTO_BAR_DA_REVISAO="${ESTABELECIMENTO_BAR_DA_REVISAO:-de000000-0000-4000-8000-000000000010}"
 
