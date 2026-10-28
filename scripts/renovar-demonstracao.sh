@@ -16,6 +16,7 @@
 #
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# shellcheck disable=SC1091
 [ -f .env ] && { set -a; source .env; set +a; }
 
 AMBIENTE="${1:-local}"
@@ -51,36 +52,40 @@ case "$AMBIENTE" in
     ;;
   dev)
     REF="${FRILA_DEV_PROJECT_REF:-<project-ref-dev>}"
+    API_URL="${SUPABASE_API_URL:-https://api.supabase.com/v1}"
     echo "▸ Renovação dos dados de demonstração no frila-dev ($REF)"
     if [ -n "$SECO" ]; then
-      echo "  [seco] POST https://api.supabase.com/v1/projects/$REF/database/query: $QUERY"
+      echo "  [seco] POST $API_URL/projects/$REF/database/query: $QUERY"
       exit 0
     fi
     [ -n "${FRILA_DEV_PROJECT_REF:-}" ] || falhou "falta FRILA_DEV_PROJECT_REF no .env"
     : "${SUPABASE_ACCESS_TOKEN:?falta SUPABASE_ACCESS_TOKEN no .env}"
-    curl -s -X POST -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+    if ! RESPOSTA=$(curl -sS --fail-with-body -X POST -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
          -H 'Content-Type: application/json' \
          -d "{\"query\":\"$QUERY\"}" \
-         "https://api.supabase.com/v1/projects/$REF/database/query" >/dev/null \
-      || falhou "falha ao renovar dados de demonstração no frila-dev"
+         "$API_URL/projects/$REF/database/query" 2>&1); then
+      falhou "falha ao renovar dados de demonstração no frila-dev: $RESPOSTA"
+    fi
     ok "dados de demonstração renovados no frila-dev"
     ;;
   prod)
     REF="${FRILA_PROD_PROJECT_REF:-<project-ref-prod>}"
+    API_URL="${SUPABASE_API_URL:-https://api.supabase.com/v1}"
     echo "▸ Renovação dos dados de demonstração no frila-prod ($REF)"
     if [ -n "$SECO" ]; then
-      echo "  [seco] POST https://api.supabase.com/v1/projects/$REF/database/query: $QUERY"
+      echo "  [seco] POST $API_URL/projects/$REF/database/query: $QUERY"
       exit 0
     fi
     [ "${EU_SEI_QUE_E_PRODUCAO:-}" = "1" ] || falhou \
       "prod recusado. A renovação altera dados no banco de produção. Se é isso mesmo, execute com EU_SEI_QUE_E_PRODUCAO=1"
     [ -n "${FRILA_PROD_PROJECT_REF:-}" ] || falhou "falta FRILA_PROD_PROJECT_REF no .env"
     : "${SUPABASE_ACCESS_TOKEN:?falta SUPABASE_ACCESS_TOKEN no .env}"
-    curl -s -X POST -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+    if ! RESPOSTA=$(curl -sS --fail-with-body -X POST -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
          -H 'Content-Type: application/json' \
          -d "{\"query\":\"$QUERY\"}" \
-         "https://api.supabase.com/v1/projects/$REF/database/query" >/dev/null \
-      || falhou "falha ao renovar dados de demonstração no frila-prod"
+         "$API_URL/projects/$REF/database/query" 2>&1); then
+      falhou "falha ao renovar dados de demonstração no frila-prod: $RESPOSTA"
+    fi
     ok "dados de demonstração renovados no frila-prod"
     ;;
   *)
