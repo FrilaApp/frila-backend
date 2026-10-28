@@ -157,11 +157,11 @@ trap 'st=$?; rm -f "$TMP_SAIDA"; limpar "$st"' EXIT
 
 exec_psql <<SQL > "$TMP_SAIDA"
 create temp table pg_temp.medicao_rnf (
-  repeticao int,
-  vaga_id uuid,
-  notificacao_id uuid,
-  despachos_criados int,
-  latencia_rnf03_s numeric
+  repeticao int primary key,
+  vaga_id uuid not null,
+  despachos_criados int not null,
+  notificacoes_criadas int not null,
+  despachar_vaga_segundos numeric not null
 );
 
 do \$\$
@@ -173,7 +173,7 @@ declare
   v_t_pub timestamptz;
   v_t_desp timestamptz;
   v_despachos int;
-  v_notif record;
+  v_notif_count int;
   v_hex text;
 begin
   -- Âncora com profissionais elegíveis definida em supabase/cenarios.sql
@@ -214,19 +214,17 @@ begin
     v_despachos := privado.despachar_vaga(v_vaga_id);
     v_t_desp := clock_timestamp();
 
-    for v_notif in
-      select id, enviada_em from public.notificacao where referencia_id = v_vaga_id
-    loop
-      insert into pg_temp.medicao_rnf (
-        repeticao, vaga_id, notificacao_id, despachos_criados, latencia_rnf03_s
-      ) values (
-        i,
-        v_vaga_id,
-        v_notif.id,
-        v_despachos,
-        round(extract(epoch from (v_t_desp - v_t_pub))::numeric, 4)
-      );
-    end loop;
+    select count(*) into v_notif_count from public.notificacao where referencia_id = v_vaga_id;
+
+    insert into pg_temp.medicao_rnf (
+      repeticao, vaga_id, despachos_criados, notificacoes_criadas, despachar_vaga_segundos
+    ) values (
+      i,
+      v_vaga_id,
+      v_despachos,
+      v_notif_count,
+      round(extract(epoch from (v_t_desp - v_t_pub))::numeric, 4)
+    );
 
     -- Afasta timestamp no relógio do teto de RN23 (> 30 min atrás)
     -- para a próxima repetição encontrar a janela aberta sem ser barrada
@@ -241,25 +239,20 @@ select
   repeticao,
   vaga_id,
   despachos_criados,
-  latencia_rnf03_s as despachar_vaga_segundos,
-  case when latencia_rnf03_s <= $META_RNF03 then 'OK (<= ' || '$META_RNF03' || 's)' else 'FALHA (> ' || '$META_RNF03' || 's)' end as status_parcial
-from (
-  select distinct on (repeticao)
-    repeticao,
-    vaga_id,
-    despachos_criados,
-    latencia_rnf03_s
-  from pg_temp.medicao_rnf
-  order by repeticao, notificacao_id
-) sub
+  notificacoes_criadas,
+  despachar_vaga_segundos,
+  case when despachar_vaga_segundos <= $META_RNF03 then 'OK (<= ' || '$META_RNF03' || 's)' else 'FALHA (> ' || '$META_RNF03' || 's)' end as status_parcial
+from pg_temp.medicao_rnf
 order by repeticao;
 
 \echo '=== METRICAS_JSON ==='
 select json_build_object(
   'amostras', count(*),
   'vagas', count(distinct vaga_id),
-  'p50_rnf03', round(coalesce(percentile_cont(0.50) within group (order by latencia_rnf03_s)::numeric, 0), 4),
-  'p95_rnf03', round(coalesce(percentile_cont(0.95) within group (order by latencia_rnf03_s)::numeric, 0), 4)
+  'notificacoes', coalesce(sum(notificacoes_criadas), 0),
+  'repeticoes_sem_notificacao', count(*) filter (where notificacoes_criadas = 0 or despachos_criados = 0),
+  'p50_rnf03', round(coalesce(percentile_cont(0.50) within group (order by despachar_vaga_segundos)::numeric, 0), 4),
+  'p95_rnf03', round(coalesce(percentile_cont(0.95) within group (order by despachar_vaga_segundos)::numeric, 0), 4)
 )::text
 from pg_temp.medicao_rnf;
 SQL
@@ -303,11 +296,12 @@ METRICAS_JSON=$(grep -E '^[[:space:]]*\{.*"p50_rnf03".*\}' "$TMP_SAIDA" | head -
 
 STATUS_CODE=0
 
-python3 - "$METRICAS_JSON" "$META_RNF03" <<'PY'
+python3 - "$METRICAS_JSON" "$META_RNF03" "$REPETICOES" <<'PY'
 import json, sys
 
 raw = sys.argv[1].strip()
 meta_rnf03 = float(sys.argv[2]) if len(sys.argv) > 2 else 30.0
+repeticoes_esperadas = int(sys.argv[3]) if len(sys.argv) > 3 else 5
 
 if not raw:
     print("✗ Nenhuma amostra válida encontrada", file=sys.stderr)
@@ -321,6 +315,8 @@ except Exception as e:
 
 amostras = data.get("amostras", 0)
 vagas = data.get("vagas", 0)
+notificacoes = data.get("notificacoes", 0)
+repeticoes_sem_notificacao = data.get("repeticoes_sem_notificacao", 0)
 p50_rnf03 = float(data.get("p50_rnf03", 0))
 p95_rnf03 = float(data.get("p95_rnf03", 0))
 
@@ -329,12 +325,21 @@ if amostras == 0 or vagas == 0:
     print("✗ Nenhuma amostra válida encontrada", file=sys.stderr)
     sys.exit(1)
 
+if amostras != repeticoes_esperadas:
+    print(f"✗ Falha: número de repetições coletadas ({amostras}) difere do total esperado ({repeticoes_esperadas})", file=sys.stderr)
+    sys.exit(1)
+
+if repeticoes_sem_notificacao > 0:
+    print(f"✗ Falha: {repeticoes_sem_notificacao} repetição(ões) não geraram despachos ou notificações válidas", file=sys.stderr)
+    sys.exit(1)
+
+print(f"Total de repetições testadas  : {amostras} (esperadas: {repeticoes_esperadas})")
 print(f"Total de vagas testadas       : {vagas}")
-print(f"Total de notificações testadas: {amostras}")
+print(f"Total de notificações criadas : {notificacoes}")
 print()
 
 status_rnf03 = "APROVADO" if p95_rnf03 <= meta_rnf03 else "REPROVADO"
-print(f"tempo de despachar_vaga (parcial):")
+print("tempo de despachar_vaga (parcial):")
 print("  Nota: mede só o tempo de despachar_vaga; pula a fila, o cron e o FCM; NÃO é o RNF03 de ponta a ponta.")
 print(f"  p50 = {p50_rnf03:.4f} s | p95 = {p95_rnf03:.4f} s (Meta: <= {meta_rnf03:.4f} s) -> [{status_rnf03}]")
 print()
