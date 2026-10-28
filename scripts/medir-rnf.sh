@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/medir-rnf.sh
-# Medição reproduzível dos requisitos não-funcionais do Frila:
-#   - RNF03: Publicar vaga -> despacho criado (meta <= 30 s)
+# Medição de latência de despacho e push do Frila:
+#   - tempo de despachar_vaga (parcial): mede só o tempo de despachar_vaga; pula a fila, o cron e o FCM; NÃO é o RNF03 de ponta a ponta (meta <= 30 s)
 #   - RNF02: Despacho -> push aceito pelo provedor (meta <= 60 s, não mensurável localmente)
 #
 # Cartão 6ab26a53 (B-005) · Alinhado com supabase/consultas/rnf02_rnf03_push.sql
@@ -16,21 +16,53 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 DB_CONTAINER="${DB_CONTAINER:-supabase_db_frila-backend}"
 REPETICOES=5
+META_RNF03="${META_RNF03:-30.0}"
+st=0
 
 # Trava de segurança: se apontar para host remoto, exige confirmação explícita
 if [ -n "${DATABASE_URL:-}" ]; then
-  db_host=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['DATABASE_URL']).hostname or '')" 2>/dev/null || true)
-  if [ -n "$db_host" ]; then
-    case "$db_host" in
-      localhost|127.0.0.1|::1|docker|supabase_db*|*.internal)
-        ;;
-      *)
-        if [ "${EU_SEI_QUE_E_PRODUCAO:-0}" != "1" ]; then
-          echo "✗ DATABASE_URL aponta para host remoto ('$db_host'). Para executar, defina EU_SEI_QUE_E_PRODUCAO=1." >&2
-          exit 1
-        fi
-        ;;
-    esac
+  if ! db_check=$(python3 - <<'PY'
+import os, re, sys, urllib.parse
+url = os.environ.get("DATABASE_URL", "").strip()
+if not url:
+    print("local")
+    sys.exit(0)
+
+host = ""
+try:
+    if "://" not in url and re.search(r"\bhost\s*=", url):
+        m = re.search(r"\bhost\s*=\s*([^\s;]+)", url)
+        if m:
+            host = m.group(1)
+    else:
+        p = urllib.parse.urlparse(url)
+        host = p.hostname or ""
+        if not host and p.query:
+            q = urllib.parse.parse_qs(p.query)
+            if "host" in q:
+                host = q["host"][0]
+except Exception:
+    host = ""
+
+host_lower = host.lower() if host else ""
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "docker"}
+
+if host_lower in LOCAL_HOSTS or host_lower.startswith("supabase_db") or host_lower.endswith(".internal"):
+    print("local")
+    sys.exit(0)
+
+if host_lower.startswith("/") or host_lower.startswith("@/"):
+    print("local")
+    sys.exit(0)
+
+print(host or "desconhecido/remoto")
+sys.exit(1)
+PY
+); then
+    if [ "${EU_SEI_QUE_E_PRODUCAO:-0}" != "1" ]; then
+      echo "✗ DATABASE_URL aponta para host remoto ('$db_check'). Para executar, defina EU_SEI_QUE_E_PRODUCAO=1." >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -66,19 +98,23 @@ if [ "$REPETICOES" -le 0 ]; then
   exit 1
 fi
 
+if [ "$REPETICOES" -lt 5 ]; then
+  echo "⚠ Aviso: N=$REPETICOES é pequeno; com poucas amostras o p95 aproxima-se do valor máximo." >&2
+fi
+
 exec_psql() {
   if [ -n "${DATABASE_URL:-}" ]; then
     psql "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1 "$@"
   elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DB_CONTAINER}$"; then
     docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"
   else
-    psql -h localhost -p 54322 -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"
+    PGPASSWORD="${PGPASSWORD:-postgres}" psql -h localhost -p 54322 -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"
   fi
 }
 
 # shellcheck disable=SC2329
 limpar() {
-  local status_saida=$?
+  local status_saida="${1:-$?}"
   if ! exec_psql <<'SQL' >/dev/null
 set session_replication_role = 'replica';
 delete from privado.auditoria_ciclo where entidade_id::text like 'e0000000-0000-4000-8000-%';
@@ -94,12 +130,13 @@ SQL
   fi
   exit "$status_saida"
 }
-trap limpar EXIT
+trap 'st=$?; limpar "$st"' EXIT
 
 echo "================================================================================"
 echo "          FRILA — MEDIÇÃO DE REQUISITOS NÃO-FUNCIONAIS (RNF02 e RNF03)          "
 echo "================================================================================"
-echo "Meta RNF03 : Publicar vaga -> Despacho criado <= 30.0 s"
+echo "Meta tempo de despachar_vaga (parcial) : <= ${META_RNF03} s"
+echo "  (mede só o tempo de despachar_vaga; pula a fila, o cron e o FCM; NÃO é o RNF03 de ponta a ponta)"
 echo "Meta RNF02 : Despacho -> Push aceito pelo provedor <= 60.0 s (Depende de prod)"
 echo "Repetições : $REPETICOES"
 echo ""
@@ -116,7 +153,7 @@ set session_replication_role = 'origin';
 SQL
 
 TMP_SAIDA=$(mktemp)
-trap 'rm -f "$TMP_SAIDA"; limpar' EXIT
+trap 'st=$?; rm -f "$TMP_SAIDA"; limpar "$st"' EXIT
 
 exec_psql <<SQL > "$TMP_SAIDA"
 create temp table pg_temp.medicao_rnf (
@@ -143,11 +180,18 @@ begin
   select inicio_em, fim_em into v_ini, v_fim
     from public.vaga where id = 'd0000000-0000-4000-8000-000000000001';
 
+  if v_ini is null then
+    raise exception 'Âncora d0000000-0000-4000-8000-000000000001 ausente em public.vaga (cenarios.sql nasce na próxima sexta 18h após db reset).';
+  end if;
+  if v_ini < clock_timestamp() then
+    raise exception 'Âncora d0000000-0000-4000-8000-000000000001 está no passado (%). Re-semeie com supabase/cenarios.sql.', v_ini;
+  end if;
+
   for i in 1..v_n loop
     v_hex := lpad(to_hex(i), 12, '0');
     v_vaga_id := ('e0000000-0000-4000-8000-' || v_hex)::uuid;
 
-    -- 1. Publicação da vaga (início da medição RNF03)
+    -- 1. Publicação da vaga (início da medição de despachar_vaga)
     v_t_pub := clock_timestamp();
 
     insert into public.vaga (
@@ -166,7 +210,7 @@ begin
       v_t_pub
     );
 
-    -- 2. Despacho (término da medição RNF03)
+    -- 2. Despacho (término da medição parcial)
     v_despachos := privado.despachar_vaga(v_vaga_id);
     v_t_desp := clock_timestamp();
 
@@ -192,13 +236,13 @@ begin
   end loop;
 end \$\$;
 
-\\echo '=== TABELA_AMOSTRAS ==='
+\echo '=== TABELA_AMOSTRAS ==='
 select
   repeticao,
   vaga_id,
   despachos_criados,
-  latencia_rnf03_s as rnf03_segundos,
-  case when latencia_rnf03_s <= 30.0 then 'OK (<= 30s)' else 'FALHA (> 30s)' end as status_rnf03
+  latencia_rnf03_s as despachar_vaga_segundos,
+  case when latencia_rnf03_s <= $META_RNF03 then 'OK (<= ' || '$META_RNF03' || 's)' else 'FALHA (> ' || '$META_RNF03' || 's)' end as status_parcial
 from (
   select distinct on (repeticao)
     repeticao,
@@ -210,7 +254,7 @@ from (
 ) sub
 order by repeticao;
 
-\\echo '=== METRICAS_JSON ==='
+\echo '=== METRICAS_JSON ==='
 select json_build_object(
   'amostras', count(*),
   'vagas', count(distinct vaga_id),
@@ -248,7 +292,8 @@ select
     )
   end as taxa_aceite_60s_pct
 from public.notificacao
-where enviada_em >= privado.agora() - interval '7 days';
+where enviada_em >= privado.agora() - interval '7 days'
+  and referencia_id::text not like 'e0000000%';
 "
 
 echo ""
@@ -258,10 +303,12 @@ METRICAS_JSON=$(grep -E '^[[:space:]]*\{.*"p50_rnf03".*\}' "$TMP_SAIDA" | head -
 
 STATUS_CODE=0
 
-python3 - "$METRICAS_JSON" <<'PY'
+python3 - "$METRICAS_JSON" "$META_RNF03" <<'PY'
 import json, sys
 
 raw = sys.argv[1].strip()
+meta_rnf03 = float(sys.argv[2]) if len(sys.argv) > 2 else 30.0
+
 if not raw:
     print("✗ Nenhuma amostra válida encontrada", file=sys.stderr)
     sys.exit(1)
@@ -286,20 +333,21 @@ print(f"Total de vagas testadas       : {vagas}")
 print(f"Total de notificações testadas: {amostras}")
 print()
 
-status_rnf03 = "APROVADO" if p95_rnf03 <= 30.0 else "REPROVADO"
-print(f"RNF03 (Publicação da vaga -> Despacho criado):")
-print(f"  p50 = {p50_rnf03:.4f} s | p95 = {p95_rnf03:.4f} s (Meta: <= 30.0000 s) -> [{status_rnf03}]")
+status_rnf03 = "APROVADO" if p95_rnf03 <= meta_rnf03 else "REPROVADO"
+print(f"tempo de despachar_vaga (parcial):")
+print("  Nota: mede só o tempo de despachar_vaga; pula a fila, o cron e o FCM; NÃO é o RNF03 de ponta a ponta.")
+print(f"  p50 = {p50_rnf03:.4f} s | p95 = {p95_rnf03:.4f} s (Meta: <= {meta_rnf03:.4f} s) -> [{status_rnf03}]")
 print()
 print("RNF02 (Despacho -> Aceite pelo provedor FCM/APNs):")
 print("  Status: NÃO MENSURÁVEL LOCALMENTE [INFORMATIVO / NÃO EXECUTADO]")
 print("  Nota  : Aferição ponta-a-ponta depende de ambiente com credenciais e tráfego real.")
 print()
 
-if p95_rnf03 > 30.0:
-    print(f"✗ FALHA: RNF03 p95 ({p95_rnf03:.4f} s) excedeu o limite máximo de 30 s", file=sys.stderr)
+if p95_rnf03 > meta_rnf03:
+    print(f"✗ FALHA: tempo de despachar_vaga (parcial) p95 ({p95_rnf03:.4f} s) excedeu o limite de {meta_rnf03} s", file=sys.stderr)
     sys.exit(1)
 
-print("✓ REQUISITO NÃO-FUNCIONAL RNF03 APROVADO")
+print("✓ MEDIÇÃO PARCIAL DE DESPACHO APROVADA")
 sys.exit(0)
 PY
 STATUS_CODE=$?
