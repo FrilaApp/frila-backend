@@ -120,6 +120,8 @@ Segredos e credenciais nunca são gravados no repositório. O código da demonst
 
 ## 3. Teste Contra o Supabase Local (Execução 100% Verde)
 
+> **Nota de Escopo**: O resultado verde desta suíte comprova **SONDAGEM, AUTENTICAÇÃO e RESPOSTAS CONTRATUAIS** das 6 funções e da probe de saúde (presença das rotas, autenticação estrita, tipagem e regras contratuais ativas), e **NÃO** o fluxo feliz completo (que requer a execução encadeada ponta a ponta com dados dinâmicos do ciclo de vida completo).
+
 ### 3.1 Preparação do Ambiente Local
 
 1. Banco de dados reservado na fila compartilhada:
@@ -146,6 +148,8 @@ Segredos e credenciais nunca são gravados no repositório. O código da demonst
 
 ### 3.2 Execução Reproduzível com Autenticação Real por Demonstração
 
+Esta execução comprova a sondagem operacional, autenticação real e validação de respostas previstas em contrato (sem substituição do fluxo feliz completo).
+
 **Comando:**
 ```bash
 ./scripts/fumaca-v1.sh http://127.0.0.1:54321
@@ -164,7 +168,7 @@ Alvo: http://127.0.0.1:54321
   turno descoberto dinamicamente: 8108b625-143e-44f7-bc19-9347025a0141
 
 ▸ Verificação das 6 funções da v1.0:
-  escolher_candidato: PASSOU (HTTP 403 - resposta contratual de candidatura inexistente/bloqueada)
+  escolher_candidato: PASSOU (HTTP 403 sem_permissao - resposta contratual de candidatura inexistente/bloqueada)
   incluir_na_equipe: PASSOU (HTTP 404)
   pedir_revisao_despacho: PASSOU (HTTP 409)
   abrir_suporte: PASSOU (HTTP 200)
@@ -172,17 +176,19 @@ Alvo: http://127.0.0.1:54321
   exportar-turnos: PASSOU (HTTP 204)
 
 === Resultado ===
-Status: PASSOU (todas as verificações foram bem-sucedidas)
+Status: PASSOU (respostas contratuais; não é prova do fluxo feliz)
 ```
 
 ---
 
 ### 3.3 Análise e Comprovação Contratual de Cada Resposta
 
+A qualificação de "PASSOU" nas funções abaixo atesta a conformidade das respostas retornadas com as especificações contratuais (`contrato/openapi.yaml`) e de segurança do Frila:
+
 1. **`saude` (HTTP 200)**: Conexão direta com o banco PostgreSQL via `DATABASE_URL` (`select 1 as ping`) validada com sucesso, retornando `{"ok":true,"status":"saudavel"}`.
 2. **`entrar-demonstracao` (HTTP 200)**: As contas `revisao-contratante@frila.app` e `revisao-profissional@frila.app` autenticaram através do endpoint real da Edge Function, gerando tokens Bearer válidos emitidos pelo Supabase Auth.
-3. **Descoberta Dinâmica de Turno**: O script consultou `meus_turnos` autenticado como o profissional da demonstração e descobriu dinamicamente o `turno_id` ativo (`8108b625-143e-44f7-bc19-9347025a0141`), evitando IDs rígidos.
-4. **`escolher_candidato` (HTTP 403 `sem_permissao`)**: Chamada autenticada com a conta contratante. Conforme definido pelo contrato e documentado no código (migrações `20260929234100` e `20261015150000`, RF26 e RN10), chamadas com candidatura inexistente ou de outra casa respondem obrigatoriamente `403 sem_permissao` para evitar enumeração de existência de IDs por terceiros.
+3. **Descoberta Dinâmica de Turno**: O script consultou `meus_turnos` autenticado como o profissional da demonstração e descobriu dinamicamente o `turno_id` ativo (`8108b625-143e-44f7-bc19-9347025a0141`), sem recorrer a IDs literais estáticos (falhando explicitamente se nenhum turno for encontrado e nenhum `TURNO_ID` fornecido).
+4. **`escolher_candidato` (HTTP 403 `sem_permissao` ou 409 `candidatura_indisponivel` / `posicao_ja_preenchida` / `vaga_encerrada`)**: Chamada autenticada com a conta contratante. O script valida estritamente os códigos contratuais permitidos pelo OpenAPI: 200 em caso de sucesso; 409 exclusivamente para os conflitos previstos (`candidatura_indisponivel`, `posicao_ja_preenchida` ou `vaga_encerrada`); e 403 `sem_permissao` para candidatura inexistente ou de outra casa (regra de privacidade RF26/RN10 que proíbe enumeração de existência de candidaturas por terceiros). Qualquer outro 409 não catalogado resulta em FALHOU.
 5. **`incluir_na_equipe` (HTTP 404 `nao_encontrado` ou 403 `sem_turno_cumprido`)**: O contratante administra o estabelecimento da demonstração. O script valida que o retorno cumpre a regra de negócio do contrato (404 se profissional inexistente ou 403 com details `sem_turno_cumprido` per UC11 se o profissional não concluiu turno verificado no local).
 6. **`pedir_revisao_despacho` (HTTP 409 `contestacao_ja_aberta`)**: O profissional da demonstração já possui contestação registrada nos dados semeados; o contrato (Opção B, migração `20261006160000`) proíbe abertura duplicada e responde estritamente `409 contestacao_ja_aberta`.
 7. **`abrir_suporte` (HTTP 200)**: Chamado pelo profissional com o `turno_id` descoberto dinamicamente e chave idempotente única; cria o protocolo operacional e retorna `{"tipo":"suporte",...}` com HTTP 200.

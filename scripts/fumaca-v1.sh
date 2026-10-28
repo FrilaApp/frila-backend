@@ -191,10 +191,10 @@ if [ -z "$ID_TURNO" ] && [ -n "$TOKEN_PROF" ]; then
   fi
 fi
 
-# Se não encontrou dinamicamente e não houve override, usa UUID canônico de fallback
+# Se não encontrou dinamicamente e não houve override, falha explicitamente
 if [ -z "$ID_TURNO" ]; then
-  ID_TURNO="8108b625-143e-44f7-bc19-9347025a0141"
-  printf '  turno: usando fallback configurado (%s)\n' "$ID_TURNO"
+  printf '  turno: FALHOU (nenhum turno encontrado via meus_turnos e TURNO_ID não fornecido no ambiente)\n'
+  FALHAS=$((FALHAS + 1))
 else
   printf '  turno descoberto dinamicamente: %s\n' "$ID_TURNO"
 fi
@@ -204,16 +204,23 @@ printf '\n▸ Verificação das 6 funções da v1.0:\n'
 
 # 1/6: escolher_candidato (RPC)
 # Contrato: requer perfil contratante.
-# Sucesso: 200 (se candidatura válida aceita) ou 409 (candidatura_indisponivel).
+# Sucesso: 200 (se candidatura válida aceita) ou 409 com código previsto (candidatura_indisponivel, posicao_ja_preenchida, vaga_encerrada).
 # Resposta contratual para candidatura inexistente ou de outra casa: 403 sem_permissao (RF26/RN10).
+# Qualquer outro 409 não catalogado = FALHOU.
 res_esc=$(chamar "POST" "$URL/rest/v1/rpc/escolher_candidato" \
   '{"candidatura_id":"00000000-0000-0000-0000-000000000000"}' "$TOKEN_CASA")
 st_esc=$(status_de "$res_esc")
 corpo_esc=$(corpo_de "$res_esc")
 cod_esc=$(campo "$corpo_esc" "code")
 
-if [ "$st_esc" = "200" ] || [ "$st_esc" = "409" ] || { [ "$st_esc" = "403" ] && [ "$cod_esc" = "sem_permissao" ]; }; then
-  printf '  escolher_candidato: PASSOU (HTTP %s - resposta contratual de candidatura inexistente/bloqueada)\n' "$st_esc"
+if [ "$st_esc" = "200" ] || { [ "$st_esc" = "409" ] && { [ "$cod_esc" = "candidatura_indisponivel" ] || [ "$cod_esc" = "posicao_ja_preenchida" ] || [ "$cod_esc" = "vaga_encerrada" ]; }; } || { [ "$st_esc" = "403" ] && [ "$cod_esc" = "sem_permissao" ]; }; then
+  if [ "$st_esc" = "409" ]; then
+    printf '  escolher_candidato: PASSOU (HTTP 409 %s - conflito contratual previsto)\n' "$cod_esc"
+  elif [ "$st_esc" = "403" ]; then
+    printf '  escolher_candidato: PASSOU (HTTP 403 sem_permissao - resposta contratual de candidatura inexistente/bloqueada)\n'
+  else
+    printf '  escolher_candidato: PASSOU (HTTP %s)\n' "$st_esc"
+  fi
 else
   detalhe=$(detalhe_erro "$corpo_esc")
   printf '  escolher_candidato: FALHOU (HTTP %s - %s)\n' "$st_esc" "$detalhe"
@@ -319,7 +326,7 @@ fi
 
 printf '\n=== Resultado ===\n'
 if [ "$FALHAS" -eq 0 ]; then
-  printf 'Status: PASSOU (todas as verificações foram bem-sucedidas)\n'
+  printf 'Status: PASSOU (respostas contratuais; não é prova do fluxo feliz)\n'
   exit 0
 else
   printf 'Status: FALHOU (%d falha(s) encontrada(s))\n' "$FALHAS"
