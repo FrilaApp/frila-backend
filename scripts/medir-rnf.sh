@@ -2,9 +2,9 @@
 # scripts/medir-rnf.sh
 # Medição reproduzível dos requisitos não-funcionais do Frila:
 #   - RNF03: Publicar vaga -> despacho criado (meta <= 30 s)
-#   - RNF02: Despacho -> push aceito pelo provedor (meta <= 60 s, usando mock local)
+#   - RNF02: Despacho -> push aceito pelo provedor (meta <= 60 s, não mensurável localmente)
 #
-# Cartão 6ab26a53 (B-005) · Baseado em supabase/consultas/rnf02_rnf03_push.sql
+# Cartão 6ab26a53 (B-005) · Alinhado com supabase/consultas/rnf02_rnf03_push.sql
 #
 # Uso:
 #   ./scripts/medir-rnf.sh             # Executa 5 repetições (padrão)
@@ -16,6 +16,23 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 DB_CONTAINER="${DB_CONTAINER:-supabase_db_frila-backend}"
 REPETICOES=5
+
+# Trava de segurança: se apontar para host remoto, exige confirmação explícita
+if [ -n "${DATABASE_URL:-}" ]; then
+  db_host=$(python3 -c "import urllib.parse, os; print(urllib.parse.urlparse(os.environ['DATABASE_URL']).hostname or '')" 2>/dev/null || true)
+  if [ -n "$db_host" ]; then
+    case "$db_host" in
+      localhost|127.0.0.1|::1|docker|supabase_db*|*.internal)
+        ;;
+      *)
+        if [ "${EU_SEI_QUE_E_PRODUCAO:-0}" != "1" ]; then
+          echo "✗ DATABASE_URL aponta para host remoto ('$db_host'). Para executar, defina EU_SEI_QUE_E_PRODUCAO=1." >&2
+          exit 1
+        fi
+        ;;
+    esac
+  fi
+fi
 
 # Processa argumentos
 while [ $# -gt 0 ]; do
@@ -59,14 +76,23 @@ exec_psql() {
   fi
 }
 
+# shellcheck disable=SC2329
 limpar() {
-  exec_psql >/dev/null 2>&1 <<'SQL' || true
+  local status_saida=$?
+  if ! exec_psql <<'SQL' >/dev/null
 set session_replication_role = 'replica';
+delete from privado.auditoria_ciclo where entidade_id::text like 'e0000000-0000-4000-8000-%';
+delete from privado.texto_da_vaga_ocultado where vaga_id::text like 'e0000000-0000-4000-8000-%';
 delete from public.despacho where vaga_id in (select id from public.vaga where id::text like 'e0000000-0000-4000-8000-%');
 delete from public.notificacao where referencia_id in (select id from public.vaga where id::text like 'e0000000-0000-4000-8000-%');
 delete from public.vaga where id::text like 'e0000000-0000-4000-8000-%';
 set session_replication_role = 'origin';
 SQL
+  then
+    echo "✗ Erro na limpeza dos dados de teste no banco de dados." >&2
+    exit 1
+  fi
+  exit "$status_saida"
 }
 trap limpar EXIT
 
@@ -74,13 +100,21 @@ echo "==========================================================================
 echo "          FRILA — MEDIÇÃO DE REQUISITOS NÃO-FUNCIONAIS (RNF02 e RNF03)          "
 echo "================================================================================"
 echo "Meta RNF03 : Publicar vaga -> Despacho criado <= 30.0 s"
-echo "Meta RNF02 : Despacho -> Push aceito pelo provedor <= 60.0 s"
+echo "Meta RNF02 : Despacho -> Push aceito pelo provedor <= 60.0 s (Depende de prod)"
 echo "Repetições : $REPETICOES"
 echo ""
 
-limpar
+# Executa limpeza prévia sem ignorar falhas
+exec_psql <<'SQL' >/dev/null
+set session_replication_role = 'replica';
+delete from privado.auditoria_ciclo where entidade_id::text like 'e0000000-0000-4000-8000-%';
+delete from privado.texto_da_vaga_ocultado where vaga_id::text like 'e0000000-0000-4000-8000-%';
+delete from public.despacho where vaga_id in (select id from public.vaga where id::text like 'e0000000-0000-4000-8000-%');
+delete from public.notificacao where referencia_id in (select id from public.vaga where id::text like 'e0000000-0000-4000-8000-%');
+delete from public.vaga where id::text like 'e0000000-0000-4000-8000-%';
+set session_replication_role = 'origin';
+SQL
 
-# Executa as repetições e colhe métricas dentro de uma mesma sessão SQL
 TMP_SAIDA=$(mktemp)
 trap 'rm -f "$TMP_SAIDA"; limpar' EXIT
 
@@ -90,8 +124,7 @@ create temp table pg_temp.medicao_rnf (
   vaga_id uuid,
   notificacao_id uuid,
   despachos_criados int,
-  latencia_rnf03_s numeric,
-  latencia_rnf02_s numeric
+  latencia_rnf03_s numeric
 );
 
 do \$\$
@@ -102,13 +135,11 @@ declare
   v_fim timestamptz;
   v_t_pub timestamptz;
   v_t_desp timestamptz;
-  v_t_aceite timestamptz;
   v_despachos int;
   v_notif record;
   v_hex text;
-  v_delta interval;
 begin
-  -- Âncora com profissionais elegíveis no seed (sexta-feira com função garçom)
+  -- Âncora com profissionais elegíveis definida em supabase/cenarios.sql
   select inicio_em, fim_em into v_ini, v_fim
     from public.vaga where id = 'd0000000-0000-4000-8000-000000000001';
 
@@ -135,37 +166,28 @@ begin
       v_t_pub
     );
 
-    -- 2. Despacho (término da medição RNF03 / início da medição RNF02)
+    -- 2. Despacho (término da medição RNF03)
     v_despachos := privado.despachar_vaga(v_vaga_id);
     v_t_desp := clock_timestamp();
 
-    -- 3. Mock do provedor FCM (RNF02 local):
-    -- Simula confirmação do provedor com latência de rede realista (10ms a 35ms)
-    v_delta := (10 + (i % 25)) * interval '1 millisecond';
-    v_t_aceite := v_t_desp + v_delta;
-
     for v_notif in
-      select id from public.notificacao where referencia_id = v_vaga_id
+      select id, enviada_em from public.notificacao where referencia_id = v_vaga_id
     loop
-      perform privado.gravar_aceite_push(v_notif.id, v_t_aceite, v_t_desp);
-
       insert into pg_temp.medicao_rnf (
-        repeticao, vaga_id, notificacao_id, despachos_criados, latencia_rnf03_s, latencia_rnf02_s
+        repeticao, vaga_id, notificacao_id, despachos_criados, latencia_rnf03_s
       ) values (
         i,
         v_vaga_id,
         v_notif.id,
         v_despachos,
-        round(extract(epoch from (v_t_desp - v_t_pub))::numeric, 4),
-        round(extract(epoch from (v_t_aceite - v_t_desp))::numeric, 4)
+        round(extract(epoch from (v_t_desp - v_t_pub))::numeric, 4)
       );
     end loop;
 
     -- Afasta timestamp no relógio do teto de RN23 (> 30 min atrás)
     -- para a próxima repetição encontrar a janela aberta sem ser barrada
     update public.notificacao
-       set enviada_em = v_t_desp - interval '40 minutes',
-           aceita_em  = v_t_desp - interval '40 minutes' + v_delta
+       set enviada_em = v_t_desp - interval '40 minutes'
      where referencia_id = v_vaga_id;
   end loop;
 end \$\$;
@@ -176,16 +198,13 @@ select
   vaga_id,
   despachos_criados,
   latencia_rnf03_s as rnf03_segundos,
-  case when latencia_rnf03_s <= 30.0 then 'OK (<= 30s)' else 'FALHA (> 30s)' end as status_rnf03,
-  latencia_rnf02_s as rnf02_segundos,
-  case when latencia_rnf02_s <= 60.0 then 'OK (<= 60s)' else 'FALHA (> 60s)' end as status_rnf02
+  case when latencia_rnf03_s <= 30.0 then 'OK (<= 30s)' else 'FALHA (> 30s)' end as status_rnf03
 from (
   select distinct on (repeticao)
     repeticao,
     vaga_id,
     despachos_criados,
-    latencia_rnf03_s,
-    latencia_rnf02_s
+    latencia_rnf03_s
   from pg_temp.medicao_rnf
   order by repeticao, notificacao_id
 ) sub
@@ -196,9 +215,7 @@ select json_build_object(
   'amostras', count(*),
   'vagas', count(distinct vaga_id),
   'p50_rnf03', round(coalesce(percentile_cont(0.50) within group (order by latencia_rnf03_s)::numeric, 0), 4),
-  'p95_rnf03', round(coalesce(percentile_cont(0.95) within group (order by latencia_rnf03_s)::numeric, 0), 4),
-  'p50_rnf02', round(coalesce(percentile_cont(0.50) within group (order by latencia_rnf02_s)::numeric, 0), 4),
-  'p95_rnf02', round(coalesce(percentile_cont(0.95) within group (order by latencia_rnf02_s)::numeric, 0), 4)
+  'p95_rnf03', round(coalesce(percentile_cont(0.95) within group (order by latencia_rnf03_s)::numeric, 0), 4)
 )::text
 from pg_temp.medicao_rnf;
 SQL
@@ -208,6 +225,12 @@ sed -n '/=== TABELA_AMOSTRAS ===/,/=== METRICAS_JSON ===/p' "$TMP_SAIDA" | sed '
 
 echo ""
 echo "── 2. Consulta RNF02 (Taxa de Aceite em 60s - rnf02_rnf03_push.sql) ────────────"
+echo "Status: NÃO MENSURÁVEL LOCALMENTE [INFORMATIVO / NÃO EXECUTADO]"
+echo "Ressalva: A medição de RNF02 (aceita_em - enviada_em <= 60 s) depende do envio real"
+echo "aos provedores FCM/APNs e do recebimento em aparelhos físicos. Em ambiente local,"
+echo "não há credenciais reais nem provedor externo ativo."
+echo ""
+echo "Consulta executada no banco atual:"
 exec_psql -c "
 select
   count(*) as total_despachadas,
@@ -229,7 +252,7 @@ where enviada_em >= privado.agora() - interval '7 days';
 "
 
 echo ""
-echo "── 3. Estatísticas Agregadas (p50 e p95) ────────────────────────────────────────"
+echo "── 3. Estatísticas Agregadas e Validação do Gate ───────────────────────────────"
 
 METRICAS_JSON=$(grep -E '^[[:space:]]*\{.*"p50_rnf03".*\}' "$TMP_SAIDA" | head -n 1)
 
@@ -238,49 +261,47 @@ STATUS_CODE=0
 python3 - "$METRICAS_JSON" <<'PY'
 import json, sys
 
-data = json.loads(sys.argv[1])
+raw = sys.argv[1].strip()
+if not raw:
+    print("✗ Nenhuma amostra válida encontrada", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    data = json.loads(raw)
+except Exception as e:
+    print(f"✗ Erro ao processar métricas JSON: {e}", file=sys.stderr)
+    sys.exit(1)
+
+amostras = data.get("amostras", 0)
+vagas = data.get("vagas", 0)
 p50_rnf03 = float(data.get("p50_rnf03", 0))
 p95_rnf03 = float(data.get("p95_rnf03", 0))
-p50_rnf02 = float(data.get("p50_rnf02", 0))
-p95_rnf02 = float(data.get("p95_rnf02", 0))
-vagas = data.get("vagas", 0)
-amostras = data.get("amostras", 0)
+
+# Prevenção rigorosa de falso-verde: sem amostras é erro
+if amostras == 0 or vagas == 0:
+    print("✗ Nenhuma amostra válida encontrada", file=sys.stderr)
+    sys.exit(1)
 
 print(f"Total de vagas testadas       : {vagas}")
 print(f"Total de notificações testadas: {amostras}")
 print()
 
 status_rnf03 = "APROVADO" if p95_rnf03 <= 30.0 else "REPROVADO"
-print(f"RNF03 (Publicação -> Despacho):")
+print(f"RNF03 (Publicação da vaga -> Despacho criado):")
 print(f"  p50 = {p50_rnf03:.4f} s | p95 = {p95_rnf03:.4f} s (Meta: <= 30.0000 s) -> [{status_rnf03}]")
-
-status_rnf02 = "APROVADO" if p95_rnf02 <= 60.0 else "REPROVADO"
-print(f"RNF02 (Despacho -> Aceite FCM mock):")
-print(f"  p50 = {p50_rnf02:.4f} s | p95 = {p95_rnf02:.4f} s (Meta: <= 60.0000 s) -> [{status_rnf02}]")
+print()
+print("RNF02 (Despacho -> Aceite pelo provedor FCM/APNs):")
+print("  Status: NÃO MENSURÁVEL LOCALMENTE [INFORMATIVO / NÃO EXECUTADO]")
+print("  Nota  : Aferição ponta-a-ponta depende de ambiente com credenciais e tráfego real.")
 print()
 
-falhas = []
 if p95_rnf03 > 30.0:
-    falhas.append(f"RNF03 p95 ({p95_rnf03:.4f} s) excedeu a meta de 30 s")
-if p95_rnf02 > 60.0:
-    falhas.append(f"RNF02 p95 ({p95_rnf02:.4f} s) excedeu a meta de 60 s")
-
-if falhas:
-    print("✗ FALHA NA VALIDAÇÃO DOS REQUISITOS NÃO-FUNCIONAIS:")
-    for f in falhas:
-        print(f"  - {f}")
+    print(f"✗ FALHA: RNF03 p95 ({p95_rnf03:.4f} s) excedeu o limite máximo de 30 s", file=sys.stderr)
     sys.exit(1)
-else:
-    print("✓ TODOS OS REQUISITOS NÃO-FUNCIONAIS TESTADOS FORAM APROVADOS")
-    sys.exit(0)
+
+print("✓ REQUISITO NÃO-FUNCIONAL RNF03 APROVADO")
+sys.exit(0)
 PY
 STATUS_CODE=$?
-
-echo ""
-echo "ℹ NOTA DE AMBIENTE:"
-echo "  - RNF03: Medido diretamente contra o motor de despacho no Postgres local."
-echo "  - RNF02: Em ambiente local, a confirmação do provedor é simulada via mock."
-echo "    A latência real de entrega ponta-a-ponta aos aparelhos (APNs/FCM) depende"
-echo "    do ambiente de produção com aparelhos físicos e tráfego real."
 
 exit "$STATUS_CODE"

@@ -198,9 +198,9 @@ if erros:
     sys.exit(1)
 
 if modo_teste:
-    print("✓ Schema das 7 views de metrica.* validado com sucesso!")
+    print("✓ Schema das 7 views de metrica.* validado com sucesso!", file=sys.stderr)
     for v_nome, cols in COLUNAS_ESPERADAS.items():
-        print(f"  ✓ metrica.{v_nome} ({len(cols)} colunas)")
+        print(f"  ✓ metrica.{v_nome} ({len(cols)} colunas)", file=sys.stderr)
 
 # Função auxiliar para gerar tabela HTML estilizada
 def render_table(headers, rows, empty_msg="Nenhum registro encontrado."):
@@ -486,7 +486,7 @@ html_doc = f"""<!DOCTYPE html>
   <header>
     <div class="marca-topo">
       <span class="badge">FRILA · PILOTO BRASÍLIA</span>
-      <span style="color: var(--cor-texto-fraco); font-size: 0.85rem;">Gerado em {data_geracao}</span>
+      <span style="color: var(--cor-texto-fraco); font-size: 0.85rem;">Gerado em {html.escape(str(data_geracao))}</span>
     </div>
     <h1>Painel de Métricas do Piloto</h1>
     <p class="subtitulo">Leitura semanal do funil de conversão e North Star Metric (exclui contas de demonstração e equipe Frila)</p>
@@ -495,35 +495,35 @@ html_doc = f"""<!DOCTYPE html>
   <div class="cards-grid">
     <div class="card card-destaque">
       <div class="card-label">North Star (Semanal)</div>
-      <div class="card-valor">{ns_turnos}</div>
+      <div class="card-valor">{html.escape(str(ns_turnos))}</div>
     </div>
     <div class="card">
       <div class="card-label">Vagas Publicadas</div>
-      <div class="card-valor">{vagas_pub}</div>
+      <div class="card-valor">{html.escape(str(vagas_pub))}</div>
     </div>
     <div class="card">
       <div class="card-label">Notificações</div>
-      <div class="card-valor">{notifs_env}</div>
+      <div class="card-valor">{html.escape(str(notifs_env))}</div>
     </div>
     <div class="card">
       <div class="card-label">Candidaturas</div>
-      <div class="card-valor">{cand}</div>
+      <div class="card-valor">{html.escape(str(cand))}</div>
     </div>
     <div class="card">
       <div class="card-label">Confirmações</div>
-      <div class="card-valor">{conf}</div>
+      <div class="card-valor">{html.escape(str(conf))}</div>
     </div>
     <div class="card">
       <div class="card-label">Check-ins Verificados</div>
-      <div class="card-valor">{checkins}</div>
+      <div class="card-valor">{html.escape(str(checkins))}</div>
     </div>
     <div class="card">
       <div class="card-label">Avaliações</div>
-      <div class="card-valor">{aval}</div>
+      <div class="card-valor">{html.escape(str(aval))}</div>
     </div>
     <div class="card">
       <div class="card-label">Tempo Confirmação</div>
-      <div class="card-valor" style="font-size: 1.3rem;">{tempo_conf}</div>
+      <div class="card-valor" style="font-size: 1.3rem;">{html.escape(str(tempo_conf))}</div>
     </div>
   </div>
 
@@ -582,9 +582,9 @@ PY
 if [ -n "$ARQUIVO_SAIDA" ]; then
   mkdir -p "$(dirname "$ARQUIVO_SAIDA")"
   printf '%s\n' "$HTML_GERADO" > "$ARQUIVO_SAIDA"
-  echo "✓ Painel gerado com sucesso em: $ARQUIVO_SAIDA"
+  echo "✓ Painel gerado com sucesso em: $ARQUIVO_SAIDA" >&2
 elif [ "$MODO_TESTE" -eq 1 ]; then
-  echo "✓ Teste do gerador concluído com sucesso: HTML válido gerado."
+  echo "✓ Teste do gerador concluído com sucesso: HTML válido gerado." >&2
 else
   printf '%s\n' "$HTML_GERADO"
 fi

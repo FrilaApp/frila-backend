@@ -11,37 +11,33 @@ Cartões: `6ab26a53` (Brief B-005, T-0017, T-0020).
 ### 1.1 Medição dos Requisitos Não-Funcionais (`scripts/medir-rnf.sh`)
 
 O script `scripts/medir-rnf.sh` afere o cumprimento das metas estabelecidas na arquitetura:
-- **RNF03**: Da publicação da vaga até a criação dos despachos pelo motor (meta: $p95 \le 30\text{ s}$).
-- **RNF02**: Do despacho até o aceite da notificação pelo provedor de push (meta: $p95 \le 60\text{ s}$, utilizando o mock em ambiente local).
+- **RNF03**: Da publicação da vaga até a criação dos despachos e notificações pelo motor (meta: $p95 \le 30\text{ s}$).
+- **RNF02**: Do despacho até o aceite da notificação pelo provedor de push (meta: $p95 \le 60\text{ s}$). **Não é mensurável localmente**, pois depende de envio real aos provedores externos (Google FCM / Apple APNs) e aparelhos físicos.
 
 #### Execução:
-Antes de rodar contra o Supabase local, obtenha a vaga da fila compartilhada:
+Caso esteja trabalhando com a orquestração compartilhada do time, obtenha a vaga da fila de banco antes de executar e solte-a ao terminar:
 ```bash
-/Users/cauecarneiro/Documents/Projetos/Frila/orquestracao/scripts/fila.sh pegar banco <seu-nome>
-```
+# Obter vaga do banco local (se aplicável)
+fila.sh pegar banco <seu-nome>
 
-Em seguida, execute o script:
-```bash
 # Executa 5 repetições (padrão)
 ./scripts/medir-rnf.sh
 
 # Executa N repetições personalizadas
 ./scripts/medir-rnf.sh 10
 ./scripts/medir-rnf.sh -n 20
-```
 
-Ao concluir a medição, solte a vaga:
-```bash
-/Users/cauecarneiro/Documents/Projetos/Frila/orquestracao/scripts/fila.sh soltar banco <seu-nome>
+# Liberar vaga do banco local ao terminar
+fila.sh soltar banco <seu-nome>
 ```
 
 #### Comportamento e Saída:
-1. Cria vagas de teste isoladas (com prefixo `e0000000-0000-4000-8000-`) no banco local.
-2. Dispara `privado.despachar_vaga` para cada uma e mede a latência de despacho (RNF03).
-3. Simula a confirmação pelo provedor FCM via `privado.gravar_aceite_push` e afere a latência de aceite (RNF02).
-4. Imprime tabela das amostras coletadas, consulta consolidada de `supabase/consultas/rnf02_rnf03_push.sql` e percentis $p50$ e $p95$.
-5. Sai com código `0` se os requisitos forem cumpridos, ou código diferente de zero se $p95$ exceder os limites.
-6. Limpa automaticamente todos os dados de teste no `trap EXIT`. Nunca realiza `db reset`.
+1. Cria vagas de teste isoladas (com prefixo `e0000000-0000-4000-8000-`) no banco de teste, utilizando a âncora de função e horário de `supabase/cenarios.sql` para garantir elegibilidade.
+2. Dispara `privado.despachar_vaga` para cada uma e mede a latência de despacho da publicação até o envio (`n.enviada_em - v.publicado_em`), conforme a consulta oficial de `supabase/consultas/rnf02_rnf03_push.sql`.
+3. Imprime tabela das amostras coletadas, consulta consolidada de `supabase/consultas/rnf02_rnf03_push.sql` e percentis $p50$ e $p95$.
+4. Exibe o requisito RNF02 com status informativo `NÃO MENSURÁVEL LOCALMENTE / NÃO EXECUTADO`.
+5. Sai com código `0` se o requisito RNF03 for cumprido, ou código `1` se $p95$ exceder 30 s ou se nenhuma amostra for encontrada.
+6. Limpa automaticamente todos os dados de teste (incluindo `privado.auditoria_ciclo` e `privado.texto_da_vaga_ocultado`) no `trap EXIT`. Nunca realiza `db reset`.
 
 ---
 
@@ -54,12 +50,14 @@ O script `scripts/gerar-painel.sh` lê as 7 views do schema `metrica.*` via `psq
 # Imprime o HTML na saída padrão
 ./scripts/gerar-painel.sh
 
-# Salva diretamente em arquivo
-./scripts/gerar-painel.sh -o docs/painel-piloto.html
+# Salva diretamente em arquivo temporário
+./scripts/gerar-painel.sh -o /tmp/painel-piloto.html
 
 # Validação contratual de schema e colunas (usado na CI)
 ./scripts/gerar-painel.sh --teste -o /tmp/painel-piloto.html
 ```
+
+> **Atenção:** Arquivos HTML gerados para inspeção ou teste devem ser salvos em diretórios efêmeros como `/tmp/painel-piloto.html`, nunca comitados na pasta `docs/`.
 
 O script respeita a variável de ambiente `DATABASE_URL` se estiver definida; caso contrário, conecta-se automaticamente ao contêiner local `supabase_db_frila-backend` ou à porta padrão `54322`.
 
@@ -98,10 +96,10 @@ Todas as métricas são lidas estritamente do schema isolado `metrica.*` (com pr
 
 Em conformidade com os princípios operacionais do Frila (*"Executado é o que você rodou e viu; o resto vai como não executado"*), declaram-se os seguintes itens que só podem ser validados com ambiente e tráfego reais de produção:
 
-1. **Aceite real e tempo de trânsito externo no Google FCM e Apple APNs:**
-   - Em ambiente local e na integração contínua (CI), não há conexão com os servidores de produção do FCM/APNs nem envio para aparelhos físicos com tokens reais.
-   - O requisito RNF02 foi testado localmente simulando o retorno de aceite através da função privada `privado.gravar_aceite_push`. A taxa de entrega e o $p95$ com rede pública real dependem do monitoramento contínuo em `frila-prod`.
+1. **Requisito RNF02 (Aceite e trânsito externo no Google FCM e Apple APNs):**
+   - Em ambiente local e na integração contínua (CI), não há conexão com os servidores de produção do FCM/APNs nem aparelhos físicos com tokens push válidos.
+   - O requisito RNF02 ($p95 \le 60\text{ s}$) afere o intervalo `aceita_em - enviada_em`. Como a confirmação de aceite só é gravada pelo retorno HTTP 200 real do provedor, ele é reportado localmente como `NÃO MENSURÁVEL LOCALMENTE / NÃO EXECUTADO`. A taxa real de aceite e a latência ponta-a-ponta dependem de produção (`frila-prod`).
 2. **Dados de funil e telemetria com comportamento de usuários reais:**
-   - O painel local foi gerado sobre dados de teste e sementes controladas (`seed.sql`). A leitura com volume orgânico de contratantes e profissionais de Brasília ocorre na rotina semanal com a base de produção.
+   - As âncoras e os dados do ambiente de teste vêm de `supabase/cenarios.sql` (que popula cenários de teste ricos, e não de `seed.sql`, que contém apenas catálogos e termos bloqueados). A leitura semanal com volume orgânico de contratantes e profissionais de Brasília ocorre na rotina semanal sobre a base de produção.
 3. **Execução ininterrupta de 24 horas dos jobs do `pg_cron`:**
    - Ambientes de teste locais e runners de CI são efêmeros. O teste de estabilidade contínua de 24 horas sem erros do job `reprocessar_despacho` requer o projeto remoto `frila-dev` / `frila-prod` ativo durante toda a janela (aferido via `scripts/medir-despacho-remoto.sh`).
