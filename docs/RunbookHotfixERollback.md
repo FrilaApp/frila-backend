@@ -108,8 +108,9 @@ visível em PR).
 11. **Registrar** no PR e no cartão: SHA, tag, hora, resultado do `desvio.sh`. No fim do dia,
     `scripts/bancada-sync.sh` leva o dia ao vault.
 
-Smoke depois da publicação: `GET` na função `saude` do Prod só lê (`select 1`,
-`supabase/functions/saude/index.ts`). Não rode `ciclo-completo.sh` nem `demonstracao.sh`
+Smoke depois da publicação: `GET` na função `saude` do Prod só lê no caminho de sucesso
+(`select 1`, `supabase/functions/saude/index.ts`); no de falha, grava uma linha em
+`registrar_falha_execucao` (`mantem-prod-vivo.yml:9`). Não rode `ciclo-completo.sh` nem `demonstracao.sh`
 contra o Prod, porque gravam dados; a decisão de gravar em produção é do `[DONO]`.
 
 ---
