@@ -161,16 +161,23 @@ limpar() {
   local code=$?
   if [ "$CRIOU_FIXTURES" -eq 1 ]; then
     psql_cmd -c "
+      begin;
+      set local privado.retencao = 'on';
+      delete from privado.texto_da_vaga_ocultado where vaga_id = '$VAGA_ID';
       delete from privado.vaga_ocultada where vaga_id = '$VAGA_ID';
       delete from public.ocorrencia where autor_id in ('$OPERADOR_ID', '$ALVO_ID', '$PUB_ID')
          or usuario_id in ('$OPERADOR_ID', '$ALVO_ID', '$PUB_ID')
+         or estabelecimento_id = '$ESTAB_ID'
          or id in ('$OC_SUPORTE_1', '$OC_SUPORTE_2', '$OC_DENUNCIA');
+      delete from public.despacho where vaga_id = '$VAGA_ID';
       delete from public.posicao where vaga_id = '$VAGA_ID';
       delete from public.vaga where id = '$VAGA_ID';
       delete from public.membro_estabelecimento where estabelecimento_id = '$ESTAB_ID';
       delete from public.estabelecimento where id = '$ESTAB_ID';
+      delete from public.notificacao where usuario_id in ('$OPERADOR_ID', '$ALVO_ID', '$PUB_ID');
       delete from privado.conta_equipe where usuario_id = '$OPERADOR_ID';
       delete from public.usuario where id in ('$OPERADOR_ID', '$ALVO_ID', '$PUB_ID');
+      commit;
     " >/dev/null 2>&1 || true
   fi
 
