@@ -96,6 +96,9 @@ jobs:
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
+      - name: Teste das ferramentas SQL da operação
+        run: ./scripts/teste-operacao-sql.sh
+
       # A porta de demonstração é Edge Function, e função não sobe com `supabase start`:
       # precisa de `functions serve`. O código e os endereços aqui são de mentira de
       # propósito — o que a CI mede é o comportamento da porta, não o segredo. O segredo
