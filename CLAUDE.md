@@ -317,3 +317,7 @@ supabase test db           # pgTAP verde
 ```
 
 Ler o código não é medir. Se você não rodou, diga que não rodou.
+
+## Bancada
+
+**Regra da Bancada (leia `BANCADA.md`):** todo PR mergeado vira fato na Bancada no mesmo dia, pelo humano ou pela IA que mergeou. Os mentores só leem o site; o que não chegou lá, para eles, não aconteceu.
