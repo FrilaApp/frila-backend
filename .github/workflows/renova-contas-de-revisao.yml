@@ -1,0 +1,166 @@
+name: Renova contas de revisão
+
+# Renova as contas e os dados que a Apple usa na revisão do app (`revisao-contratante` e
+# `revisao-profissional`): vaga aberta e turno confirmado de novo à frente do relógio. Quem
+# faz o trabalho é o `scripts/renovar-demonstracao.sh`, que chama
+# `privado.renovar_dados_demonstracao` pela Management API. Este workflow só o põe atrás de
+# uma confirmação e registra o resultado.
+#
+# NUNCA roda sozinho: só `workflow_dispatch`, e o job que escreve só começa depois de um
+# job de confirmação em que quem disparou digitou `renovar <ambiente>`.
+#
+# O job que escreve usa `environment: frila-prod`, para valer a aprovação de um revisor do
+# Environment. Medido em 28/10/2026: o Environment ainda NÃO tem Required reviewers, então
+# hoje a confirmação digitada é o único portão. Ligar o revisor é de quem administra o
+# repositório. Este workflow usa o segredo `SUPABASE_ACCESS_TOKEN` desse Environment
+# também para o `dev`.
+#
+# O script engole erro HTTP (`curl -s` sem `-f`, e a saída vai para /dev/null), então o
+# código de saída dele não prova a renovação. O último passo lê as datas de volta e falha
+# se a vaga ou o turno não estiverem à frente do relógio.
+on:
+  workflow_dispatch:
+    inputs:
+      ambiente:
+        description: 'Ambiente a renovar'
+        type: choice
+        options: [dev, prod]
+        default: dev
+        required: true
+      confirmacao:
+        description: 'Para executar, digite "renovar dev" ou "renovar prod", igual ao ambiente escolhido'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renova-contas-de-revisao
+  cancel-in-progress: false
+
+jobs:
+  confirmar:
+    name: Confirmação explícita
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    env:
+      AMBIENTE: ${{ inputs.ambiente }}
+      CONFIRMACAO: ${{ inputs.confirmacao }}
+    steps:
+      - name: A confirmação bate com o ambiente
+        run: |
+          case "$AMBIENTE" in
+            dev|prod) ;;
+            *) echo "::error::Ambiente desconhecido: use dev ou prod."; exit 1 ;;
+          esac
+          esperado="renovar $AMBIENTE"
+          if [ "$CONFIRMACAO" != "$esperado" ]; then
+            echo "::error::Confirmação recusada. Para renovar $AMBIENTE, digite exatamente: $esperado"
+            exit 1
+          fi
+          echo "✓ confirmação recebida para $AMBIENTE."
+
+  renovar:
+    name: Renovar as contas de revisão
+    needs: confirmar
+    runs-on: ubuntu-latest
+    # O Environment `frila-prod` é o que pode exigir a aprovação de um revisor.
+    environment: frila-prod
+    timeout-minutes: 10
+    env:
+      AMBIENTE: ${{ inputs.ambiente }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      # Mesmos project refs do `entrega.yml` (linhas 62 e 131). Não são segredo.
+      FRILA_DEV_PROJECT_REF: jcobftbhbqdikratzizz
+      FRILA_PROD_PROJECT_REF: hbjkkcenbudiezmamiak
+      # O script recusa `prod` sem isto. Só chega aqui depois do job de confirmação.
+      EU_SEI_QUE_E_PRODUCAO: ${{ inputs.ambiente == 'prod' && '1' || '' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: O token existe
+        run: |
+          [ -n "$SUPABASE_ACCESS_TOKEN" ] || {
+            echo "::error::Falta o secret SUPABASE_ACCESS_TOKEN no Environment frila-prod."
+            exit 1
+          }
+
+      - name: Renovar
+        run: ./scripts/renovar-demonstracao.sh "$AMBIENTE"
+
+      # Ids fixos da demonstração: vaga aberta ...0020 e posição do turno ...0031
+      # (migração 20261020150000, função `privado.renovar_dados_demonstracao`). O turno não
+      # tem data própria; a dele é a da posição.
+      - name: Conferir as datas e registrar no resumo
+        run: |
+          case "$AMBIENTE" in
+            dev)  ref="$FRILA_DEV_PROJECT_REF" ;;
+            prod) ref="$FRILA_PROD_PROJECT_REF" ;;
+          esac
+          sql="select v.inicio_em as vaga_inicio_em, v.estado::text as vaga_estado, p.inicio_em as turno_inicio_em, t.verificacao::text as turno_verificacao, now() as consultado_em from public.vaga v cross join public.posicao p join public.turno t on t.posicao_id = p.id where v.id = 'de000000-0000-4000-8000-000000000020' and p.id = 'de000000-0000-4000-8000-000000000031'"
+          corpo=$(python3 -c 'import json, sys; print(json.dumps({"query": sys.argv[1]}))' "$sql")
+          RESPOSTA=$(curl -sS --fail-with-body --max-time 60 -X POST \
+            -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d "$corpo" \
+            "https://api.supabase.com/v1/projects/$ref/database/query") || {
+            echo "::error::Não consegui ler de volta as datas no $AMBIENTE. A renovação não está provada."
+            exit 1
+          }
+          export RESPOSTA
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          SP = ZoneInfo("America/Sao_Paulo")
+          linhas = json.loads(os.environ["RESPOSTA"])
+          if len(linhas) != 1:
+              print("::error::A vaga ou o turno de revisão não existem neste ambiente.")
+              raise SystemExit(1)
+          r = linhas[0]
+
+          def instante(texto):
+              return datetime.fromisoformat(texto.replace("Z", "+00:00"))
+
+          def legivel(texto):
+              d = instante(texto)
+              return f"{d:%d/%m/%Y %H:%M} UTC ({d.astimezone(SP):%d/%m/%Y %H:%M} São Paulo)"
+
+          agora = instante(r["consultado_em"])
+          vaga = instante(r["vaga_inicio_em"])
+          turno = instante(r["turno_inicio_em"])
+
+          falhas = []
+          if vaga <= agora:
+              falhas.append("a vaga aberta não está à frente do relógio")
+          if turno <= agora:
+              falhas.append("o turno não está à frente do relógio")
+          if r["turno_verificacao"] != "pendente":
+              falhas.append(f"o turno está em '{r['turno_verificacao']}', esperado 'pendente'")
+          if r["vaga_estado"] != "publicada":
+              falhas.append(f"a vaga aberta está em '{r['vaga_estado']}', esperado 'publicada'")
+
+          ambiente = os.environ["AMBIENTE"]
+          linhas_md = [
+              f"### Contas de revisão no {ambiente}: datas lidas de volta",
+              "",
+              "| | Início |",
+              "|---|---|",
+              f"| Vaga aberta (`{r['vaga_estado']}`) | {legivel(r['vaga_inicio_em'])} |",
+              f"| Turno confirmado (`{r['turno_verificacao']}`) | {legivel(r['turno_inicio_em'])} |",
+              "",
+              f"Consultado em {legivel(r['consultado_em'])}.",
+          ]
+          if falhas:
+              linhas_md += ["", "**Renovação NÃO comprovada:** " + "; ".join(falhas) + "."]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as saida:
+              saida.write("\n".join(linhas_md) + "\n")
+
+          if falhas:
+              print("::error::" + "; ".join(falhas))
+              raise SystemExit(1)
+          print(f"✓ vaga em {legivel(r['vaga_inicio_em'])}; turno em {legivel(r['turno_inicio_em'])}")
+          PY
