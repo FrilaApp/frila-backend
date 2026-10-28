@@ -272,7 +272,8 @@ O vault `FrilaApp/Bancada · doc-harness/` publica em **https://bancada-buu.page
 e é onde os mentores acompanham o processo. Os commits daqui **não** chegam lá sozinhos:
 o hook do vault só registra commits do próprio repositório.
 
-No fim de cada dia de trabalho, `scripts/bancada-sync.sh`:
+Ao mergear cada PR (o prazo é o mesmo dia; veja `BANCADA.md`, que manda) e, no mínimo, no
+fim de cada dia de trabalho, `scripts/bancada-sync.sh`:
 
 ```bash
 ./scripts/bancada-sync.sh                     # os commits de hoje
