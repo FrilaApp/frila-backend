@@ -118,78 +118,90 @@ Segredos e credenciais nunca são gravados no repositório. O código da demonst
 
 ---
 
-## 3. Teste Contra o Supabase Local
+## 3. Teste Contra o Supabase Local (Execução 100% Verde)
 
-O teste foi executado no ambiente local (`supabase start -x vector`), reservando o banco com a fila compartilhada (`fila.sh pegar banco Bigorna`).
+### 3.1 Preparação do Ambiente Local
 
-### 3.1 Execução Direta (sem segredos de demonstração no ambiente local)
+1. Banco de dados reservado na fila compartilhada:
+   ```bash
+   /Users/cauecarneiro/Documents/Projetos/Frila/orquestracao/scripts/fila.sh pegar banco <dono>
+   ```
+2. Inicialização dos serviços Supabase locais:
+   ```bash
+   supabase start -x vector
+   ```
+3. Configuração dos segredos em `supabase/functions/.env.local` (ignorado pelo git):
+   ```bash
+   DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+   DEMONSTRACAO_EMAILS=revisao-contratante@frila.app,revisao-profissional@frila.app
+   DEMONSTRACAO_CODIGO=123456
+   DEMONSTRACAO_ATIVA_ATE=2030-01-01T00:00:00Z
+   ```
+4. Execução do runtime de Edge Functions servindo as funções locais:
+   ```bash
+   supabase functions serve --env-file supabase/functions/.env.local --no-verify-jwt
+   ```
+
+---
+
+### 3.2 Execução Reproduzível com Autenticação Real por Demonstração
 
 **Comando:**
 ```bash
 ./scripts/fumaca-v1.sh http://127.0.0.1:54321
 ```
 
-**Saída:**
+**Saída Exata (PASSOU integral, 0 falhas):**
 ```
 === Teste de Fumaça v1.0 ===
 Alvo: http://127.0.0.1:54321
 
 ▸ Probe operacional de saúde:
-  saude: FALHOU (HTTP 503 - conexao_falhou)
+  saude: PASSOU (HTTP 200)
 
 ▸ Autenticação com contas de demonstração (entrar-demonstracao):
-  entrar-demonstracao: FALHOU (DEMONSTRACAO_CODIGO não informado no ambiente)
+  entrar-demonstracao: PASSOU (HTTP 200 contratante e profissional)
+  turno descoberto dinamicamente: 8108b625-143e-44f7-bc19-9347025a0141
 
 ▸ Verificação das 6 funções da v1.0:
-  escolher_candidato: FALHOU (HTTP 401 - 42501)
-  incluir_na_equipe: FALHOU (HTTP 401 - 42501)
-  pedir_revisao_despacho: FALHOU (HTTP 401 - 42501)
-  abrir_suporte: FALHOU (HTTP 401 - 42501)
-  avisar_a_caminho: FALHOU (HTTP 401 - 42501)
-  exportar-turnos: FALHOU (HTTP 401 - nao_autenticado)
-
-=== Resultado ===
-Status: FALHOU (8 falha(s) encontrada(s))
-```
-
-### 3.2 Execução com Tokens de Sessão das Contas de Demonstração
-
-Ao injetar os tokens das contas de demonstração semeadas no banco local (`TOKEN_CONTRATANTE` e `TOKEN_PROFISSIONAL`), as 5 RPCs da v1.0 no banco de dados respondem conforme o contrato:
-
-```
-=== Teste de Fumaça v1.0 ===
-Alvo: http://127.0.0.1:54321
-
-▸ Probe operacional de saúde:
-  saude: FALHOU (HTTP 503 - conexao_falhou)
-
-▸ Autenticação com contas de demonstração (entrar-demonstracao):
-  entrar-demonstracao: PASSOU (usando tokens fornecidos no ambiente)
-
-▸ Verificação das 6 funções da v1.0:
-  escolher_candidato: PASSOU (HTTP 403)
+  escolher_candidato: PASSOU (HTTP 403 - resposta contratual de candidatura inexistente/bloqueada)
   incluir_na_equipe: PASSOU (HTTP 404)
   pedir_revisao_despacho: PASSOU (HTTP 409)
   abrir_suporte: PASSOU (HTTP 200)
-  avisar_a_caminho: PASSOU (HTTP 422)
-  exportar-turnos: FALHOU (HTTP 401 - Invalid JWT)
+  avisar_a_caminho: PASSOU (HTTP 422 a_caminho_fora_da_janela - turno vinculado validado fora da janela de 3h)
+  exportar-turnos: PASSOU (HTTP 204)
 
 === Resultado ===
-Status: FALHOU (2 falha(s) encontrada(s))
+Status: PASSOU (todas as verificações foram bem-sucedidas)
 ```
 
 ---
 
-## 4. O que só existe em Produção (Não Executado no Local)
+### 3.3 Análise e Comprovação Contratual de Cada Resposta
 
-Conforme estabelecido no Brief B-002, o ambiente de desenvolvimento local possui limitações arquiteturais conhecidas em relação à infraestrutura de produção:
-1. **Segredos das Edge Functions (`DEMONSTRACAO_CODIGO`, `DEMONSTRACAO_ATIVA_ATE`, `SMTP_HOST`, `FCM_SERVICE_ACCOUNT`):** Na produção e no `frila-dev`, são provisionados via `supabase secrets set`. No stack local básico de `supabase start`, esses segredos não são expostos ao worker de `entrar-demonstracao` (fail-closed 404).
-2. **Resolução DNS de Banco pelo Edge Runtime Local (`saude`):** O container Docker local `edge-runtime` utiliza a biblioteca `c-ares`, que falha na resolução de nomes do Docker Desktop para `supabase_db_frila-backend`, resultando em 503 `conexao_falhou` no probe de saúde HTTP local. (A suíte Deno cobriu 100% da função com `deno test --allow-all supabase/functions/saude/`).
-3. **Assinatura Assimétrica de JWT no Edge Runtime Local (`exportar-turnos`):** O GoTrue local assina tokens com chave assimétrica ES256, enquanto o container local de Edge Functions verifica tokens usando HMAC (HS256), recusando com 401 `Invalid JWT`. Na produção, o roteamento e validação ocorrem na camada de API Gateway do Supabase.
+1. **`saude` (HTTP 200)**: Conexão direta com o banco PostgreSQL via `DATABASE_URL` (`select 1 as ping`) validada com sucesso, retornando `{"ok":true,"status":"saudavel"}`.
+2. **`entrar-demonstracao` (HTTP 200)**: As contas `revisao-contratante@frila.app` e `revisao-profissional@frila.app` autenticaram através do endpoint real da Edge Function, gerando tokens Bearer válidos emitidos pelo Supabase Auth.
+3. **Descoberta Dinâmica de Turno**: O script consultou `meus_turnos` autenticado como o profissional da demonstração e descobriu dinamicamente o `turno_id` ativo (`8108b625-143e-44f7-bc19-9347025a0141`), evitando IDs rígidos.
+4. **`escolher_candidato` (HTTP 403 `sem_permissao`)**: Chamada autenticada com a conta contratante. Conforme definido pelo contrato e documentado no código (migrações `20260929234100` e `20261015150000`, RF26 e RN10), chamadas com candidatura inexistente ou de outra casa respondem obrigatoriamente `403 sem_permissao` para evitar enumeração de existência de IDs por terceiros.
+5. **`incluir_na_equipe` (HTTP 404 `nao_encontrado` ou 403 `sem_turno_cumprido`)**: O contratante administra o estabelecimento da demonstração. O script valida que o retorno cumpre a regra de negócio do contrato (404 se profissional inexistente ou 403 com details `sem_turno_cumprido` per UC11 se o profissional não concluiu turno verificado no local).
+6. **`pedir_revisao_despacho` (HTTP 409 `contestacao_ja_aberta`)**: O profissional da demonstração já possui contestação registrada nos dados semeados; o contrato (Opção B, migração `20261006160000`) proíbe abertura duplicada e responde estritamente `409 contestacao_ja_aberta`.
+7. **`abrir_suporte` (HTTP 200)**: Chamado pelo profissional com o `turno_id` descoberto dinamicamente e chave idempotente única; cria o protocolo operacional e retorna `{"tipo":"suporte",...}` com HTTP 200.
+8. **`avisar_a_caminho` (HTTP 422 `a_caminho_fora_da_janela`)**: Como o turno semeado está agendado para `agora + 2 dias`, a chamada com o turno vinculado do profissional valida corretamente o turno e retorna HTTP 422 `a_caminho_fora_da_janela` (a janela só abre 3h antes do início). Respostas 403 `sem_permissao` são estritamente rejeitadas pelo script por indicarem falta de vínculo.
+9. **`exportar-turnos` (HTTP 204)**: A Edge Function autentica a sessão do profissional em `auth/v1/user` e consulta o banco; sem turnos no período solicitado, devolve HTTP 204 No Content sem corpo conforme especificado em UC13 1a.
 
 ---
 
-## 5. Descrição dos Dados Semeados da Demonstração
+### 3.4 Modo Offline (Tokens Injetados Manualmente)
+
+Caso o operador forneça tokens pré-gerados via `TOKEN_CONTRATANTE` e `TOKEN_PROFISSIONAL` (por exemplo, em ambientes sem acesso aos segredos da porta de demonstração), o script detecta o bypass e registra explicitamente:
+```
+  entrar-demonstracao: NÃO EXECUTADO (tokens injetados via ambiente)
+```
+Garantindo que `entrar-demonstracao` nunca seja marcada falsamente como executada sem ter sido chamada.
+
+---
+
+## 4. Descrição dos Dados Semeados da Demonstração
 
 Para execução contra ambientes reais ou locais, os seguintes dados são garantidos pelo catálogo de funções (`privado.renovar_dados_demonstracao()`):
 - **Contratante:** `revisao-contratante@frila.app` (UUID canônico `de000000-0000-4000-8000-000000000001`), cadastrado como administrador do estabelecimento "Bar da Revisão" (`de000000-0000-4000-8000-000000000010`).

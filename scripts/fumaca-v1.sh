@@ -11,7 +11,7 @@
 #   6. avisar_a_caminho (RPC)
 #   7. exportar-turnos (Edge Function)
 #
-# Usa as contas de demonstração da revisão da loja via `entrar-demonstracao`.
+# Autentica via porta de demonstração da revisão da loja (`entrar-demonstracao`).
 #
 # Entradas por argumento ou variáveis de ambiente (nunca segredos gravados):
 #   ./scripts/fumaca-v1.sh <URL_DO_PROJETO> <ANON_KEY>
@@ -21,8 +21,9 @@
 # Variáveis opcionais de ambiente:
 #   DEMONSTRACAO_CODIGO   Código numérico fixo de demonstração (se ausente, tenta carregar de .env.local/.env)
 #   DEMONSTRACAO_EMAILS   Lista de e-mails de demonstração separados por vírgula (padrão: contratante,profissional)
-#   TOKEN_CONTRATANTE     Token JWT Bearer do contratante de demonstração (bypass opcional de entrar-demonstracao)
-#   TOKEN_PROFISSIONAL    Token JWT Bearer do profissional de demonstração (bypass opcional de entrar-demonstracao)
+#   TURNO_ID              ID de turno para teste (se omitido, descoberto dinamicamente via meus_turnos)
+#   TOKEN_CONTRATANTE     Token JWT Bearer do contratante (modo offline; registra entrar-demonstracao como NÃO EXECUTADO)
+#   TOKEN_PROFISSIONAL    Token JWT Bearer do profissional (modo offline; registra entrar-demonstracao como NÃO EXECUTADO)
 
 set -uo pipefail
 
@@ -61,6 +62,7 @@ PROFISSIONAL="${EMAILS##*,}"
 
 TOKEN_CASA="${TOKEN_CONTRATANTE:-}"
 TOKEN_PROF="${TOKEN_PROFISSIONAL:-}"
+TURNO_OVERRIDE="${TURNO_ID:-}"
 
 FALHAS=0
 
@@ -147,18 +149,18 @@ fi
 printf '\n▸ Autenticação com contas de demonstração (entrar-demonstracao):\n'
 
 if [ -n "$TOKEN_CASA" ] && [ -n "$TOKEN_PROF" ]; then
-  printf '  entrar-demonstracao: PASSOU (usando tokens fornecidos no ambiente)\n'
+  printf '  entrar-demonstracao: NÃO EXECUTADO (tokens injetados via ambiente)\n'
 elif [ -z "$CODIGO" ]; then
   printf '  entrar-demonstracao: FALHOU (DEMONSTRACAO_CODIGO não informado no ambiente)\n'
   FALHAS=$((FALHAS + 1))
 else
   porta="$URL/functions/v1/entrar-demonstracao"
-  
+
   # Contratante
   res_c=$(chamar "POST" "$porta" "{\"email\":\"$CONTRATANTE\",\"codigo\":\"$CODIGO\"}")
   st_c=$(status_de "$res_c")
   corpo_c=$(corpo_de "$res_c")
-  
+
   # Profissional
   res_p=$(chamar "POST" "$porta" "{\"email\":\"$PROFISSIONAL\",\"codigo\":\"$CODIGO\"}")
   st_p=$(status_de "$res_p")
@@ -178,20 +180,40 @@ fi
 TOKEN_CASA="${TOKEN_CASA:-$ANON}"
 TOKEN_PROF="${TOKEN_PROF:-$ANON}"
 
+# ── 2.1 Descoberta Dinâmica de Turno da Demonstração ──────────────────────────
+ID_TURNO="$TURNO_OVERRIDE"
+if [ -z "$ID_TURNO" ] && [ -n "$TOKEN_PROF" ]; then
+  res_turnos=$(chamar "POST" "$URL/rest/v1/rpc/meus_turnos" '{}' "$TOKEN_PROF")
+  st_turnos=$(status_de "$res_turnos")
+  corpo_turnos=$(corpo_de "$res_turnos")
+  if [ "$st_turnos" = "200" ]; then
+    ID_TURNO=$(campo "$corpo_turnos" "0.id")
+  fi
+fi
+
+# Se não encontrou dinamicamente e não houve override, usa UUID canônico de fallback
+if [ -z "$ID_TURNO" ]; then
+  ID_TURNO="8108b625-143e-44f7-bc19-9347025a0141"
+  printf '  turno: usando fallback configurado (%s)\n' "$ID_TURNO"
+else
+  printf '  turno descoberto dinamicamente: %s\n' "$ID_TURNO"
+fi
+
 # ── 3. As 6 Funções da v1.0 ──────────────────────────────────────────────────
 printf '\n▸ Verificação das 6 funções da v1.0:\n'
 
 # 1/6: escolher_candidato (RPC)
-# Aceita: 200 (se sucesso com candidatura) ou 403 sem_permissao (candidatura dummy/inexistente ou de outra casa, RF26/RN10).
-# Falha se 404 (função não encontrada / PGRST202), 500 ou 401 (sem sessão).
+# Contrato: requer perfil contratante.
+# Sucesso: 200 (se candidatura válida aceita) ou 409 (candidatura_indisponivel).
+# Resposta contratual para candidatura inexistente ou de outra casa: 403 sem_permissao (RF26/RN10).
 res_esc=$(chamar "POST" "$URL/rest/v1/rpc/escolher_candidato" \
   '{"candidatura_id":"00000000-0000-0000-0000-000000000000"}' "$TOKEN_CASA")
 st_esc=$(status_de "$res_esc")
 corpo_esc=$(corpo_de "$res_esc")
 cod_esc=$(campo "$corpo_esc" "code")
 
-if [ "$st_esc" = "200" ] || { [ "$st_esc" = "403" ] && [ "$cod_esc" = "sem_permissao" ]; }; then
-  printf '  escolher_candidato: PASSOU (HTTP %s)\n' "$st_esc"
+if [ "$st_esc" = "200" ] || [ "$st_esc" = "409" ] || { [ "$st_esc" = "403" ] && [ "$cod_esc" = "sem_permissao" ]; }; then
+  printf '  escolher_candidato: PASSOU (HTTP %s - resposta contratual de candidatura inexistente/bloqueada)\n' "$st_esc"
 else
   detalhe=$(detalhe_erro "$corpo_esc")
   printf '  escolher_candidato: FALHOU (HTTP %s - %s)\n' "$st_esc" "$detalhe"
@@ -199,16 +221,23 @@ else
 fi
 
 # 2/6: incluir_na_equipe (RPC)
-# Aceita: 200 (se sucesso), 404 nao_encontrado (profissional não cadastrado), ou 403 sem_permissao (não admin).
-# Falha se PGRST 404 (função inexistente) ou 500.
+# Contrato: apenas administrador do estabelecimento pode incluir (RF21).
+# Sucesso: 200 (se já cumpriu turno verificado e incluído com sucesso).
+# Regra de negócio UC11: se profissional não cumpriu turno verificado no local, retorna 403 sem_permissao com details "sem_turno_cumprido".
+# Se profissional não cadastrado: 404 nao_encontrado.
 res_inc=$(chamar "POST" "$URL/rest/v1/rpc/incluir_na_equipe" \
-  '{"estabelecimento_id":"de000000-0000-4000-8000-000000000010","profissional_id":"00000000-0000-0000-0000-000000000000"}' "$TOKEN_CASA")
+  '{"estabelecimento_id":"de000000-0000-4000-8000-000000000010","profissional_id":"de000000-0000-4000-8000-000000000002"}' "$TOKEN_CASA")
 st_inc=$(status_de "$res_inc")
 corpo_inc=$(corpo_de "$res_inc")
 cod_inc=$(campo "$corpo_inc" "code")
+det_inc=$(campo "$corpo_inc" "details")
 
-if [ "$st_inc" = "200" ] || { [ "$st_inc" = "404" ] && [ "$cod_inc" = "nao_encontrado" ]; } || { [ "$st_inc" = "403" ] && [ "$cod_inc" = "sem_permissao" ]; }; then
-  printf '  incluir_na_equipe: PASSOU (HTTP %s)\n' "$st_inc"
+if [ "$st_inc" = "200" ] || { [ "$st_inc" = "403" ] && [ "$cod_inc" = "sem_permissao" ] && [ "$det_inc" = "sem_turno_cumprido" ]; } || { [ "$st_inc" = "404" ] && [ "$cod_inc" = "nao_encontrado" ]; }; then
+  if [ "$st_inc" = "403" ]; then
+    printf '  incluir_na_equipe: PASSOU (HTTP 403 sem_turno_cumprido - trava UC11 ativa e validada)\n'
+  else
+    printf '  incluir_na_equipe: PASSOU (HTTP %s)\n' "$st_inc"
+  fi
 else
   detalhe=$(detalhe_erro "$corpo_inc")
   printf '  incluir_na_equipe: FALHOU (HTTP %s - %s)\n' "$st_inc" "$detalhe"
@@ -216,7 +245,8 @@ else
 fi
 
 # 3/6: pedir_revisao_despacho (RPC)
-# Aceita: 200 (protocolo criado) ou 409 contestacao_ja_aberta (opção B do contrato quando reexecutado).
+# Contrato: profissional solicita revisão do despacho.
+# Retorna 200 (protocolo gerado) ou 409 contestacao_ja_aberta (opção B do contrato, reexecução).
 res_rev=$(chamar "POST" "$URL/rest/v1/rpc/pedir_revisao_despacho" \
   '{"relato":"Solicitacao de revisao de despacho operacional para teste de fumaca"}' "$TOKEN_PROF")
 st_rev=$(status_de "$res_rev")
@@ -232,9 +262,11 @@ else
 fi
 
 # 4/6: abrir_suporte (RPC)
-# Aceita: 200 (protocolo gerado ou reenvio com mesma chave) ou 404 nao_encontrado (turno inexistente).
+# Contrato: abre chamado operacional para turno vinculado.
+# Retorna 200 (protocolo gerado com sucesso para o turno descoberto) ou 404 nao_encontrado (se turno inexistente).
+CHAVE_SUPORTE=$(python3 -c "import uuid; print(uuid.uuid4())")
 res_sup=$(chamar "POST" "$URL/rest/v1/rpc/abrir_suporte" \
-  '{"turno_id":"8108b625-143e-44f7-bc19-9347025a0141","categoria":"outro","chave":"c0000000-0000-4000-8000-000000000001"}' "$TOKEN_PROF")
+  "{\"turno_id\":\"$ID_TURNO\",\"categoria\":\"outro\",\"chave\":\"$CHAVE_SUPORTE\"}" "$TOKEN_PROF")
 st_sup=$(status_de "$res_sup")
 corpo_sup=$(corpo_de "$res_sup")
 cod_sup=$(campo "$corpo_sup" "code")
@@ -248,15 +280,21 @@ else
 fi
 
 # 5/6: avisar_a_caminho (RPC)
-# Aceita: 200 (aviso registrado/idempotente) ou 422 a_caminho_fora_da_janela ou 403 sem_permissao.
+# Contrato: profissional vinculado avisa que está a caminho.
+# Retorna 200 (se dentro da janela de 3h) ou 422 a_caminho_fora_da_janela (se turno agendado fora da janela).
+# Não aceita 403 sem_permissao (indica turno não vinculado à conta).
 res_cam=$(chamar "POST" "$URL/rest/v1/rpc/avisar_a_caminho" \
-  '{"turno_id":"8108b625-143e-44f7-bc19-9347025a0141"}' "$TOKEN_PROF")
+  "{\"turno_id\":\"$ID_TURNO\"}" "$TOKEN_PROF")
 st_cam=$(status_de "$res_cam")
 corpo_cam=$(corpo_de "$res_cam")
 cod_cam=$(campo "$corpo_cam" "code")
 
-if [ "$st_cam" = "200" ] || { [ "$st_cam" = "422" ] && [ "$cod_cam" = "a_caminho_fora_da_janela" ]; } || { [ "$st_cam" = "403" ] && [ "$cod_cam" = "sem_permissao" ]; }; then
-  printf '  avisar_a_caminho: PASSOU (HTTP %s)\n' "$st_cam"
+if [ "$st_cam" = "200" ] || { [ "$st_cam" = "422" ] && [ "$cod_cam" = "a_caminho_fora_da_janela" ]; }; then
+  if [ "$st_cam" = "422" ]; then
+    printf '  avisar_a_caminho: PASSOU (HTTP 422 a_caminho_fora_da_janela - turno vinculado validado fora da janela de 3h)\n'
+  else
+    printf '  avisar_a_caminho: PASSOU (HTTP %s)\n' "$st_cam"
+  fi
 else
   detalhe=$(detalhe_erro "$corpo_cam")
   printf '  avisar_a_caminho: FALHOU (HTTP %s - %s)\n' "$st_cam" "$detalhe"
@@ -264,7 +302,8 @@ else
 fi
 
 # 6/6: exportar-turnos (Edge Function)
-# Aceita: 200 (CSV gerado) ou 204 No Content (sem turnos no período, UC13).
+# Contrato: exporta os turnos do período em CSV ou PDF.
+# Retorna 200 (CSV gerado) ou 204 No Content (sem turnos no período, UC13 1a).
 res_exp=$(chamar "POST" "$URL/functions/v1/exportar-turnos" \
   '{"formato":"csv"}' "$TOKEN_PROF")
 st_exp=$(status_de "$res_exp")
