@@ -16,6 +16,7 @@
 #
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# shellcheck disable=SC1091
 [ -f .env ] && { set -a; source .env; set +a; }
 
 AMBIENTE="dev"
@@ -23,6 +24,11 @@ QUANTIDADE=""
 A_PARTIR_DE="2026-11-20"
 POSICOES="20"
 SECO=""
+
+# Valores padrão canônicos de demonstração (migrações 20261004160000_renovacao_dados_demonstracao.sql
+# linhas 42 e 64, 20261020150000_publicar_vaga_demonstracao_resiliencia.sql e supabase/seed.sql)
+EMAIL_CONTRATANTE="${EMAIL_CONTRATANTE:-revisao-contratante@frila.app}"
+ESTABELECIMENTO_BAR_DA_REVISAO="${ESTABELECIMENTO_BAR_DA_REVISAO:-de000000-0000-4000-8000-000000000010}"
 
 # Verifica se o primeiro argumento é o identificador de ambiente
 if [ $# -gt 0 ]; then
@@ -99,7 +105,7 @@ if [ -n "$SECO" ]; then
   exit 0
 fi
 
-for par in "URL:${BASE_URL}" "ANON:${ANON_KEY}" "SERVICE_ROLE:${SERVICE_ROLE}"; do
+for par in "URL:${BASE_URL}" "ANON:${ANON_KEY}" "SERVICE_ROLE:${SERVICE_ROLE}" "EMAIL_CONTRATANTE:${EMAIL_CONTRATANTE}" "ESTABELECIMENTO_BAR_DA_REVISAO:${ESTABELECIMENTO_BAR_DA_REVISAO}"; do
   [ -n "${par#*:}" ] || { echo "falta ${par%%:*} para $AMBIENTE no .env" >&2; exit 1; }
 done
 
