@@ -126,6 +126,11 @@ jobs:
       - name: Contas de demonstração por HTTP
         run: ./scripts/demonstracao.sh
 
+      # Valida as 7 views do schema metrica.* e gera o painel HTML autocontido.
+      # Falha se qualquer view do funil ou telemetria mudar de coluna (Cartão 6ab26a53, B-005).
+      - name: Testar gerador do painel do piloto
+        run: ./scripts/gerar-painel.sh --teste -o /tmp/painel-piloto.html
+
       # Suíte verde não diz o que ela protege. Derruba cada restrição, trigger e
       # política — e afrouxa cada política para `using (true)` — exigindo que o pgTAP
       # fique vermelho em cada caso. Escrito depois de duas revisões medirem que 11 de
