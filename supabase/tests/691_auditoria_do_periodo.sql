@@ -29,10 +29,10 @@ select plan(12);
 select has_function('privado', 'auditoria_do_periodo', array['timestamptz', 'timestamptz'],
   'privado.auditoria_do_periodo(timestamptz, timestamptz) existe');
 
-select function_lang_is('privado', 'auditoria_do_periodo', array['timestamptz', 'timestamptz'], 'sql',
+select function_lang_is('privado', 'auditoria_do_periodo', array['timestamp with time zone', 'timestamp with time zone'], 'sql',
   'auditoria_do_periodo é em linguagem sql');
 
-select is_definer('privado', 'auditoria_do_periodo', array['timestamptz', 'timestamptz'],
+select is_definer('privado', 'auditoria_do_periodo', array['timestamp with time zone', 'timestamp with time zone'],
   'auditoria_do_periodo é SECURITY DEFINER');
 
 select is(has_function_privilege('anon', 'privado.auditoria_do_periodo(timestamptz, timestamptz)', 'execute'), false,

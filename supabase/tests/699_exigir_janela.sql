@@ -36,7 +36,7 @@ select plan(17);
 select has_function('privado', 'exigir_janela', array['timestamptz', 'timestamptz', 'timestamptz'],
   'privado.exigir_janela(timestamptz, timestamptz, timestamptz) existe');
 
-select function_lang_is('privado', 'exigir_janela', array['timestamptz', 'timestamptz', 'timestamptz'], 'plpgsql',
+select function_lang_is('privado', 'exigir_janela', array['timestamp with time zone', 'timestamp with time zone', 'timestamp with time zone'], 'plpgsql',
   'privado.exigir_janela é em linguagem plpgsql');
 
 select is(
