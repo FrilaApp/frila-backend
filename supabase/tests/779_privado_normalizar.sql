@@ -18,7 +18,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
-select plan(23);
+select plan(24);
 
 -- ── 1. Comportamento STRICT e Strings Vazias ──────────────────────────────────────
 select is(
@@ -144,6 +144,12 @@ select is(
   privado.normalizar('Mesa 14 Setor VIP 2'),
   'mesa 14 setor vip 2',
   'números e letras sem acento são preservados em caixa baixa'
+);
+
+select is(
+  privado.normalizar('Mesa 9'),
+  'mesa 9',
+  'dígito 9 é preservado na normalização alfanumérica'
 );
 
 -- ── 7. Provas de Mutação Dinâmica via pg_get_functiondef ─────────────────────────
