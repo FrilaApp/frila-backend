@@ -136,22 +136,27 @@ function podarMapIp(agoraMs: number): void {
   }
 }
 
+function normalizarIp(ip: string): string {
+  const limpo = ip?.trim();
+  return limpo ? limpo : "desconhecido";
+}
+
 export function verificarLimiteIp(ip: string, agoraMs = Date.now()): boolean {
-  if (!ip || ip === "desconhecido") return true;
-  const timestamps = (tentativasPorIp.get(ip) ?? []).filter(
+  const chave = normalizarIp(ip);
+  const timestamps = (tentativasPorIp.get(chave) ?? []).filter(
     (t) => agoraMs - t < JANELA_MINUTOS * 60_000,
   );
   return timestamps.length < TETO_TENTATIVAS;
 }
 
 export function registrarTentativaIp(ip: string, agoraMs = Date.now()): void {
-  if (!ip || ip === "desconhecido") return;
+  const chave = normalizarIp(ip);
   podarMapIp(agoraMs);
-  const timestamps = (tentativasPorIp.get(ip) ?? []).filter(
+  const timestamps = (tentativasPorIp.get(chave) ?? []).filter(
     (t) => agoraMs - t < JANELA_MINUTOS * 60_000,
   );
   timestamps.push(agoraMs);
-  tentativasPorIp.set(ip, timestamps);
+  tentativasPorIp.set(chave, timestamps);
 }
 
 export function resetarLimitesIp(): void {
