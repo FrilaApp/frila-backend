@@ -8,7 +8,7 @@ Requisitos e diretrizes: **D01 a D16, RN13, RN15, RF23, RF25, RF26, RF27, UC14, 
 
 ## 1. Rotina Diária e Prazos de Atendimento
 
-A caixa oficial (`suporte@frila.app`) e a fila de ocorrências do banco de dados são monitoradas diariamente por membros designados da Equipe Frila.
+A caixa oficial (`suporte@frilabr.com`) e a fila de ocorrências do banco de dados são monitoradas diariamente por membros designados da Equipe Frila.
 
 | Tipo de Demanda | Prazo Máximo de Tratamento | SLA / Fundamento |
 |---|---|---|
@@ -17,7 +17,7 @@ A caixa oficial (`suporte@frila.app`) e a fila de ocorrências do banco de dados
 | **Contestação de suspensão** | **Até 5 dias úteis** | RN13 / UC15 |
 | **Revisão de despacho ("Por que recebo vagas")** | **Até 5 dias úteis** | RF27 / LGPD art. 20 |
 | **Solicitação de dados do titular (LGPD)** | **Até 5 dias úteis** | LGPD art. 18 / RF25 |
-| **Suporte a partir do turno (via e-mail `suporte@frila.app`)** | **Até 5 dias úteis** | RF23 / UC14 / D1=C / Contrato 0.2.40 |
+| **Suporte a partir do turno (via e-mail `suporte@frilabr.com`)** | **Até 5 dias úteis** | RF23 / UC14 / D1=C / Contrato 0.2.40 |
 | **Suporte geral e dúvidas** | **Até 5 dias úteis** | UC14 |
 
 ---
@@ -57,14 +57,14 @@ psql -c "select * from (...) where tipo = 'suporte' and origem = 'app'"
 
 ---
 
-## 3. Suporte por E-mail a partir do Turno (`suporte@frila.app`)
+## 3. Suporte por E-mail a partir do Turno (`suporte@frilabr.com`)
 
 O atendimento de suporte a partir de um turno opera segundo o modelo da **Opção C** (v1.1, D1 a D16, contrato 0.2.40): sem ingestão direta de e-mails pelo backend. O fluxo conecta o aplicativo móvel, o banco de dados e a caixa postal oficial.
 
 ### 3.1. Endereço Oficial
 O endereço único e oficial de suporte da plataforma Frila é:
 ```
-suporte@frila.app
+suporte@frilabr.com
 ```
 (D2: unifica e substitui qualquer endereço anterior ou legado).
 
@@ -78,13 +78,13 @@ suporte@frila.app
    - Aplica idempotência estrita pela `chave`: reenvios com a mesma chave devolvem o protocolo já gerado sem consumir novo teto diário.
 4. A RPC grava em `public.ocorrencia`: `tipo = 'suporte'`, `origem = 'app'`, `turno_id`, `motivo = categoria` e `relato = null`. **Nenhum texto livre é gravado no banco nem enfileirado na fila `email`** (RN15, SU-RN03, SU-RN08).
 5. O app exibe o prazo regulamentar calculado (`prazo_resposta_ate`, até 5 dias úteis) e aciona o cliente de e-mail padrão do aparelho:
-   - **Destinatário:** `suporte@frila.app`
+   - **Destinatário:** `suporte@frilabr.com`
    - **Assunto pré-preenchido:** `[Frila Suporte #<protocolo curto>]` (ex.: `[Frila Suporte #A1B2C3D4]`)
    - **Corpo pré-preenchido:** identificação do turno para contexto.
 6. O usuário redige seu relato e envia o e-mail diretamente por seu provedor.
 
 ### 3.3. Rotina da Equipe Frila ao Tratar o Chamado
-1. O operador monitora a caixa `suporte@frila.app` e executa periodicamente `consultar-ocorrencias.sql`.
+1. O operador monitora a caixa `suporte@frilabr.com` e executa periodicamente `consultar-ocorrencias.sql`.
 2. Ao receber um e-mail com assunto `[Frila Suporte #<protocolo curto>]`, o operador busca a ocorrência na fila pelo `protocolo_curto`.
 3. Em caso de eventual colisão teórica dos 8 hexadecimais, o operador utiliza o `turno_id` e os dados do usuário para desambiguação.
 4. O operador analisa o caso consultando os dados do turno e da vaga no banco, redige a orientação e responde ao usuário pelo próprio e-mail corporativo.
@@ -200,14 +200,14 @@ O Frila opera sob o princípio da necessidade e minimização de dados (LGPD art
    - O banco de dados do Frila **não armazena o corpo dos e-mails de suporte, nem textos livres ou anexos**.
    - Na tabela `public.ocorrencia`, residem exclusivamente dados estruturados: categoria (`motivo`), identificador do turno (`turno_id`), autor (`autor_id`), origem (`app`), datas de SLA e resultado objetivo. O campo `relato` é mantido nulo.
 2. **Prática Obrigatória de Expulgo na Caixa de E-mail (D9, SU-RN11):**
-   - O texto livre e eventuais anexos (comprovantes, mensagens, fotos) permanecem estritamente na caixa `suporte@frila.app`.
+   - O texto livre e eventuais anexos (comprovantes, mensagens, fotos) permanecem estritamente na caixa `suporte@frilabr.com`.
    - **Ao concluir e fechar o chamado no banco:** O operador responsável deve **apagar o e-mail e o histórico da conversa da caixa postal**, esvaziando inclusive a pasta de Itens Excluídos / Lixeira. O histórico auditável da tratativa permanece preservado no banco através do registro da ocorrência com `resolvido_em` e `resultado`.
    - É expressamente vedado manter acervo de e-mails antigos arquivados na caixa de entrada sem justificativa legal ativa.
 3. **Direito do Titular à Exclusão de Conta (RF25, LGPD art. 18, VI):**
    - Quando um usuário solicita exclusão de conta via app (`excluir_conta`), o banco executa a anonimização cadastral imediata e aplica a rotina de retenção de até 15 dias.
-   - Como a caixa de e-mail é externa ao banco de dados, a Equipe Frila deve verificar periodicamente e purgar em definitivo da caixa `suporte@frila.app` qualquer mensagem ou histórico vinculado à conta excluída ou aos seus protocolos.
+   - Como a caixa de e-mail é externa ao banco de dados, a Equipe Frila deve verificar periodicamente e purgar em definitivo da caixa `suporte@frilabr.com` qualquer mensagem ou histórico vinculado à conta excluída ou aos seus protocolos.
 4. **Segurança Operacional:**
-   - O acesso à caixa `suporte@frila.app` é restrito a operadores autorizados, com autenticação em dois fatores (2FA/MFA) habilitada obrigatoriamente.
+   - O acesso à caixa `suporte@frilabr.com` é restrito a operadores autorizados, com autenticação em dois fatores (2FA/MFA) habilitada obrigatoriamente.
    - É terminantemente proibido encaminhar mensagens de suporte contendo relatos ou dados de usuários para e-mails pessoais.
 
 ---
@@ -282,7 +282,7 @@ Atenciosamente,
 Encarregado de Dados (DPO) / Equipe Frila
 ```
 
-### Modelo E: Resposta a Suporte de Turno (`suporte@frila.app`)
+### Modelo E: Resposta a Suporte de Turno (`suporte@frilabr.com`)
 ```
 Assunto: Re: [Frila Suporte #[Protocolo Curto]]
 
@@ -296,5 +296,5 @@ Ressaltamos que os registros operacionais do turno foram atualizados conforme as
 
 Atenciosamente,
 Equipe Frila
-suporte@frila.app
+suporte@frilabr.com
 ```
