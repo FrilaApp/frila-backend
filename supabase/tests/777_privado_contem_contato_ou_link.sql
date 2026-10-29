@@ -2,14 +2,25 @@
 --
 -- Cobertura pgTAP de privado.contem_contato_ou_link(t text)
 -- e provas de mutação dinâmica que matam mutantes de omissão de telefone,
--- encurtadores de links e de filtros de falsos positivos (RN10, RN15, RF02).
+-- encurtadores de links, e-mail genérico e filtros de falsos positivos (RN10, RN15, RF02).
+--
+-- Defeitos preexistentes identificados na revisão R-002 (Lince), preservados sem alteração de código:
+--   1. CEP com ponto de milhar ('CEP 70.000-000'): classificado indevidamente como contato (true)
+--      porque a regex em 20261014160000:53 espera '\d{5}[-.]?\d{3}' e não cobre '\d{2}\.\d{3}'.
+--   2. CEP com espaço ('CEP 70000 000'): classificado indevidamente como contato (true)
+--      pois a regex não prevê espaço entre os blocos numéricos do CEP.
+--   3. Data e hora ISO com 'T' ('Evento 2026-10-29T14:30:00-03:00'): classificada indevidamente
+--      como contato (true) porque o separador 'T' impede o limite de palavra (\y) após o dia,
+--      sobrando a sequência numérica da data para o detector de telefone.
+--   4. Ambiguidade de heurística ('Código do pedido 1234-5678'): oito dígitos com hífen
+--      aciona o detector de telefone (decisão de produto necessária para não criar bypass).
 --
 -- Regras validadas:
 --   1. Casos neutros: NULL, string vazia e texto livre sem dados de contato retornam false.
 --   2. Detecção de telefones e WhatsApp (8+ dígitos com máscaras, espaços, barras e pontos) retorna true.
---   3. Detecção de endereços de e-mail (com @ e domínios com ponto) retorna true.
+--   3. Detecção de endereços de e-mail (com @ e domínios com ponto, inclusive TLDs genéricos como .test) retorna true.
 --   4. Detecção de URLs, links diretos e encurtadores (http, https, www, wa.me, bit.ly, t.me, linktr.ee, TLDs comuns) retorna true.
---   5. Imunidade contra falsos positivos legítimos (UUIDs, datas com barra/hífen/ponto/ISO, CEPs, valores monetários em R$ e reais, horários e períodos) retornam false.
+--   5. Imunidade contra falsos positivos legítimos (UUIDs, datas com barra/hífen/ponto/ISO, CEPs, valores monetários em R$ incluindo 8+ dígitos e reais, horários e períodos) retornam false.
 --   6. Provas de Mutação Dinâmica via pg_get_functiondef comprovando que mutantes divergem do comportamento canônico e são mortos pela suíte.
 
 begin;
@@ -17,7 +28,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
-select plan(42);
+select plan(46);
 
 -- ── 1. Casos Neutros e Nulos ──────────────────────────────────────────────────────
 select is(
@@ -92,6 +103,12 @@ select is(
   privado.contem_contato_ou_link('Mande para financeiro @ bar.net hoje'),
   true,
   'e-mail com espaçamento ao redor do @ é detectado'
+);
+
+select is(
+  privado.contem_contato_ou_link('Envie candidatura para vagas@exemplo.test'),
+  true,
+  'e-mail com TLD genérico (.test) não coberto por regras de link é detectado pela condição de e-mail'
 );
 
 -- ── 4. Links, URLs e Encurtadores ─────────────────────────────────────────────────
@@ -229,6 +246,12 @@ select is(
 );
 
 select is(
+  privado.contem_contato_ou_link('Orçamento R$ 12345678,90'),
+  false,
+  'falso positivo: valor monetário em R$ com 8+ dígitos não é barrado como telefone (exercita a máscara R$)'
+);
+
+select is(
   privado.contem_contato_ou_link('Valor acordado: 150 reais ao término do expediente'),
   false,
   'falso positivo: valor com sufixo reais por extenso não é barrado'
@@ -326,6 +349,52 @@ select is(
 );
 
 -- Restauração dinâmica de M3
+do $$
+begin
+  execute (select def from canonicos);
+end $$;
+
+-- Mutante M4: Omissão da condição de e-mail
+-- Demonstra que sob M4 e-mails com TLDs genéricos não cobertos por links passam ilesos.
+do $$
+begin
+  execute replace(
+    (select def from canonicos),
+    'if t ~* ''[a-z0-9._%+-]+\s*@\s*[a-z0-9.-]+\.[a-z]{2,}'' then',
+    'if false and t ~* ''[a-z0-9._%+-]+\s*@\s*[a-z0-9.-]+\.[a-z]{2,}'' then'
+  );
+end $$;
+
+select is(
+  privado.contem_contato_ou_link('Envie candidatura para vagas@exemplo.test'),
+  false,
+  'mutante M4 (sem regra de e-mail): deixa e-mail .test vazar retornando false; morto pela suíte'
+);
+
+-- Restauração dinâmica de M4
+do $$
+begin
+  execute (select def from canonicos);
+end $$;
+
+-- Mutante M5: Omissão da máscara de valor monetário R$
+-- Demonstra que sob M5 valores com 8+ dígitos acionam indevidamente o detector de telefone.
+do $$
+begin
+  execute replace(
+    (select def from canonicos),
+    'v_limpo := regexp_replace(v_limpo, ''R\$\s*\d+([.,]\d+)*'', '' '', ''gi'');',
+    '-- sem mascara R$'
+  );
+end $$;
+
+select is(
+  privado.contem_contato_ou_link('Orçamento R$ 12345678,90'),
+  true,
+  'mutante M5 (sem mascara R$): valor de 8+ digitos vira falso positivo como telefone retornando true; morto pela suite'
+);
+
+-- Restauração dinâmica de M5
 do $$
 begin
   execute (select def from canonicos);
