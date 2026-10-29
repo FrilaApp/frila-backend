@@ -8,15 +8,15 @@
 --   1. Rejeição de valores nulos, vazios, formatos com pontuação ou tamanhos diferentes de 11 e 14 dígitos.
 --   2. Rejeição de sequências com todos os dígitos repetidos (000...0 a 999...9) tanto para 11 quanto para 14 dígitos.
 --   3. Validação algorítmica de CPF (11 dígitos): aceita CPFs com DV1 e DV2 válidos e rejeita DVs incorretos.
---   4. Validação algorítmica de CNPJ (14 dígitos): aceita CNPJs com pesos oficiais corretos e rejeita DVs incorretos.
---   5. Provas de Mutação Dinâmica via pg_get_functiondef matando mutantes de omissão de repetidos e afrouxamento de DVs.
+--   4. Validação algorítmica de CNPJ (14 dígitos): aceita CNPJs com pesos oficiais corretos, incluindo restos baixos (< 2) no DV1, e rejeita DVs incorretos.
+--   5. Provas de Mutação Dinâmica via pg_get_functiondef matando mutantes de omissão de repetidos, afrouxamento de DVs e alteração do ramo de resto baixo.
 
 begin;
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
-select plan(38);
+select plan(40);
 
 -- ── 1. Valores Nulos, Vazios e Formatos/Tamanhos Inválidos ─────────────────────────
 select is(
@@ -209,6 +209,12 @@ select is(
   'CNPJ comercial válido 04252011000110 é aceito'
 );
 
+select is(
+  privado.documento_valido('00000000000604'),
+  true,
+  'CNPJ sintético 00000000000604 com resto 1 no DV1 (soma=12 -> dv1=0, soma2=18 -> dv2=4) é aceito'
+);
+
 -- ── 6. CNPJs com Dígitos Verificadores Incorretos ─────────────────────────────────
 select is(
   privado.documento_valido('11222333000182'),
@@ -302,6 +308,29 @@ select is(
 );
 
 -- Restauração dinâmica de M3
+do $$
+begin
+  execute (select def from canonicos);
+end $$;
+
+-- Mutante M4: Ramo de resto < 2 no DV1 do CNPJ produz 1 em vez de 0
+-- Demonstra que sob M4 CNPJs válidos com resto 1 (como 00000000000604) seriam rejeitados; morto pela suíte.
+do $$
+begin
+  execute regexp_replace(
+    (select def from canonicos),
+    'pesos1\[i\]; end loop;\s*resto := soma % 11;\s*dv1 := case when resto < 2 then 0 else 11 - resto end;',
+    'pesos1[i]; end loop; resto := soma % 11; dv1 := case when resto < 2 then 1 else 11 - resto end;'
+  );
+end $$;
+
+select is(
+  privado.documento_valido('00000000000604'),
+  false,
+  'mutante M4 (dv1 do CNPJ retorna 1 para resto < 2): rejeita 00000000000604 retornando false; morto pela suíte'
+);
+
+-- Restauração dinâmica de M4
 do $$
 begin
   execute (select def from canonicos);
