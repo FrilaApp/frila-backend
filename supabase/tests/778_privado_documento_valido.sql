@@ -16,7 +16,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
-select plan(40);
+select plan(41);
 
 -- ── 1. Valores Nulos, Vazios e Formatos/Tamanhos Inválidos ─────────────────────────
 select is(
@@ -47,6 +47,12 @@ select is(
   privado.documento_valido('11.222.333/0001-81'),
   false,
   'CNPJ com máscara e pontuação retorna false (espera somente dígitos)'
+);
+
+select is(
+  privado.documento_valido(' 00000000000191 '),
+  false,
+  'documento válido cercado por espaços retorna false (rejeita trim implícito)'
 );
 
 select is(
