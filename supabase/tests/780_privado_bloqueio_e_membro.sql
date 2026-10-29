@@ -2,7 +2,7 @@
 --
 -- Cobertura pgTAP de privado.bloqueado_com_estabelecimento(conta uuid, estab uuid)
 -- e privado.eh_membro(estab uuid), com provas de mutação dinâmica que matam
--- mutantes de bloqueio consigo mesmo, direcionalidade e controle de acesso (RF26, RN06).
+-- mutantes de bloqueio consigo mesmo, direcionalidade, papel de membro e controle de acesso (RF26, RN06).
 --
 -- Regras validadas:
 --   1. Bloqueio bidirecional:
@@ -14,7 +14,7 @@
 --      - Profissional sem bloqueios retorna false.
 --      - Entradas nulas ou inexistentes retornam false sem erro.
 --   4. Verificação de membro do estabelecimento (privado.eh_membro):
---      - Usuário autenticado pertencente ao estabelecimento retorna true.
+--      - Usuário autenticado pertencente ao estabelecimento retorna true, tanto com papel administrador quanto operador.
 --      - Usuário autenticado não pertencente retorna false.
 --      - Usuário profissional retorna false.
 --      - Sessão anônima (sem auth.uid()) retorna false.
@@ -26,7 +26,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
-select plan(19);
+select plan(21);
 
 create function pg_temp.autenticar_jwt(conta uuid) returns void
 language plpgsql as $$
@@ -158,13 +158,20 @@ select pg_temp.autenticar_jwt('78000000-0000-4000-8000-000000000001');
 select is(
   privado.eh_membro((select e1 from ids)),
   true,
-  'usuário autenticado que é membro do estabelecimento retorna true'
+  'usuário autenticado que é membro administrador do estabelecimento 1 retorna true'
 );
 
 select is(
   privado.eh_membro((select e2 from ids)),
   false,
   'membro do estabelecimento 1 não é membro do estabelecimento 2 (retorna false)'
+);
+
+select pg_temp.autenticar_jwt('78000000-0000-4000-8000-000000000002');
+select is(
+  privado.eh_membro((select e2 from ids)),
+  true,
+  'usuário autenticado que é membro operador do estabelecimento 2 retorna true'
 );
 
 select pg_temp.autenticar_jwt('78000000-0000-4000-8000-000000000013');
@@ -273,6 +280,30 @@ select is(
 do $$
 begin
   execute (select def_bloq from canonicos);
+end $$;
+
+-- Mutante M4: eh_membro restringe indevidamente para papel administrador
+-- Demonstra que sob M4 um membro com papel operador (u_membro_e2) perderia o acesso; morto pela suíte.
+do $$
+begin
+  execute replace(
+    (select def_membro from canonicos),
+    'and m.usuario_id = (select auth.uid())',
+    'and m.usuario_id = (select auth.uid()) and m.papel = ''administrador'''
+  );
+end $$;
+
+select pg_temp.autenticar_jwt('78000000-0000-4000-8000-000000000002');
+select is(
+  privado.eh_membro((select e2 from ids)),
+  false,
+  'mutante M4 (eh_membro restrito a administrador): operador deixa de ser reconhecido retornando false; morto pela suíte'
+);
+
+-- Restauração dinâmica de M4
+do $$
+begin
+  execute (select def_membro from canonicos);
 end $$;
 
 select * from finish();
