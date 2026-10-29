@@ -1,0 +1,51 @@
+name: Conferência de Auth remoto
+
+# Confere diariamente (e sob demanda) a configuração remota de Auth do Supabase
+# nos ambientes frila-dev e frila-prod (site_url, tamanho de OTP, SMTP próprio e templates).
+#
+# Se algum ambiente estiver com SMTP desligado, OTP diferente de 6, localhost ou
+# modelo contendo links mágicos (ConfirmationURL), o job falha com exit 1 e aponta
+# para supabase/operacao/configurar-smtp-auth.md.
+#
+# Segredos: SUPABASE_ACCESS_TOKEN em cada Environment (frila-dev e frila-prod).
+on:
+  schedule:
+    # 08:17 BRT = 11:17 UTC
+    - cron: '17 11 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: confere-auth-remoto
+  cancel-in-progress: false
+
+jobs:
+  dev:
+    name: Conferir Auth no frila-dev
+    runs-on: ubuntu-latest
+    environment: frila-dev
+    timeout-minutes: 5
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      REF: jcobftbhbqdikratzizz
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Conferir Auth remoto (dev)
+        run: ./scripts/conferir-auth-remoto.sh "$REF"
+
+  prod:
+    name: Conferir Auth no frila-prod
+    runs-on: ubuntu-latest
+    environment: frila-prod
+    timeout-minutes: 5
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      REF: hbjkkcenbudiezmamiak
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Conferir Auth remoto (prod)
+        run: ./scripts/conferir-auth-remoto.sh "$REF"
