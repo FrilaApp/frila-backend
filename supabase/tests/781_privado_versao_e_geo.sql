@@ -35,7 +35,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
-select plan(35);
+select plan(36);
 
 -- Função auxiliar temporária para capturar diagnostics de exceção de public.erro
 create or replace function pg_temp.capturar_erro_ponto(p jsonb, campo text default 'ponto_base')
@@ -196,6 +196,12 @@ select throws_matching(
   $$ select privado.ponto_do_json('{}'::jsonb) $$,
   'campo_obrigatorio',
   'objeto json vazio lança 422 campo_obrigatorio'
+);
+
+select is(
+  ((pg_temp.capturar_erro_ponto('{}'::jsonb))->>'status')::int,
+  422,
+  'objeto json vazio retorna status HTTP 422 em PG_EXCEPTION_DETAIL'
 );
 
 select throws_matching(
