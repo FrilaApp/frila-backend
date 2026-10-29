@@ -6,12 +6,9 @@ import {
   HandlerDeps,
   igualEmTempoConstante,
   JANELA_MINUTOS,
-  MAX_IPS_EM_MEMORIA,
-  MIN_COMPRIMENTO_CODIGO,
   parseLimiteJanela,
   registrarTentativaIp,
   resetarLimitesIp,
-  TETO_TENTATIVAS,
   verificarLimiteIp,
 } from "./index.ts";
 
@@ -373,6 +370,79 @@ Deno.test("entrar-demonstracao: 10 erradas do mesmo IP seguidas da correta do ME
   // A tentativa correta grava aceita = true
   const ultima = estado.tentativas[estado.tentativas.length - 1];
   assertEquals(ultima.aceita, true);
+});
+
+Deno.test("segurança: IP desconhecido ou ausente não possui bypass e sofre rate limit de 10 tentativas por janela (T-seguranca-backend-29-10)", async () => {
+  resetarLimitesIp();
+  const estado: MockState = {
+    tentativas: [],
+    proximoId: 1,
+  };
+
+  // Alterna entre os dois e-mails de demonstração (5 tentativas em cada, totalizando 10)
+  // Sem header de IP ("desconhecido"):
+  for (let i = 1; i <= 5; i++) {
+    const req1 = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "codigo-errado" }),
+    });
+    const res1 = await handler(req1, depsPadrao(estado));
+    assertEquals(res1.status, 404);
+
+    const req2 = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: MOCK_EMAIL_CONTRATANTE, codigo: "codigo-errado" }),
+    });
+    const res2 = await handler(req2, depsPadrao(estado));
+    assertEquals(res2.status, 404);
+  }
+
+  // Neste ponto: MOCK_EMAIL_REVISOR tem 5 tentativas no banco, MOCK_EMAIL_CONTRATANTE tem 5 tentativas no banco.
+  // Nenhum e-mail atingiu o teto individual de 10 do banco.
+  // Porém, o IP desconhecido acumulou 10 tentativas incorretas.
+  // 11ª tentativa errada SEM header de IP: DEVE ser bloqueada no Edge pelo teto de IP com 429 limite_excedido!
+  const qtdBancoAntes = estado.tentativas.length;
+  assertEquals(qtdBancoAntes, 10);
+
+  const reqBloqueada = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "codigo-errado" }),
+  });
+  const resBloqueada = await handler(reqBloqueada, depsPadrao(estado));
+  assertEquals(resBloqueada.status, 429);
+  assertEquals((await resBloqueada.json()).code, "limite_excedido");
+  assertEquals(estado.tentativas.length, qtdBancoAntes);
+
+  // Código correto sem header de IP não é bloqueado (Diretriz 2.1 Apple)
+  const reqCorreta = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: MOCK_CODIGO }),
+  });
+  const resCorreta = await handler(reqCorreta, depsPadrao(estado));
+  assertEquals(resCorreta.status, 200);
+
+  resetarLimitesIp();
+});
+
+Deno.test("segurança: verificarLimiteIp e registrarTentativaIp tratam IP desconhecido e vazio sob a mesma cota restrita", () => {
+  resetarLimitesIp();
+  const agora = Date.now();
+
+  for (let i = 0; i < 10; i++) {
+    assertEquals(verificarLimiteIp("desconhecido", agora), true);
+    registrarTentativaIp("desconhecido", agora);
+  }
+
+  // 11ª tentativa de 'desconhecido' deve retornar false
+  assertEquals(verificarLimiteIp("desconhecido", agora), false);
+  assertEquals(verificarLimiteIp("", agora), false);
+  assertEquals(verificarLimiteIp("   ", agora), false);
+
+  resetarLimitesIp();
 });
 
 Deno.test("entrar-demonstracao: igualdade correta resistente a timing em comparacao de codigo", () => {
