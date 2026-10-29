@@ -10,7 +10,7 @@
 # Uso:
 #   ./scripts/teste-conferir-auth-remoto.sh
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 falhas=0
 casos=0

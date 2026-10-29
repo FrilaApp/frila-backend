@@ -22,7 +22,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 # Se o token não estiver no ambiente, carrega do .env se existir
 if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ] && [ -f .env ]; then
-  set -a; source .env; set +a
+  set -a
+  # shellcheck source=/dev/null
+  source .env
+  set +a
 fi
 
 if [ $# -eq 0 ]; then
