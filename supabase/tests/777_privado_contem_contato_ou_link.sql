@@ -28,7 +28,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
-select plan(46);
+select plan(47);
 
 -- ── 1. Casos Neutros e Nulos ──────────────────────────────────────────────────────
 select is(
@@ -255,6 +255,12 @@ select is(
   privado.contem_contato_ou_link('Valor acordado: 150 reais ao término do expediente'),
   false,
   'falso positivo: valor com sufixo reais por extenso não é barrado'
+);
+
+select is(
+  privado.contem_contato_ou_link('Orçamento 12345678,90 reais'),
+  false,
+  'falso positivo: valor monetário com sufixo reais e 8+ dígitos não é barrado como telefone (exercita a máscara reais)'
 );
 
 select is(
