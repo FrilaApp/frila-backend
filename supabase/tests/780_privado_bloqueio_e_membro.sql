@@ -26,7 +26,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
-select plan(21);
+select plan(22);
 
 create function pg_temp.autenticar_jwt(conta uuid) returns void
 language plpgsql as $$
@@ -92,9 +92,11 @@ insert into public.membro_estabelecimento (estabelecimento_id, usuario_id, papel
 -- Bloqueios:
 -- 1. Profissional 11 bloqueou o membro do Bar 780 (autor = prof, bloqueado = membro)
 -- 2. Membro do Bar 780 bloqueou o Profissional 12 (autor = membro, bloqueado = prof)
+-- 3. Profissional 13 bloqueou o operador do Restaurante 780 (autor = prof, bloqueado = operador)
 insert into public.bloqueio (autor_id, bloqueado_id) values
   ('78000000-0000-4000-8000-000000000011', '78000000-0000-4000-8000-000000000001'),
-  ('78000000-0000-4000-8000-000000000001', '78000000-0000-4000-8000-000000000012');
+  ('78000000-0000-4000-8000-000000000001', '78000000-0000-4000-8000-000000000012'),
+  ('78000000-0000-4000-8000-000000000013', '78000000-0000-4000-8000-000000000002');
 
 -- ── 1. privado.bloqueado_com_estabelecimento: Bidirecionalidade ────────────────────
 select is(
@@ -107,6 +109,12 @@ select is(
   privado.bloqueado_com_estabelecimento((select u_prof_bloqueado from ids), (select e1 from ids)),
   true,
   'profissional bloqueado por membro do estabelecimento consta como bloqueado com a casa'
+);
+
+select is(
+  privado.bloqueado_com_estabelecimento((select u_prof_livre from ids), (select e2 from ids)),
+  true,
+  'profissional que bloqueou membro OPERADOR do estabelecimento consta como bloqueado com a casa'
 );
 
 -- ── 2. Trava de Proteção de Membro com o Próprio Negócio ──────────────────────────
