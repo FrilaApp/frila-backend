@@ -88,7 +88,7 @@ function segredoValido(req: Request, agendadorSecret?: string): boolean {
 // A caixa da Equipe Frila é segredo de ambiente, e não linha de tabela: ela não é dado
 // do produto, muda com o provedor de e-mail e não deve viajar num `db reset`.
 export function caixaDaEquipe(injetada?: string): string {
-  return (injetada || Deno.env.get("EMAIL_EQUIPE") || "equipe@frila.app").trim();
+  return (injetada || Deno.env.get("EMAIL_EQUIPE") || "suporte@frilabr.com").trim();
 }
 
 function obterDbUrl(injetada?: string): string {
