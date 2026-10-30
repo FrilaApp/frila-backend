@@ -137,7 +137,7 @@ jobs:
 
           NOME_ARQUIVO=$(basename "$ARQUIVO")
           TAMANHO=$(wc -c < "$ARQUIVO" | tr -d ' ')
-          echo "Enviando $NOME_ARQUIVO ($TAMANHO bytes) para s3://${S3_BUCKET}/${NOME_ARQUIVO}..."
+          echo "Enviando $NOME_ARQUIVO ($TAMANHO bytes) para o bucket configurado..."
 
           aws s3 cp "$ARQUIVO" "s3://${S3_BUCKET}/${NOME_ARQUIVO}" \
             --endpoint-url "${S3_ENDPOINT}" \
@@ -153,7 +153,6 @@ jobs:
             echo "|---|---|"
             echo "| Arquivo cifrado | \`$NOME_ARQUIVO\` |"
             echo "| Tamanho | $TAMANHO bytes |"
-            echo "| Destino | \`s3://$S3_BUCKET/$NOME_ARQUIVO\` |"
             echo "| Cifra | \`age\` (pacote v2: \`banco.dump\`, \`extensoes.sql\`, \`formato.txt\`) |"
             echo "| Retenção no bucket | 14 dias (Lifecycle Rule) |"
             echo "| Concluído em | $(date -u +'%Y-%m-%d %H:%M:%S UTC') |"
