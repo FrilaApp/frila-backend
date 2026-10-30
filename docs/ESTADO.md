@@ -1,7 +1,7 @@
 # Estado do backend — 16/10/2026
 
 Onde o trabalho parou e o que a próxima sessão precisa saber. As regras duráveis estão
-no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
+no [`AGENTS.md`](../AGENTS.md); aqui fica o que muda.
 
 ---
 

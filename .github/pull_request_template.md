@@ -12,6 +12,13 @@ Lembrete: a base do PR é SEMPRE develop (`gh pr create --base develop`). Nunca 
 
 https://trello.com/c/
 
+## Quem responde e qual IA ajudou
+
+<!-- Pelo nome: o sócio que responde por este PR e, se houve, a IA (ferramenta e modelo). -->
+
+Quem responde: 
+IA: 
+
 ## O que muda, e por quê
 
 <!--
@@ -65,6 +72,12 @@ foi a mutação.
 > O merge na `develop` publica a migração no `frila-dev` em minutos, pelo workflow
 > `Entrega`, e a tag `backend-v*` a leva ao `frila-prod`. Não existe mais o passo manual
 > em que alguém percebia o problema antes de aplicar.
+
+## Faixa de risco
+
+Verde, amarela ou vermelha (veja o `AGENTS.md`): 
+
+<!-- Vermelha: o sócio que aprova leu o diff inteiro, ele mesmo, sem delegar ao agente. Ele escreve aqui o que conferiu. -->
 
 ## O que ficou de fora
 
