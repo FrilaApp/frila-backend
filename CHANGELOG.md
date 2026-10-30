@@ -9,6 +9,10 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [1.1.0] - 2026-11-02
 
+Versão base do backend consolidada a partir do tronco `develop` para a release em produção (`frila-prod`).
+
+> **Nota sobre o histórico:** Este changelog documenta os principais marcos consolidados das frentes de trabalho. Cerca de 200 pull requests foram integrados na `develop` desde a versão 1.0.0 de 04/10/2026. Entre as evoluções operacionais não detalhadas individualmente neste arquivo destacam-se: 4 migrações DDL recentes (`20261018050000` SKIP LOCKED em push, `20261020100000` alerta em demonstração, `20261020150000` semeadura de revisão e `20261020180000` retenção de falhas), push FCM data-only para Android e APNs alert para iOS (RN15, PR #320), núcleo compartilhado de autenticação em tempo constante (PR #319), supressão de mensagens brutas de banco em `tratarErroBanco` (PR #318), sanitização de cabeçalhos SMTP contra injeção CRLF (PR #317 / PR #326), rate limit em demonstração (PR #349) e atualização da caixa de suporte para `suporte@frilabr.com` (PR #339). Para o histórico completo e detalhado de commits e PRs, consulte o `git log origin/develop`.
+
 ### Corrigido
 - **Sanitização de caracteres fora do charset WinAnsi no gerador de PDF de turnos (PR #229):**
   - `supabase/functions/exportar-turnos/index.ts`: sanitiza caracteres não suportados pela fonte Helvetica em WinAnsi substituindo-os por '?', preservando acentuação pt-BR, aspas curvas e travessões; adiciona `try/catch` no handler em volta de `gerarPdf` retornando envelope de erro 500 estruturado em vez de falha não tratada.
