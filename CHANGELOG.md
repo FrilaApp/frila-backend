@@ -7,6 +7,8 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Não lançado]
 
+## [1.1.0] - 2026-11-02
+
 ### Corrigido
 - **Sanitização de caracteres fora do charset WinAnsi no gerador de PDF de turnos (PR #229):**
   - `supabase/functions/exportar-turnos/index.ts`: sanitiza caracteres não suportados pela fonte Helvetica em WinAnsi substituindo-os por '?', preservando acentuação pt-BR, aspas curvas e travessões; adiciona `try/catch` no handler em volta de `gerarPdf` retornando envelope de erro 500 estruturado em vez de falha não tratada.
