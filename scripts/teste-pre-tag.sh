@@ -47,10 +47,12 @@ conferir "tag sem versão semântica sai com código 2" \
   "$PORTAO" "tag-invalida"
 
 # ── 2. Janela de manutenção (RNF12) ───────────────────────────
+COMMIT_BASE_DEV=$(git rev-parse origin/develop 2>/dev/null || git rev-parse develop 2>/dev/null || git rev-parse HEAD)
+
 # Simula horário dentro da janela: sexta-feira 20h SP
 conferir "tentativa dentro da janela proibida (sexta 20h) é bloqueada com exit 1" \
   1 "dentro da janela proibida" \
-  env FRILA_AGORA="2026-10-30 20:00" "$PORTAO" backend-v1.0.0
+  env FRILA_AGORA="2026-10-30 20:00" "$PORTAO" --commit "$COMMIT_BASE_DEV" backend-v1.0.0
 
 # ── 3. CHANGELOG ───────────────────────────────────────────────
 # Cria changelog temporário sem a versão 9.9.9
@@ -63,7 +65,7 @@ EOF
 
 conferir "versão ausente no changelog sai com exit 1" \
   1 "CHANGELOG: versão [9.9.9] não encontrada" \
-  env FRILA_AGORA="2026-11-02 10:00" "$PORTAO" --changelog "$FAKE_CHANGELOG" backend-v9.9.9
+  env FRILA_AGORA="2026-11-02 10:00" "$PORTAO" --commit "$COMMIT_BASE_DEV" --changelog "$FAKE_CHANGELOG" backend-v9.9.9
 
 # ── 4. Ancestralidade ─────────────────────────────────────────
 # Cria um repositório git temporário para testar árvore de ancestralidade divergente
@@ -100,10 +102,10 @@ conferir "commit divergente que não está na develop reprova com exit 1" \
 
 # ── 5. Caminho feliz completo ─────────────────────────────────
 # Segunda-feira às 10h da manhã (fora da janela proibida da RNF12),
-# commit ancestral de develop (HEAD), versão 1.0.0 documentada no CHANGELOG.md
+# commit ancestral de develop ($COMMIT_BASE_DEV), versão 1.0.0 documentada no CHANGELOG.md
 conferir "caminho feliz passa com exit 0 fora da janela proibida" \
   0 "Todas as 5 conferências passaram com sucesso" \
-  env FRILA_AGORA="2026-11-02 10:00" "$PORTAO" backend-v1.0.0
+  env FRILA_AGORA="2026-11-02 10:00" "$PORTAO" --commit "$COMMIT_BASE_DEV" backend-v1.0.0
 
 echo
 if [ "$falhas" -ne 0 ]; then
