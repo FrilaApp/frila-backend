@@ -21,7 +21,7 @@ Aqui entra o que falta em torno dele: a janela, a tag e o pico.
 | Declarar hotfix e publicar em Prod | Os sócios têm comando total; quem leva o hotfix até a tag responde por ele | `AGENTS.md`, "Quem é quem" |
 | Aprovar o PR do hotfix | Qualquer um dos quatro sócios, menos quem abriu o PR, lendo o diff inteiro (migração e push são faixa vermelha) | `AGENTS.md`, "Aprovar e mesclar" |
 | Mesclar com a CI ainda rodando ou vermelha | Só em emergência, registrada no PR | `AGENTS.md`, "Aprovar e mesclar" |
-| Aprovar o job de Prod no Environment | Revisor do Environment `frila-prod`. **Hoje não existe revisor** (seção 7) | `entrega.yml:126-127`; medido em 28/10 |
+| Aprovar o job de Prod no Environment | Revisor do Environment `frila-prod`. O Environment possui 4 revisores cadastrados (`cauecarneiro`, `fbtostadev`, `jotape12-Dev`, `silvaaszx`) com auto-aprovação prevenida (`prevent_self_review: true`) e bypass de admin ativo (fonte: medido via GitHub API em 30/10) | `entrega.yml:126-127`; GitHub API |
 | Aplicar patch à mão em Prod | `[DONO]`, termo de `docs/RUNBOOK-INCIDENTES.md` (por exemplo, linha 224) que o documento não define | `RUNBOOK-INCIDENTES.md` |
 | Exceção à janela proibida | Proposta, a confirmar: `[DONO]`, com motivo e hora registrados no PR ou no cartão | não existe regra escrita |
 
@@ -192,11 +192,12 @@ Medido em 28/10/2026 com `gh` e `git ls-remote` (só leitura), salvo indicação
 
 - **Nenhuma tag `backend-v*` existe** (`git ls-remote --tags origin` vazio). O job `frila-prod`
   nunca rodou a partir de tag; nenhuma execução real prova a seção 2 em Prod.
-- **O Environment `frila-prod` não tem regra de proteção**: sem Required reviewers e sem
-  restrição de branch ou tag (`protection_rules: []`, `deployment_branch_policy: null`). O
-  texto "exige a aprovação de um revisor" em `entrega.yml:3-4` e `:126` descreve o que se
-  pretende, não o que está ligado. Hoje quem empurra a tag põe em Prod. Ligar o revisor é de
-  quem administra o repositório e está fora do escopo deste runbook.
+- **O Environment `frila-prod` possui regra de proteção ativa com revisores obrigatórios:**
+  possui regra de proteção `required_reviewers` com 4 revisores (`cauecarneiro`, `fbtostadev`,
+  `jotape12-Dev`, `silvaaszx`), `prevent_self_review: true` e `can_admins_bypass: true`
+  (medido via `gh api repos/FrilaApp/frila-backend/environments/frila-prod` em 30/10). Não possui
+  restrição de branch ou tag (`deployment_branch_policy: null`). O texto "exige a aprovação de
+  um revisor" em `entrega.yml:3-4` e `:126` corresponde à proteção ativa no GitHub.
 - **A janela só foi testada em unidade** (`scripts/teste-entrega.sh:36-46`); nunca vimos o
   passo barrando um job real.
 - **A janela é medida só no começo do job** (`entrega.yml:137-140`). Inferência: um job que
