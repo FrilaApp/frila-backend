@@ -12,7 +12,7 @@ publicar → notificar → candidatar → confirmar → executar → avaliar
 ```
 
 Loja em 13/11/2026. O que entra em cada versão está em
-[`05-ESCOPO-DO-MVP.md`](https://github.com/FrilaApp/frila-docs/blob/main/Documentos/MD/05-ESCOPO-DO-MVP.md);
+[`05-ESCOPO-DO-MVP.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/05-ESCOPO-DO-MVP.md);
 o plano de trabalho, no [quadro do Trello](https://trello.com/b/0eyqvbRJ/frila).
 
 ## Rodar
@@ -75,7 +75,7 @@ supabase/
 └── tests/         pgTAP — um teste por CHECK e por política, com o nome da regra
 
 contrato/openapi.yaml   Espelho do contrato do Frila. Divergência quebra a CI
-agents/                 Os cinco agentes do pipeline, versionados
+.claude/agents/         Os cinco agentes do pipeline, versionados
 scripts/                bancada-sync, ciclo-completo
 ```
 
@@ -85,7 +85,7 @@ scripts/                bancada-sync, ciclo-completo
 |---|---|
 | local | Cada dev, com `supabase start`. Migração destrutiva e teste de corrida moram aqui |
 | `frila-dev` | Compartilhado: integração com o iOS e o TestFlight |
-| `frila-prod` | Só a partir do Sprint 3 |
+| `frila-prod` | Produção: app 0.5.5 e 9 Edge Functions ativas em uso |
 
 A chave de serviço fica fora do app e fora do git: só o agendador e a CI a usam.
 
