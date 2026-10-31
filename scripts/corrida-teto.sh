@@ -36,6 +36,12 @@ set session_replication_role = 'replica';
 delete from public.despacho where vaga_id in ('$VAGA_A', '$VAGA_B');
 delete from public.notificacao where referencia_id in ('$VAGA_A', '$VAGA_B');
 delete from public.vaga where id in ('$VAGA_A', '$VAGA_B');
+do \$\$
+begin
+  if to_regclass('privado.marca_notificacao') is not null then
+    delete from privado.marca_notificacao where referencia_id in ('$VAGA_A', '$VAGA_B');
+  end if;
+end \$\$;
 set session_replication_role = 'origin';
 SQL
   reativar_cron
