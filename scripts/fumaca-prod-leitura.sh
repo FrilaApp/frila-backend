@@ -8,12 +8,12 @@
 # - SEM POST, sem mutação no banco, sem inserção de dados, sem disparo de e-mails/push.
 # - URL e chave anônima informadas exclusivamente por variáveis de ambiente ou parâmetros.
 #
-# Probes realizados:
+# Probes realizados (11 probes de leitura pura):
 #   1. GET /functions/v1/saude -> HTTP 200 (conectividade do Postgres e runtime Deno)
 #   2. HEAD /functions/v1/saude -> HTTP 200 (probe de baixa latência)
-#   3. GET /functions/v1/<funcao> -> HTTP 405/404/401 (comprova implantação no API Gateway sem execução)
-#   4. GET /rest/v1/ (sem auth) -> HTTP 401 (comprova fail-closed do PostgREST)
-#   5. GET /rest/v1/ (com anon key) -> HTTP 200 (comprova gateway PostgREST ativo, se anon key fornecida)
+#   3. GET /functions/v1/<funcao> (7 funções) -> HTTP 405 (rejeição de método sem execução)
+#   4. GET /functions/v1/entrar-demonstracao -> HTTP 404 (rota Deno uniforme com anon key)
+#   5. GET /rest/v1/ (sem auth) -> HTTP 401 (comprova fail-closed do PostgREST)
 #
 # Uso:
 #   ./scripts/fumaca-prod-leitura.sh <URL> [ANON_KEY]
@@ -106,13 +106,21 @@ for fn in "${FUNCOES_405[@]}"; do
   fi
 done
 
-# entrar-demonstracao (responde 404 para GET de acordo com a rota Deno uniforme, ou 401 se sem token)
-res_demo=$(curl -sS --max-time "$TIMEOUT" -w "%{http_code}" -o /dev/null \
-  "$URL_BASE/functions/v1/entrar-demonstracao" 2>&1 || echo "000")
-if [ "$res_demo" = "404" ] || [ "$res_demo" = "405" ] || [ "$res_demo" = "401" ]; then
-  registrar 1 "GET /functions/v1/entrar-demonstracao" "HTTP $res_demo (função ativa na borda)"
+# entrar-demonstracao (com anon key deve responder 404 de acordo com a rota Deno uniforme;
+# aceitar 401 esconderia o gateway rejeitando a chamada, por isso enviamos Authorization+apikey e exigimos 404)
+if [ -n "$ANON_KEY" ]; then
+  res_demo=$(curl -sS --max-time "$TIMEOUT" -w "%{http_code}" -o /dev/null \
+    -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
+    "$URL_BASE/functions/v1/entrar-demonstracao" 2>&1 || echo "000")
 else
-  registrar 0 "GET /functions/v1/entrar-demonstracao" "esperado HTTP 404/405/401, veio HTTP $res_demo"
+  res_demo=$(curl -sS --max-time "$TIMEOUT" -w "%{http_code}" -o /dev/null \
+    "$URL_BASE/functions/v1/entrar-demonstracao" 2>&1 || echo "000")
+fi
+
+if [ "$res_demo" = "404" ]; then
+  registrar 1 "GET /functions/v1/entrar-demonstracao" "HTTP 404 (função ativa na borda, rota uniforme)"
+else
+  registrar 0 "GET /functions/v1/entrar-demonstracao" "esperado HTTP 404, veio HTTP $res_demo"
 fi
 
 # ─────────────────────────────────────────────────────────────
@@ -128,18 +136,6 @@ if [ "$st_sem_auth" = "401" ]; then
   registrar 1 "GET /rest/v1/ sem credenciais" "HTTP 401 Unauthorized (fail-closed confirmado)"
 else
   registrar 0 "GET /rest/v1/ sem credenciais" "esperado HTTP 401, veio HTTP $st_sem_auth"
-fi
-
-# Se houver ANON_KEY, confere que o PostgREST responde 200 para a chave pública autorizada
-if [ -n "$ANON_KEY" ]; then
-  st_com_auth=$(curl -sS --max-time "$TIMEOUT" -w "%{http_code}" -o /dev/null \
-    -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
-    "$URL_BASE/rest/v1/" 2>&1 || echo "000")
-  if [ "$st_com_auth" = "200" ]; then
-    registrar 1 "GET /rest/v1/ com anon key" "HTTP 200 OK (OpenAPI / gateway PostgREST operacional)"
-  else
-    registrar 0 "GET /rest/v1/ com anon key" "esperado HTTP 200, veio HTTP $st_com_auth"
-  fi
 fi
 
 # ─────────────────────────────────────────────────────────────

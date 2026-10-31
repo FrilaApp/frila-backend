@@ -87,21 +87,23 @@ class MockHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b'{"erro":"metodo_nao_permitido"}')
         elif self.path == "/functions/v1/entrar-demonstracao":
-            self.send_response(404)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b'{"code":"nao_encontrado"}')
-        elif self.path == "/rest/v1/":
-            if not auth:
+            # Exige cabeçalhos de autenticação (apikey + Authorization Bearer)
+            if not self.headers.get("Authorization") or not self.headers.get("apikey"):
                 self.send_response(401)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(b'{"message":"Unauthorized"}')
             else:
-                self.send_response(200)
+                self.send_response(404)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"swagger":"2.0"}')
+                self.wfile.write(b'{"code":"nao_encontrado"}')
+        elif self.path == "/rest/v1/":
+            # Raiz do PostgREST responde 401 Unauthorized sem chave secreta
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"message":"Unauthorized"}')
         else:
             self.send_response(404)
             self.end_headers()
@@ -140,6 +142,10 @@ URL_MOCK="http://127.0.0.1:$PORTA"
 conferir "caminho feliz contra servidor mock passa com exit 0" \
   0 "Suíte de fumaça de leitura passou" \
   "$PORTAO" "$URL_MOCK" "chave-anon-teste"
+
+conferir "chamada sem chave anon falha entrar-demonstracao e reprova com exit 1" \
+  1 "Suíte de fumaça de leitura falhou" \
+  "$PORTAO" "$URL_MOCK"
 
 # ── 4. Garantia estrita de zero POSTs ──────────────────────────
 if grep -q "POST" "$LOG_REQUISICOES" 2>/dev/null; then
