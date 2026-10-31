@@ -45,6 +45,18 @@ conferir "segunda às 20h passa"                    0 "fora da janela"   janela 
 conferir "quarta às 23h passa"                     0 "fora da janela"   janela "2026-09-30 23:00"
 conferir "hora ilegível não mede"                  2 "não medi"         janela "sexta 20h"
 
+echo "▸ Janela de manutenção com margem de término (FRILA_MARGEM_MIN)"
+janela_m() { FRILA_AGORA="$1" FRILA_MARGEM_MIN="$2" ./scripts/janela-de-manutencao.sh; }
+conferir "quinta 15h29 com margem 30 passa (término 15h59)"  0 "fora da janela"          janela_m "2026-10-01 15:29" "30"
+conferir "quinta 15h30 com margem 30 recusa (término 16h00)" 1 "cai na janela proibida"  janela_m "2026-10-01 15:30" "30"
+conferir "quinta 15h40 com margem 30 recusa (término 16h10)" 1 "cai na janela proibida"  janela_m "2026-10-01 15:40" "30"
+conferir "quinta 15h44 com margem 15 passa (término 15h59)"  0 "fora da janela"          janela_m "2026-10-01 15:44" "15"
+conferir "quinta 15h45 com margem 15 recusa (término 16h00)" 1 "cai na janela proibida"  janela_m "2026-10-01 15:45" "15"
+conferir "sexta 02h00 com margem 30 passa"                   0 "fora da janela"          janela_m "2026-10-02 02:00" "30"
+conferir "segunda 02h00 com margem 30 passa"                 0 "fora da janela"          janela_m "2026-10-05 02:00" "30"
+conferir "margem não numérica não mede"                      2 "não medi"                janela_m "2026-10-01 12:00" "abc"
+conferir "margem negativa não mede"                          2 "não medi"                janela_m "2026-10-01 12:00" "-15"
+
 echo "▸ Desvio"
 printf 'funcao privado.a() md5=1\nrelacao public.x tipo=r rls=true forcado=false\n' > "$TMP/base"
 printf 'relacao public.x tipo=r rls=true forcado=false\nfuncao privado.a() md5=1\n' > "$TMP/igual"
