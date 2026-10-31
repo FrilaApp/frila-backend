@@ -30,7 +30,7 @@ falha=0
 VAGA_A="d0000000-0000-4000-8000-0000000000a7"
 VAGA_B="d0000000-0000-4000-8000-0000000000b7"
 
-limpar() {
+limpar_vagas() {
   psql >/dev/null 2>&1 <<SQL || echo "  aviso: a limpeza falhou" >&2
 set session_replication_role = 'replica';
 delete from public.despacho where vaga_id in ('$VAGA_A', '$VAGA_B');
@@ -38,33 +38,64 @@ delete from public.notificacao where referencia_id in ('$VAGA_A', '$VAGA_B');
 delete from public.vaga where id in ('$VAGA_A', '$VAGA_B');
 set session_replication_role = 'origin';
 SQL
+}
+
+limpar() {
+  limpar_vagas
   reativar_cron
   rm -rf "$TMP"
 }
 
+CRON_JOBS_DESATIVADOS=""
+
 desativar_cron() {
-  psql -q -c "
-    do \$\$
-    begin
-      if to_regclass('cron.job') is not null then
-        update cron.job set active = false where active = true;
-      end if;
-    end \$\$;" >/dev/null 2>&1 || true
+  local existe
+  existe=$(psql -tA -c "select 1 from pg_extension where extname = 'pg_cron';" 2>/dev/null || true)
+  [ "$existe" = "1" ] || return 0
+
+  CRON_JOBS_DESATIVADOS=$(psql -tA -c "select jobid from cron.job where active order by jobid;") || {
+    echo "✗ [pg_cron] Falha ao consultar tarefas ativas em cron.job." >&2
+    exit 1
+  }
+
+  if [ -n "$CRON_JOBS_DESATIVADOS" ]; then
+    local lista_ids
+    lista_ids=$(echo "$CRON_JOBS_DESATIVADOS" | paste -sd, -)
+    psql -q -c "
+      do \$\$
+      declare
+        j bigint;
+      begin
+        for j in select unnest(array[$lista_ids]::bigint[]) loop
+          perform cron.alter_job(j, active := false);
+        end loop;
+      end \$\$;" || {
+      echo "✗ [pg_cron] Falha ao desativar tarefas via cron.alter_job." >&2
+      exit 1
+    }
+  fi
 }
 
 reativar_cron() {
+  [ -n "${CRON_JOBS_DESATIVADOS:-}" ] || return 0
+  local lista_ids
+  lista_ids=$(echo "$CRON_JOBS_DESATIVADOS" | paste -sd, -)
   psql -q -c "
     do \$\$
+    declare
+      j bigint;
     begin
-      if to_regclass('cron.job') is not null then
-        update cron.job set active = true where active = false;
-      end if;
+      for j in select unnest(array[$lista_ids]::bigint[]) loop
+        perform cron.alter_job(j, active := true);
+      end loop;
     end \$\$;" >/dev/null 2>&1 || true
+  CRON_JOBS_DESATIVADOS=""
 }
 
+limpar_vagas
+TMP=$(mktemp -d)
 trap limpar EXIT
 desativar_cron
-limpar; TMP=$(mktemp -d)
 
 echo "▸ Montando o cenário: duas vagas no horário da vaga de referência do seed"
 
