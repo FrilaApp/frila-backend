@@ -376,7 +376,11 @@ No Frila, as migrações são **estritamente lineares, imutáveis e forward-only
 2. A integridade do histórico do banco de dados depende de linearidade absoluta registrada no catálogo `supabase_migrations.schema_migrations`.
 
 ### Procedimento Canônico de Resolução (Forward Fix)
-Para reverter os efeitos de uma migração problemática, o procedimento obrigatório consiste em criar uma **nova migração corretiva linear à frente**:
+Para reverter os efeitos de uma migração problemática, o procedimento obrigatório consiste em criar uma **nova migração corretiva linear à frente**.
+
+> [!TIP]
+> **Consulte o guia completo e checklist operacional em:**
+> [`docs/TemplateMigracaoCorretivaERollback.md`](TemplateMigracaoCorretivaERollback.md) — contém padrões prontos de reversão para funções, RLS, constraints, colunas e dados, além de exemplos reais e checklist pré/pós deploy.
 
 1. **Criar a migração corretiva:**
    ```bash
