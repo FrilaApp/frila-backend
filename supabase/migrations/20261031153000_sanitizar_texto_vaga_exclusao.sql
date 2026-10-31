@@ -228,7 +228,10 @@ begin
                                       join public.turno tu on tu.posicao_id = po.id
                                      where po.vaga_id = g.id
                                        and po.estado <> 'cancelada'
-                                       and tu.checkout_em is null
+                                       and (
+                                          tu.checkout_em is null
+                                          or tu.verificacao = 'verificado'
+                                        )
                                    ) then g.local
                                    else '[removido por exclusão de conta]'
                                  end
@@ -295,15 +298,47 @@ begin
            select 1 from public.vaga g
             where g.publicado_por = u.id
               and (
-                g.responsavel_local <> '[removido por exclusão de conta]'
-                or g.traje is not null
-                or g.observacoes is not null
-                or (g.local <> '[removido por exclusão de conta]'
+                (g.responsavel_local <> '[removido por exclusão de conta]'
+                 and not exists (
+                   select 1 from public.posicao po
+                    join public.turno tu on tu.posicao_id = po.id
+                   where po.vaga_id = g.id
+                     and po.estado <> 'cancelada'
+                     and tu.checkout_em is null
+                 ))
+                or (g.traje is not null
                     and not exists (
                       select 1 from public.posicao po
                        join public.turno tu on tu.posicao_id = po.id
                       where po.vaga_id = g.id
-                        and tu.verificacao = 'verificado'
+                        and po.estado <> 'cancelada'
+                        and tu.checkout_em is null
+                    )
+                    and not exists (
+                      select 1 from public.membro_estabelecimento m
+                       where m.estabelecimento_id = g.estabelecimento_id
+                         and m.usuario_id <> u.id
+                    ))
+                or (g.observacoes is not null
+                    and not exists (
+                      select 1 from public.membro_estabelecimento m
+                       where m.estabelecimento_id = g.estabelecimento_id
+                         and m.usuario_id <> u.id
+                    ))
+                or (g.local <> '[removido por exclusão de conta]'
+                    and not exists (
+                      select 1 from public.membro_estabelecimento m
+                       where m.estabelecimento_id = g.estabelecimento_id
+                         and m.usuario_id <> u.id
+                    )
+                    and not exists (
+                      select 1 from public.posicao po
+                       join public.turno tu on tu.posicao_id = po.id
+                      where po.vaga_id = g.id
+                        and (
+                          tu.checkout_em is null
+                          or tu.verificacao = 'verificado'
+                        )
                     ))
               )
          )
@@ -342,29 +377,99 @@ begin
     -- mútua e histórico de trabalho da contraparte (exercício regular de direitos - LGPD art. 7º, VI,
     -- e legítimo interesse/obrigação do controlador conforme o caso, em avaliação pelo Jurídico).
     update public.vaga g
-       set responsavel_local = '[removido por exclusão de conta]',
-           traje             = null,
-           observacoes       = null,
-           local             = case
+       set responsavel_local = case
                                  when exists (
                                    select 1 from public.posicao po
                                     join public.turno tu on tu.posicao_id = po.id
                                    where po.vaga_id = g.id
-                                     and tu.verificacao = 'verificado'
+                                     and po.estado <> 'cancelada'
+                                     and tu.checkout_em is null
+                                 ) then g.responsavel_local
+                                 else '[removido por exclusão de conta]'
+                               end,
+           traje             = case
+                                 when exists (
+                                   select 1 from public.posicao po
+                                    join public.turno tu on tu.posicao_id = po.id
+                                   where po.vaga_id = g.id
+                                     and po.estado <> 'cancelada'
+                                     and tu.checkout_em is null
+                                 ) then g.traje
+                                 when exists (
+                                   select 1 from public.membro_estabelecimento m
+                                    where m.estabelecimento_id = g.estabelecimento_id
+                                      and m.usuario_id <> v_candidato.id
+                                 ) then g.traje
+                                 else null
+                               end,
+           observacoes       = case
+                                 when exists (
+                                   select 1 from public.membro_estabelecimento m
+                                    where m.estabelecimento_id = g.estabelecimento_id
+                                      and m.usuario_id <> v_candidato.id
+                                 ) then g.observacoes
+                                 else null
+                               end,
+           local             = case
+                                 when exists (
+                                   select 1 from public.membro_estabelecimento m
+                                    where m.estabelecimento_id = g.estabelecimento_id
+                                      and m.usuario_id <> v_candidato.id
+                                 ) then g.local
+                                 when exists (
+                                   select 1 from public.posicao po
+                                    join public.turno tu on tu.posicao_id = po.id
+                                   where po.vaga_id = g.id
+                                     and (
+                                       tu.checkout_em is null
+                                       or tu.verificacao = 'verificado'
+                                     )
                                  ) then g.local
                                  else '[removido por exclusão de conta]'
                                end
      where g.publicado_por = v_candidato.id
        and (
-         g.responsavel_local <> '[removido por exclusão de conta]'
-         or g.traje is not null
-         or g.observacoes is not null
-         or (g.local <> '[removido por exclusão de conta]'
+         (g.responsavel_local <> '[removido por exclusão de conta]'
+          and not exists (
+            select 1 from public.posicao po
+             join public.turno tu on tu.posicao_id = po.id
+            where po.vaga_id = g.id
+              and po.estado <> 'cancelada'
+              and tu.checkout_em is null
+          ))
+         or (g.traje is not null
              and not exists (
                select 1 from public.posicao po
                 join public.turno tu on tu.posicao_id = po.id
                where po.vaga_id = g.id
-                 and tu.verificacao = 'verificado'
+                 and po.estado <> 'cancelada'
+                 and tu.checkout_em is null
+             )
+             and not exists (
+               select 1 from public.membro_estabelecimento m
+                where m.estabelecimento_id = g.estabelecimento_id
+                  and m.usuario_id <> v_candidato.id
+             ))
+         or (g.observacoes is not null
+             and not exists (
+               select 1 from public.membro_estabelecimento m
+                where m.estabelecimento_id = g.estabelecimento_id
+                  and m.usuario_id <> v_candidato.id
+             ))
+         or (g.local <> '[removido por exclusão de conta]'
+             and not exists (
+               select 1 from public.membro_estabelecimento m
+                where m.estabelecimento_id = g.estabelecimento_id
+                  and m.usuario_id <> v_candidato.id
+             )
+             and not exists (
+               select 1 from public.posicao po
+                join public.turno tu on tu.posicao_id = po.id
+               where po.vaga_id = g.id
+                 and (
+                   tu.checkout_em is null
+                   or tu.verificacao = 'verificado'
+                 )
              ))
        );
 

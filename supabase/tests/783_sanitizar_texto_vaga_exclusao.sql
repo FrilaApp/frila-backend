@@ -17,7 +17,7 @@
 begin;
 
 set local timezone = 'UTC';
-select plan(15);
+select plan(23);
 
 insert into privado.ambiente (eh_teste) values (true);
 
@@ -54,6 +54,97 @@ values ('78300000-0000-4000-8000-000000000020', '78300000-0000-4000-8000-0000000
 insert into public.funcao (id, nome, categoria)
 values ('78300000-0000-4000-8000-000000000030', 'Cozinheiro 783', 'cozinha')
 on conflict (id) do nothing;
+
+-- Usuário extra para estabelecimento compartilhado (Item 2a)
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, estado, termos_versao, termos_aceite_em)
+values ('78300000-0000-4000-8000-000000000004', 'contratante', 'Sócio Ativo 783', '+5561978300004', 'socio783@teste.frila', '1988-02-20', 'ativa', '2026-09-22', '2026-09-22 12:00:00+00')
+on conflict (id) do nothing;
+
+-- Estabelecimento compartilhado (Item 2a)
+insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto)
+values (
+  '78300000-0000-4000-8000-000000000021',
+  'Bar Compartilhado 783',
+  '78312345000200',
+  'food_service',
+  'CLN 201 Bloco A',
+  extensions.st_setsrid(extensions.st_makepoint(-47.88, -15.78), 4326)::extensions.geography
+) on conflict (id) do nothing;
+
+insert into public.membro_estabelecimento (estabelecimento_id, usuario_id, papel)
+values
+  ('78300000-0000-4000-8000-000000000021', '78300000-0000-4000-8000-000000000001', 'administrador'),
+  ('78300000-0000-4000-8000-000000000021', '78300000-0000-4000-8000-000000000004', 'administrador');
+
+-- Vaga em estabelecimento compartilhado (Item 2a)
+insert into public.vaga (
+  id, estabelecimento_id, funcao_id, publicado_por, inicio_em, fim_em, local, ponto,
+  valor_centavos, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio,
+  responsavel_local, traje, observacoes, modo, estado, chave_cliente
+) values (
+  '78300000-0000-4000-8000-000000000054',
+  '78300000-0000-4000-8000-000000000021',
+  '78300000-0000-4000-8000-000000000030',
+  '78300000-0000-4000-8000-000000000001',
+  '2026-11-20 18:00:00+00',
+  '2026-11-20 23:00:00+00',
+  'Bar Compartilhado - Deck Norte',
+  extensions.st_setsrid(extensions.st_makepoint(-47.88, -15.78), 4326)::extensions.geography,
+  16000, 1, true, false, false,
+  'Sócio que Saiu', 'Uniforme do Bar', 'Entrar pela recepção', 'urgencia', 'publicada', gen_random_uuid()
+);
+
+-- Vaga com turno verificado e checkout concluído ANTES da exclusão imediata (Item 3)
+insert into public.vaga (
+  id, estabelecimento_id, funcao_id, publicado_por, inicio_em, fim_em, local, ponto,
+  valor_centavos, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio,
+  responsavel_local, traje, observacoes, modo, estado, chave_cliente
+) values (
+  '78300000-0000-4000-8000-000000000055',
+  '78300000-0000-4000-8000-000000000020',
+  '78300000-0000-4000-8000-000000000030',
+  '78300000-0000-4000-8000-000000000001',
+  '2026-10-30 18:00:00+00',
+  '2026-10-30 23:00:00+00',
+  'Endereço Verificado Antes da Exclusão',
+  extensions.st_setsrid(extensions.st_makepoint(-47.9, -15.8), 4326)::extensions.geography,
+  17000, 1, true, false, false,
+  'Gerente Concluído', 'Roupa preta', 'Turno já verificado com checkout', 'urgencia', 'preenchida', gen_random_uuid()
+);
+
+insert into public.posicao (id, vaga_id, estado, profissional_id, confirmado_em, inicio_em, fim_em)
+values (
+  '78300000-0000-4000-8000-000000000065',
+  '78300000-0000-4000-8000-000000000055',
+  'confirmada',
+  '78300000-0000-4000-8000-000000000012',
+  '2026-10-29 18:00:00+00',
+  '2026-10-30 18:00:00+00',
+  '2026-10-30 23:00:00+00'
+);
+
+insert into public.turno (id, posicao_id, checkin_em, checkout_em, checkin_tipo, checkin_distancia_m, verificacao, valor_acordado_centavos)
+values (
+  '78300000-0000-4000-8000-000000000075',
+  '78300000-0000-4000-8000-000000000065',
+  '2026-10-30 18:05:00+00',
+  '2026-10-30 23:05:00+00',
+  'geolocalizado',
+  30,
+  'verificado',
+  17000
+);
+
+-- Ocorrência em estado parcialmente limpo (Item 1)
+insert into public.ocorrencia (id, autor_id, usuario_id, tipo, motivo, relato)
+values (
+  '78300000-0000-4000-8000-000000000081',
+  '78300000-0000-4000-8000-000000000001',
+  '78300000-0000-4000-8000-000000000002',
+  'denuncia',
+  '[removido por exclusão de conta]',
+  'Relato confidencial que deve ser anulado aos 15 dias'
+);
 
 -- ── 1. Cenário 1: Vaga sem turno (publicada) ───────────────────────────────────
 
@@ -181,6 +272,13 @@ select is(
   'local da vaga com turno em andamento é preservado'
 );
 
+-- Asserção do Item 3 (vaga com turno verificado e checkout feito antes de excluir -> local preservado)
+select is(
+  (select local from public.vaga where id = '78300000-0000-4000-8000-000000000055'),
+  'Endereço Verificado Antes da Exclusão',
+  'local de turno verificado com checkout concluído é PRESERVADO na exclusão imediata (Item 3)'
+);
+
 -- ── 3. Cenário 3: Retenção de 15 dias (limpar_contas_anonimizadas) ─────────────
 
 -- Conclui o turno do cenário 2
@@ -233,6 +331,46 @@ values (
 -- Avança o relógio para 16 dias após a exclusão
 select set_config('frila.agora', '2026-11-16 12:00:00+00', true);
 
+-- Cria vaga e turno em andamento no dia da retenção aos 15 dias (Item 2b)
+insert into public.vaga (
+  id, estabelecimento_id, funcao_id, publicado_por, inicio_em, fim_em, local, ponto,
+  valor_centavos, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio,
+  responsavel_local, traje, observacoes, modo, estado, chave_cliente
+) values (
+  '78300000-0000-4000-8000-000000000056',
+  '78300000-0000-4000-8000-000000000021',
+  '78300000-0000-4000-8000-000000000030',
+  '78300000-0000-4000-8000-000000000001',
+  '2026-11-16 10:00:00+00',
+  '2026-11-16 18:00:00+00',
+  'Bar Compartilhado - Bar Principal',
+  extensions.st_setsrid(extensions.st_makepoint(-47.88, -15.78), 4326)::extensions.geography,
+  19000, 1, true, false, false,
+  'Gerente em Turno 783', 'Traje Bar Especial', 'Turno ativo na data da retenção', 'urgencia', 'publicada', gen_random_uuid()
+);
+
+insert into public.posicao (id, vaga_id, estado, profissional_id, confirmado_em, inicio_em, fim_em)
+values (
+  '78300000-0000-4000-8000-000000000066',
+  '78300000-0000-4000-8000-000000000056',
+  'confirmada',
+  '78300000-0000-4000-8000-000000000013',
+  '2026-11-15 18:00:00+00',
+  '2026-11-16 10:00:00+00',
+  '2026-11-16 18:00:00+00'
+);
+
+insert into public.turno (id, posicao_id, checkin_em, checkin_tipo, checkin_distancia_m, verificacao, valor_acordado_centavos)
+values (
+  '78300000-0000-4000-8000-000000000076',
+  '78300000-0000-4000-8000-000000000066',
+  '2026-11-16 10:01:00+00',
+  'geolocalizado',
+  25,
+  'verificado',
+  19000
+);
+
 -- Executa a retenção de 15 dias
 select is(
   privado.limpar_contas_anonimizadas(15),
@@ -270,6 +408,51 @@ select is(
   (select local from public.vaga where id = '78300000-0000-4000-8000-000000000053'),
   'Restaurante Loja 10 - Endereço Histórico',
   'local da vaga histórica cumprida é PRESERVADO para exercício regular de direitos e auditoria mútua (LGPD art. 7º, VI)'
+);
+
+-- Confere Item 1 (ocorrência parcialmente limpa tem relato anulado)
+select is(
+  (select relato from public.ocorrencia where id = '78300000-0000-4000-8000-000000000081'),
+  null,
+  'ocorrência parcialmente limpa tem relato anulado aos 15 dias (Item 1)'
+);
+
+-- Confere Item 2a (estabelecimento compartilhado: local, traje e observações preservados; responsavel_local redigido)
+select is(
+  (select local from public.vaga where id = '78300000-0000-4000-8000-000000000054'),
+  'Bar Compartilhado - Deck Norte',
+  'local de vaga em estabelecimento compartilhado com outro membro ativo é PRESERVADO (Item 2a)'
+);
+
+select is(
+  (select traje from public.vaga where id = '78300000-0000-4000-8000-000000000054'),
+  'Uniforme do Bar',
+  'traje de vaga em estabelecimento compartilhado com outro membro ativo é PRESERVADO (Item 2a)'
+);
+
+select is(
+  (select observacoes from public.vaga where id = '78300000-0000-4000-8000-000000000054'),
+  'Entrar pela recepção',
+  'observacoes de vaga em estabelecimento compartilhado com outro membro ativo é PRESERVADO (Item 2a)'
+);
+
+select is(
+  (select responsavel_local from public.vaga where id = '78300000-0000-4000-8000-000000000054'),
+  '[removido por exclusão de conta]',
+  'responsavel_local da vaga em estabelecimento compartilhado é redigido (Item 2a)'
+);
+
+-- Confere Item 2b (turno em andamento no dia da retenção não perde responsável nem traje)
+select is(
+  (select responsavel_local from public.vaga where id = '78300000-0000-4000-8000-000000000056'),
+  'Gerente em Turno 783',
+  'responsavel_local de turno em andamento aos 15 dias é PRESERVADO (Item 2b)'
+);
+
+select is(
+  (select traje from public.vaga where id = '78300000-0000-4000-8000-000000000056'),
+  'Traje Bar Especial',
+  'traje de turno em andamento aos 15 dias é PRESERVADO (Item 2b)'
 );
 
 select * from finish();
