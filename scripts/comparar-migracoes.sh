@@ -6,33 +6,71 @@
 #
 # Uso:
 #   ./scripts/comparar-migracoes.sh <arquivo-com-versoes-do-prod>
-#   ./scripts/comparar-migracoes.sh --commit <ref> <arquivo-com-versoes-do-prod>
+#   ./scripts/comparar-migracoes.sh --pendentes-esperadas <N> <arquivo-com-versoes-do-prod>
+#   ./scripts/comparar-migracoes.sh --commit <ref> [--pendentes-esperadas <N>] <arquivo-com-versoes-do-prod>
 #
 # Códigos de Saída:
-#   0: Catálogo íntegro (liberado para a tag ou 100% atualizado, zero anomalias no Prod)
-#   1: Catálogo com divergência, anomalias no Prod ou catálogo vazio
+#   0: Catálogo íntegro como prefixo contínuo da develop (com pendências esperadas confirmadas via --pendentes-esperadas N ou 100% atualizado)
+#   1: Catálogo com divergência, anomalias no Prod, catálogo vazio, buraco no meio ou pendências não confirmadas
 #   2: Erro de uso (parâmetro ausente, arquivo inexistente ou referência inválida)
 set -uo pipefail
 
 REF="${FRILA_REF:-origin/develop}"
+PENDENTES_ESPERADAS=""
+ARQUIVO_PROD=""
 
-if [ "${1:-}" = "--commit" ]; then
-  if [ -z "${2:-}" ]; then
-    echo "✗ Erro: Parâmetro --commit informado sem referência." >&2
-    echo "Uso: $0 [--commit <ref>] <arquivo-com-versoes-do-prod>" >&2
-    exit 2
-  fi
-  REF="$2"
-  shift 2
-fi
-
-ARQUIVO_PROD="${1:-}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --commit)
+      if [ -z "${2:-}" ]; then
+        echo "✗ Erro: Parâmetro --commit informado sem referência." >&2
+        echo "Uso: $0 [--commit <ref>] [--pendentes-esperadas <N>] <arquivo-com-versoes-do-prod>" >&2
+        exit 2
+      fi
+      REF="$2"
+      shift 2
+      ;;
+    --pendentes-esperadas)
+      if [ -z "${2:-}" ]; then
+        echo "✗ Erro: Parâmetro --pendentes-esperadas informado sem valor." >&2
+        echo "Uso: $0 [--commit <ref>] [--pendentes-esperadas <N>] <arquivo-com-versoes-do-prod>" >&2
+        exit 2
+      fi
+      PENDENTES_ESPERADAS="$2"
+      shift 2
+      ;;
+    --pendentes-esperadas=*)
+      PENDENTES_ESPERADAS="${1#*=}"
+      shift
+      ;;
+    -*)
+      echo "✗ Erro: Opção desconhecida: $1" >&2
+      echo "Uso: $0 [--commit <ref>] [--pendentes-esperadas <N>] <arquivo-com-versoes-do-prod>" >&2
+      exit 2
+      ;;
+    *)
+      if [ -n "$ARQUIVO_PROD" ]; then
+        echo "✗ Erro: Mais de um arquivo informado: '$ARQUIVO_PROD' e '$1'." >&2
+        exit 2
+      fi
+      ARQUIVO_PROD="$1"
+      shift
+      ;;
+  esac
+done
 
 if [ -z "$ARQUIVO_PROD" ]; then
   echo "✗ Erro: Arquivo de versões do Prod não informado." >&2
-  echo "Uso: $0 [--commit <ref>] <arquivo-com-versoes-do-prod>" >&2
-  echo "Exemplo: $0 /tmp/prod_versoes.txt" >&2
+  echo "Uso: $0 [--commit <ref>] [--pendentes-esperadas <N>] <arquivo-com-versoes-do-prod>" >&2
+  echo "Exemplo: $0 --pendentes-esperadas 4 /tmp/prod_versoes.txt" >&2
   exit 2
+fi
+
+if [ -n "$PENDENTES_ESPERADAS" ]; then
+  if ! [[ "$PENDENTES_ESPERADAS" =~ ^[0-9]+$ ]]; then
+    echo "✗ Erro: --pendentes-esperadas deve ser um número inteiro maior ou igual a zero (recebido: '$PENDENTES_ESPERADAS')." >&2
+    exit 2
+  fi
 fi
 
 if [ ! -f "$ARQUIVO_PROD" ]; then
@@ -102,6 +140,9 @@ echo "==========================================================================
 echo "Referência do repositório: $REF ($total_dev migrações registradas)"
 echo "Arquivo de versões do Prod: $ARQUIVO_PROD ($total_prod versões encontradas)"
 echo "Total de versões coincidentes: $total_coincidentes"
+if [ -n "$PENDENTES_ESPERADAS" ]; then
+  echo "Pendências esperadas pelo operador: $PENDENTES_ESPERADAS"
+fi
 echo ""
 
 if [ "$total_faltam" -gt 0 ]; then
@@ -123,7 +164,7 @@ else
 fi
 echo "=========================================================================="
 
-# 5. Análise de prefixo contínuo, buraco no meio e limite de pendências
+# 5. Análise de prefixo contínuo e detecção de buracos
 buracos_no_meio=0
 maior_prod=$(tail -n 1 "$tmp_prod" || echo "00000000000000")
 
@@ -146,32 +187,34 @@ elif [ "$total_coincidentes" -eq 0 ]; then
   echo "Motivo: Nenhuma migração coincidente encontrada entre o Prod e a develop."
   echo "Ação necessária: O dono deve rodar reparo de metadados ('supabase migration repair --status applied')."
   exit 1
-elif [ "$buracos_no_meio" -gt 0 ]; then
+elif [ "$buracos_no_meio" -gt 0 ] || ! cmp -s "$tmp_prod" <(head -n "$total_prod" "$tmp_dev"); then
   echo "✗ VEREDITO: BLOQUEIO TOTAL — BURACO NO MEIO DETECTADO (exit 1)"
-  echo "Motivo: Há $buracos_no_meio migração(ões) pendente(s) mais antiga(s) que a versão mais recente aplicada no Prod ($maior_prod)."
+  echo "Motivo: O catálogo do Prod não é um prefixo contínuo da develop ($buracos_no_meio migração(ões) pendente(s) antes da versão $maior_prod)."
   echo "Ação necessária: O histórico de migrações está descontínuo. Não aplique deploys automáticos sem sincronizar a sequência."
   exit 1
-elif [ "$total_coincidentes" -lt 119 ]; then
-  echo "✗ VEREDITO: BLOQUEIO TOTAL — CATÁLOGO INCOMPLETO (exit 1)"
-  echo "Motivo: O Prod possui apenas $total_coincidentes migração(ões) coincidente(s) (esperado mínimo de 119 da versão 1.0.0)."
-  echo "Ação necessária: O catálogo do Prod está defasado ou não sincronizado ($total_faltam pendências). Execute o reparo de metadados."
-  exit 1
-elif [ "$total_coincidentes" -eq 119 ] && [ "$total_faltam" -eq 4 ]; then
-  echo "✓ VEREDITO: LIBERADO PARA A TAG (exit 0)"
-  echo "Diagnóstico: Catálogo íntegro e perfeitamente alinhado com a release."
-  echo "O Prod possui as 119 migrações base da v1.0.0; o deploy aplicará as 4 pendentes esperadas."
-  exit 0
-elif [ "$total_faltam" -eq 0 ] && [ "$total_anomalias" -eq 0 ]; then
+elif [ "$total_faltam" -eq 0 ]; then
+  if [ -n "$PENDENTES_ESPERADAS" ] && [ "$PENDENTES_ESPERADAS" -ne 0 ]; then
+    echo "✗ VEREDITO: BLOQUEIO — DIVERGÊNCIA NAS PENDÊNCIAS ESPERADAS (exit 1)"
+    echo "Motivo: O operador informou --pendentes-esperadas $PENDENTES_ESPERADAS, mas o Prod já possui todas as $total_dev migrações (0 pendências)."
+    echo "Ação necessária: Averigue o ambiente informado antes de prosseguir."
+    exit 1
+  fi
   echo "✓ VEREDITO: 100% ATUALIZADO (exit 0)"
   echo "Diagnóstico: O ambiente já possui todas as $total_dev migrações da develop aplicadas."
   exit 0
-elif [ "$total_faltam" -gt 4 ]; then
-  echo "✗ VEREDITO: BLOQUEIO TOTAL — LIMITE DE PENDÊNCIAS EXCEDIDO (exit 1)"
-  echo "Motivo: Há $total_faltam migrações pendentes no Prod (máximo esperado para a tag é 4)."
-  echo "Ação necessária: Investigue a defasagem da base antes de prosseguir."
+elif [ -z "$PENDENTES_ESPERADAS" ]; then
+  echo "✗ VEREDITO: BLOQUEIO — PENDÊNCIAS NÃO CONFIRMADAS (exit 1)"
+  echo "Motivo: Há $total_faltam migrações na develop que faltam no Prod."
+  echo "Ação necessária: Para liberar com pendências conhecidas, informe explicitamente '--pendentes-esperadas $total_faltam'."
+  exit 1
+elif [ "$PENDENTES_ESPERADAS" -ne "$total_faltam" ]; then
+  echo "✗ VEREDITO: BLOQUEIO — DIVERGÊNCIA NAS PENDÊNCIAS ESPERADAS (exit 1)"
+  echo "Motivo: O operador esperava $PENDENTES_ESPERADAS pendência(s), mas foram encontradas $total_faltam pendência(s) real(is)."
+  echo "Ação necessária: Averigue as migrações pendentes antes de prosseguir."
   exit 1
 else
-  echo "✓ VEREDITO: LIBERADO (exit 0)"
-  echo "Diagnóstico: $total_coincidentes coincidentes, $total_faltam pendentes, zero anomalias."
+  echo "✓ VEREDITO: CATÁLOGO DE MIGRAÇÕES OK (só esta conferência; falta agendador_secret, janela e aprovação) (exit 0)"
+  echo "Diagnóstico: Catálogo íntegro como prefixo contínuo da develop."
+  echo "O Prod possui $total_coincidentes migrações coincidentes; o deploy aplicará as $total_faltam pendentes esperadas."
   exit 0
 fi

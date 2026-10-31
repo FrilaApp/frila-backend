@@ -42,6 +42,14 @@ conferir "flag --commit sem argumento sai com código 2" \
   2 "Parâmetro --commit informado sem referência" \
   "$PORTAO" --commit
 
+conferir "flag --pendentes-esperadas sem valor sai com código 2" \
+  2 "Parâmetro --pendentes-esperadas informado sem valor" \
+  "$PORTAO" --pendentes-esperadas
+
+conferir "flag --pendentes-esperadas com valor não numérico sai com código 2" \
+  2 "--pendentes-esperadas deve ser um número inteiro" \
+  "$PORTAO" --pendentes-esperadas abc "$TMP/dummy.txt"
+
 conferir "arquivo inexistente sai com código 2" \
   2 "não encontrado" \
   "$PORTAO" "$TMP/arquivo_que_nao_existe.txt"
@@ -68,73 +76,98 @@ git ls-tree -r --name-only origin/develop:supabase/migrations 2>/dev/null \
 
 total_dev=$(wc -l < "$TMP/todas_develop.txt" | tr -d ' ')
 
-# ── 3. Cenário Ideal Go: 119 no Prod (faltam as 4 pendentes) ──
-# As 4 últimas migrações pós-1.0.0
+# ── 3. Cenário Ideal: 119 no Prod (faltam 4 pendências) ────────
 head -n 119 "$TMP/todas_develop.txt" > "$TMP/prod_ideal_119.txt"
 
-conferir "cenário ideal com 119 versões no Prod passa com exit 0 (LIBERADO PARA A TAG)" \
-  0 "LIBERADO PARA A TAG" \
+conferir "119 sem flag reprova com exit 1 pedindo --pendentes-esperadas 4" \
+  1 "informe explicitamente '--pendentes-esperadas 4'" \
   "$PORTAO" "$TMP/prod_ideal_119.txt"
 
-conferir "cenário ideal lista exatamente as 4 pendências esperadas" \
+conferir "119 com --pendentes-esperadas 4 passa com exit 0 (CATÁLOGO DE MIGRAÇÕES OK)" \
+  0 "CATÁLOGO DE MIGRAÇÕES OK (só esta conferência; falta agendador_secret, janela e aprovação)" \
+  "$PORTAO" --pendentes-esperadas 4 "$TMP/prod_ideal_119.txt"
+
+conferir "119 com --pendentes-esperadas 5 falha com exit 1 (DIVERGÊNCIA NAS PENDÊNCIAS ESPERADAS)" \
+  1 "DIVERGÊNCIA NAS PENDÊNCIAS ESPERADAS" \
+  "$PORTAO" --pendentes-esperadas 5 "$TMP/prod_ideal_119.txt"
+
+conferir "119 lista exatamente as 4 pendências para a tag aplicar" \
   0 "4 pendências para a tag aplicar" \
-  "$PORTAO" "$TMP/prod_ideal_119.txt"
+  "$PORTAO" --pendentes-esperadas 4 "$TMP/prod_ideal_119.txt"
 
-# ── 3.1. Casos de Catálogo Incompleto (1 versão e 60 versões) ─
+# ── 4. Casos de Catálogo Incompleto (1 versão e 60 versões) ─────
 head -n 1 "$TMP/todas_develop.txt" > "$TMP/prod_1_versao.txt"
-conferir "Prod com apenas 1 versão reprova com exit 1 (CATÁLOGO INCOMPLETO)" \
-  1 "BLOQUEIO TOTAL — CATÁLOGO INCOMPLETO" \
+conferir "Prod com 1 versão sem flag reprova com exit 1 pedindo --pendentes-esperadas 122" \
+  1 "informe explicitamente '--pendentes-esperadas 122'" \
   "$PORTAO" "$TMP/prod_1_versao.txt"
 
+conferir "Prod com 1 versão e --pendentes-esperadas 4 reprova com exit 1 (divergência)" \
+  1 "DIVERGÊNCIA NAS PENDÊNCIAS ESPERADAS" \
+  "$PORTAO" --pendentes-esperadas 4 "$TMP/prod_1_versao.txt"
+
 head -n 60 "$TMP/todas_develop.txt" > "$TMP/prod_60_versoes.txt"
-conferir "Prod com 60 versões reprova com exit 1 (CATÁLOGO INCOMPLETO)" \
-  1 "BLOQUEIO TOTAL — CATÁLOGO INCOMPLETO" \
+conferir "Prod com 60 versões sem flag reprova com exit 1 pedindo --pendentes-esperadas 63" \
+  1 "informe explicitamente '--pendentes-esperadas 63'" \
   "$PORTAO" "$TMP/prod_60_versoes.txt"
 
-# ── 3.2. Caso de Buraco no Meio (Lacuna na Sequência) ─────────
+conferir "Prod com 60 versões e --pendentes-esperadas 4 reprova com exit 1 (divergência)" \
+  1 "DIVERGÊNCIA NAS PENDÊNCIAS ESPERADAS" \
+  "$PORTAO" --pendentes-esperadas 4 "$TMP/prod_60_versoes.txt"
+
+# ── 5. Caso de Buraco no Meio (Lacuna na Sequência) ─────────────
 # Cria lista de 119 versões mas remove a versão da linha 50
 sed '50d' "$TMP/prod_ideal_119.txt" > "$TMP/prod_buraco.txt"
-conferir "Prod com buraco no meio (lacuna na sequência) reprova com exit 1" \
+conferir "Prod com buraco no meio reprova com exit 1 mesmo sem flag" \
   1 "BLOQUEIO TOTAL — BURACO NO MEIO DETECTADO" \
   "$PORTAO" "$TMP/prod_buraco.txt"
 
-# ── 4. Cenário 100% atualizado (123 coincidentes, 0 pendências) ─
+conferir "Prod com buraco no meio reprova com exit 1 mesmo com --pendentes-esperadas 5" \
+  1 "BLOQUEIO TOTAL — BURACO NO MEIO DETECTADO" \
+  "$PORTAO" --pendentes-esperadas 5 "$TMP/prod_buraco.txt"
+
+# ── 6. Cenário 100% atualizado (123 coincidentes, 0 pendências) ─
 cp "$TMP/todas_develop.txt" "$TMP/prod_123.txt"
-conferir "cenário 100% atualizado passa com exit 0" \
+conferir "cenário 100% atualizado sem flag passa com exit 0" \
   0 "100% ATUALIZADO" \
   "$PORTAO" "$TMP/prod_123.txt"
 
-# ── 5. Cenário com Anomalia no Prod (versão desconhecida) ──────
+conferir "cenário 100% atualizado com --pendentes-esperadas 0 passa com exit 0" \
+  0 "100% ATUALIZADO" \
+  "$PORTAO" --pendentes-esperadas 0 "$TMP/prod_123.txt"
+
+conferir "cenário 100% atualizado com --pendentes-esperadas 4 reprova com exit 1 (divergência)" \
+  1 "DIVERGÊNCIA NAS PENDÊNCIAS ESPERADAS" \
+  "$PORTAO" --pendentes-esperadas 4 "$TMP/prod_123.txt"
+
+# ── 7. Cenário com Anomalia no Prod (versão desconhecida) ──────
 cp "$TMP/prod_ideal_119.txt" "$TMP/prod_anomalia.txt"
 echo "99991231235959" >> "$TMP/prod_anomalia.txt"
 sort "$TMP/prod_anomalia.txt" -o "$TMP/prod_anomalia.txt"
 
 conferir "carimbo desconhecido no Prod acusa anomalia e reprova com exit 1" \
   1 "BLOQUEIO TOTAL — NÃO DISPARAR A TAG" \
-  "$PORTAO" "$TMP/prod_anomalia.txt"
+  "$PORTAO" --pendentes-esperadas 4 "$TMP/prod_anomalia.txt"
 
 conferir "anomalia identifica o carimbo estranho no relatório" \
   1 "99991231235959" \
-  "$PORTAO" "$TMP/prod_anomalia.txt"
+  "$PORTAO" --pendentes-esperadas 4 "$TMP/prod_anomalia.txt"
 
-# ── 6. Cenário Específico da Migração Renomeada ─────────────────
+# ── 8. Cenário Específico da Migração Renomeada ─────────────────
 # Caso real: 20261015160000 (nome de rascunho) x 20261020180000 (nome oficial no PR #185)
-# Se o Prod foi aplicado com o nome antigo 20261015160000:
 cp "$TMP/prod_ideal_119.txt" "$TMP/prod_renomeada.txt"
-# Remove a versão 20261020180000 se estivesse presente e adiciona a versão antiga de rascunho
 sed -i '' '/20261020180000/d' "$TMP/prod_renomeada.txt" 2>/dev/null || sed -i '/20261020180000/d' "$TMP/prod_renomeada.txt"
 echo "20261015160000" >> "$TMP/prod_renomeada.txt"
 sort "$TMP/prod_renomeada.txt" -o "$TMP/prod_renomeada.txt"
 
 conferir "migração com timestamp renomeado (20261015160000) é detectada como anomalia (exit 1)" \
   1 "20261015160000" \
-  "$PORTAO" "$TMP/prod_renomeada.txt"
+  "$PORTAO" --pendentes-esperadas 4 "$TMP/prod_renomeada.txt"
 
 conferir "migração renomeada também acusa pendência da versão oficial (20261020180000)" \
   1 "20261020180000" \
-  "$PORTAO" "$TMP/prod_renomeada.txt"
+  "$PORTAO" --pendentes-esperadas 4 "$TMP/prod_renomeada.txt"
 
-# ── 7. Resiliência a formato de cópia do Supabase SQL Editor ───
+# ── 9. Resiliência a formato de cópia do Supabase SQL Editor ───
 cat << 'EOF' > "$TMP/prod_sujo.txt"
 versao | inserted_at
 ---------------------
@@ -144,14 +177,14 @@ versao | inserted_at
 
 (3 rows)
 EOF
-conferir "resiliência: linhas com aspas, pipes e cabeçalhos são sanitizadas" \
+conferir "resiliência: linhas com aspas, pipes e cabeçalhos são sanitizadas (3 encontradas)" \
   1 "3 versões encontradas" \
   "$PORTAO" "$TMP/prod_sujo.txt"
 
-# ── 8. Suporte à flag --commit ─────────────────────────────────
-conferir "flag --commit origin/develop processa catálogo corretamente" \
+# ── 10. Suporte à flag --commit ────────────────────────────────
+conferir "flag --commit origin/develop com --pendentes-esperadas 4 passa com exit 0" \
   0 "Referência do repositório: origin/develop" \
-  "$PORTAO" --commit origin/develop "$TMP/prod_ideal_119.txt"
+  "$PORTAO" --commit origin/develop --pendentes-esperadas 4 "$TMP/prod_ideal_119.txt"
 
 echo
 if [ "$falhas" -ne 0 ]; then
