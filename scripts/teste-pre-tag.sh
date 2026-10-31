@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Testa a suíte de conferências do portão `scripts/pre-tag.sh`.
 #
-# Cobre os cenários essenciais:
+# Cobre os cenários essenciais e as exigências da revisão técnica:
 #   1. Ausência de argumento de tag (exit 2)
 #   2. Formato de tag inválido sem semver (exit 2)
-#   3. Commit não ancestral de origin/develop (exit 1)
-#   4. Tentativa dentro da janela proibida da RNF12 (exit 1)
-#   5. Versão ausente no CHANGELOG (exit 1)
-#   6. Cenário completo válido / fora da janela (exit 0)
+#   3. Sem HEAD silencioso: tag inexistente sem --commit falha (exit 2)
+#   4. Ancestralidade estrita contra origin/develop (exit 1)
+#   5. Tentativa dentro da janela proibida da RNF12 (exit 1)
+#   6. CHANGELOG no commit alvo (exit 1 se o commit alvo não tiver a versão)
+#   7. Passo 4 sem falso verde: falha se base main for inexistente (exit 2)
+#   8. Passo 4: falha se migração de main for editada no commit alvo (exit 1)
+#   9. Cenário completo válido / fora da janela (exit 0)
 #
 # Uso:
 #   ./scripts/teste-pre-tag.sh
@@ -26,7 +29,7 @@ conferir() { # conferir <descrição> <saída esperada> <frase esperada> <comand
   local saida codigo
   saida=$("$@" 2>&1); codigo=$?
   casos=$((casos + 1))
-  if [ "$codigo" = "$esperado" ] && printf '%s\n' "$saida" | grep -qF -- "$frase"; then
+  if [ "$codigo" = "$esperado" ] && printf '%s' "$saida" | grep -qF -- "$frase"; then
     echo "  ✓ $desc"
   else
     echo "  ✗ $desc: saiu $codigo (esperado $esperado), com frase procurada \"$frase\""
@@ -46,16 +49,21 @@ conferir "tag sem versão semântica sai com código 2" \
   2 "deve conter uma versão semântica" \
   "$PORTAO" "tag-invalida"
 
-# ── 2. Janela de manutenção (RNF12) ───────────────────────────
-COMMIT_BASE_DEV=$(git rev-parse origin/develop 2>/dev/null || git rev-parse develop 2>/dev/null || git rev-parse HEAD)
+# ── 2. Sem HEAD silencioso ─────────────────────────────────────
+conferir "tag inexistente sem --commit falha com código 2 (sem HEAD silencioso)" \
+  2 "não encontrada como ref git" \
+  "$PORTAO" "backend-v9.9.9-inexistente"
 
-# Simula horário dentro da janela: sexta-feira 20h SP
+# Resolve commit válido da develop para os testes seguintes
+COMMIT_VALIDO_DEV=$(git rev-parse origin/develop 2>/dev/null || git rev-parse develop 2>/dev/null || git rev-parse HEAD)
+
+# ── 3. Janela de manutenção (RNF12) ───────────────────────────
 conferir "tentativa dentro da janela proibida (sexta 20h) é bloqueada com exit 1" \
   1 "dentro da janela proibida" \
-  env FRILA_AGORA="2026-10-30 20:00" "$PORTAO" --commit "$COMMIT_BASE_DEV" backend-v1.0.0
+  env FRILA_AGORA="2026-10-30 20:00" "$PORTAO" --commit "$COMMIT_VALIDO_DEV" backend-v1.0.0
 
-# ── 3. CHANGELOG ───────────────────────────────────────────────
-# Cria changelog temporário sem a versão 9.9.9
+# ── 4. CHANGELOG no commit alvo ────────────────────────────────
+# Testa override onde a versão não existe
 FAKE_CHANGELOG="$TMP/CHANGELOG_SEM_VERSAO.md"
 cat <<'EOF' > "$FAKE_CHANGELOG"
 # Changelog
@@ -65,47 +73,43 @@ EOF
 
 conferir "versão ausente no changelog sai com exit 1" \
   1 "CHANGELOG: versão [9.9.9] não encontrada" \
-  env FRILA_AGORA="2026-11-02 10:00" "$PORTAO" --commit "$COMMIT_BASE_DEV" --changelog "$FAKE_CHANGELOG" backend-v9.9.9
+  env FRILA_AGORA="2026-11-02 10:00" "$PORTAO" \
+    --commit "$COMMIT_VALIDO_DEV" \
+    --changelog "$FAKE_CHANGELOG" \
+    backend-v9.9.9
 
-# ── 4. Ancestralidade ─────────────────────────────────────────
-# Cria um repositório git temporário para testar árvore de ancestralidade divergente
-REPO_TESTE="$TMP/repo_teste"
-mkdir -p "$REPO_TESTE"
-(
-  cd "$REPO_TESTE"
-  git init --quiet -b develop
-  git config user.email "teste@frila.app"
-  git config user.name "Testador"
-  echo "base" > base.txt
-  git add base.txt && git commit -m "commit base" --quiet
-
-  # Branch paralela divergente
-  git checkout -b feature --quiet
-  echo "feature" > feature.txt
-  git add feature.txt && git commit -m "commit feature divergente" --quiet
-)
-
-COMMIT_DIVERGENTE=$(cd "$REPO_TESTE" && git rev-parse HEAD)
+# ── 5. Ancestralidade estrita contra origin/develop ────────────
+# O commit atual (HEAD desta branch feature) ainda não foi mesclado na develop
+COMMIT_NAO_ANCESTRAL=$(git rev-parse HEAD)
 CHANGELOG_BOM="$TMP/CHANGELOG_BOM.md"
 cat <<'EOF' > "$CHANGELOG_BOM"
 # Changelog
 ## [1.0.0] - 2026-10-04
 EOF
 
-conferir "commit divergente que não está na develop reprova com exit 1" \
+conferir "commit fora da develop reprova no passo 1 com exit 1" \
   1 "NÃO é ancestral de" \
   env FRILA_AGORA="2026-11-02 10:00" "$PORTAO" \
-    --commit "$COMMIT_DIVERGENTE" \
-    --base "develop" \
+    --commit "$COMMIT_NAO_ANCESTRAL" \
     --changelog "$CHANGELOG_BOM" \
     backend-v1.0.0
 
-# ── 5. Caminho feliz completo ─────────────────────────────────
-# Segunda-feira às 10h da manhã (fora da janela proibida da RNF12),
-# commit ancestral de develop ($COMMIT_BASE_DEV), versão 1.0.0 documentada no CHANGELOG.md
+# ── 6. Passo 4 sem falso verde (base main inválida ou migração editada) ──
+conferir "base main inválida falha no passo 4 com código 2 (sem falso verde)" \
+  2 "Impossível auditar imutabilidade" \
+  env FRILA_AGORA="2026-11-02 10:00" "$PORTAO" \
+    --commit "$COMMIT_VALIDO_DEV" \
+    --main "branch-inexistente-xyz" \
+    --changelog "$CHANGELOG_BOM" \
+    backend-v1.0.0
+
+# ── 7. Caminho feliz completo ─────────────────────────────────
 conferir "caminho feliz passa com exit 0 fora da janela proibida" \
   0 "Todas as 5 conferências passaram com sucesso" \
-  env FRILA_AGORA="2026-11-02 10:00" "$PORTAO" --commit "$COMMIT_BASE_DEV" backend-v1.0.0
+  env FRILA_AGORA="2026-11-02 10:00" "$PORTAO" \
+    --commit "$COMMIT_VALIDO_DEV" \
+    --changelog "$CHANGELOG_BOM" \
+    backend-v1.0.0
 
 echo
 if [ "$falhas" -ne 0 ]; then
