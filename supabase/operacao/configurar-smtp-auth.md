@@ -142,7 +142,7 @@ Para cada um dos 3 provedores, cronometre e inspecione:
 
 ## 5. Conferência automática contínua (GitHub Actions)
 
-A integridade das configurações de Auth nos ambientes remotos (`frila-dev` e `frila-prod`) é monitorada de forma contínua pelo workflow [`.github/workflows/confere-auth-remoto.yml`](../../.github/workflows/confere-auth-remoto.yml) e pelo script [`scripts/conferir-auth-remoto.sh`](../../scripts/conferir-auth-remoto.sh).
+A integridade das configurações de Auth nos ambientes remotos (`frila-dev` e `frila-prod`) é monitorada de forma contínua pelo workflow [`.github/workflows/confere-auth-remoto.yml`](../../.github/workflows/confere-auth-remoto.yml) e pelo script [`scripts/conferir-auth-remoto.sh`](../../scripts/conferir-auth-remoto.sh). Para o ambiente de produção, a execução utiliza o Environment GitHub `frila-prod-leitura` (sem revisores obrigatórios e restrito à branch `develop`), permitindo a checagem diária automatizada sem bloquear em aprovações manuais (detalhes em [`docs/ambiente-frila-prod-leitura.md`](../../docs/ambiente-frila-prod-leitura.md)).
 
 ### 5.1. Como funciona a conferência
 - **Execução periódica:** 1 vez por dia via agendamento (`cron: '17 11 * * *'`).

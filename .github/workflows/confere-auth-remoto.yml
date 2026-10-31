@@ -7,7 +7,7 @@ name: Conferência de Auth remoto
 # modelo contendo links mágicos (ConfirmationURL), o job falha com exit 1 e aponta
 # para supabase/operacao/configurar-smtp-auth.md.
 #
-# Segredos: SUPABASE_ACCESS_TOKEN em cada Environment (frila-dev e frila-prod).
+# Segredos: SUPABASE_ACCESS_TOKEN em cada Environment (frila-dev e frila-prod-leitura).
 on:
   schedule:
     # 08:17 BRT = 11:17 UTC
@@ -39,7 +39,7 @@ jobs:
   prod:
     name: Conferir Auth no frila-prod
     runs-on: ubuntu-latest
-    environment: frila-prod
+    environment: frila-prod-leitura
     timeout-minutes: 5
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
