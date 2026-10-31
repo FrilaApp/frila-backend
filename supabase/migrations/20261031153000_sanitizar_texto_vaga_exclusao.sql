@@ -288,7 +288,9 @@ begin
          or exists (select 1 from public.disponibilidade d where d.profissional_id = p.id)
          or exists (select 1 from public.profissional_funcao pf where pf.profissional_id = p.id)
          or exists (select 1 from public.dispositivo disp where disp.usuario_id = u.id)
-         or exists (select 1 from public.ocorrencia o where o.autor_id = u.id and o.motivo <> '[removido por exclusão de conta]')
+         or exists (select 1 from public.ocorrencia o
+                     where o.autor_id = u.id
+                       and (o.motivo <> '[removido por exclusão de conta]' or o.relato is not null))
          or exists (
            select 1 from public.vaga g
             where g.publicado_por = u.id
@@ -322,11 +324,13 @@ begin
     -- 2. Apaga aparelhos registrados
     delete from public.dispositivo where usuario_id = v_candidato.id;
 
-    -- 3. Substitui relato das ocorrências de autoria dela pelo marcador neutro
+    -- 3. Substitui o motivo das ocorrências de autoria dela pelo marcador neutro e
+    --    apaga o relato da denúncia
     update public.ocorrencia
-       set motivo = '[removido por exclusão de conta]'
+       set motivo = '[removido por exclusão de conta]',
+           relato = null
      where autor_id = v_candidato.id
-       and motivo <> '[removido por exclusão de conta]';
+       and (motivo <> '[removido por exclusão de conta]' or relato is not null);
 
     -- 4. Zera data de nascimento
     update public.usuario
@@ -372,7 +376,7 @@ begin
 end $$;
 
 comment on function privado.limpar_contas_anonimizadas(integer) is
-  'Apaga disponibilidade, funções, aparelhos, zera nascimento e ponto base, substitui relato de ocorrências e sanitiza texto livre de vagas após p_dias dias, preservando local de turnos verificados para auditoria (RF25, RN15, K-001).';
+  'Apaga disponibilidade, funções, aparelhos, zera nascimento e ponto base, substitui o motivo e apaga o relato das ocorrências e sanitiza texto livre de vagas após p_dias dias, preservando local de turnos verificados para auditoria (RF25, RN15, K-001).';
 
 revoke execute on function privado.limpar_contas_anonimizadas(integer) from public, anon, authenticated;
 grant  execute on function privado.limpar_contas_anonimizadas(integer) to service_role;
