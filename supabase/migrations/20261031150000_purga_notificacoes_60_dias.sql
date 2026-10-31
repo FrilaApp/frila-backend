@@ -73,6 +73,11 @@ create table if not exists privado.marca_notificacao (
 comment on table privado.marca_notificacao is
   'Registro durável de deduplicação de avisos (RN23, K-001d). Não contém dados de payload ou mensagens e sobrevive à purga de 60 dias.';
 
+-- Defesa em profundidade RLS e privilégios mínimos (auditoria-rls achado 1)
+alter table privado.marca_notificacao enable row level security;
+revoke all on table privado.marca_notificacao from public, anon, authenticated;
+grant select, insert, update, delete on table privado.marca_notificacao to service_role;
+
 -- Popula marcas preexistentes
 insert into privado.marca_notificacao (tipo, referencia_id, usuario_id, rodada, criada_em)
 select n.tipo, n.referencia_id, n.usuario_id, n.rodada, n.enviada_em
@@ -145,7 +150,7 @@ begin
     v_rodada := coalesce(v_rodada, 1);
   end if;
 
-  -- Deduplicação durável (K-001d): não depende da presença da linha em public.notificacao
+  -- Deduplicação durável (K-001d): se já foi expurgada da notificacao mas existe na marca durável, não recria
   if p_tipo in ('lembrete_24h', 'lembrete_3h', 'inicio_sem_checkin', 'atraso_15min',
                 'fim_sem_checkout', 'vaga_vazia', 'avaliacao_disponivel', 'vaga_sem_elegiveis',
                 'vaga') then
@@ -155,19 +160,34 @@ begin
          and m.referencia_id = p_referencia
          and m.usuario_id = p_usuario
          and m.rodada = v_rodada
+    ) and not exists (
+      select 1 from public.notificacao n
+       where n.tipo = p_tipo
+         and n.referencia_id = p_referencia
+         and n.usuario_id = p_usuario
+         and n.rodada = v_rodada
     ) then
       return null;
     end if;
   end if;
 
-  insert into public.notificacao (usuario_id, profissional_id, tipo, referencia_id, payload, rodada)
-  values (p_usuario, v_prof, p_tipo, p_referencia, coalesce(p_payload, '{}'::jsonb), v_rodada)
+  insert into public.notificacao (usuario_id, profissional_id, tipo, referencia_id, payload,
+                                  enviada_em, rodada)
+  values (p_usuario, v_prof, p_tipo, p_referencia,
+          coalesce(p_payload, '{}'::jsonb) || jsonb_build_object('tipo', p_tipo),
+          privado.agora(), v_rodada)
   on conflict (tipo, referencia_id, usuario_id, rodada)
     where tipo in ('lembrete_24h', 'lembrete_3h', 'inicio_sem_checkin', 'atraso_15min',
                    'fim_sem_checkout', 'vaga_vazia', 'avaliacao_disponivel', 'vaga_sem_elegiveis',
                    'vaga')
     do nothing
   returning id into v_id;
+
+  if v_id is null then
+    select n.id into v_id from public.notificacao n
+     where n.tipo = p_tipo and n.referencia_id = p_referencia and n.usuario_id = p_usuario
+       and n.rodada = v_rodada;
+  end if;
 
   return v_id;
 end $$;
