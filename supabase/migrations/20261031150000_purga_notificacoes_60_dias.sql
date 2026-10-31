@@ -1,6 +1,6 @@
 -- 20261031150000_purga_notificacoes_60_dias.sql
 --
--- Higiene e conformidade LGPD (K-001, K-001d, PR #614 do frila-frontend, E11):
+-- Higiene e conformidade LGPD (K-001, K-001d, K-001g, PR #614 do frila-frontend, E11):
 -- Purga periódica de notificações com mais de 60 dias (public.notificacao).
 --
 -- 1. Contexto e Justificativa de Negócio / LGPD:
@@ -20,15 +20,34 @@
 --      garante que a marca durável de envio não dependa de linha expurgável.
 --
 -- 3. Integridade Referencial e Bloqueio (public.despacho):
---    - A chave estrangeira despacho_notificacao_id_fkey é ajustada com lock_timeout curto e
---      NOT VALID + VALIDATE CONSTRAINT para não segurar AccessExclusiveLock em despacho.
---    - A purga opera em lotes de até 5000 linhas por iteração, evitando transações gigantes.
+--    - A coluna expurgado_em é adicionada com default NULL (operação metadata-only).
+--    - A chave estrangeira despacho_notificacao_id_fkey é recriada com ON DELETE SET NULL e
+--      marcada como NOT VALID, exigindo apenas um lock curto com lock_timeout de 2s.
+--    - A validação de linhas existentes roda em transação separada na migração
+--      20261031150100_validar_fk_despacho_notificacao.sql (ShareUpdateExclusiveLock),
+--      sem segurar AccessExclusiveLock em despacho durante a varredura da tabela.
+--    - A purga opera em lotes de até 5000 linhas por chamada/transação (sem medição prévia
+--      de volume acumulado em produção). Se houver mais linhas pendentes além do lote,
+--      a função agenda automaticamente uma continuação no pg_cron para o minuto seguinte.
 --
 -- 4. Agendamento Automático:
 --    - Agendado no pg_cron com o nome 'limpar_notificacoes_antigas' às 06:19 UTC ('19 6 * * *'),
 --      fora da janela de tráfego quente (RNF12), no mesmo padrão de limpar_dispositivos_inativos.
 
--- 1. Ajusta chave estrangeira com lock_timeout e NOT VALID (evita AccessExclusiveLock longo em despacho)
+-- 1. Coluna expurgado_em em public.despacho para diferenciar notificação expurgada de pendente (K-001d)
+-- Adição de coluna anulável sem valor padrão exige apenas lock curto de metadados.
+do $$
+begin
+  execute 'set local lock_timeout = ''2s''';
+  alter table public.despacho
+    add column if not exists expurgado_em timestamptz default null;
+end $$;
+
+comment on column public.despacho.expurgado_em is
+  'Instante em que a notificação deste despacho foi expurgada (60 dias). Impede reenvios indevidos por liberar_teto_do_profissional.';
+
+-- 2. Ajusta chave estrangeira com lock_timeout e NOT VALID (K-001d, K-001g)
+-- A validação da constraint é postergada para a migração 20261031150100 em transação separada.
 do $$
 begin
   execute 'set local lock_timeout = ''2s''';
@@ -39,15 +58,7 @@ begin
       references public.notificacao(id)
       on delete set null
       not valid;
-  alter table public.despacho validate constraint despacho_notificacao_id_fkey;
 end $$;
-
--- 2. Coluna expurgado_em em public.despacho para diferenciar notificação expurgada de pendente (K-001d)
-alter table public.despacho
-  add column if not exists expurgado_em timestamptz default null;
-
-comment on column public.despacho.expurgado_em is
-  'Instante em que a notificação deste despacho foi expurgada (60 dias). Impede reenvios indevidos por liberar_teto_do_profissional.';
 
 -- 3. Tabela durável de marca de envio que sobrevive ao expurgo de 60 dias de public.notificacao (K-001d)
 create table if not exists privado.marca_notificacao (
@@ -145,19 +156,12 @@ begin
          and m.usuario_id = p_usuario
          and m.rodada = v_rodada
     ) then
-      -- Já foi notificado antes (mesmo que a notificação tenha sido expurgada aos 60 dias)
-      select n.id into v_id from public.notificacao n
-       where n.tipo = p_tipo and n.referencia_id = p_referencia and n.usuario_id = p_usuario
-         and n.rodada = v_rodada;
-      return v_id;
+      return null;
     end if;
   end if;
 
-  insert into public.notificacao (usuario_id, profissional_id, tipo, referencia_id, payload,
-                                  enviada_em, rodada)
-  values (p_usuario, v_prof, p_tipo, p_referencia,
-          coalesce(p_payload, '{}'::jsonb) || jsonb_build_object('tipo', p_tipo),
-          privado.agora(), v_rodada)
+  insert into public.notificacao (usuario_id, profissional_id, tipo, referencia_id, payload, rodada)
+  values (p_usuario, v_prof, p_tipo, p_referencia, coalesce(p_payload, '{}'::jsonb), v_rodada)
   on conflict (tipo, referencia_id, usuario_id, rodada)
     where tipo in ('lembrete_24h', 'lembrete_3h', 'inicio_sem_checkin', 'atraso_15min',
                    'fim_sem_checkout', 'vaga_vazia', 'avaliacao_disponivel', 'vaga_sem_elegiveis',
@@ -165,16 +169,10 @@ begin
     do nothing
   returning id into v_id;
 
-  if v_id is null then
-    select n.id into v_id from public.notificacao n
-     where n.tipo = p_tipo and n.referencia_id = p_referencia and n.usuario_id = p_usuario
-       and n.rodada = v_rodada;
-  end if;
-
   return v_id;
 end $$;
 
--- 5. Atualiza privado.liberar_teto_do_profissional para ignorar despachos expurgados
+-- 5. Atualiza privado.liberar_teto_do_profissional para ignorar despachos expurgados (K-001d)
 create or replace function privado.liberar_teto_do_profissional(p_profissional uuid)
 returns uuid
 language plpgsql
@@ -253,65 +251,95 @@ begin
   return v_notif;
 end $$;
 
--- 6. Função de purga em lotes de até 5000 registros com marcação de expurgo
-create or replace function privado.limpar_notificacoes_antigas(p_dias integer default 60)
+-- 6. Função de purga em lote único por chamada/transação com continuação reagendada (K-001g)
+drop function if exists privado.limpar_notificacoes_antigas(integer);
+
+create or replace function privado.limpar_notificacoes_antigas(
+  p_dias   integer default 60,
+  p_limite integer default 5000
+)
 returns integer
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
-  v_removidos integer := 0;
   v_limite timestamptz;
   v_agora timestamptz := privado.agora();
   v_lote_ids uuid[];
+  v_removidos integer := 0;
+  v_tem_mais boolean := false;
 begin
   if p_dias is null or p_dias < 1 then
     p_dias := 60;
   end if;
+  if p_limite is null or p_limite < 1 then
+    p_limite := 5000;
+  end if;
 
   v_limite := v_agora - (p_dias || ' days')::interval;
 
-  -- Sinaliza retenção autorizada para que desvinculação em despacho passe pelo gatilho despacho_imutavel (RF25)
-  perform set_config('privado.retencao', 'on', true);
+  -- 1. Seleciona até um lote (p_limite) de notificações vencidas
+  select array_agg(sub.id) into v_lote_ids
+    from (
+      select n.id
+        from public.notificacao n
+       where n.enviada_em < v_limite
+       order by n.enviada_em, n.id
+       limit p_limite
+    ) sub;
 
-  -- Purga em lotes de até 5000 por vez para evitar locks prolongados e transações excessivas (K-001d)
-  loop
-    select array_agg(sub.id) into v_lote_ids
-      from (
-        select n.id
-          from public.notificacao n
-         where n.enviada_em < v_limite
-         limit 5000
-      ) sub;
+  if v_lote_ids is not null and cardinality(v_lote_ids) > 0 then
+    -- Sinaliza retenção autorizada para que desvinculação em despacho passe pelo gatilho despacho_imutavel (RF25)
+    perform set_config('privado.retencao', 'on', true);
 
-    exit when v_lote_ids is null or cardinality(v_lote_ids) = 0;
-
-    -- 1. Marca despacho como expurgado e desvincula a FK da notificação que será apagada
+    -- 2. Marca despacho como expurgado e desvincula a FK da notificação que será apagada
     update public.despacho
        set notificacao_id = null,
            expurgado_em = v_agora
      where notificacao_id = any (v_lote_ids);
 
-    -- 2. Purga o lote de notificações com mais de p_dias
+    -- 3. Purga o lote de notificações com mais de p_dias
     delete from public.notificacao
      where id = any (v_lote_ids);
 
-    v_removidos := v_removidos + cardinality(v_lote_ids);
+    perform set_config('privado.retencao', 'off', true);
 
-    exit when cardinality(v_lote_ids) < 5000;
-  end loop;
+    v_removidos := cardinality(v_lote_ids);
+  end if;
 
-  perform set_config('privado.retencao', 'off', true);
+  -- 4. Verifica se ainda restam notificações vencidas após este lote
+  select exists (
+    select 1
+      from public.notificacao n
+     where n.enviada_em < v_limite
+  ) into v_tem_mais;
+
+  -- 5. Reagendamento da continuação via pg_cron (se houver mais linhas pendentes)
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    if v_tem_mais then
+      perform cron.schedule(
+        'limpar_notificacoes_antigas_continua',
+        '* * * * *',
+        'select privado.limpar_notificacoes_antigas(' || p_dias || ', ' || p_limite || ')'
+      );
+    else
+      perform cron.unschedule('limpar_notificacoes_antigas_continua')
+        where exists (
+          select 1 from cron.job
+           where jobname = 'limpar_notificacoes_antigas_continua'
+        );
+    end if;
+  end if;
 
   return v_removidos;
 end $$;
 
-comment on function privado.limpar_notificacoes_antigas(integer) is
-  'Purga notificações enviadas há mais de p_dias (padrão 60 dias, ROPA da LGPD art. 37) em lotes de 5000 e marca despachos como expurgados sob sinal privado.retencao=on (RF25, RN23). Rodada diariamente pelo pg_cron.';
+comment on function privado.limpar_notificacoes_antigas(integer, integer) is
+  'Purga notificações enviadas há mais de p_dias (padrão 60 dias, ROPA da LGPD art. 37) em um lote de até p_limite registros por transação, marcando despachos como expurgados sob sinal privado.retencao=on (RF25, RN23, K-001g). Caso restem linhas pendentes (sem medição prévia de volume), reagenda a continuação minuto a minuto via pg_cron até a conclusão.';
 
-revoke execute on function privado.limpar_notificacoes_antigas(integer) from public, anon, authenticated;
-grant  execute on function privado.limpar_notificacoes_antigas(integer) to service_role;
+revoke execute on function privado.limpar_notificacoes_antigas(integer, integer) from public, anon, authenticated;
+grant  execute on function privado.limpar_notificacoes_antigas(integer, integer) to service_role;
 
 -- Agendamento diário às 06:19 UTC (03:19 BRT), fora da janela protegida por RNF12
 do $$
