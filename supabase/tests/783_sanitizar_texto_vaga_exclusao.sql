@@ -1,5 +1,5 @@
 -- 783_sanitizar_texto_vaga_exclusao.sql
--- Cobertura pgTAP da sanitização de texto livre da vaga na exclusão de conta (K-001, LGPD art. 18, VI, RF25).
+-- Cobertura pgTAP da sanitização de texto livre da vaga na exclusão de conta (K-001, direito de eliminação - LGPD art. 18, RF25).
 --
 -- Afere:
 --   1. Vaga cancelada na exclusão de contratante solo (sem turno ativo):
@@ -11,7 +11,7 @@
 --      - estado passa a 'cancelada', mas texto livre é PRESERVADO até o término do turno (auditoria);
 --   3. Rotina de retenção de 15 dias (privado.limpar_contas_anonimizadas):
 --      - responsavel_local, traje e observacoes são sanitizados;
---      - local é PRESERVADO nas vagas com turnos cumpridos/verificados para resguardo da auditoria da contraparte;
+--      - local é PRESERVADO nas vagas com turnos cumpridos/verificados para exercício regular de direitos e auditoria da contraparte (LGPD art. 7º, VI);
 --      - local é redigido nas vagas sem turnos verificados.
 
 begin;
@@ -269,7 +269,7 @@ select is(
 select is(
   (select local from public.vaga where id = '78300000-0000-4000-8000-000000000053'),
   'Restaurante Loja 10 - Endereço Histórico',
-  'local da vaga histórica cumprida é PRESERVADO para auditoria mútua do turno (LGPD art. 16, VI)'
+  'local da vaga histórica cumprida é PRESERVADO para exercício regular de direitos e auditoria mútua (LGPD art. 7º, VI)'
 );
 
 select * from finish();

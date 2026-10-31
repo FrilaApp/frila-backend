@@ -10,7 +10,7 @@
 --    Ao excluir uma conta de contratante (privado.excluir_conta), as vagas abertas ou preenchidas
 --    de estabelecimentos sem outros membros são canceladas, mas seus textos permaneciam íntegros.
 --
--- 2. Menor Ajuste Seguro e Preservação de Auditoria Mútua (LGPD art. 16, I e VI):
+-- 2. Menor Ajuste Seguro e Preservação de Auditoria Mútua:
 --    - Na hora da exclusão (privado.excluir_conta):
 --      * Vagas canceladas SEM turno em andamento têm texto livre sanitizado imediatamente:
 --        responsavel_local = '[removido por exclusão de conta]', traje = null, observacoes = null,
@@ -22,9 +22,11 @@
 --        responsavel_local, traje e observacoes de todas as vagas publicadas pelo titular excluído
 --        são sanitizados.
 --      * O campo 'local' é preservado exclusivamente nas vagas com turnos cumpridos/verificados,
---        assegurando que o histórico de trabalho da contraparte (profissional) em meus_turnos() e
---        a trilha probatória do serviço permaneçam íntegros (LGPD art. 16, VI - exercício regular
---        de direitos). Nas vagas sem turnos cumpridos, 'local' é também redigido.
+--        assegurando o tratamento para exercício regular de direitos (LGPD art. 7º, VI) e
+--        legítimo interesse/obrigação do controlador conforme o caso (com base jurídica exata
+--        em avaliação pelo Jurídico), para que o histórico de trabalho da contraparte (profissional)
+--        em meus_turnos() e a trilha probatória do serviço permaneçam íntegros. Nas vagas sem
+--        turnos cumpridos, 'local' é também redigido.
 
 -- 1. Atualiza privado.excluir_conta
 create or replace function privado.excluir_conta(p_usuario_id uuid default null::uuid)
@@ -258,7 +260,7 @@ begin
 end $function$;
 
 comment on function privado.excluir_conta(uuid) is
-  'Exclui/anonimiza conta de usuário (RF25, LGPD art. 18, VI). Se contratante único membro, cancela turnos futuros, retira candidaturas pendentes, cancela vagas e sanitiza texto livre preservando turnos em andamento para auditoria.';
+  'Exclui/anonimiza conta de usuário (RF25, direito de eliminação - LGPD art. 18). Se contratante único membro, cancela turnos futuros, retira candidaturas pendentes, cancela vagas e sanitiza texto livre preservando turnos em andamento para auditoria.';
 
 revoke execute on function privado.excluir_conta(uuid) from public, anon, authenticated;
 grant  execute on function privado.excluir_conta(uuid) to service_role;
@@ -333,7 +335,8 @@ begin
 
     -- 5. Sanitiza texto livre das vagas publicadas pelo titular excluído (K-001)
     -- Preserva 'local' nas vagas com turnos cumpridos/verificados para resguardo da auditoria
-    -- mútua e histórico de trabalho da contraparte (LGPD art. 16, I e VI).
+    -- mútua e histórico de trabalho da contraparte (exercício regular de direitos - LGPD art. 7º, VI,
+    -- e legítimo interesse/obrigação do controlador conforme o caso, em avaliação pelo Jurídico).
     update public.vaga g
        set responsavel_local = '[removido por exclusão de conta]',
            traje             = null,
