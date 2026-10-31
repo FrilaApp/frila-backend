@@ -21,7 +21,7 @@
 begin;
 
 set local timezone = 'UTC';
-select plan(25);
+select plan(29);
 
 -- ── 1. Estrutura e Controle de Acesso ──────────────────────────────────────────
 
@@ -234,17 +234,17 @@ values (
 insert into public.vaga (
   id, estabelecimento_id, funcao_id, publicado_por, inicio_em, fim_em, local, ponto,
   valor_centavos, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio,
-  responsavel_local, modo, chave_cliente
+  responsavel_local, modo, estado, chave_cliente
 ) values (
   '78200000-0000-4000-8000-000000000050',
   '78200000-0000-4000-8000-000000000020',
   '78200000-0000-4000-8000-000000000030',
   '78200000-0000-4000-8000-000000000001',
-  '2026-09-01 18:00:00+00',
-  '2026-09-01 23:00:00+00',
+  '2026-11-15 18:00:00+00',
+  '2026-11-15 23:00:00+00',
   'Local 782',
   extensions.st_setsrid(extensions.st_makepoint(-47.9, -15.8), 4326)::extensions.geography,
-  15000, 1, false, false, false, 'Gerente 782', 'urgencia', gen_random_uuid()
+  15000, 1, false, false, false, 'Gerente 782', 'urgencia', 'publicada', gen_random_uuid()
 ) on conflict (id) do nothing;
 
 -- Notificação vinculada a despacho com mais de 60 dias (70 dias atrás: 2026-08-22)
@@ -285,6 +285,34 @@ select is(
   (select notificacao_id from public.despacho where id = '78200000-0000-4000-8000-000000000088'),
   null,
   'Despacho associado à notificação purgada tem notificacao_id desvinculado para null com integridade preservada'
+);
+
+select ok(
+  (select expurgado_em from public.despacho where id = '78200000-0000-4000-8000-000000000088') is not null,
+  'Despacho expurgado tem coluna expurgado_em preenchida com timestamp de retenção (Item 4)'
+);
+
+select is(
+  privado.liberar_teto_do_profissional('78200000-0000-4000-8000-000000000040'),
+  null,
+  'liberar_teto_do_profissional NÃO reenvia notificação de vaga futura cujo despacho foi expurgado (Item 4)'
+);
+
+select is(
+  (select count(*)::int from privado.marca_notificacao where referencia_id = '78200000-0000-4000-8000-000000000050'),
+  1,
+  'Marca durável em privado.marca_notificacao sobrevive à purga da notificação (Item 4)'
+);
+
+select is(
+  privado.notificar(
+    '78200000-0000-4000-8000-000000000001',
+    'vaga',
+    '78200000-0000-4000-8000-000000000050',
+    '{"vaga_id": "78200000-0000-4000-8000-000000000050"}'::jsonb
+  ),
+  null,
+  'privado.notificar não recria notificação expurgada respeitando marca durável (Item 4)'
 );
 
 select * from finish();
