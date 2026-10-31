@@ -123,7 +123,19 @@ else
 fi
 echo "=========================================================================="
 
-# 5. Veredito e código de saída
+# 5. Análise de prefixo contínuo, buraco no meio e limite de pendências
+buracos_no_meio=0
+maior_prod=$(tail -n 1 "$tmp_prod" || echo "00000000000000")
+
+# Se alguma migração faltante for mais antiga que a maior já aplicada no Prod, há um buraco no meio
+while read -r v_falta; do
+  [ -z "$v_falta" ] && continue
+  if [ "$v_falta" -lt "$maior_prod" ]; then
+    buracos_no_meio=$((buracos_no_meio + 1))
+  fi
+done < "$tmp_faltam"
+
+# 6. Veredito e código de saída
 if [ "$total_anomalias" -gt 0 ]; then
   echo "✗ VEREDITO: BLOQUEIO TOTAL — NÃO DISPARAR A TAG (exit 1)"
   echo "Motivo: Foram encontradas $total_anomalias anomalias no catálogo do Prod."
@@ -134,6 +146,16 @@ elif [ "$total_coincidentes" -eq 0 ]; then
   echo "Motivo: Nenhuma migração coincidente encontrada entre o Prod e a develop."
   echo "Ação necessária: O dono deve rodar reparo de metadados ('supabase migration repair --status applied')."
   exit 1
+elif [ "$buracos_no_meio" -gt 0 ]; then
+  echo "✗ VEREDITO: BLOQUEIO TOTAL — BURACO NO MEIO DETECTADO (exit 1)"
+  echo "Motivo: Há $buracos_no_meio migração(ões) pendente(s) mais antiga(s) que a versão mais recente aplicada no Prod ($maior_prod)."
+  echo "Ação necessária: O histórico de migrações está descontínuo. Não aplique deploys automáticos sem sincronizar a sequência."
+  exit 1
+elif [ "$total_coincidentes" -lt 119 ]; then
+  echo "✗ VEREDITO: BLOQUEIO TOTAL — CATÁLOGO INCOMPLETO (exit 1)"
+  echo "Motivo: O Prod possui apenas $total_coincidentes migração(ões) coincidente(s) (esperado mínimo de 119 da versão 1.0.0)."
+  echo "Ação necessária: O catálogo do Prod está defasado ou não sincronizado ($total_faltam pendências). Execute o reparo de metadados."
+  exit 1
 elif [ "$total_coincidentes" -eq 119 ] && [ "$total_faltam" -eq 4 ]; then
   echo "✓ VEREDITO: LIBERADO PARA A TAG (exit 0)"
   echo "Diagnóstico: Catálogo íntegro e perfeitamente alinhado com a release."
@@ -143,6 +165,11 @@ elif [ "$total_faltam" -eq 0 ] && [ "$total_anomalias" -eq 0 ]; then
   echo "✓ VEREDITO: 100% ATUALIZADO (exit 0)"
   echo "Diagnóstico: O ambiente já possui todas as $total_dev migrações da develop aplicadas."
   exit 0
+elif [ "$total_faltam" -gt 4 ]; then
+  echo "✗ VEREDITO: BLOQUEIO TOTAL — LIMITE DE PENDÊNCIAS EXCEDIDO (exit 1)"
+  echo "Motivo: Há $total_faltam migrações pendentes no Prod (máximo esperado para a tag é 4)."
+  echo "Ação necessária: Investigue a defasagem da base antes de prosseguir."
+  exit 1
 else
   echo "✓ VEREDITO: LIBERADO (exit 0)"
   echo "Diagnóstico: $total_coincidentes coincidentes, $total_faltam pendentes, zero anomalias."

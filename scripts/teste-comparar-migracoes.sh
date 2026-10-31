@@ -80,6 +80,24 @@ conferir "cenário ideal lista exatamente as 4 pendências esperadas" \
   0 "4 pendências para a tag aplicar" \
   "$PORTAO" "$TMP/prod_ideal_119.txt"
 
+# ── 3.1. Casos de Catálogo Incompleto (1 versão e 60 versões) ─
+head -n 1 "$TMP/todas_develop.txt" > "$TMP/prod_1_versao.txt"
+conferir "Prod com apenas 1 versão reprova com exit 1 (CATÁLOGO INCOMPLETO)" \
+  1 "BLOQUEIO TOTAL — CATÁLOGO INCOMPLETO" \
+  "$PORTAO" "$TMP/prod_1_versao.txt"
+
+head -n 60 "$TMP/todas_develop.txt" > "$TMP/prod_60_versoes.txt"
+conferir "Prod com 60 versões reprova com exit 1 (CATÁLOGO INCOMPLETO)" \
+  1 "BLOQUEIO TOTAL — CATÁLOGO INCOMPLETO" \
+  "$PORTAO" "$TMP/prod_60_versoes.txt"
+
+# ── 3.2. Caso de Buraco no Meio (Lacuna na Sequência) ─────────
+# Cria lista de 119 versões mas remove a versão da linha 50
+sed '50d' "$TMP/prod_ideal_119.txt" > "$TMP/prod_buraco.txt"
+conferir "Prod com buraco no meio (lacuna na sequência) reprova com exit 1" \
+  1 "BLOQUEIO TOTAL — BURACO NO MEIO DETECTADO" \
+  "$PORTAO" "$TMP/prod_buraco.txt"
+
 # ── 4. Cenário 100% atualizado (123 coincidentes, 0 pendências) ─
 cp "$TMP/todas_develop.txt" "$TMP/prod_123.txt"
 conferir "cenário 100% atualizado passa com exit 0" \
@@ -127,7 +145,7 @@ versao | inserted_at
 (3 rows)
 EOF
 conferir "resiliência: linhas com aspas, pipes e cabeçalhos são sanitizadas" \
-  0 "3 versões encontradas" \
+  1 "3 versões encontradas" \
   "$PORTAO" "$TMP/prod_sujo.txt"
 
 # ── 8. Suporte à flag --commit ─────────────────────────────────
