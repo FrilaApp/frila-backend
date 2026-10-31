@@ -129,7 +129,7 @@ Medida com `gh pr list --state open` em 16/10:
 |---|---|
 | local | `supabase start` · Postgres 17 · **107** migrações na `develop` (veja `scripts/migracoes-sem-colisao.sh`), **47** no `main` (em 16/10) |
 | `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · SMTP próprio ativo (`smtp.gmail.com:465`, código de 6 dígitos) · **Entrega bloqueada** por `frila.agendador_secret` (vide abaixo) |
-| `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **vazio**: aguarda esteira de deploy por tag |
+| `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **em uso** (app 0.5.5 no TestFlight e 9 Edge Functions ativas desde 27/10; fonte: issue #352) · aguarda esteira automatizada de deploy por tag |
 
 **Desde 29/09 o `frila-dev` manda e-mail por SMTP próprio** (PR #81):
 - Envio: `smtp.gmail.com:465`, conta `frilaverificacao@gmail.com`, remetente "Frila".
