@@ -60,8 +60,8 @@ discordar do documento, **o documento ganha** — ou o documento muda primeiro.
 | **Contrato da API** | `contrato/openapi.yaml` — espelho de `FrilaApp/frila-docs · api/openapi.yaml`. Nome de campo, código de erro e status HTTP saem daqui |
 | **Modelagem de Banco** | vault `FrilaApp/Bancada · doc-harness/07 - Arquitetura/Modelagem de Banco de Dados.md` — o DDL, as 19 políticas de RLS, a definição canônica da taxa de comparecimento |
 | **Decisões técnicas** | mesmo vault, `Pendências Técnicas Para Codar.md` — D1 a D13 |
-| **Escopo e sprints** | `FrilaApp/frila-docs · Documentos/MD/05-ESCOPO-DO-MVP.md` |
-| **Requisitos (RN, RF, RNF, UC)** | `FrilaApp/frila-docs · Documentos/Diagramas:Documentos/Frila_Documento_de_Requisitos.docx` |
+| **Escopo e sprints** | `FrilaApp/frila-docs · produto/05-ESCOPO-DO-MVP.md` |
+| **Requisitos (RN, RF, RNF, UC)** | `FrilaApp/frila-docs · requisitos/Frila_Documento_de_Requisitos.docx` |
 | **Termos bloqueados e moderação** | `supabase/operacao/lista-de-termos.md` — Processo de governança, adição, remoção e revisão trimestral da lista de termos bloqueados (J6, cartão `ggEzge6h`) |
 | **O quadro** | https://trello.com/b/0eyqvbRJ/frila — 221 cartões, 60 com etiqueta Backend |
 
