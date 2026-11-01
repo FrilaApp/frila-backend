@@ -108,6 +108,7 @@ echo "▸ Disparando Sessão 1 (Purga) com lock SHARE em public.notificacao"
 FIFO1="$TMP/sessao1.fifo"
 mkfifo "$FIFO1"
 
+# Abre processo da Sessão 1 ouvindo o FIFO (com ON_ERROR_STOP=1 para propagar erros SQL)
 docker exec -i "$DB" psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 < "$FIFO1" > "$TMP/sessao1.out" 2> "$TMP/sessao1.err" &
 PID_SESSAO1=$!
 
@@ -127,7 +128,7 @@ for i in $(seq 1 60); do # até 3.0s
 done
 
 if [ "$lock_adquirido" -ne 1 ]; then
-  falhou "Sessão 1 não conseguiu adquirir lock SHARE em public.notificacao"
+  falhou "Sessão 1 não conseguiu adquirir lock SHARE em public.notificacao: $(cat "$TMP/sessao1.err" 2>/dev/null)"
   exit 1
 fi
 
@@ -141,7 +142,8 @@ if [ -n "${ATRASO_SESSAO2:-}" ]; then
   ATRASO_SQL="select pg_sleep($ATRASO_SESSAO2);"
 fi
 
-docker exec -i "$DB" psql -U postgres -d postgres -X -q -t -A <<SQL >"$TMP/sessao2.out" 2>"$TMP/sessao2.err" &
+# Sessão 2: executa com -v ON_ERROR_STOP=1 para garantir que qualquer erro SQL seja propagado (N-003)
+docker exec -i "$DB" psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 -t -A <<SQL >"$TMP/sessao2.out" 2>"$TMP/sessao2.err" &
 set application_name = 'corrida_notificar_sessao2';
 set statement_timeout = '12s';
 $ATRASO_SQL
@@ -152,6 +154,8 @@ PID_SESSAO2=$!
 echo "▸ Monitorando intercalação verificável das duas sessões"
 
 intercalacao_detectada=""
+s2_erro_precoce=0
+
 # Limite de espera para a intercalação (15 rodadas ~1.2s)
 for i in $(seq 1 15); do
   # 1. Verifica se a Sessão 2 bloqueou aguardando lock na tabela notificacao
@@ -164,7 +168,15 @@ for i in $(seq 1 15); do
 
   # 2. Verifica se a Sessão 2 terminou
   if ! kill -0 "$PID_SESSAO2" 2>/dev/null; then
-    # Sessão 2 terminou. Verifica se Sessão 1 AINDA está segurando o lock SHARE
+    wait "$PID_SESSAO2" 2>/dev/null || S2_EXIT=$?
+    S2_EXIT=${S2_EXIT:-0}
+    if [ "$S2_EXIT" -ne 0 ] || grep -qE "(ERROR|FATAL|PANIC):" "$TMP/sessao2.err" 2>/dev/null; then
+      intercalacao_detectada="sessao2_falhou"
+      s2_erro_precoce=1
+      break
+    fi
+
+    # Sessão 2 terminou com sucesso. Verifica se Sessão 1 AINDA está segurando o lock SHARE
     lock_ativo=$(psql -tAc "select count(*) from pg_locks l join pg_stat_activity a on l.pid = a.pid where a.application_name = 'corrida_purga_sessao1' and l.relation = 'public.notificacao'::regclass and l.mode = 'ShareLock' and l.granted = true;" 2>/dev/null || echo 0)
     if [ "$lock_ativo" -eq 1 ]; then
       intercalacao_detectada="terminou_antes_da_purga"
@@ -182,30 +194,38 @@ if [ "$intercalacao_detectada" = "bloqueado_no_insert" ]; then
   ok "Intercalação verificada: Sessão 2 aguardando lock de notificacao (tentativa de INSERT bloqueada)"
 elif [ "$intercalacao_detectada" = "terminou_antes_da_purga" ]; then
   ok "Intercalação verificada: Sessão 2 terminou antes da purga sem tentar INSERT (marca atômica)"
+elif [ "$intercalacao_detectada" = "sessao2_falhou" ]; then
+  falhou "Sessão 2 (notificar) falhou com erro SQL antes da purga (exit=${S2_EXIT:-3}): $(cat "$TMP/sessao2.err" 2>/dev/null)"
 elif [ "$intercalacao_detectada" = "sessao2_apos_purga" ]; then
   falhou "Intercalação inválida: Sessão 2 só executou depois que a purga já havia sido concluída."
 else
   falhou "Intercalação não ocorreu dentro do tempo limite: Sessão 2 não atingiu o lock enquanto Sessão 1 segurava SHARE."
 fi
 
-# Se a intercalação foi válida, comanda a Sessão 1 a purgar e commitar
+# Se a intercalação foi válida e sem erro de Sessão 2, comanda a Sessão 1 a purgar e commitar
 if [ "$intercalacao_detectada" = "bloqueado_no_insert" ] || [ "$intercalacao_detectada" = "terminou_antes_da_purga" ]; then
   printf "select 'purgados=' || privado.limpar_notificacoes_antigas(60, 5000);\ncommit;\n" >&3
   exec 3>&- # Fecha FIFO para que psql encerre
 
-  wait $PID_SESSAO1; S1_EXIT=$?
-  wait $PID_SESSAO2; S2_EXIT=$?
-
-  if [ $S1_EXIT -ne 0 ]; then
-    falhou "Sessão 1 (purga) falhou: $(cat "$TMP/sessao1.err")"
+  wait $PID_SESSAO1 2>/dev/null || S1_EXIT=$?
+  S1_EXIT=${S1_EXIT:-0}
+  if [ -n "${PID_SESSAO2:-}" ] && kill -0 "$PID_SESSAO2" 2>/dev/null; then
+    wait $PID_SESSAO2 2>/dev/null || S2_EXIT=$?
+    S2_EXIT=${S2_EXIT:-0}
   fi
-  if [ $S2_EXIT -ne 0 ]; then
-    falhou "Sessão 2 (notificar) falhou: $(cat "$TMP/sessao2.err")"
+
+  if [ "$S1_EXIT" -ne 0 ] || grep -qE "(ERROR|FATAL|PANIC):" "$TMP/sessao1.err" 2>/dev/null; then
+    falhou "Sessão 1 (purga) falhou (exit=$S1_EXIT): $(cat "$TMP/sessao1.err" 2>/dev/null)"
+  fi
+  if [ "${S2_EXIT:-0}" -ne 0 ] || grep -qE "(ERROR|FATAL|PANIC):" "$TMP/sessao2.err" 2>/dev/null; then
+    falhou "Sessão 2 (notificar) falhou (exit=${S2_EXIT:-0}): $(cat "$TMP/sessao2.err" 2>/dev/null)"
   fi
 else
   exec 3>&- 2>/dev/null || true
   wait $PID_SESSAO1 2>/dev/null || true
-  wait $PID_SESSAO2 2>/dev/null || true
+  if [ -n "${PID_SESSAO2:-}" ] && kill -0 "$PID_SESSAO2" 2>/dev/null; then
+    wait $PID_SESSAO2 2>/dev/null || true
+  fi
 fi
 
 echo "▸ Verificando resultado da corrida"
