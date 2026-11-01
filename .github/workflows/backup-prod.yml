@@ -95,6 +95,7 @@ jobs:
           psql --version
           age --version
           aws --version
+          tar --version
 
       - name: Executar backup lógico cifrado
         id: backup
