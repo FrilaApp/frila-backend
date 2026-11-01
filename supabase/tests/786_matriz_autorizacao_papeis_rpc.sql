@@ -19,7 +19,7 @@ on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-20 21:00:00+00', true);
 set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 
-select plan(180);
+select plan(182);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -154,7 +154,25 @@ begin
       when insufficient_privilege then
         v_res := '42501_SEM_EXECUTE';
       when sqlstate 'PGRST' then
-        v_res := 'PGRST:' || coalesce(SQLERRM::jsonb ->> 'code', SQLERRM);
+        declare
+          v_code text := SQLERRM::jsonb ->> 'code';
+          v_detail text;
+          v_status int;
+        begin
+          get stacked diagnostics v_detail = pg_exception_detail;
+          begin
+            v_status := (v_detail::jsonb ->> 'status')::int;
+          exception when others then
+            v_status := null;
+          end;
+          if v_status = 401 or v_code = 'nao_autenticado' then
+            v_res := '401_NAO_AUTENTICADO';
+          elsif v_code = 'sem_permissao' or v_status = 403 then
+            v_res := '403_SEM_PERMISSAO';
+          else
+            v_res := 'PGRST:' || coalesce(v_code, SQLERRM);
+          end if;
+        end;
       when others then
         v_res := SQLSTATE || ':' || SQLERRM;
     end;
@@ -175,21 +193,35 @@ begin
       when sqlstate 'PGRST' then
         declare
           v_code text := SQLERRM::jsonb ->> 'code';
-          v_status int := (SQLERRM::jsonb ->> 'status')::int;
+          v_detail text;
+          v_status int;
         begin
-          if v_code = 'perfil_incompativel' or (v_status = 403 and v_code = 'perfil_incompativel') then
+          get stacked diagnostics v_detail = pg_exception_detail;
+          begin
+            v_status := (v_detail::jsonb ->> 'status')::int;
+          exception when others then
+            v_status := null;
+          end;
+
+          -- Validação estrita de status HTTP no DETAIL e código no MESSAGE
+          if v_status = 401 or v_code = 'nao_autenticado' then
+            v_res := '401_NAO_AUTENTICADO';
+          elsif v_code = 'perfil_incompativel' or (v_status = 403 and v_code = 'perfil_incompativel') then
             v_res := '403_PERFIL_INCOMPATIVEL';
           elsif v_code = 'sem_permissao' or (v_status = 403 and v_code = 'sem_permissao') then
             v_res := '403_SEM_PERMISSAO';
           elsif v_code = 'nao_encontrado' or v_status = 404 then
             v_res := '404_NAO_ENCONTRADO';
-          elsif v_code = 'nao_autenticado' or v_status = 401 then
-            v_res := '401_NAO_AUTENTICADO';
           elsif v_code in ('conta_existente', 'sem_suspensao_ativa', 'perfil_ja_existe',
                            'a_caminho_fora_da_janela', 'republicacao_indisponivel',
                            'candidatura_indisponivel', 'posicao_nao_cancelavel',
                            'checkin_ja_confirmado') then
-            v_res := 'REGRA:' || v_code;
+            -- Regra de negócio nunca pode ter status HTTP 401 ou 403
+            if v_status in (401, 403) then
+              v_res := 'STATUS_INVALIDO_PARA_REGRA:' || coalesce(v_status::text, 'NULL') || ':' || v_code;
+            else
+              v_res := 'REGRA:' || v_code;
+            end if;
           else
             v_res := 'PGRST_OUTRO:' || coalesce(v_code, 'DESCONHECIDO');
           end if;
@@ -482,10 +514,24 @@ select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-0
 -- ============================================================================
 create or replace function pg_temp.mock_rpc_401() returns void language plpgsql as $$
 begin
-  raise exception using errcode = 'PGRST', message = '{"code": "nao_autenticado", "status": 401, "message": "Token ausente ou invalido"}';
+  raise exception using
+    errcode = 'PGRST',
+    message = json_build_object('code', 'nao_autenticado', 'message', 'nao_autenticado')::text,
+    detail  = json_build_object('status', 401, 'headers', json_build_object())::text;
 end;
 $$;
 grant execute on function pg_temp.mock_rpc_401() to authenticated;
+
+create or replace function pg_temp.mock_rpc_mutacao_status_401() returns void language plpgsql as $$
+begin
+  -- Mutacao simulada: regra de negocio sem_suspensao_ativa forcada com status 401 no detail
+  raise exception using
+    errcode = 'PGRST',
+    message = json_build_object('code', 'sem_suspensao_ativa', 'message', 'sem_suspensao_ativa')::text,
+    detail  = json_build_object('status', 401, 'headers', json_build_object())::text;
+end;
+$$;
+grant execute on function pg_temp.mock_rpc_mutacao_status_401() to authenticated;
 
 create or replace function pg_temp.mock_rpc_sucesso() returns void language plpgsql as $$
 begin
@@ -494,8 +540,10 @@ end;
 $$;
 grant execute on function pg_temp.mock_rpc_sucesso() to authenticated;
 
-select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select pg_temp.mock_rpc_401()'), '401_NAO_AUTENTICADO', 'classificador [mutacao 401]: erro 401 nao_autenticado JAMAIS e classificado como AUTORIZADO');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select pg_temp.mock_rpc_401()'), '401_NAO_AUTENTICADO', 'classificador [mutacao 401]: erro 401 nao_autenticado no detail JAMAIS e classificado como AUTORIZADO');
 select isnt(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select pg_temp.mock_rpc_401()'), 'AUTORIZADO', 'classificador [mutacao 401]: isolamento rigoroso garante rejeicao de 401 no caminho autorizado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select pg_temp.mock_rpc_mutacao_status_401()'), '401_NAO_AUTENTICADO', 'classificador [mutacao status 401 em regra]: status 401 no detail sobrepoe codigo de negocio e derruba regra');
+select isnt(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select pg_temp.mock_rpc_mutacao_status_401()'), 'REGRA:sem_suspensao_ativa', 'classificador [mutacao status 401 em regra]: regra com status 401 JAMAIS passa como REGRA');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select pg_temp.mock_rpc_sucesso()'), 'AUTORIZADO', 'classificador [sucesso]: execucao limpa e classificada como AUTORIZADO');
 
 select * from finish();
