@@ -75,7 +75,7 @@ supabase/
 └── tests/         pgTAP — um teste por CHECK e por política, com o nome da regra
 
 contrato/openapi.yaml   Espelho do contrato do Frila. Divergência quebra a CI
-agents/                 Os cinco agentes do pipeline, versionados
+.claude/agents/         Os cinco agentes de apoio do Claude Code, versionados
 scripts/                bancada-sync, ciclo-completo
 ```
 
@@ -227,7 +227,7 @@ entram como passos novos desse workflow, e a política registra que as cópias s
 Um cartão do Trello por vez, do quadro ao merge.
 
 - **Branch base e destino de PR: SEMPRE `develop`**: todo branch parte de `origin/develop` (`git fetch origin develop && git checkout -b sX/<slug> origin/develop`), todo PR deve ser aberto com `--base develop` (`gh pr create --base develop`), e o merge de PR aprovado entra exclusivamente na `develop`. A branch `main` é estritamente reservada para releases estáveis de produção.
-- O pipeline, os agentes e as regras que o código segue estão em [`CLAUDE.md`](CLAUDE.md).
+- O pipeline, os agentes e as regras que o código segue estão em [`AGENTS.md`](AGENTS.md).
 
 ## Time
 
