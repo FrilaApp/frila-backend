@@ -63,7 +63,7 @@
 #       CENARIOS="checkin cancelar teto posicao impasse janela rollback atraso excluir escolher" ./scripts/corrida-ciclo.sh
 #       MANTER=1 ./scripts/corrida-ciclo.sh     # não limpa: o placar fica em corrida_ciclo
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 RODADAS=${RODADAS:-50}
@@ -785,7 +785,6 @@ SQL
     >"$TMP/impasse"
   # A desistência sai um pouco depois dos outros dois: ela só age sobre a posição que a
   # candidatura já confirmou.
-  local ms
   ms() { printf '0.%03d 0' "$(( ${2:-0} + RANDOM % $1 ))"; }
   while read -r n vaga pos conta; do
     lado impasse "$n" 1 "$DONA"  "select public.cancelar_vaga('$vaga', 'a casa fechou mais cedo')" "$(ms 30)"

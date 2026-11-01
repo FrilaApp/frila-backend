@@ -20,7 +20,7 @@
 # Uso:  ./scripts/corrida-candidatar.sh
 #       CLIENTES=20 POSICOES=2 ./scripts/corrida-candidatar.sh
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 CLIENTES=${CLIENTES:-20}

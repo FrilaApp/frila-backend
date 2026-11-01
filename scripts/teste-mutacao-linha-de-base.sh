@@ -12,7 +12,7 @@
 #
 #   ./scripts/teste-mutacao-linha-de-base.sh
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 PORTAO="$PWD/scripts/mutacao.sh"
 TMP=$(mktemp -d)

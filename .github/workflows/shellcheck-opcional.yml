@@ -1,0 +1,29 @@
+name: ShellCheck Opcional
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: ShellCheck (scripts alterados)
+    runs-on: ubuntu-latest
+    # Portão opcional: não bloqueia a esteira do PR, apenas emite avisos
+    continue-on-error: true
+    steps:
+      - name: Checkout do código completo para diff
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Executar ShellCheck nos scripts alterados
+        run: |
+          ./scripts/shellcheck-alterados.sh
