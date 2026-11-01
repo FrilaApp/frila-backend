@@ -833,4 +833,59 @@ Deno.test("entrar-demonstracao: parseLimiteJanela exige formato ISO-8601 estrito
   assertEquals(isNaN(parseLimiteJanela("2026-10-30T23:59:00+02:00")), false);
 });
 
+Deno.test("entrar-demonstracao: falha 500 ao gravar auditoria de entrada bem-sucedida", async () => {
+  const estado: MockState = { tentativas: [], proximoId: 1, restGravarFalha: true };
+  const req = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: MOCK_CODIGO }),
+  });
+  const res = await handler(req, depsPadrao(estado));
+  assertEquals(res.status, 500);
+  const json = await res.json();
+  assertEquals(json.code, "erro_interno");
+});
+
+Deno.test("entrar-demonstracao: falha 500 quando consulta de janela de tentativas falha", async () => {
+  const estado: MockState = { tentativas: [], proximoId: 1, restJanelaFalha: true };
+  const req = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "codigo-errado" }),
+  });
+  const res = await handler(req, depsPadrao(estado));
+  assertEquals(res.status, 500);
+  const json = await res.json();
+  assertEquals(json.code, "erro_interno");
+});
+
+Deno.test("entrar-demonstracao: extrairIpCliente lida com x-forwarded-for encadeado e sem headers", () => {
+  const reqXff = new Request("http://localhost", {
+    headers: { "x-forwarded-for": "198.51.100.1, 203.0.113.195" },
+  });
+  assertEquals(extrairIpCliente(reqXff), "203.0.113.195");
+
+  const reqVazia = new Request("http://localhost");
+  assertEquals(extrairIpCliente(reqVazia), "desconhecido");
+});
+
+Deno.test("entrar-demonstracao: corpo com JSON quebrado ou campos vazios retorna 404 nao_encontrado", async () => {
+  const estado: MockState = { tentativas: [], proximoId: 1 };
+  const reqQuebrado = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{ json-invalido",
+  });
+  const resQuebrado = await handler(reqQuebrado, depsPadrao(estado));
+  assertEquals(resQuebrado.status, 404);
+
+  const reqVazio = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "", codigo: "" }),
+  });
+  const resVazio = await handler(reqVazio, depsPadrao(estado));
+  assertEquals(resVazio.status, 404);
+});
+
 

@@ -3535,3 +3535,41 @@ Deno.test("sendFcmMessage: data-only puro para plataforma android injeta titulo 
   assertEquals(capturado.message.data.corpo, "Corpo de teste");
   assertEquals(capturado.message.data.tipo, "confirmacao");
 });
+
+Deno.test("enviar-push: recusa metodos GET e PUT com 405 metodo_nao_permitido", async () => {
+  for (const method of ["GET", "PUT"]) {
+    const req = new Request("http://localhost/functions/v1/enviar-push", {
+      method,
+      headers: { "x-agendador-secret": SEGREDO_TESTE },
+    });
+    const res = await processarEnvioPush(req, { agendadorSecret: SEGREDO_TESTE });
+    assertEquals(res.status, 405);
+    const json = await res.json();
+    assertEquals(json.ok, false);
+    assertEquals(json.erro, "metodo_nao_permitido");
+  }
+});
+
+Deno.test("enviar-push: recusa requisicao sem segredo ou com segredo incorreto com 401 nao_autorizado", async () => {
+  const reqSemSegredo = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+  });
+  const resSemSegredo = await processarEnvioPush(reqSemSegredo, { agendadorSecret: SEGREDO_TESTE });
+  assertEquals(resSemSegredo.status, 401);
+
+  const reqSegredoErrado = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: { "x-agendador-secret": "segredo-incorreto" },
+  });
+  const resSegredoErrado = await processarEnvioPush(reqSegredoErrado, { agendadorSecret: SEGREDO_TESTE });
+  assertEquals(resSegredoErrado.status, 401);
+});
+
+Deno.test("enviar-push: helpers capitalizar e formatarHorario tratam nulos e entradas invalidas", () => {
+  assertEquals(capitalizar(""), "");
+  assertEquals(capitalizar(undefined), "");
+  assertEquals(capitalizar("garçom"), "Garçom");
+
+  assertEquals(formatarHorario("data-invalida"), undefined);
+  assertEquals(formatarHorario(""), undefined);
+});
