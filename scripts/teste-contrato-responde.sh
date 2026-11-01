@@ -189,7 +189,8 @@ julga() {
 
 julga_com_flags() {
   local flags="$1" entrada="$2"
-  saida=$(printf '%s\n%s\n' "$PROMESSA_OK" "$entrada" | "$PY" scripts/contrato_responde.py $flags 2>&1)
+  read -r -a flag_args <<< "$flags"
+  saida=$(printf '%s\n%s\n' "$PROMESSA_OK" "$entrada" | "$PY" scripts/contrato_responde.py "${flag_args[@]}" 2>&1)
   codigo=$?
 }
 
