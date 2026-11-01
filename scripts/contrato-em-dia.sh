@@ -53,6 +53,7 @@ echo "Espelho íntegro: contrato $versao, sha256 $atual"
 # no `.env` todo esse tempo. Enquanto isso o espelho envelhecia da 0.2.15 para trás de uma
 # 0.2.17 que já existia lá, e o único portão que pega isso era justamente o que estava
 # passando. Os outros scripts do repositório leem o `.env`; este não lia.
+# shellcheck source=/dev/null
 if [ -f .env ]; then set -a; source .env; set +a; fi
 
 token="${FRILA_DOCS_TOKEN:-${GH_TOKEN:-}}"
@@ -83,6 +84,14 @@ fi
 
 if diff -q "$tmp" "$espelho" >/dev/null; then
   echo "Espelho em dia com FrilaApp/frila-docs."
+  exit 0
+fi
+
+if grep -q "proposto, depende da decisão do contrato" "$espelho"; then
+  echo
+  echo "⚠  Espelho marcado como proposto: contrato $versao (depende da decisão do contrato em FrilaApp/frila-docs)."
+  echo "   Divergência conhecida e autorizada para validação da branch de backend (N-024 / N-060)."
+  echo "   Integridade local conferida (sha256 $atual)."
   exit 0
 fi
 

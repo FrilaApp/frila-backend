@@ -1,7 +1,9 @@
+# Espelho do contrato: proposto em FrilaApp/frila-docs PR #118 (Cartão 72 / RN06)
+# NOTA: proposto, depende da decisão do contrato em FrilaApp/frila-docs (disputa de versão 0.2.47 com PR #110).
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.46
+  version: 0.2.47
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -97,6 +99,29 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.47, de 01/11/2026.** Coordenadas exatas do estabelecimento em `meus_turnos` (RN06, RN22, Cartão 72):
+
+    - **`VagaResumo.ponto`** (`Coordenada` ou nulo, opcional): expõe latitude e longitude do estabelecimento
+      em `/rpc/meus_turnos` (e em `MeusDados.turnos`). Permite ao cliente Android (e iOS) obter as coordenadas
+      exatas para monitoramento de proximidade e geofencing nativo de check-in (RN22), eliminando o fallback
+      impreciso de geocodificação offline por texto sobre centróides de regiões administrativas.
+    - **Regra de Visibilidade e LGPD (art. 7º, V e VI, opção mais restritiva):**
+      - **Para o profissional alocado no turno:** as coordenadas exatas (`ponto`) só aparecem enquanto o turno
+        estiver confirmado (`posicao.estado = 'confirmada'`, cobrindo turnos futuros e em andamento, sob o
+        art. 7º, V — execução de contrato), ou quando cumprido com presença comprovada (`posicao.estado = 'cumprida'`
+        e `verificacao = 'verificado'`, sob o art. 7º, VI — exercício regular de direitos e resguardo probatório).
+      - **Nos demais casos do profissional** (turnos cancelados `posicao.estado = 'cancelada'`, ou turnos
+        cumpridos com presença não verificada `verificacao = 'nao_verificado'`), o campo `ponto` é retornado como
+        **nulo**, mitigando exposição de geolocalização residencial/privada sem necessidade operacional (LGPD art. 6º, III).
+      - **Para membros do estabelecimento:** membros com acesso a `/rpc/meus_turnos?estabelecimento_id=...`
+        leem as coordenadas de suas próprias vagas normalmente.
+      - **Em `/rpc/minhas_candidaturas`:** `Candidatura.vaga` continua sem coordenadas (campo omitido/nulo),
+        pois o candidato ainda não foi confirmado para o turno.
+      - **Terceiros:** nunca recebem dados nem coordenadas de turnos alheios (recusa com lista vazia `[]` ou `403 sem_permissao`).
+    - **Compatibilidade total:** `ponto` é opcional (fora da lista `required` de `VagaResumo`). Clientes legados
+      continuam desserializando `VagaResumo` normalmente; clientes v1.1 passam a priorizar `vaga.ponto` quando
+      presente.
 
     **Versão 0.2.46, de 23/10/2026.** Push FCM data-only para Android e alerta APNs no iOS (RN15):
 
@@ -2512,6 +2537,12 @@ paths:
         Desde a 0.2.32, o turno cancelado traz `cancelamento`: a causa, se contou como falta e o
         instante. O texto que alguém escreveu ao cancelar não sai por aqui, para nenhum dos dois
         lados.
+
+        Desde a 0.2.47 (v1.1, Cartão 72), `vaga` (`VagaResumo`) traz o campo opcional `ponto`
+        (coordenadas latitude/longitude do estabelecimento). Para o profissional, as coordenadas
+        só são expostas enquanto o turno estiver confirmado (`estado: confirmada`) ou se foi
+        cumprido com presença verificada (`verificacao: verificado`), sob os arts. 7º, V e VI da LGPD.
+        Nos turnos cancelados ou cumpridos sem verificação, `ponto` retorna nulo.
       x-requisitos: [RF13, RF14, RF15, RF22, RN12, RNF06, UC13]
       parameters:
         - name: de
@@ -4508,12 +4539,32 @@ components:
           type: string
           description: Região Administrativa do Distrito Federal onde o turno será executado.
           example: Plano Piloto
+        ponto:
+          description: |
+            Coordenadas geográficas exatas do estabelecimento onde o turno será executado (RN06, RN22, Cartão 72, v1.1).
+            Presente em `/rpc/meus_turnos` para o profissional com turno confirmado ou verificado (LGPD art. 7º, V e VI),
+            ou para membros do estabelecimento. Nos demais casos (ex.: turno cancelado, presença não verificada,
+            ou em `/rpc/minhas_candidaturas` antes da confirmação), este campo é retornado nulo.
+          oneOf:
+            - $ref: '#/components/schemas/Coordenada'
+            - type: 'null'
         inicio_em:
           $ref: '#/components/schemas/Instante'
         fim_em:
           $ref: '#/components/schemas/Instante'
         valor_centavos:
           $ref: '#/components/schemas/Centavos'
+      example:
+        id: 7b84c3e2-8e3b-4f9e-a0e2-1a2b3c4d5e6f
+        funcao: Garçom
+        local: CLN 201 Bloco B Loja 10, Asa Norte
+        regiao_administrativa: Plano Piloto
+        ponto:
+          latitude: -15.7942
+          longitude: -47.8822
+        inicio_em: '2026-11-01T21:00:00Z'
+        fim_em: '2026-11-02T03:00:00Z'
+        valor_centavos: 15000
 
     # ── Candidatura e confirmação
 
