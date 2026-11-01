@@ -1,4 +1,4 @@
-# Estado do backend — 31/10/2026
+# Estado do backend — 01/11/2026
 
 Onde o trabalho parou e o que a próxima sessão precisa saber. As regras duráveis estão
 no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
@@ -7,41 +7,39 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-**A `develop` é o tronco e está à frente do `main` por 69 commits.** O `main` recebeu o PR #308
-(`release/backend-v1.0.0`) em 19/10/2026 (`8d19626`). A `develop` (ref `ca11a68` em 31/10/2026) possui
-**123 migrações**, **198 arquivos pgTAP** no total em `supabase/tests` (197 de regras + 1 de carga),
-**10 Edge Functions** e **56 scripts** em `scripts/`.
+**A `develop` é o tronco e está à frente do `main` por 71 commits.** O `main` recebeu o PR #308
+(`release/backend-v1.0.0`) em 19/10/2026 (`8d19626`). A `develop` (ref `c25ef14` em 01/11/2026) possui
+**123 migrações**, **198 arquivos pgTAP** no total em `supabase/tests` (197 de regras + 1 de carga em `gerar_df.sql`),
+**10 Edge Functions** (9 expostas + `_compartilhado`), **279 testes em Deno** (verde) e **56 scripts** em `scripts/`.
 
-Os números abaixo foram consolidados e remedidos em 31/10/2026 (commit de referência `ca11a68` na `develop`):
+Os números abaixo foram consolidados e remedidos em 01/11/2026 (commit de referência `c25ef14` na `develop`):
 
 | | | Comando |
 |---|---|---|
-| Commits à frente do `main` | **69** (em 31/10, ref `ca11a68`) | `git rev-list --count origin/main..origin/develop` |
-| Migrações na `develop` | **123** (veja `scripts/migracoes-sem-colisao.sh`, ref `ca11a68`) | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
-| pgTAP | **198 arquivos** (197 de regras + 1 de carga, ref `ca11a68`), verde | `find supabase/tests -name "*.sql"` / `supabase test db` |
+| Commits à frente do `main` | **71** (em 01/11, ref `c25ef14`) | `git rev-list --count origin/main..origin/develop` |
+| Migrações na `develop` | **123** (veja `scripts/migracoes-sem-colisao.sh`, ref `c25ef14`) | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
+| pgTAP | **198 arquivos** (197 de regras + 1 de carga, ref `c25ef14`), verde | `find supabase/tests -name "*.sql"` / `supabase test db` |
 | Portão `contrato-responde.sh` | **151 recusas vigiadas e alcançadas**, verde | 151 de 151 vigiados e alcançados (100% de cobertura; 16 isentas, 0 não vigiadas de 167 declaradas), 46 de 50 respostas 200 validadas, 37 de 37 coleções |
-| Testes em Deno das Edge Functions | **179** na suíte, verde | `ok \| 179 passed \| 0 failed`, medido com `deno test --allow-all --no-check` |
+| Testes em Deno das Edge Functions | **279** na suíte da develop, verde | `ok \| 279 passed \| 0 failed`, medido com `deno test --allow-all --no-check` |
 | Edge Functions | **10** (inclui `limpar-contas-orfas` e `_compartilhado`) | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
-| Testes unitários em `exportar-turnos` | **31**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
+| Testes unitários em `exportar-turnos` | **44**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
 | Scripts em `scripts/` | **56** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
-| Contrato espelhado | **0.2.45** (canônico no docs: **0.2.46**) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
+| Contrato espelhado | **0.2.46** (sincronizado com o canônico no docs via PR #342 / PR #364) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
 Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **197** arquivos de teste de regras,
 e alcança **198** com `supabase/tests/carga/gerar_df.sql`, que é gerador de carga e não teste de regra.
 
-> ## 🟢 O espelho do contrato está em 0.2.45 (canônico em 0.2.46 no frila-docs)
+> ## 🟢 O espelho do contrato está em 0.2.46 (alinhado com o canônico em frila-docs)
 >
-> O contrato espelhado localmente em `contrato/openapi.yaml` está na versão **0.2.45** (incorporado no PR #302/#304,
-> trazendo `sinal_idade` no `criarConta` e `eventos_app` em `MeusDados`).
+> O contrato espelhado localmente em `contrato/openapi.yaml` está na versão **0.2.46** (incorporado no PR #342 / commit `4ddc9e5`,
+> trazendo push FCM data-only para Android e canais por tipo, RN15).
+> O checksum SHA-256 está perfeitamente alinhado com `contrato/openapi.yaml.sha256`:
+> `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10`.
 >
-> O contrato original canônico em `FrilaApp/frila-docs · api/openapi.yaml` avançou para a versão **0.2.46** em 23/10/2026
-> (push FCM data-only para Android e alerta APNs no iOS, RN15). A atualização do espelho local no backend para 0.2.46
-> está pendente de PR no backend.
->
-> | | Versão | Origem |
-> |---|---|---|
-> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.45** | `frila-backend` (commit `692f38e6`) |
-> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.46** | `frila-docs` (commit `5b9ba85` / `6ad9188`) |
+> | | Versão | Origem | SHA-256 |
+> |---|---|---|---|
+> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.46** | `frila-backend` (commit `4ddc9e5`) | `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10` |
+> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.46** | `frila-docs` (commit `760b0b4`) | `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10` |
 
 > ## 🟢 Instabilidades de concorrência em `Corridas do ciclo` sanadas na raiz
 >
@@ -107,7 +105,54 @@ O repositório conta com mais de 180 PRs mergeados (183 em 16/10, ref develop `7
 19. **PR #202 (Ativação Automática de RLS por ensure_rls e public.rls_auto_enable · merge em 16/10):**
     Teste pgTAP `690_rls_auto_enable.sql` cobrindo a lacuna 1 do mapa pgTAP: validação de SECURITY DEFINER, ausência de EXECUTE para `anon`/`authenticated`, disparo do event trigger em `ddl_command_end` e ativação obrigatória de `relrowsecurity = true` em `CREATE TABLE` e `CREATE TABLE AS` sem afetar tabelas temporárias.
 
-### A fila de PRs aberta em 16/10
+### Entregas Recentes e Marcos Consolidados (17/10 a 31/10)
+
+1. **PR #308 (Release Backend v1.0.0 · merge em 19/10):**
+   Sincronização e release v1.0.0 em `main` (`8d19626`), consolidando as primeiras 119 migrações e toda a infraestrutura base de produção.
+2. **PR #339 (E-mail Operacional da Equipe Frila · merge em 31/10):**
+   Unificação do endereço de contato operacional para `suporte@frilabr.com` e saneamento das referências documentais e operacionais.
+3. **PR #342 (Espelho do Contrato 0.2.46 · merge em 31/10):**
+   Espelhamento do contrato canônico 0.2.46 do `frila-docs` em `contrato/openapi.yaml` (SHA-256 `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10`), cobrindo push FCM data-only para Android e canais por tipo (RN15).
+4. **PR #350 (Expansão pgTAP para Funções Auxiliares do Schema Privado · merge em 31/10):**
+   Novas suítes cobrindo preservação de dígito 9 na normalização alfanumérica, rejeição de documento cercado por espaços, máscara de valor em reais e validação de status HTTP 422 em campos obrigatórios.
+5. **PR #351 (CI de Autenticação Remota · merge em 31/10):**
+   Inclusão de `scripts/conferir-auth-remoto.sh` e testes automatizados para verificação das configurações de autenticação no Supabase.
+6. **PR #364 (Atualização Factual de Métricas e Estado do Backend · merge em 31/10):**
+   Atualização de métricas e documentação de alinhamento com base na ref `ca11a68`.
+
+### A fila de PRs aberta em 01/11/2026 (madrugada)
+
+Medida com `gh pr list --state open` em 01/11/2026 (22 PRs abertos no total):
+
+- **Release e Sincronização:**
+  - **PR #367** (`develop` -> `main` · Draft): Sincronização da develop com main (123 migrações, paridade Prod, 71 commits).
+- **Infraestrutura, Observabilidade e Operação:**
+  - **PR #368** (`feat/checagem-diaria-producao` · Draft): Script de checagem diária de produção de ~1 min com 7 checagens só de leitura e zero dados pessoais (Cartão 42).
+  - **PR #359** (`feat/fumaca-prod-leitura` · Draft): Fumaça pós-deploy só de leitura (`scripts/fumaca-prod-leitura.sh`).
+  - **PR #357** (`feat/script-pre-tag` · Draft): Portão pré-tag local (`scripts/pre-tag.sh`).
+  - **PR #354** (`ci/auth-prod-sem-revisor` · Draft): Mover job de auth do prod para environment `frila-prod-leitura` sem revisor.
+  - **PR #353** (`ci/backup-prod-diario` · Aberto): Adiciona workflow diário de backup lógico do `frila-prod` (#352).
+  - **PR #371** (`sugestao/fix-p1-01-tar-portavel-backup-353` · Draft): Sugestão de portabilidade do empacotamento tar no Linux e macOS (P1-01 sobre #353).
+  - **PR #372** (`sugestao/fix-p1-02-p1-03-token-e-zero-escrita-354` · Draft): Sugestão de escopo `auth_config_read` e teste fail-closed (P1-02, P1-03 sobre #354).
+- **Banco de Dados e Negócio:**
+  - **PR #369** (`feat/coordenadas-meus-turnos-cartao-72` · Draft): Coordenadas exatas do estabelecimento em `meus_turnos` respeitando RN06 e LGPD (Cartão 72).
+  - **PR #365** (`feat/purga-notificacao-60-dias` · Draft): Purga periódica de notificações com mais de 60 dias (K-001).
+  - **PR #366** (`fix/sanitizar-texto-vaga-exclusao` · Draft): Sanitizar texto livre de vagas na exclusão de conta (K-001).
+  - **PR #361** (`feat/comparar-migracoes` · Draft): Adiciona `scripts/comparar-migracoes.sh` e autoteste.
+  - **PR #360** (`feat/margem-termino-janela-rnf12` · Draft): Adiciona margem de término opcional na janela RNF12.
+  - **PR #363** (`fix/desativar-cron-alter-job` · Draft): Usa `cron.alter_job` para desativar tarefas nos testes de corrida.
+- **Qualidade, Segurança e Testes:**
+  - **PR #370** (`test/auditoria-seguranca-banco-n039` · Draft): Auditoria de segurança do banco com testes novos de catálogo e RLS (N-039).
+  - **PR #373** (`chore/shellcheck-scripts-qualidade` · Draft): Saneamento de shellcheck nos 56 scripts e portão opcional de CI (N-045 item 1).
+  - **PR #374** (`test/edge-functions-lacunas-deno` · Draft): Cobertura de lacunas em Deno nas 10 Edge Functions (+30 testes, 309 total) (N-045 item 2).
+- **Documentação e Governança:**
+  - **PR #362** (`docs/links-e-referencias-quebradas` · Draft): Corrige links quebrados e referências a arquivos renomeados.
+  - **PR #358** (`docs/template-migracao-corretiva-rollback` · Draft): Template de migração corretiva e rollback para a frente.
+  - **PR #356** (`docs/atualiza-docs-ambiente-e-revisores` · Draft): Atualiza status de frila-prod e revisores do environment.
+  - **PR #355** (`docs/changelog-1-1-0` · Draft): Prepara versão 1.1.0 no changelog.
+  - **PR #329** (`docs/agents-md-unico` · Aberto): Regras do time num AGENTS.md único.
+
+### A fila de PRs aberta em 16/10 (histórico)
 
 Medida com `gh pr list --state open` em 16/10:
 
@@ -147,7 +192,7 @@ Medida com `gh pr list --state open` em 16/10:
 
 ## O contrato em detalhes
 
-Versão espelhada: **0.2.45** em `contrato/openapi.yaml` (contrato original canônico em **0.2.46** em `FrilaApp/frila-docs · api/openapi.yaml`).
+Versão espelhada: **0.2.46** em `contrato/openapi.yaml` (sincronizada com o canônico em `FrilaApp/frila-docs · api/openapi.yaml` no PR #342 / commit `4ddc9e5`, SHA-256 `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10`).
 
 Histórico das versões recentes integradas no backend:
 
@@ -171,13 +216,13 @@ Histórico das versões recentes integradas no backend:
 | **0.2.43** | liberação de relato sem filtro de termos ofensivos em contestação e denúncia | #198 |
 | **0.2.44** | documentação de recusas de presença em `fazer_checkin`, `confirmar_checkin_manual` e `fazer_checkout` (só texto) | #92 |
 | **0.2.45** | adições compatíveis no cadastro (sinal_idade) e telemetria do titular (eventos_app em MeusDados) | #302, #304 |
-| **0.2.46** | push FCM data-only para Android e canais por tipo (canônico em frila-docs, espelho pendente no backend) | pendente |
+| **0.2.46** | push FCM data-only para Android e canais por tipo (RN15) | #342 (mergeado em develop) |
 
 ---
 
 ## O que existe no banco
 
-Medido no banco de desenvolvimento com a `develop` em `ca11a68`:
+Medido no banco de desenvolvimento com a `develop` em `c25ef14`:
 
 - **22 tabelas** em `public`:
   ```
@@ -220,20 +265,20 @@ Medido no banco de desenvolvimento com a `develop` em `ca11a68`:
 
 ## Os portões
 
-Medição consolidada da bateria em 16/10 (ref `7e011ea`):
+Medição consolidada da bateria em 01/11/2026 (ref `c25ef14` na `develop`, comparada a 16/10 ref `7e011ea`):
 
-| Comando | O que garante | Medida em 16/10 |
-|---|---|---|
-| `supabase test db` | pgTAP | **108** arquivos de regras (109 no prove), **2.980** asserções verdes (100% PASS) |
-| `./scripts/contrato-responde.sh` | respostas casam com o contrato | **46 de 50** respostas 200 validadas, **151 de 151** recusas vigiadas e alcançadas, **37 de 37** coleções exercitadas |
-| `deno test --allow-all --no-check` | Edge Functions em Deno | **179** testes verdes (0 falhas), incluindo 31 em `exportar-turnos` |
-| `./scripts/teste-contrato-promete.sh` | autoteste da direção contrato-à-frente | 9 de 9 casos verdes |
-| `./scripts/teste-contrato-responde.sh` | autoteste de schemas do contrato | 14 de 14 casos verdes |
-| `./scripts/teste-contrato-acompanha.sh` | PR que altera `public` acompanha contrato | 19 de 19 casos verdes |
-| `./scripts/relogio-em-testes.sh` | imunidade contra bombas-relógio de relógio | **108** arquivos pgTAP imunizados |
-| `./scripts/migracoes-sem-colisao.sh` | carimbos de migração únicos | **123** carimbos distintos sem colisão |
-| `./scripts/migracoes-imutaveis.sh` | migrações passadas não foram alteradas | verde |
-| `./scripts/planos-com-carga.sh` | caminho quente sob volume sintético do DF (PR #180, #196) | verde na CI (aquecimento prévio, melhor de 3 baterias, autoteste de 11 casos em `teste-planos-com-carga.sh`) |
+| Comando | O que garante | Medida em 16/10 (ref `7e011ea`) | Medida em 01/11 (ref `c25ef14`) |
+|---|---|---|---|
+| `supabase test db` | pgTAP | **108** arquivos de regras (109 no prove), **2.980** asserções verdes | **197** arquivos de regras (198 no total com `gerar_df.sql`), verde |
+| `./scripts/contrato-responde.sh` | respostas casam com o contrato | **46 de 50** respostas 200, **151 de 151** vigiados, **37 de 37** coleções | **46 de 50** respostas 200 validadas, **151 de 151** recusas vigiadas e alcançadas, **37 de 37** coleções exercitadas |
+| `deno test --allow-all --no-check` | Edge Functions em Deno | **179** testes verdes | **279** testes verdes (0 falhas; 44 em `exportar-turnos`) |
+| `./scripts/teste-contrato-promete.sh` | autoteste da direção contrato-à-frente | 9 de 9 casos verdes | **9 de 9** casos verdes |
+| `./scripts/teste-contrato-responde.sh` | autoteste de schemas do contrato | 14 de 14 casos verdes | **14 de 14** casos verdes |
+| `./scripts/teste-contrato-acompanha.sh` | PR que altera `public` acompanha contrato | 19 de 19 casos verdes | **19 de 19** casos verdes |
+| `./scripts/relogio-em-testes.sh` | imunidade contra bombas-relógio de relógio | **108** arquivos pgTAP imunizados | **197** arquivos pgTAP imunizados |
+| `./scripts/migracoes-sem-colisao.sh` | carimbos de migração únicos | **123** carimbos distintos | **123** carimbos distintos sem colisão |
+| `./scripts/migracoes-imutaveis.sh` | migrações passadas não foram alteradas | verde | verde |
+| `./scripts/planos-com-carga.sh` | caminho quente sob volume sintético do DF (PR #180, #196) | verde na CI | verde na CI (aquecimento prévio, melhor de 3 baterias) |
 
 ### O portão do contrato, medido em 10/10
 
