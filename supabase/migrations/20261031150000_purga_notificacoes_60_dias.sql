@@ -20,6 +20,9 @@
 --      garante que a marca durável de envio não dependa de linha expurgável.
 --
 -- 3. Integridade Referencial e Bloqueio (public.despacho):
+--    - A tabela privado.marca_notificacao, seu gatilho e o backfill histórico rodam previamente
+--      na migração 20261031145000_marca_notificacao_duravel.sql em transação dedicada que não toca
+--      em public.despacho, garantindo que o backfill não segure AccessExclusiveLock em despacho (K-001l / D1).
 --    - A coluna expurgado_em é adicionada com default NULL (operação metadata-only).
 --    - A chave estrangeira despacho_notificacao_id_fkey é recriada com ON DELETE SET NULL e
 --      marcada como NOT VALID, exigindo apenas um lock curto com lock_timeout de 2s.
@@ -46,7 +49,7 @@ end $$;
 comment on column public.despacho.expurgado_em is
   'Instante em que a notificação deste despacho foi expurgada (60 dias). Impede reenvios indevidos por liberar_teto_do_profissional.';
 
--- 2. Ajusta chave estrangeira com lock_timeout e NOT VALID (K-001d, K-001g)
+-- 2. Ajusta chave estrangeira com lock_timeout e NOT VALID (K-001d, K-001g, K-001l)
 -- A validação da constraint é postergada para a migração 20261031150100 em transação separada.
 do $$
 begin
@@ -60,58 +63,7 @@ begin
       not valid;
 end $$;
 
--- 3. Tabela durável de marca de envio que sobrevive ao expurgo de 60 dias de public.notificacao (K-001d)
-create table if not exists privado.marca_notificacao (
-  tipo           public.tipo_notificacao not null,
-  referencia_id  uuid not null,
-  usuario_id     uuid not null,
-  rodada         integer not null default 1,
-  criada_em      timestamptz not null default now(),
-  primary key (tipo, referencia_id, usuario_id, rodada)
-);
-
-comment on table privado.marca_notificacao is
-  'Registro durável de deduplicação de avisos (RN23, K-001d). Não contém dados de payload ou mensagens e sobrevive à purga de 60 dias.';
-
--- Defesa em profundidade RLS e privilégios mínimos (auditoria-rls achado 1)
-alter table privado.marca_notificacao enable row level security;
-revoke all on table privado.marca_notificacao from public, anon, authenticated;
-grant select, insert, update, delete on table privado.marca_notificacao to service_role;
-
--- Popula marcas preexistentes
-insert into privado.marca_notificacao (tipo, referencia_id, usuario_id, rodada, criada_em)
-select n.tipo, n.referencia_id, n.usuario_id, n.rodada, n.enviada_em
-  from public.notificacao n
- where n.tipo in ('lembrete_24h', 'lembrete_3h', 'inicio_sem_checkin', 'atraso_15min',
-                  'fim_sem_checkout', 'vaga_vazia', 'avaliacao_disponivel', 'vaga_sem_elegiveis',
-                  'vaga')
-on conflict (tipo, referencia_id, usuario_id, rodada) do nothing;
-
--- Trigger para gravar automaticamente a marca durável em qualquer inserção de notificacao
-create or replace function privado.gravar_marca_notificacao()
-returns trigger
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  if NEW.tipo in ('lembrete_24h', 'lembrete_3h', 'inicio_sem_checkin', 'atraso_15min',
-                  'fim_sem_checkout', 'vaga_vazia', 'avaliacao_disponivel', 'vaga_sem_elegiveis',
-                  'vaga') then
-    insert into privado.marca_notificacao (tipo, referencia_id, usuario_id, rodada, criada_em)
-    values (NEW.tipo, NEW.referencia_id, NEW.usuario_id, coalesce(NEW.rodada, 1), coalesce(NEW.enviada_em, privado.agora()))
-    on conflict (tipo, referencia_id, usuario_id, rodada) do nothing;
-  end if;
-  return NEW;
-end $$;
-
-drop trigger if exists trg_notificacao_marca on public.notificacao;
-create trigger trg_notificacao_marca
-  after insert on public.notificacao
-  for each row
-  execute function privado.gravar_marca_notificacao();
-
--- 4. Atualiza privado.notificar para alimentar e respeitar a marca durável
+-- 3. Atualiza privado.notificar com marca como autoridade atômica do envio (K-001d, K-001l / N1)
 create or replace function privado.notificar(
   p_usuario    uuid,
   p_tipo       public.tipo_notificacao,
@@ -124,10 +76,11 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_prof   uuid;
-  v_id     uuid;
-  v_par    record;
-  v_rodada integer := 1;
+  v_prof          uuid;
+  v_id            uuid;
+  v_par           record;
+  v_rodada        integer := 1;
+  v_marca_criada  integer;
 begin
   -- RN15: o payload é estrutura, não texto livre.
   for v_par in select key, value from jsonb_each(coalesce(p_payload, '{}'::jsonb)) loop
@@ -150,24 +103,31 @@ begin
     v_rodada := coalesce(v_rodada, 1);
   end if;
 
-  -- Deduplicação durável (K-001d): se já foi expurgada da notificacao mas existe na marca durável, não recria
+  -- Deduplicação atômica via marca_notificacao (K-001d, K-001l / N1):
+  -- A marca durável em privado.marca_notificacao é a autoridade atômica do envio.
+  -- Tentamos registrar a marca antes de qualquer inserção em public.notificacao.
+  -- Se a marca já existia (v_marca_criada is null), o aviso já foi enviado no passado:
+  -- NUNCA reinserimos em public.notificacao (mesmo que a notificação tenha sido expurgada
+  -- pela purga de 60 dias ou esteja sendo expurgada concorrentemente).
   if p_tipo in ('lembrete_24h', 'lembrete_3h', 'inicio_sem_checkin', 'atraso_15min',
                 'fim_sem_checkout', 'vaga_vazia', 'avaliacao_disponivel', 'vaga_sem_elegiveis',
                 'vaga') then
-    if exists (
-      select 1 from privado.marca_notificacao m
-       where m.tipo = p_tipo
-         and m.referencia_id = p_referencia
-         and m.usuario_id = p_usuario
-         and m.rodada = v_rodada
-    ) and not exists (
-      select 1 from public.notificacao n
+    insert into privado.marca_notificacao (tipo, referencia_id, usuario_id, rodada, criada_em)
+    values (p_tipo, p_referencia, p_usuario, v_rodada, privado.agora())
+    on conflict (tipo, referencia_id, usuario_id, rodada) do nothing
+    returning 1 into v_marca_criada;
+
+    if v_marca_criada is null then
+      -- Marca já existia: se a notificação ainda está na tabela (ativa), retorna seu id.
+      -- Se já foi expurgada pela purga de 60 dias, retorna null sem recriar.
+      select n.id into v_id
+        from public.notificacao n
        where n.tipo = p_tipo
          and n.referencia_id = p_referencia
          and n.usuario_id = p_usuario
-         and n.rodada = v_rodada
-    ) then
-      return null;
+         and n.rodada = v_rodada;
+
+      return v_id;
     end if;
   end if;
 
@@ -192,7 +152,7 @@ begin
   return v_id;
 end $$;
 
--- 5. Atualiza privado.liberar_teto_do_profissional para ignorar despachos expurgados (K-001d)
+-- 4. Atualiza privado.liberar_teto_do_profissional para ignorar despachos expurgados (K-001d)
 create or replace function privado.liberar_teto_do_profissional(p_profissional uuid)
 returns uuid
 language plpgsql
@@ -271,7 +231,7 @@ begin
   return v_notif;
 end $$;
 
--- 6. Função de purga em lote único por chamada/transação com continuação reagendada (K-001g)
+-- 5. Função de purga em lote único por chamada/transação com continuação reagendada (K-001g)
 drop function if exists privado.limpar_notificacoes_antigas(integer);
 
 create or replace function privado.limpar_notificacoes_antigas(
@@ -361,7 +321,7 @@ comment on function privado.limpar_notificacoes_antigas(integer, integer) is
 revoke execute on function privado.limpar_notificacoes_antigas(integer, integer) from public, anon, authenticated;
 grant  execute on function privado.limpar_notificacoes_antigas(integer, integer) to service_role;
 
--- Agendamento diário às 06:19 UTC (03:19 BRT), fora da janela protegida por RNF12
+-- 6. Agendamento diário às 06:19 UTC (03:19 BRT), fora da janela protegida por RNF12
 do $$
 begin
   if exists (select 1 from pg_extension where extname = 'pg_cron') then
