@@ -75,8 +75,7 @@ No seu terminal local, valide que o token autoriza a leitura da configuração d
 Para comprovar formalmente que o token opera sob menor privilégio e que a rotina é fail-closed:
 
 1. **Inspeção no Painel do Supabase (A via 100% segura e direta):**
-   Inspecione os metadados do token emitido no painel de controle do Supabase (**Account > Access Tokens**), confirmando que a coluna de escopos restringe-se estritamente a **`auth_config_read`** sobre o projeto `frila-prod` (`hbjkkcenbudiezmamiak`).
-   *(Nota de segurança: Não execute comandos de teste com métodos de mutação contra outros projetos Supabase como `REF_DESCARCAVEL`: o isolamento entre projetos (barreira de tenant) do Supabase rejeita com HTTP 401/403 qualquer requisição a outro projeto, gerando um falso positivo de fail-closed e podendo induzir à criação desnecessária de projetos auxiliares).*
+   Inspecione os metadados do token emitido no painel de controle do Supabase (**Account > Access Tokens**), confirmando que a coluna de escopos restringe-se estritamente a **`auth_config_read`** sobre o projeto `frila-prod` (`hbjkkcenbudiezmamiak`). A conferência visual direta no painel garante verificação com zero risco e sem requisições desnecessárias.
 
 2. **Validação da Lógica Fail-Closed Offline (com Mock/Fixtures Locais):**
    Para comprovar que a rotina de conferência rejeita configurações incorretas e falha fechada com `exit 1` sem tocar em rede nem criar projetos no Supabase, execute o autoteste offline do repositório:
