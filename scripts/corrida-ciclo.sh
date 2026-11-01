@@ -89,6 +89,12 @@ set session_replication_role = 'replica';
 delete from public.despacho where vaga_id in ('$TETO_A', '$TETO_B');
 delete from public.notificacao where referencia_id in ('$TETO_A', '$TETO_B');
 delete from public.vaga where id in ('$TETO_A', '$TETO_B');
+do \$\$
+begin
+  if to_regclass('privado.marca_notificacao') is not null then
+    delete from privado.marca_notificacao where referencia_id in ('$TETO_A', '$TETO_B');
+  end if;
+end \$\$;
 set session_replication_role = 'origin';
 SQL
 }
@@ -110,6 +116,14 @@ create temp table posicoes as select id from public.posicao where vaga_id in (se
 delete from public.notificacao
  where usuario_id in (select id from contas)
     or referencia_id in (select id from vagas union all select id from posicoes);
+do \$\$
+begin
+  if to_regclass('privado.marca_notificacao') is not null then
+    delete from privado.marca_notificacao
+     where usuario_id in (select id from contas)
+        or referencia_id in (select id from vagas union all select id from posicoes);
+  end if;
+end \$\$;
 delete from pgmq.q_despacho where (message->>'vaga_id')::uuid in (select id from vagas);
 delete from public.despacho    where vaga_id in (select id from vagas);
 delete from public.ocorrencia  where autor_id in (select id from contas)
