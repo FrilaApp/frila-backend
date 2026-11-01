@@ -19,12 +19,15 @@
 // (caixa inexistente) arquiva na hora: insistir cinco vezes num 550 não muda o 550.
 
 import postgres from "npm:postgres@3.4.4";
+import { segredoAgendadorValido } from "../_compartilhado/auth.ts";
 import {
   criarEnvioSmtp,
   Email,
   Enviar,
   lerConfiguracaoSmtp,
   ResultadoEnvio,
+  validarDestinatario,
+  validarTextoCabecalhoSmtp,
 } from "./provedor.ts";
 import {
   alertaParaEquipe,
@@ -72,15 +75,6 @@ export interface Dependencias {
   caixaDaEquipe?: string;
 }
 
-function igualEmTempoConstante(a: string, b: string): boolean {
-  const x = new TextEncoder().encode(a);
-  const y = new TextEncoder().encode(b);
-  let diferenca = x.length ^ y.length;
-  const n = Math.max(x.length, y.length);
-  for (let i = 0; i < n; i++) diferenca |= (x[i] ?? 0) ^ (y[i] ?? 0);
-  return diferenca === 0;
-}
-
 const AGENDADOR_SECRET = Deno.env.get("AGENDADOR_SECRET");
 if (!AGENDADOR_SECRET || AGENDADOR_SECRET.trim() === "") {
   throw new Error("AGENDADOR_SECRET é obrigatório e deve estar configurado no ambiente.");
@@ -88,20 +82,13 @@ if (!AGENDADOR_SECRET || AGENDADOR_SECRET.trim() === "") {
 
 function segredoValido(req: Request, agendadorSecret?: string): boolean {
   const secret = agendadorSecret || AGENDADOR_SECRET;
-  if (!secret || secret.trim() === "") return false;
-
-  const cabecalho = req.headers.get("x-agendador-secret");
-  if (cabecalho && igualEmTempoConstante(cabecalho, secret)) return true;
-
-  const auth = req.headers.get("Authorization") ?? "";
-  const m = auth.match(/^Bearer\s+(.+)$/i);
-  return Boolean(m && igualEmTempoConstante(m[1], secret));
+  return segredoAgendadorValido(req, secret ?? "");
 }
 
 // A caixa da Equipe Frila é segredo de ambiente, e não linha de tabela: ela não é dado
 // do produto, muda com o provedor de e-mail e não deve viajar num `db reset`.
 export function caixaDaEquipe(injetada?: string): string {
-  return (injetada || Deno.env.get("EMAIL_EQUIPE") || "equipe@frila.app").trim();
+  return (injetada || Deno.env.get("EMAIL_EQUIPE") || "suporte@frilabr.com").trim();
 }
 
 function obterDbUrl(injetada?: string): string {
@@ -204,6 +191,11 @@ async function processarAlerta(
     ? pedido.mensagem.valor
     : undefined;
   const modelo = alertaParaEquipe(codigo, valor);
+  if (!validarDestinatario(equipe) || !validarTextoCabecalhoSmtp(modelo.assunto)) {
+    await sql.concluir(pedido.msg_id);
+    return { msg_id: pedido.msg_id, status: "arquivado", detalhe: "destinatario_invalido" };
+  }
+
   const r = await enviar({ para: equipe, assunto: modelo.assunto, texto: modelo.texto });
 
   if (r.ok) {
@@ -262,13 +254,25 @@ async function processarOcorrencia(
       return { msg_id: pedido.msg_id, status: "arquivado", detalhe: "tipo_desconhecido" };
     }
 
+    const responderPara = destino === "autor" ? equipe : undefined;
+
+    if (
+      !validarDestinatario(para) ||
+      (responderPara && !validarDestinatario(responderPara)) ||
+      !validarTextoCabecalhoSmtp(modelo.assunto)
+    ) {
+      await sql.registrarFalha(ocorrenciaId, "destinatario_invalido");
+      await sql.concluir(pedido.msg_id);
+      return { msg_id: pedido.msg_id, status: "arquivado", detalhe: "destinatario_invalido" };
+    }
+
     const email: Email = {
       para,
       assunto: modelo.assunto,
       texto: modelo.texto,
       // A Equipe Frila só responde por e-mail: a resposta de quem recebeu o protocolo
       // tem de cair na caixa dela, e não no remetente que não lê.
-      responderPara: destino === "autor" ? equipe : undefined,
+      responderPara,
     };
 
     const r = await enviar(email);

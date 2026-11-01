@@ -1,0 +1,77 @@
+name: Mantém o Prod vivo
+
+# O projeto gratuito do Supabase pausa depois de sete dias sem uso, e só Owner ou Admin o
+# reativa. Este workflow faz um GET por dia na Edge Function `saude` do frila-prod, que
+# executa `select 1` no banco (supabase/functions/saude/index.ts) e responde 200 com
+# `{"ok":true}`. Não grava dado, não usa segredo e não leva credencial: `saude` roda com
+# `verify_jwt = false` (supabase/config.toml, bloco `[functions.saude]`).
+#
+# Só o caminho de falha da `saude` grava, e grava uma linha em `registrar_falha_execucao`.
+#
+# Variável de repositório (não é segredo, é a URL pública da função):
+#   FRILA_PROD_URL_SAUDE   ex.: https://<project-ref>.supabase.co/functions/v1/saude
+# Crie em Settings → Secrets and variables → Actions → Variables. Sem ela o job falha de
+# propósito: um alarme que passa em silêncio sem a variável não protege o projeto.
+#
+# Agendamento só roda a partir da branch padrão do repositório. Um job vermelho aqui quer
+# dizer que o Prod não respondeu 200: abra o projeto no painel antes de supor pausa.
+on:
+  schedule:
+    # 09:00 BRT = 12:00 UTC
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mantem-prod-vivo
+  cancel-in-progress: false
+
+jobs:
+  saude:
+    name: GET na função saude do frila-prod
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      URL_SAUDE: ${{ vars.FRILA_PROD_URL_SAUDE }}
+    steps:
+      - name: A variável da URL existe
+        run: |
+          if [ -z "$URL_SAUDE" ]; then
+            echo "::error::Falta a variável de repositório FRILA_PROD_URL_SAUDE. Crie em Settings → Secrets and variables → Actions → Variables, com a URL da função saude do frila-prod (https://<project-ref>.supabase.co/functions/v1/saude)."
+            exit 1
+          fi
+          case "$URL_SAUDE" in
+            https://*) ;;
+            *)
+              echo "::error::FRILA_PROD_URL_SAUDE precisa começar com https://. Corrija a variável de repositório."
+              exit 1 ;;
+          esac
+
+      - name: GET na função saude
+        run: |
+          corpo=$(mktemp)
+          # --retry cobre 408, 429 e 5xx passageiros (o projeto pode estar acordando).
+          status=$(curl -sS --max-time 20 --retry 2 --retry-delay 5 \
+            -X GET -o "$corpo" -w '%{http_code}' -- "$URL_SAUDE") || {
+            echo "::error::Sem resposta de $URL_SAUDE. Se o projeto estiver pausado, só Owner ou Admin o reativa no painel do Supabase."
+            exit 1
+          }
+          if [ "$status" != "200" ]; then
+            echo "::error::A função saude respondeu HTTP $status (esperado 200)."
+            exit 1
+          fi
+          python3 - "$corpo" <<'PY'
+          import json, sys
+          dados = json.load(open(sys.argv[1]))
+          if dados.get("ok") is not True:
+              print("::error::A função saude respondeu 200 mas sem ok=true.")
+              sys.exit(1)
+          print(f"✓ saude respondeu 200: ok={dados['ok']} status={dados.get('status')}")
+          PY
+          {
+            echo "### Prod vivo"
+            echo
+            echo "GET na função \`saude\` do frila-prod: HTTP $status, \`ok: true\`."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -18,7 +18,7 @@ PR — escopo que cresce no caminho vira cartão novo, não commit extra.
 
 2. **Leia o que o cartão referencia.** Quase todo cartão de backend aponta para:
    - `contrato/openapi.yaml` — a rota, os campos, os códigos de erro, os status HTTP
-   - `../Bancada/doc-harness/07 - Arquitetura/Modelagem de Banco de Dados.md` — o DDL e
+   - `frila-docs/banco-de-dados/Modelagem de Banco de Dados.md` — o DDL e
      as políticas
    - o Documento de Requisitos, para a regra citada (RN, RF, RNF, UC)
 

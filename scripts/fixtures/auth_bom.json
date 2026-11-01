@@ -1,0 +1,11 @@
+{
+  "site_url": "https://frila.app",
+  "mailer_otp_length": 6,
+  "smtp_host": "smtp.resend.com",
+  "smtp_port": 465,
+  "smtp_user": "resend",
+  "smtp_admin_email": "verificacao@frilabr.com",
+  "smtp_sender_name": "Frila",
+  "mailer_templates_confirmation_content": "<h2>Confirme sua conta</h2><p>Seu código de acesso é: <strong>{{ .Token }}</strong></p>",
+  "mailer_templates_magic_link_content": "<h2>Seu código de entrada no Frila</h2><p>Use o código abaixo: <strong>{{ .Token }}</strong></p>"
+}

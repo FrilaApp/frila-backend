@@ -170,9 +170,18 @@ trap 'rm -f "$lista"' EXIT
 # committer para outro dia sem mudar a data do autor, então filtramos a data do
 # autor explicitamente depois da coleta. O ISO 8601 preserva também o fuso original
 # para que a hora registrada seja a hora do autor, não a hora desta máquina.
+#
+# `BANCADA_AUTOR` restringe a passagem a uma pessoa. Vazio, que é o padrão, registra todo
+# mundo — o comportamento de sempre. Serve à recuperação de atraso: medido em 27/10/2026,
+# entre 29/09 e 26/10 havia 10 commits do Matheus e 154 de outras pessoas sem fato no log,
+# e uma passagem sem filtro traz os 164 de uma vez, pondo no diário de cada dia o fato de
+# quem não escreveu narrativa ali. A comparação é por trecho do nome do autor, sem
+# distinguir maiúscula, porque é o que `git log %an` dá.
 git log --branches --no-merges \
   --format='%h%x09%aI%x09%an%x09%s' \
-  | awk -F '\t' -v dia="$DIA" 'substr($2, 1, 10) == dia { print }' > "$lista"
+  | awk -F '\t' -v dia="$DIA" -v autor="${BANCADA_AUTOR:-}" \
+      'substr($2, 1, 10) == dia && (autor == "" || index(tolower($3), tolower(autor)) > 0) { print }' \
+      > "$lista"
 
 total=$(grep -c . "$lista" || true)
 novos=0

@@ -10,6 +10,7 @@
 //    - Não reenvia se a vaga ou turno já tiver iniciado, nem antes de proxima_tentativa_em.
 
 import postgres from "npm:postgres@3.4.4";
+import { segredoAgendadorValido } from "../_compartilhado/auth.ts";
 import {
   FcmServiceAccount,
   getAccessToken,
@@ -32,6 +33,18 @@ export interface GravarAceitePushParams {
   aceitaEm?: string | null;
 }
 
+export interface NotificacaoLinha {
+  id: string;
+  usuario_id: string;
+  tipo: string;
+  referencia_id: string;
+  payload: Record<string, unknown>;
+  tentativas: number;
+  estado_entrega: string;
+  proxima_tentativa_em?: string | null;
+  urgente?: boolean;
+}
+
 export interface SqlClient {
   notificacaoExpirada: (notificacaoId: string) => Promise<boolean>;
   gravarFalhaPush: (params: GravarFalhaPushParams) => Promise<void>;
@@ -43,6 +56,7 @@ export interface SqlClient {
     usuarioId: string,
     tipo: string,
   ) => Promise<{ title: string; body: string } | null>;
+  reivindicarLotePendentes?: (limite: number) => Promise<NotificacaoLinha[]>;
 }
 
 export interface Dependencias {
@@ -57,15 +71,6 @@ export interface Dependencias {
   sqlClient?: SqlClient;
 }
 
-function igualEmTempoConstante(a: string, b: string): boolean {
-  const x = new TextEncoder().encode(a);
-  const y = new TextEncoder().encode(b);
-  let diferenca = x.length ^ y.length;
-  const n = Math.max(x.length, y.length);
-  for (let i = 0; i < n; i++) diferenca |= (x[i] ?? 0) ^ (y[i] ?? 0);
-  return diferenca === 0;
-}
-
 const AGENDADOR_SECRET = Deno.env.get("AGENDADOR_SECRET");
 if (!AGENDADOR_SECRET || AGENDADOR_SECRET.trim() === "") {
   throw new Error("AGENDADOR_SECRET é obrigatório e deve estar configurado no ambiente.");
@@ -73,22 +78,7 @@ if (!AGENDADOR_SECRET || AGENDADOR_SECRET.trim() === "") {
 
 function segredoValido(req: Request, agendadorSecret?: string): boolean {
   const secret = agendadorSecret || AGENDADOR_SECRET;
-  if (!secret || secret.trim() === "") {
-    return false;
-  }
-
-  const secretHeader = req.headers.get("x-agendador-secret");
-  if (secretHeader && igualEmTempoConstante(secretHeader, secret)) {
-    return true;
-  }
-
-  const authHeader = req.headers.get("Authorization") ?? "";
-  const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (match && igualEmTempoConstante(match[1], secret)) {
-    return true;
-  }
-
-  return false;
+  return segredoAgendadorValido(req, secret ?? "");
 }
 
 export function carregarContaDeServico(): FcmServiceAccount | null {
@@ -546,6 +536,40 @@ export function criarSqlClient(deps?: Dependencias): SqlClient {
         await sql.end({ timeout: 2 });
       }
     },
+    async reivindicarLotePendentes(limite: number): Promise<NotificacaoLinha[]> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        const res = await sql`
+          select
+            id,
+            usuario_id,
+            tipo,
+            referencia_id,
+            payload,
+            tentativas,
+            estado_entrega,
+            proxima_tentativa_em,
+            urgente
+          from privado.reivindicar_lote_push(${limite}::int)
+        `;
+        // deno-lint-ignore no-explicit-any
+        return (res as any[]).map((r) => ({
+          id: String(r.id),
+          usuario_id: String(r.usuario_id),
+          tipo: String(r.tipo),
+          referencia_id: r.referencia_id ? String(r.referencia_id) : "",
+          payload: (r.payload ?? {}) as Record<string, unknown>,
+          tentativas: Number(r.tentativas ?? 0),
+          estado_entrega: String(r.estado_entrega),
+          proxima_tentativa_em: r.proxima_tentativa_em
+            ? new Date(r.proxima_tentativa_em).toISOString()
+            : null,
+          urgente: r.urgente === true,
+        }));
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
   };
 }
 
@@ -619,18 +643,16 @@ export async function processarEnvioPush(
     Prefer: "return=representation",
   };
 
+  let sqlClient: SqlClient | undefined = deps.sqlClient;
+  if (!sqlClient && (deps.dbUrl || Deno.env.get("DATABASE_URL") || Deno.env.get("SUPABASE_DB_URL"))) {
+    try {
+      sqlClient = criarSqlClient(deps);
+    } catch {
+      // Ignora erro se dbUrl não estiver configurado neste momento
+    }
+  }
 
-  let notificacoes: Array<{
-    id: string;
-    usuario_id: string;
-    tipo: string;
-    referencia_id: string;
-    payload: Record<string, unknown>;
-    tentativas: number;
-    estado_entrega: string;
-    proxima_tentativa_em?: string | null;
-    urgente?: boolean;
-  }> = [];
+  let notificacoes: NotificacaoLinha[] = [];
 
   if (notificacaoId) {
     const res = await fetchFn(
@@ -645,19 +667,34 @@ export async function processarEnvioPush(
     }
     notificacoes = await res.json();
   } else {
-    // Processamento da fila de pendentes (não busca notificações cujo backoff ainda não venceu)
-    const agoraIso = new Date().toISOString();
-    const res = await fetchFn(
-      `${supabaseUrl}/rest/v1/notificacao?estado_entrega=eq.pendente&or=(proxima_tentativa_em.is.null,proxima_tentativa_em.lte.${encodeURIComponent(agoraIso)})&order=enviada_em.asc&limit=${limite}&select=id,usuario_id,tipo,referencia_id,payload,tentativas,estado_entrega,proxima_tentativa_em,urgente`,
-      { headers: dbHeaders },
-    );
-    if (!res.ok) {
-      return new Response(
-        JSON.stringify({ ok: false, erro: "erro_ao_buscar_pendentes" }),
-        { status: 500, headers: { "Content-Type": "application/json" } },
+    // Processamento da fila de pendentes com SKIP LOCKED e visibility timeout (Item 15)
+    // Se sqlClient fornece reivindicarLotePendentes, consome com bloqueio atômico para evitar push duplicado
+    if (sqlClient && sqlClient.reivindicarLotePendentes) {
+      try {
+        notificacoes = await sqlClient.reivindicarLotePendentes(limite);
+      } catch (err) {
+        const errMensagem = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+        console.error("Erro ao reivindicar lote com SKIP LOCKED:", errMensagem);
+        return new Response(
+          JSON.stringify({ ok: false, erro: "erro_ao_buscar_pendentes" }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    } else {
+      // Fallback para chamadas/mocks sem o método implementado
+      const agoraIso = new Date().toISOString();
+      const res = await fetchFn(
+        `${supabaseUrl}/rest/v1/notificacao?estado_entrega=eq.pendente&or=(proxima_tentativa_em.is.null,proxima_tentativa_em.lte.${encodeURIComponent(agoraIso)})&order=enviada_em.asc&limit=${limite}&select=id,usuario_id,tipo,referencia_id,payload,tentativas,estado_entrega,proxima_tentativa_em,urgente`,
+        { headers: dbHeaders },
       );
+      if (!res.ok) {
+        return new Response(
+          JSON.stringify({ ok: false, erro: "erro_ao_buscar_pendentes" }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      notificacoes = await res.json();
     }
-    notificacoes = await res.json();
   }
 
   if (notificacoes.length === 0) {
@@ -666,8 +703,6 @@ export async function processarEnvioPush(
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
   }
-
-  const sqlClient = criarSqlClient(deps);
 
   // Obter token de acesso do Google OAuth
   let accessToken = "";
@@ -681,6 +716,8 @@ export async function processarEnvioPush(
       { status: 500, headers: { "Content-Type": "application/json" } },
     );
   }
+
+  sqlClient = sqlClient ?? criarSqlClient(deps);
 
   const relatorio: Array<{
     notificacao_id: string;
@@ -803,6 +840,10 @@ export async function processarEnvioPush(
       const dataParaDispositivo = { ...dataStrings };
       if (disp.vinculo_id) {
         dataParaDispositivo.vinculo_id = disp.vinculo_id;
+      }
+      if (disp.plataforma === "android") {
+        dataParaDispositivo.titulo = title;
+        dataParaDispositivo.corpo = body;
       }
       const resultado: FcmSendResult = await sendFcmMessage(
         sa.project_id,

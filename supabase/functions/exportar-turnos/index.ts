@@ -10,6 +10,7 @@
 //   5. Gera o arquivo no formato solicitado (CSV ou PDF) com Cache-Control: no-store (RN15).
 
 import postgres from "npm:postgres@3.4.4";
+import { validarFormatoBearer } from "../_compartilhado/auth.ts";
 import { PDFDocument, StandardFonts, rgb } from "npm:pdf-lib@1.17.1";
 
 export interface TurnoExportacao {
@@ -136,23 +137,29 @@ const CARACTERES_FORMULA_INICIO = ["=", "+", "-", "@", "\t", "\r"];
  */
 export function neutralizarFormulaCsv(texto: string): string {
   if (!texto) return "";
+  if (texto === "-" || texto === "--") return texto;
   const primeiroChar = texto.charAt(0);
   if (CARACTERES_FORMULA_INICIO.includes(primeiroChar)) {
-    return `'${texto}`;
+    if (!texto.startsWith("'")) {
+      return `'${texto}`;
+    }
   }
   return texto;
 }
 
 /**
- * Escapa uma célula segundo a RFC 4180.
+ * Escapa uma célula segundo a RFC 4180 e neutraliza injeção de fórmulas (OWASP CSV Injection).
+ * Prefixa apóstrofo (') se o texto iniciar por =, +, -, @, \t ou \r (exceto o marcador "-" de ausência).
  * Envolve em aspas duplas se contiver vírgula (,), aspas duplas ("), line feed (\n)
  * ou carriage return (\r), duplicando aspas duplas internas.
  */
 export function escaparCelulaCsv(val: string): string {
-  if (val.includes(",") || val.includes('"') || val.includes("\n") || val.includes("\r")) {
-    return `"${val.replace(/"/g, '""')}"`;
+  if (!val) return "";
+  const texto = neutralizarFormulaCsv(val);
+  if (texto.includes(",") || texto.includes('"') || texto.includes("\n") || texto.includes("\r")) {
+    return `"${texto.replace(/"/g, '""')}"`;
   }
-  return val;
+  return texto;
 }
 
 export function gerarCsv(turnos: TurnoExportacao[]): string {
@@ -393,7 +400,9 @@ export function tratarErroBanco(err: unknown): Response {
       }
       return respostaJson(status, corpoErro);
     } catch {
-      return erro(400, erroPg.message);
+      // Mensagem não é JSON: trata como erro interno sem ecoar texto cru do banco (RN15 / AUDITORIA-EDGE-SEG.md)
+      console.error("exportar-turnos: erro interno ao consultar turnos");
+      return erro(500, "erro_interno");
     }
   }
   // Sem vazar mensagens de erro do Postgres (RN15)
@@ -445,7 +454,7 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   }
 
   const autorizacao = req.headers.get("Authorization") ?? "";
-  if (!/^Bearer\s+\S+$/i.test(autorizacao)) {
+  if (!validarFormatoBearer(autorizacao)) {
     return erro(401, "nao_autenticado");
   }
 

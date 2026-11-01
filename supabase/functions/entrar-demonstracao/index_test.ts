@@ -6,11 +6,9 @@ import {
   HandlerDeps,
   igualEmTempoConstante,
   JANELA_MINUTOS,
-  MAX_IPS_EM_MEMORIA,
-  MIN_COMPRIMENTO_CODIGO,
+  parseLimiteJanela,
   registrarTentativaIp,
   resetarLimitesIp,
-  TETO_TENTATIVAS,
   verificarLimiteIp,
 } from "./index.ts";
 
@@ -374,6 +372,79 @@ Deno.test("entrar-demonstracao: 10 erradas do mesmo IP seguidas da correta do ME
   assertEquals(ultima.aceita, true);
 });
 
+Deno.test("segurança: IP desconhecido ou ausente não possui bypass e sofre rate limit de 10 tentativas por janela (T-seguranca-backend-29-10)", async () => {
+  resetarLimitesIp();
+  const estado: MockState = {
+    tentativas: [],
+    proximoId: 1,
+  };
+
+  // Alterna entre os dois e-mails de demonstração (5 tentativas em cada, totalizando 10)
+  // Sem header de IP ("desconhecido"):
+  for (let i = 1; i <= 5; i++) {
+    const req1 = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "codigo-errado" }),
+    });
+    const res1 = await handler(req1, depsPadrao(estado));
+    assertEquals(res1.status, 404);
+
+    const req2 = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: MOCK_EMAIL_CONTRATANTE, codigo: "codigo-errado" }),
+    });
+    const res2 = await handler(req2, depsPadrao(estado));
+    assertEquals(res2.status, 404);
+  }
+
+  // Neste ponto: MOCK_EMAIL_REVISOR tem 5 tentativas no banco, MOCK_EMAIL_CONTRATANTE tem 5 tentativas no banco.
+  // Nenhum e-mail atingiu o teto individual de 10 do banco.
+  // Porém, o IP desconhecido acumulou 10 tentativas incorretas.
+  // 11ª tentativa errada SEM header de IP: DEVE ser bloqueada no Edge pelo teto de IP com 429 limite_excedido!
+  const qtdBancoAntes = estado.tentativas.length;
+  assertEquals(qtdBancoAntes, 10);
+
+  const reqBloqueada = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: "codigo-errado" }),
+  });
+  const resBloqueada = await handler(reqBloqueada, depsPadrao(estado));
+  assertEquals(resBloqueada.status, 429);
+  assertEquals((await resBloqueada.json()).code, "limite_excedido");
+  assertEquals(estado.tentativas.length, qtdBancoAntes);
+
+  // Código correto sem header de IP não é bloqueado (Diretriz 2.1 Apple)
+  const reqCorreta = new Request("http://localhost/functions/v1/entrar-demonstracao", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: MOCK_EMAIL_REVISOR, codigo: MOCK_CODIGO }),
+  });
+  const resCorreta = await handler(reqCorreta, depsPadrao(estado));
+  assertEquals(resCorreta.status, 200);
+
+  resetarLimitesIp();
+});
+
+Deno.test("segurança: verificarLimiteIp e registrarTentativaIp tratam IP desconhecido e vazio sob a mesma cota restrita", () => {
+  resetarLimitesIp();
+  const agora = Date.now();
+
+  for (let i = 0; i < 10; i++) {
+    assertEquals(verificarLimiteIp("desconhecido", agora), true);
+    registrarTentativaIp("desconhecido", agora);
+  }
+
+  // 11ª tentativa de 'desconhecido' deve retornar false
+  assertEquals(verificarLimiteIp("desconhecido", agora), false);
+  assertEquals(verificarLimiteIp("", agora), false);
+  assertEquals(verificarLimiteIp("   ", agora), false);
+
+  resetarLimitesIp();
+});
+
 Deno.test("entrar-demonstracao: igualdade correta resistente a timing em comparacao de codigo", () => {
   assertEquals(igualEmTempoConstante("123456", "123456"), true);
   assertEquals(igualEmTempoConstante("123456", "123457"), false);
@@ -608,24 +679,39 @@ Deno.test("entrar-demonstracao: janela DEMONSTRACAO_ATIVA_ATE expira ou ausente 
       const resSemEnv = await handler(criarReq(), depsPadrao(estado, { ativaAte: undefined }));
       assertEquals(resSemEnv.status, 404);
 
-      // 4. Data em formato inválido
+      // 4. Data em formato inválido ou sem fuso horário explícito
       const resInvalida = await handler(criarReq(), depsPadrao(estado, { ativaAte: "data-invalida" }));
       assertEquals(resInvalida.status, 404);
 
-      // 5. Data válida configurada no ambiente
+      // 4b. Data sem 'T' ou sem fuso (rejeitada para evitar ambiguidades UTC vs BRT)
+      const resSemFuso1 = await handler(criarReq(), depsPadrao(estado, { ativaAte: "2099-12-31" }));
+      assertEquals(resSemFuso1.status, 404);
+
+      const resSemFuso2 = await handler(criarReq(), depsPadrao(estado, { ativaAte: "2099-12-31T23:59:00" }));
+      assertEquals(resSemFuso2.status, 404);
+
+      // 5. Data válida configurada no ambiente com fuso Z
       Deno.env.set("DEMONSTRACAO_ATIVA_ATE", "2035-01-01T00:00:00Z");
       const resEnvFuturo = await handler(criarReq(), depsPadrao(estado, { ativaAte: undefined }));
       assertEquals(resEnvFuturo.status, 200);
+
+      // 5b. Data válida configurada com fuso de offset brasileiro (-03:00)
+      Deno.env.set("DEMONSTRACAO_ATIVA_ATE", "2099-12-31T23:59:00-03:00");
+      const resEnvOffset = await handler(criarReq(), depsPadrao(estado, { ativaAte: undefined }));
+      assertEquals(resEnvOffset.status, 200);
     } finally {
       if (envAntigo !== undefined) Deno.env.set("DEMONSTRACAO_ATIVA_ATE", envAntigo);
       else Deno.env.delete("DEMONSTRACAO_ATIVA_ATE");
     }
 
-    // 6. Data no futuro em deps: login permitido normalmente
+    // 6. Data no futuro em deps com fuso Z ou offset: login permitido normalmente
     const resAtiva = await handler(criarReq(), depsPadrao(estado, { ativaAte: "2030-01-01T00:00:00Z" }));
     assertEquals(resAtiva.status, 200);
 
-    // Valida que emitiu alerta operacional para as configurações inválidas/expiradas
+    const resAtivaOffset = await handler(criarReq(), depsPadrao(estado, { ativaAte: "2099-12-31T23:59:00-03:00" }));
+    assertEquals(resAtivaOffset.status, 200);
+
+    // Valida que emitiu alerta operacional para as configurações inválidas/expiradas/sem fuso
     assertEquals(
       logsErro.some((msg) => msg.includes("[ALERTA_CONFIG_DEMONSTRACAO]")),
       true,
@@ -725,6 +811,26 @@ Deno.test("entrar-demonstracao: controle de memoria do mapa de IPs evita vazamen
   // Após expirar a janela (10 minutos), o IP é liberado
   const dezMinDepois = agora + JANELA_MINUTOS * 60_000 + 1000;
   assertEquals(verificarLimiteIp(ipNovo, dezMinDepois), true);
+});
+
+Deno.test("entrar-demonstracao: parseLimiteJanela exige formato ISO-8601 estrito com fuso explicito", () => {
+  // Rejeita formatos sem fuso horário (ambíguos entre UTC e horário local)
+  assertEquals(isNaN(parseLimiteJanela("")), true);
+  assertEquals(isNaN(parseLimiteJanela("   ")), true);
+  assertEquals(isNaN(parseLimiteJanela("2026-10-30")), true);
+  assertEquals(isNaN(parseLimiteJanela("2026-10-30T23:59:00")), true);
+  assertEquals(isNaN(parseLimiteJanela("30/10/2026 23:59:00")), true);
+  assertEquals(isNaN(parseLimiteJanela("invalido")), true);
+
+  // Aceita formatos com fuso UTC ('Z')
+  assertEquals(isNaN(parseLimiteJanela("2030-01-01T00:00:00Z")), false);
+  assertEquals(isNaN(parseLimiteJanela("2030-01-01T00:00Z")), false);
+  assertEquals(isNaN(parseLimiteJanela("2030-01-01T00:00:00.000Z")), false);
+
+  // Aceita formatos com offset numérico explícito (+HH:MM ou -HH:MM)
+  assertEquals(isNaN(parseLimiteJanela("2026-10-30T23:59:00-03:00")), false);
+  assertEquals(isNaN(parseLimiteJanela("2026-10-30T23:59:00+00:00")), false);
+  assertEquals(isNaN(parseLimiteJanela("2026-10-30T23:59:00+02:00")), false);
 });
 
 

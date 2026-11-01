@@ -57,7 +57,7 @@ Membros: `cauecarneiroc`, `joaopauloalbuquerque7`, `juliavasconcelos82`,
 5. **Etiqueta faltando.** Todo cartão de execução tem frente (Backend, iOS, Design,
    Infra, QA, Produto, Pesquisa, Jurídico, Marketing, Academy), sprint (Sprint 0 a 4) e
    prioridade (MUST, SHOULD, COULD).
-6. **Mais de dois cartões em andamento** para a mesma pessoa. É regra do quadro.
+6. **Mais de cinco cartões em andamento** para a mesma pessoa. É regra do quadro.
 7. **Prazo vencido** em cartão que não está em Concluído.
 8. **Cartão parado em "Revisão".** Revisão é só para PR aberto esperando outra pessoa.
    Cartão lá com todos os PRs mesclados, ou sem PR nenhum, está na coluna errada: reporte
@@ -74,7 +74,7 @@ O critério, em ordem:
 3. A dependência declarada está em **Concluído**.
 4. Prioridade MUST antes de SHOULD antes de COULD.
 5. Mais alto na lista — o quadro já está em ordem de prioridade.
-6. Quem pediu ainda não tem dois cartões em andamento.
+6. Quem pediu ainda não tem cinco cartões em andamento.
 
 Se o cartão tem **Responsável sugerido** diferente de quem vai pegar, diga isso na
 resposta. É sugestão, não reserva, mas assumir em silêncio custa retrabalho.

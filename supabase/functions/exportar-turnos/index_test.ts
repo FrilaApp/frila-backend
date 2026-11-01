@@ -527,12 +527,13 @@ Deno.test("formatarHoraLocal e formatarDataLocal tratam dados inválidos com seg
   assertEquals(formatarDataLocal("data-invalida-xyz"), "data-invalida-xyz");
 });
 
-Deno.test("tratarErroBanco com erro PGRST e mensagem em texto simples devolve 400", async () => {
-  const err = { code: "PGRST", message: "texto_simples_nao_json" };
+Deno.test("tratarErroBanco com erro PGRST e mensagem em texto simples devolve 500 erro_interno sem ecoar mensagem crua (RN15 / AUDITORIA-EDGE-SEG.md)", async () => {
+  const err = { code: "PGRST", message: "texto_simples_nao_json_com_detalhes_internos" };
   const res = tratarErroBanco(err);
-  assertEquals(res.status, 400);
+  assertEquals(res.status, 500);
   const json = await res.json();
-  assertEquals(json.code, "texto_simples_nao_json");
+  assertEquals(json.code, "erro_interno");
+  assertEquals(json.message, "erro_interno");
 });
 
 Deno.test("tratarErroBanco com erro PGRST e detail sem status numérico mantém 400", async () => {
@@ -964,6 +965,44 @@ Deno.test("seguranca csv: textos legítimos (hífen no meio, etc.) NÃO são alt
   // Coluna de checkin ausente formatada com "-" NÃO deve virar "'-'"
   assertStringIncludes(csv, ",-,");
   assert(!csv.includes("'-'"), "Marcador '-' do sistema não deve ser alterado");
+});
+
+Deno.test("seguranca csv (0g): neutralizarFormulaCsv e escaparCelulaCsv cobrem =HYPERLINK(...), +1, -1+1, @SUM e valor normal intacto", () => {
+  // 1. =HYPERLINK(...)
+  const hyperlinkFormula = '=HYPERLINK("http://evil.com", "clique")';
+  assertEquals(neutralizarFormulaCsv(hyperlinkFormula), `'=HYPERLINK("http://evil.com", "clique")`);
+  assertEquals(escaparCelulaCsv(hyperlinkFormula), `"'=HYPERLINK(""http://evil.com"", ""clique"")"`);
+
+  // 2. +1
+  assertEquals(neutralizarFormulaCsv("+1"), "'+1");
+  assertEquals(escaparCelulaCsv("+1"), "'+1");
+
+  // 3. -1+1
+  assertEquals(neutralizarFormulaCsv("-1+1"), "'-1+1");
+  assertEquals(escaparCelulaCsv("-1+1"), "'-1+1");
+
+  // 4. @SUM
+  assertEquals(neutralizarFormulaCsv("@SUM"), "'@SUM");
+  assertEquals(escaparCelulaCsv("@SUM"), "'@SUM");
+  assertEquals(neutralizarFormulaCsv("@SUM(1+1)"), "'@SUM(1+1)");
+  assertEquals(escaparCelulaCsv("@SUM(1+1)"), "'@SUM(1+1)");
+
+  // 5. Valores normais intactos
+  assertEquals(neutralizarFormulaCsv("Garçom"), "Garçom");
+  assertEquals(escaparCelulaCsv("Garçom"), "Garçom");
+
+  assertEquals(neutralizarFormulaCsv("Bar do Zé"), "Bar do Zé");
+  assertEquals(escaparCelulaCsv("Bar do Zé"), "Bar do Zé");
+
+  assertEquals(neutralizarFormulaCsv("-"), "-");
+  assertEquals(escaparCelulaCsv("-"), "-");
+
+  assertEquals(neutralizarFormulaCsv("123"), "123");
+  assertEquals(escaparCelulaCsv("123"), "123");
+
+  // Valor normal com vírgula (RFC 4180) intacto sem apóstrofo indevido
+  assertEquals(neutralizarFormulaCsv("R$ 150,00"), "R$ 150,00");
+  assertEquals(escaparCelulaCsv("R$ 150,00"), '"R$ 150,00"');
 });
 
 Deno.test("seguranca csv: CSV inicia com BOM UTF-8 (\\uFEFF) para compatibilidade com acentos no Excel", () => {

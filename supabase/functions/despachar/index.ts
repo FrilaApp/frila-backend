@@ -10,6 +10,7 @@
 // Não exposta para a internet: recusa qualquer chamada sem o segredo do agendador (401).
 
 import postgres from "npm:postgres@3.4.4";
+import { segredoAgendadorValido } from "../_compartilhado/auth.ts";
 
 export const UUID_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -19,28 +20,8 @@ export const LIMITE_MAXIMO_DESPACHO = 100;
 export const VT_PADRAO_DESPACHO = 30;
 export const VT_MAXIMO_DESPACHO = 300;
 
-function igualEmTempoConstante(a: string, b: string): boolean {
-  const x = new TextEncoder().encode(a);
-  const y = new TextEncoder().encode(b);
-  let diferenca = x.length ^ y.length;
-  const n = Math.max(x.length, y.length);
-  for (let i = 0; i < n; i++) diferenca |= (x[i] ?? 0) ^ (y[i] ?? 0);
-  return diferenca === 0;
-}
-
 export function segredoValido(req: Request, segredoEsperado: string): boolean {
-  const secretHeader = req.headers.get("x-agendador-secret");
-  if (secretHeader && igualEmTempoConstante(secretHeader, segredoEsperado)) {
-    return true;
-  }
-
-  const authHeader = req.headers.get("Authorization") ?? "";
-  const match = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (match && igualEmTempoConstante(match[1], segredoEsperado)) {
-    return true;
-  }
-
-  return false;
+  return segredoAgendadorValido(req, segredoEsperado);
 }
 
 export interface SqlClient {

@@ -88,8 +88,16 @@ jobs:
       - name: Corridas do ciclo
         run: ./scripts/corrida-ciclo.sh
 
+      # O pgTAP roda numa sessão só e não enxerga corrida. Duas conexões de verdade:
+      # a sessão A segura linhas na fila e a sessão B consome com SKIP LOCKED sem esperar A.
+      - name: Corrida no lote de push (SKIP LOCKED)
+        run: ./scripts/corrida-push.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
+
+      - name: Teste das ferramentas SQL da operação
+        run: ./scripts/teste-operacao-sql.sh
 
       # A porta de demonstração é Edge Function, e função não sobe com `supabase start`:
       # precisa de `functions serve`. O código e os endereços aqui são de mentira de
@@ -118,6 +126,11 @@ jobs:
       - name: Contas de demonstração por HTTP
         run: ./scripts/demonstracao.sh
 
+      # Valida as 7 views do schema metrica.* e gera o painel HTML autocontido.
+      # Falha se qualquer view do funil ou telemetria mudar de coluna (Cartão 6ab26a53, B-005).
+      - name: Testar gerador do painel do piloto
+        run: ./scripts/gerar-painel.sh --teste -o /tmp/painel-piloto.html
+
       # Suíte verde não diz o que ela protege. Derruba cada restrição, trigger e
       # política — e afrouxa cada política para `using (true)` — exigindo que o pgTAP
       # fique vermelho em cada caso. Escrito depois de duas revisões medirem que 11 de
@@ -136,6 +149,14 @@ jobs:
       # reprova, e o conhecido que sumir também avisa.
       - name: Lint do plpgsql sem achado novo
         run: ./scripts/lint-conhecido.sh
+
+      # Cartão `5boVdM0t`: `demonstracao-remoto.sh` gravava só EMAILS e CODIGO no
+      # `frila-dev`. Uma janela DEMONSTRACAO_ATIVA_ATE setada manualmente uma vez (fora
+      # deste script) e nunca renovada apaga a porta de demonstração em silêncio — 404
+      # idêntico para e-mail certo e código certo, sem log que distinga o motivo. Roda
+      # sem rede e sem Postgres: só valida a função pura via `source`.
+      - name: Deploy da demonstração exige janela válida
+        run: ./scripts/teste-demonstracao-remoto.sh
 
       # `privado.agora()` é o relógio do produto. Com `now()` no meio do caminho, todo
       # prazo vira decoração dentro de um teste que controla o relógio: o teste passa e a
