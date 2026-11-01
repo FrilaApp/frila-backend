@@ -133,7 +133,7 @@ fi
 dir_fixture="$TMP/repo_fixture"
 mkdir -p "$dir_fixture/scripts" "$dir_fixture/supabase/functions/auth"
 cp "$PORTAO" "$dir_fixture/scripts/"
-touch "$dir_fixture/deno.lock"
+echo '{"version":"3"}' > "$dir_fixture/deno.lock"
 cat << 'EOF' > "$dir_fixture/supabase/functions/auth/index_test.ts"
 Deno.test("mock auth", () => {
   const privateKey = "-----BEGIN PRIVATE KEY-----\nMOCKTESTKEY\n-----END PRIVATE KEY-----";
@@ -221,6 +221,110 @@ fi
 conferir "caso 10: --falhar-se-encontrar-segredo reprova com exit 1" \
   1 "Segredo em arquivo: src/provedor.ts" \
   "$dir_segredo/scripts/auditoria-segredos-e-dependencias.sh" --falhar-se-encontrar-segredo --relatorio "$dir_segredo/docs/rel.md"
+
+# Caso 11 (Sonda 1 do Lince): Token em arquivo de teste fora da allowlist gera ALERTA
+dir_sonda1="$TMP/repo_sonda1"
+mkdir -p "$dir_sonda1/scripts" "$dir_sonda1/supabase/functions/auth"
+cp "$PORTAO" "$dir_sonda1/scripts/"
+tok_sonda1=$(printf '%s%s' "sbp_" "1234567890abcdef1234567890abcdef12345678")
+cat << EOF > "$dir_sonda1/supabase/functions/auth/index_test.ts"
+Deno.test("sonda", () => {
+  const token = "${tok_sonda1}";
+});
+EOF
+(
+  cd "$dir_sonda1" || exit 1
+  git init -q
+  git config user.email "teste@frilabr.com"
+  git config user.name "Testador"
+  git add .
+  git commit -q -m "test: sonda token fora da allowlist"
+)
+conferir "caso 11 (sonda 1): token sbp desconhecido em teste gera ALERTA e sai com 1" \
+  1 "Segredo em arquivo: supabase/functions/auth/index_test.ts" \
+  "$dir_sonda1/scripts/auditoria-segredos-e-dependencias.sh" --falhar-se-encontrar-segredo --relatorio "$dir_sonda1/docs/rel.md"
+
+# Caso 12 (Sonda 2 do Lince): Mistura de fixture e arquivo de produção no mesmo commit
+dir_sonda2="$TMP/repo_sonda2"
+mkdir -p "$dir_sonda2/scripts" "$dir_sonda2/a/fixtures" "$dir_sonda2/z"
+cp "$PORTAO" "$dir_sonda2/scripts/"
+tok_sonda2_mock=$(printf '%s%s' "re_" "mock_1234567890abcdef12345678")
+tok_sonda2_prod=$(printf '%s%s' "re_" "prod_1234567890abcdef12345678")
+cat << EOF > "$dir_sonda2/a/fixtures/seed.ts"
+export const mockSecret = "${tok_sonda2_mock}";
+EOF
+cat << EOF > "$dir_sonda2/z/prod.ts"
+export const prodSecret = "${tok_sonda2_prod}";
+EOF
+(
+  cd "$dir_sonda2" || exit 1
+  git init -q
+  git config user.email "teste@frilabr.com"
+  git config user.name "Testador"
+  git add .
+  git commit -q -m "feat: commit misturando fixture e producao"
+  rm "$dir_sonda2/z/prod.ts"
+  git add "$dir_sonda2/z/prod.ts"
+  git commit -q -m "fix: remove segredo em producao"
+)
+conferir "caso 12 (sonda 2): segredo no historico em z/prod.ts e detectado e sai com 1" \
+  1 "Segredo no histórico: commit" \
+  "$dir_sonda2/scripts/auditoria-segredos-e-dependencias.sh" --falhar-se-encontrar-segredo --relatorio "$dir_sonda2/docs/rel.md"
+
+# Caso 13 (Sonda 3 do Lince): Falha ao ler histórico Git gera status INCOMPLETO e exit 2
+dir_sonda3="$TMP/repo_sonda3"
+mkdir -p "$dir_sonda3/scripts" "$dir_sonda3/bin"
+cp "$PORTAO" "$dir_sonda3/scripts/"
+(
+  cd "$dir_sonda3" || exit 1
+  git init -q
+  git config user.email "teste@frilabr.com"
+  git config user.name "Testador"
+  echo "vazio" > README.md
+  git add README.md
+  git commit -q -m "init"
+)
+cat << 'EOF' > "$dir_sonda3/bin/git"
+#!/usr/bin/env bash
+if [ "$1" = "log" ]; then
+  echo "fatal: git log error 128" >&2
+  exit 128
+fi
+exec /usr/bin/git "$@"
+EOF
+chmod +x "$dir_sonda3/bin/git"
+
+conferir "caso 13 (sonda 3): falha de git log sai com exit 2 e status INCOMPLETO" \
+  2 "INCOMPLETO" \
+  env PATH="$dir_sonda3/bin:$PATH" "$dir_sonda3/scripts/auditoria-segredos-e-dependencias.sh" --falhar-se-encontrar-segredo --relatorio "$dir_sonda3/docs/rel.md"
+
+# Caso 14 (Sonda 4 do Lince): jsr:@scope sem versao, npm:lodash@~ e lockfile corrompido
+dir_sonda4="$TMP/repo_sonda4"
+mkdir -p "$dir_sonda4/scripts" "$dir_sonda4/supabase/functions/sonda"
+cp "$PORTAO" "$dir_sonda4/scripts/"
+echo "texto corrompido nao json" > "$dir_sonda4/deno.lock"
+cat << 'EOF' > "$dir_sonda4/supabase/functions/sonda/index.ts"
+import { pkg } from "jsr:@scope/pkg";
+import lodash from "npm:lodash@~4.17.0";
+EOF
+(
+  cd "$dir_sonda4" || exit 1
+  git init -q
+  git config user.email "teste@frilabr.com"
+  git config user.name "Testador"
+  git add .
+  git commit -q -m "feat: dependencias flutuantes"
+)
+saida_sonda4=$("$dir_sonda4/scripts/auditoria-segredos-e-dependencias.sh" --relatorio "$dir_sonda4/docs/rel.md" 2>&1 || true)
+casos=$((casos + 1))
+if printf '%s' "$saida_sonda4" | grep -q "Dependência Deno sem versão fixada: jsr:@scope/pkg" && \
+   printf '%s' "$saida_sonda4" | grep -q "Dependência Deno sem versão fixada: npm:lodash@~4.17.0" && \
+   printf '%s' "$saida_sonda4" | grep -q "Arquivo deno.lock corrompido"; then
+  echo "  ✓ caso 14 (sonda 4): detectados especificadores flutuantes e lockfile corrompido"
+else
+  echo "  ✗ caso 14 (sonda 4): falha ao auditar especificadores flutuantes / lockfile"
+  falhas=$((falhas + 1))
+fi
 
 echo
 if [ "$falhas" -eq 0 ]; then

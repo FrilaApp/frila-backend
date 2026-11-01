@@ -136,32 +136,57 @@ def mascarar(valor: str, tipo: str) -> str:
     sufixo = valor_limpo[-3:]
     return f"{prefixo}...[REDACTED]...{sufixo} (sha256:{h})"
 
-def classificar_ocorrencia(caminho: str, valor: str, tipo: str) -> str:
+def classificar_ocorrencia(caminho: str, valor: str, tipo: str, linha: str = "") -> str:
     """Classifica o achado como legítimo (testes, exemplos, docs) ou alerta real."""
     caminho_norm = caminho.replace("\\", "/").lower()
     valor_lower = valor.lower()
+    linha_lower = linha.lower()
 
     # Relatório ou scripts de teste do próprio auditor
     if any(k in caminho_norm for k in ["auditoriasegredosedependencias", "teste-auditoria", "auditoria-segredos"]):
         return "LEGÍTIMO (Documentação/Script de Auditoria)"
 
-    # Fixtures de teste
-    if any(caminho_norm.endswith(sfx) for sfx in ["_test.ts", "_test.js", ".test.ts", ".spec.ts", ".test.js"]) or \
-       any(part in caminho_norm for part in ["/fixtures/", "/tests/", "supabase/tests/", "teste_setup", "test_setup"]):
-        return "LEGÍTIMO (Fixture Sintética de Teste)"
-
-    # Arquivos de exemplo e placeholders documentados
-    if any(caminho_norm.endswith(sfx) for sfx in [".example", ".exemplo"]) or ".env.example" in caminho_norm or ".env.exemplo" in caminho_norm:
-        return "LEGÍTIMO (Placeholder de Exemplo)"
-
-    placeholders = ["[host]", "[senha]", "[password]", "<segredo>", "<token>", "seu-token", "sua-chave", "mock-", "test-", "placeholder", "exemplo", "postgres:postgres"]
-    if any(ph in valor_lower for ph in placeholders):
-        return "LEGÍTIMO (Placeholder de Exemplo)"
+    # Allowlist estrita de padrões sintéticos de teste e placeholders conhecidos
+    placeholders = [
+        "[host]", "[senha]", "[password]", "<segredo>", "<token>", "seu-token",
+        "sua-chave", "mock", "test", "placeholder", "exemplo", "postgres:postgres",
+        "fake", "dummy", "00000000", "segredo_teste", "sua_chave_resend",
+        "token_fcm_valido_com_mais_de_vinte_caracteres", "senha", "secret",
+        "seu-projeto", "seu_projeto", "frila-test", "frila_test", "example.com",
+        "test-proj", "...", "${b64}", "invalido", "invalida", "invalidos",
+        "sgvsbg8gv29ybgqh"
+    ]
+    eh_placeholder_valor = any(ph in valor_lower for ph in placeholders)
+    eh_placeholder_linha = any(ph in linha_lower for ph in placeholders)
+    eh_placeholder = eh_placeholder_valor or eh_placeholder_linha
 
     # Conexões postgres locais
     if "Postgres URL" in tipo:
         if any(h in valor_lower for h in ["localhost", "127.0.0.1", "supabase_db_", "mock"]):
             return "LEGÍTIMO (Ambiente Local / Mock)"
+
+    # Fixtures de teste só são legítimas se contiverem valor/contexto comprovadamente sintético/placeholder
+    eh_caminho_teste = any(caminho_norm.endswith(sfx) for sfx in ["_test.ts", "_test.js", ".test.ts", ".spec.ts", ".test.js"]) or \
+                       any(part in caminho_norm for part in ["/fixtures/", "/tests/", "supabase/tests/", "teste_setup", "test_setup"])
+    if eh_caminho_teste:
+        if eh_placeholder:
+            return "LEGÍTIMO (Fixture Sintética de Teste)"
+        else:
+            return "ALERTA (Possível Segredo Exposto em Arquivo de Teste)"
+
+    # Arquivos de exemplo e documentação
+    eh_exemplo = any(caminho_norm.endswith(sfx) for sfx in [".example", ".exemplo"]) or \
+                 ".env.example" in caminho_norm or ".env.exemplo" in caminho_norm
+    if eh_exemplo:
+        if eh_placeholder:
+            return "LEGÍTIMO (Placeholder de Exemplo)"
+        else:
+            return "ALERTA (Possível Segredo em Arquivo de Exemplo)"
+
+    # Placeholders literais em arquivos normais (ex: <token>, [senha], etc.)
+    literal_placeholders = ["[host]", "[senha]", "[password]", "<segredo>", "<token>", "seu-token", "sua-chave", "placeholder", "postgres:postgres"]
+    if any(ph in valor_lower for ph in literal_placeholders):
+        return "LEGÍTIMO (Placeholder de Exemplo)"
 
     return "ALERTA (Possível Segredo Exposto)"
 
@@ -228,7 +253,7 @@ def varrer_arquivos_atuais(caminho_relatorio: Path):
                 if m:
                     val = m.group(0)
                     if "[REDACTED" not in val:
-                        classif = classificar_ocorrencia(rel_path, val, pat["tipo"])
+                        classif = classificar_ocorrencia(rel_path, val, pat["tipo"], linha=linha)
                         achados.append({
                             "arquivo": rel_path,
                             "linha": 1,
@@ -251,7 +276,7 @@ def varrer_arquivos_atuais(caminho_relatorio: Path):
                         # Se for placeholder óbvio, ignora
                         if any(ph in val_grupo.lower() for ph in ["sua-chave", "seu-token", "placeholder", "exemplo", "<", "["]):
                             continue
-                    classif = classificar_ocorrencia(rel_path, val, pat["tipo"])
+                    classif = classificar_ocorrencia(rel_path, val, pat["tipo"], linha=linha)
                     achados.append({
                         "arquivo": rel_path,
                         "linha": num_linha,
@@ -266,6 +291,7 @@ def varrer_historico_git():
     """Varre histórico git em busca de commits que adicionaram ou modificaram segredos em um único comando."""
     achados_git = []
     total_commits = 0
+    status_git = "OK"
 
     try:
         out_commits = subprocess.check_output(["git", "rev-list", "--count", "HEAD"], text=True, stderr=subprocess.DEVNULL)
@@ -274,14 +300,21 @@ def varrer_historico_git():
         total_commits = 0
 
     if total_commits == 0:
-        return achados_git, total_commits
+        return achados_git, total_commits, status_git
 
     combined_ere = "|".join(f"({p['git_ere']})" for p in PATTERNS if p.get("git_ere"))
     cmd = ["git", "log", "--all", "-E", "-G", combined_ere, "--format=COMMIT:%h%x00%ad%x00%an%x00%s", "--date=short", "-U0"]
     try:
-        out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
-    except Exception:
-        return achados_git, total_commits
+        proc = subprocess.run(cmd, text=True, capture_output=True)
+        if proc.returncode != 0:
+            status_git = f"INCOMPLETO (git log exit {proc.returncode})"
+            sys.stderr.write(f"ERRO: git log falhou com exit {proc.returncode}: {proc.stderr}\n")
+            return achados_git, total_commits, status_git
+        out = proc.stdout
+    except Exception as e:
+        status_git = f"INCOMPLETO ({e})"
+        sys.stderr.write(f"ERRO: falha ao executar git log: {e}\n")
+        return achados_git, total_commits, status_git
 
     current_commit = None
     files_touched = []
@@ -291,27 +324,21 @@ def varrer_historico_git():
         if not c_info:
             return
         sha, dt, author, subject = c_info
-        for pat in PATTERNS:
-            matched_val = None
-            matched_file = None
-            for fname, ltext in lines:
-                m = pat["regex"].search(ltext)
-                if m:
-                    matched_val = m.group(0)
-                    matched_file = fname
-                    break
-            if matched_val:
-                c = classificar_ocorrencia(matched_file or (files[0] if files else "desconhecido"), matched_val, pat["tipo"])
-                achados_git.append({
-                    "sha": sha,
-                    "data": dt,
-                    "autor": author,
-                    "mensagem": subject,
-                    "arquivos": ", ".join(files[:3]) + ("..." if len(files) > 3 else ""),
-                    "tipo": pat["tipo"],
-                    "classificacao": c,
-                    "mascara": mascarar(matched_val, pat["tipo"])
-                })
+        for fname, ltext in lines:
+            for pat in PATTERNS:
+                for m in pat["regex"].finditer(ltext):
+                    val = m.group(0)
+                    c = classificar_ocorrencia(fname, val, pat["tipo"], linha=ltext)
+                    achados_git.append({
+                        "sha": sha,
+                        "data": dt,
+                        "autor": author,
+                        "mensagem": subject,
+                        "arquivos": fname,
+                        "tipo": pat["tipo"],
+                        "classificacao": c,
+                        "mascara": mascarar(val, pat["tipo"])
+                    })
 
     current_file = ""
     for line in out.splitlines():
@@ -325,15 +352,14 @@ def varrer_historico_git():
         elif line.startswith("diff --git"):
             parts = line.split(" b/")
             if len(parts) > 1:
-                current_file = parts[-1]
+                current_file = parts[-1].strip()
                 if current_file not in files_touched:
                     files_touched.append(current_file)
         elif line.startswith("+") and not line.startswith("+++"):
             lines_added.append((current_file, line[1:]))
 
     processar_commit(current_commit, files_touched, lines_added)
-
-    return achados_git, total_commits
+    return achados_git, total_commits, status_git
 
 def auditar_dependencias():
     """Audita dependências em Deno (Edge Functions), Python, GitHub Actions e PostgreSQL."""
@@ -359,28 +385,57 @@ def auditar_dependencias():
 
     for imp in sorted(imports_vistos):
         fixado = False
-        versao = "não declarada"
-        if "@" in imp:
-            partes = imp.split("@")
-            versao = partes[-1]
-            if versao and not any(v in versao for v in ["latest", "^", "*"]):
+        versao = None
+
+        if imp.startswith("jsr:") or imp.startswith("npm:"):
+            corpo = imp.split(":", 1)[1]
+            if corpo.startswith("@"):
+                at_pos = corpo.find("@", 1)
+                if at_pos != -1:
+                    versao = corpo[at_pos + 1:].strip()
+            else:
+                if "@" in corpo:
+                    versao = corpo.split("@", 1)[1].strip()
+        elif "@" in imp:
+            m_ver = re.search(r"@([^\/\s]+)", imp)
+            if m_ver:
+                versao = m_ver.group(1).strip()
+
+        if versao:
+            tem_flutuacao = any(c in versao for c in ["^", "~", "*", ">", "<", "latest"])
+            eh_semver_exato = bool(re.match(r"^[0-9]+(\.[0-9]+)*(-[a-zA-Z0-9\.\-_]+)?$", versao))
+            if eh_semver_exato and not tem_flutuacao:
                 fixado = True
 
         status = "Fixado (Pin)" if fixado else "Alerta: Flutuante / Sem Pin"
         if not fixado:
-            relato["deno"]["alertas"].append(f"Dependência Deno sem versão fixada: {imp}")
+            relato["deno"]["alertas"].append(f"Dependência Deno sem versão fixada: {imp} (versão: '{versao or 'nenhuma'}')")
 
         relato["deno"]["modulos"].append({
             "especificador": imp,
-            "versao": versao,
+            "versao": versao or "não declarada",
             "status": status
         })
 
     lock_file = Path("deno.lock")
-    relato["deno"]["lockfile_presente"] = lock_file.is_file()
-    if fn_dir.is_dir() and any(fn_dir.rglob("*.ts")):
-        if not lock_file.is_file():
+    lock_presente = lock_file.is_file()
+    lock_valido = False
+    if lock_presente:
+        try:
+            txt_lock = lock_file.read_text(encoding="utf-8")
+            dados_lock = json.loads(txt_lock)
+            if isinstance(dados_lock, dict) and "version" in dados_lock:
+                lock_valido = True
+            else:
+                relato["deno"]["alertas"].append("Arquivo deno.lock existe mas não contém chave 'version' válida de lockfile Deno.")
+        except Exception as e:
+            relato["deno"]["alertas"].append(f"Arquivo deno.lock corrompido ou JSON inválido: {e}")
+    else:
+        if fn_dir.is_dir() and any(fn_dir.rglob("*.ts")):
             relato["deno"]["alertas"].append("Arquivo deno.lock não encontrado na raiz.")
+
+    relato["deno"]["lockfile_presente"] = lock_presente
+    relato["deno"]["lockfile_valido"] = lock_valido
 
     # 2. Python e Contrato OpenAPI
     venv_dir = Path(".venv-contrato")
@@ -481,7 +536,7 @@ def auditar_dependencias():
 
     return relato
 
-def gerar_relatorio_md(caminho_relatorio: Path, achados_arquivos, arquivos_auditados, achados_git, total_commits, relato_deps, apenas_segredos, apenas_deps):
+def gerar_relatorio_md(caminho_relatorio: Path, achados_arquivos, arquivos_auditados, achados_git, total_commits, relato_deps, apenas_segredos, apenas_deps, status_git="OK"):
     """Gera o documento Markdown em conformidade com as regras do time."""
     data_hora = datetime.now().strftime("%d/%m/%Y às %H:%M")
 
@@ -495,12 +550,19 @@ def gerar_relatorio_md(caminho_relatorio: Path, achados_arquivos, arquivos_audit
 
     alertas_segredos = [a for a in achados_arquivos if "ALERTA" in a["classificacao"]]
     alertas_git = [a for a in achados_git if "ALERTA" in a["classificacao"]]
+    deno_alertas = len(relato_deps.get("deno", {}).get("alertas", []))
+    actions_alertas = len(relato_deps.get("actions", {}).get("alertas", []))
     alertas_deps = (relato_deps.get("deno", {}).get("alertas", []) +
                     relato_deps.get("python", {}).get("alertas", []) +
                     relato_deps.get("actions", {}).get("alertas", []))
 
     total_alertas = len(alertas_segredos) + len(alertas_git) + len(alertas_deps)
-    status_geral = "CONFORME (Nenhum segredo exposto e dependências fixadas)" if total_alertas == 0 else f"ALERTA ({total_alertas} itens a verificar)"
+    if status_git != "OK":
+        status_geral = f"INCOMPLETO ({status_git})"
+    elif total_alertas == 0:
+        status_geral = "CONFORME (Nenhum segredo exposto e dependências fixadas)"
+    else:
+        status_geral = f"ALERTA ({total_alertas} itens a verificar)"
 
     md = []
     md.append("# Auditoria de Segredos e Dependências")
@@ -517,7 +579,10 @@ def gerar_relatorio_md(caminho_relatorio: Path, achados_arquivos, arquivos_audit
     md.append("| :--- | :--- | :--- |")
     if not apenas_deps:
         md.append(f"| Arquivos na Árvore de Trabalho | {arquivos_auditados} | Auditados |")
-        md.append(f"| Commits no Histórico Git | {total_commits} | Auditados |")
+        if status_git != "OK":
+            md.append(f"| Commits no Histórico Git | {total_commits} | ✗ {status_git} |")
+        else:
+            md.append(f"| Commits no Histórico Git | {total_commits} | Auditados |")
         md.append(f"| Segredos Reais Expostos em Arquivos | {len(alertas_segredos)} | {'✓ Conforme' if len(alertas_segredos) == 0 else '✗ Alerta'} |")
         md.append(f"| Segredos Reais Expostos no Histórico | {len(alertas_git)} | {'✓ Conforme' if len(alertas_git) == 0 else '✗ Alerta'} |")
         md.append(f"| Fixtures Sintéticas / Placeholders | {len(achados_arquivos) - len(alertas_segredos)} | ✓ Documentados / Isolados |")
@@ -525,8 +590,10 @@ def gerar_relatorio_md(caminho_relatorio: Path, achados_arquivos, arquivos_audit
         modulos_deno = len(relato_deps.get("deno", {}).get("modulos", []))
         actions_cnt = len(relato_deps.get("actions", {}).get("actions", []))
         ext_cnt = len(relato_deps.get("postgres", {}).get("extensoes", []))
-        md.append(f"| Módulos Deno Externos | {modulos_deno} (todos com pin) | ✓ Conforme |")
-        md.append(f"| Workflows GitHub Actions | {actions_cnt} actions (100% commit SHA) | ✓ Conforme |")
+        deno_alertas = len(relato_deps.get("deno", {}).get("alertas", []))
+        actions_alertas = len(relato_deps.get("actions", {}).get("alertas", []))
+        md.append(f"| Módulos Deno Externos | {modulos_deno} ({'100% fixados' if deno_alertas == 0 else f'{deno_alertas} alertas de flutuação'}) | {'✓ Conforme' if deno_alertas == 0 else '✗ Alerta'} |")
+        md.append(f"| Workflows GitHub Actions | {actions_cnt} actions ({'100% commit SHA' if actions_alertas == 0 else f'{actions_alertas} sem pin'}) | {'✓ Conforme' if actions_alertas == 0 else '✗ Alerta'} |")
         md.append(f"| Extensões PostgreSQL | {ext_cnt} declaradas | ✓ Conforme |")
     md.append("")
 
@@ -625,9 +692,15 @@ def gerar_relatorio_md(caminho_relatorio: Path, achados_arquivos, arquivos_audit
     md.append("## 4. Matriz de Riscos e Recomendações")
     md.append("")
     md.append("1. **Isolamento de Segredos de Infraestrutura:**")
-    md.append("   - O repositório não armazena credenciais em texto claro. Variáveis sensíveis como `RESEND_API_KEY`, `SUPABASE_ACCESS_TOKEN`, `FCM_SERVICE_ACCOUNT` e segredos de despacho são injetados exclusivamente via secrets de ambiente e Supabase Vault (PR #187).")
-    md.append("2. **Imutabilidade de CI/CD:**")
-    md.append("   - 100% das GitHub Actions utilizam commit SHAs imutáveis de 40 caracteres, prevenindo ataques de sequestro de tag (*supply chain poisoning*).")
+    if len(alertas_segredos) == 0 and len(alertas_git) == 0 and status_git == "OK":
+        md.append("   - O repositório não armazena credenciais em texto claro. Variáveis sensíveis como `RESEND_API_KEY`, `SUPABASE_ACCESS_TOKEN`, `FCM_SERVICE_ACCOUNT` e segredos de despacho são injetados exclusivamente via secrets de ambiente e Supabase Vault (PR #187).")
+    else:
+        md.append(f"   - ⚠️ ALERTA: Foram detectados {len(alertas_segredos) + len(alertas_git)} potenciais segredos ou status git {status_git} que exigem atenção imediata.")
+    md.append("2. **Imutabilidade de CI/CD e Dependências:**")
+    if actions_alertas == 0 and deno_alertas == 0:
+        md.append("   - 100% das GitHub Actions utilizam commit SHAs imutáveis de 40 caracteres e dependências Deno possuem versões fixadas sem flutuação, prevenindo ataques de sequestro de tag (*supply chain poisoning*).")
+    else:
+        md.append(f"   - ⚠️ ALERTA: Há {actions_alertas + deno_alertas} dependências com versões flutuantes ou sem pin estrito.")
     md.append("3. **Extensão pg_net e Fila de Despacho:**")
     md.append("   - Conforme documentado em `docs/PROPOSTA-SEGREDO-DESPACHO.md` (e comprovado pela run da CI no PR #284), segredos não devem trafegar em texto claro em `net.http_post`. A migração para tokens HMAC efêmeros recomendada na proposta elimina a persistência de credenciais na fila.")
     md.append("")
@@ -683,6 +756,7 @@ def main():
     arquivos_auditados = 0
     achados_git = []
     total_commits = 0
+    status_git = "OK"
     relato_deps = {}
 
     if not apenas_deps:
@@ -691,25 +765,28 @@ def main():
         print(f"    ✓ {arquivos_auditados} arquivos auditados ({len(achados_arquivos)} ocorrências catalogadas)")
 
         print("  - Varrendo histórico git...")
-        achados_git, total_commits = varrer_historico_git()
-        print(f"    ✓ {total_commits} commits auditados ({len(achados_git)} ocorrências históricas catalogadas)")
+        achados_git, total_commits, status_git = varrer_historico_git()
+        print(f"    ✓ {total_commits} commits auditados ({len(achados_git)} ocorrências históricas catalogadas, status: {status_git})")
 
     if not apenas_segredos:
         print("  - Auditando dependências (Deno, Python, Actions, PostgreSQL)...")
         relato_deps = auditar_dependencias()
         print("    ✓ Dependências auditadas")
 
-    gerar_relatorio_md(relatorio_caminho, achados_arquivos, arquivos_auditados, achados_git, total_commits, relato_deps, apenas_segredos, apenas_deps)
+    gerar_relatorio_md(relatorio_caminho, achados_arquivos, arquivos_auditados, achados_git, total_commits, relato_deps, apenas_segredos, apenas_deps, status_git=status_git)
     print(f"  ✓ Relatório gerado em: {relatorio_caminho}")
 
     # Resumo do veredito
     alertas_segredos = [a for a in achados_arquivos if "ALERTA" in a["classificacao"]]
     alertas_git = [a for a in achados_git if "ALERTA" in a["classificacao"]]
+    deno_alertas = len(relato_deps.get("deno", {}).get("alertas", []))
+    actions_alertas = len(relato_deps.get("actions", {}).get("alertas", []))
     alertas_deps = (relato_deps.get("deno", {}).get("alertas", []) +
                     relato_deps.get("python", {}).get("alertas", []) +
                     relato_deps.get("actions", {}).get("alertas", []))
 
-    total_alertas = len(alertas_segredos) + len(alertas_git) + len(alertas_deps)
+    git_falhou = (status_git != "OK")
+    total_alertas = len(alertas_segredos) + len(alertas_git) + len(alertas_deps) + (1 if git_falhou else 0)
 
     print("\n▸ Veredito da Auditoria:")
     if total_alertas == 0:
@@ -717,6 +794,8 @@ def main():
         sys.exit(0)
     else:
         print(f"  ✗ ALERTA: {total_alertas} itens exigem atenção:")
+        if git_falhou:
+            print(f"    - Git: Leitura do histórico incompleta ({status_git})")
         for a in alertas_segredos:
             print(f"    - Segredo em arquivo: {a['arquivo']}:{a['linha']} ({a['tipo']})")
         for g in alertas_git:
@@ -724,8 +803,11 @@ def main():
         for d in alertas_deps:
             print(f"    - Dependência: {d}")
 
-        if falhar_se_encontrar_segredo and (len(alertas_segredos) > 0 or len(alertas_git) > 0):
-            sys.exit(1)
+        if falhar_se_encontrar_segredo:
+            if git_falhou:
+                sys.exit(2)
+            if len(alertas_segredos) > 0 or len(alertas_git) > 0:
+                sys.exit(1)
         sys.exit(0)
 
 if __name__ == "__main__":
