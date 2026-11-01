@@ -37,7 +37,7 @@
 # Uso:  ./scripts/mutacao.sh              tudo
 #       ./scripts/mutacao.sh sem_turno    só o que casa com o texto
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 filtro="${1:-}"

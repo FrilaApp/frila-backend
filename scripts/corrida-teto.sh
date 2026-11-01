@@ -15,7 +15,7 @@
 #
 # Uso:  ./scripts/corrida-teto.sh
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 
@@ -100,6 +100,8 @@ ok "Cenário: $n_livres elegíveis sem notificação de vaga na janela"
 
 echo "▸ Disparando as sessões A e B em concorrência real (cada uma segura o commit 1 s)"
 
+pA=""
+pB=""
 for s in A B; do
   vaga=$([ "$s" = A ] && echo "$VAGA_A" || echo "$VAGA_B")
   psql -tA <<SQL >"$TMP/$s.out" 2>"$TMP/$s.err" &
@@ -109,7 +111,7 @@ select privado.despachar_vaga('$vaga');
 select pg_sleep(1);
 commit;
 SQL
-  eval "p$s=\$!"
+  if [ "$s" = "A" ]; then pA=$!; else pB=$!; fi
 done
 
 wait "$pA"; sA=$?

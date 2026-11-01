@@ -7,7 +7,7 @@
 #
 # Não precisa de Postgres: alimenta o validador com corpos sintéticos e confere o veredito.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 PY=.venv-contrato/bin/python
 [ -x "$PY" ] || PY=python3
