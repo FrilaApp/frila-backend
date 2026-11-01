@@ -16,10 +16,12 @@ import {
 import {
   criarSqlClient,
   DadosDoEmail,
+  LIMITE_PADRAO_EMAIL,
   PedidoDaFila,
   processarEnvioEmail,
   SqlClient,
   TETO_DE_LEITURAS,
+  VT_PADRAO_EMAIL,
 } from "./index.ts";
 import {
   Email,
@@ -1194,6 +1196,66 @@ Deno.test("segurança: validarTextoCabecalhoSmtp aceita cabeçalhos e assuntos l
   assertEquals(validarTextoCabecalhoSmtp("smtp.frila.app"), true);
   assertEquals(validarTextoCabecalhoSmtp("mail-relay-01.us-east-1.aws.com"), true);
   assertEquals(validarTextoCabecalhoSmtp("equipe+suporte-frila@dominio.com.br"), true);
+});
+
+Deno.test("enviar-email: recusa metodos GET, PUT e DELETE com 405 metodo_nao_permitido", async () => {
+  for (const method of ["GET", "PUT", "DELETE"]) {
+    const req = new Request("http://localhost/functions/v1/enviar-email", {
+      method,
+      headers: { "x-agendador-secret": "segredo" },
+    });
+    const res = await processarEnvioEmail(req, { agendadorSecret: "segredo" });
+    assertEquals(res.status, 405);
+    const json = await res.json();
+    assertEquals(json.ok, false);
+    assertEquals(json.erro, "metodo_nao_permitido");
+  }
+});
+
+Deno.test("enviar-email: recusa chamada sem segredo ou com segredo incorreto com 401 nao_autorizado", async () => {
+  const reqSemSegredo = new Request("http://localhost/functions/v1/enviar-email", {
+    method: "POST",
+  });
+  const resSemSegredo = await processarEnvioEmail(reqSemSegredo, { agendadorSecret: "segredo" });
+  assertEquals(resSemSegredo.status, 401);
+
+  const reqSegredoErrado = new Request("http://localhost/functions/v1/enviar-email", {
+    method: "POST",
+    headers: { "x-agendador-secret": "segredo-incorreto" },
+  });
+  const resSegredoErrado = await processarEnvioEmail(reqSegredoErrado, { agendadorSecret: "segredo" });
+  assertEquals(resSegredoErrado.status, 401);
+});
+
+Deno.test("enviar-email: corpo com JSON quebrado assume parametros padrao sem falhar", async () => {
+  let limiteConsultado = 0;
+  let vtConsultado = 0;
+  const e = espiao([]);
+  const sqlOriginal = e.sql.lerFilaEmail;
+  e.sql.lerFilaEmail = (limite, vt) => {
+    limiteConsultado = limite;
+    vtConsultado = vt;
+    return sqlOriginal(limite, vt);
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-email", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": "segredo",
+    },
+    body: "{ json-quebrado",
+  });
+
+  const res = await processarEnvioEmail(req, {
+    agendadorSecret: "segredo",
+    enviar: () => Promise.resolve({ ok: true }),
+    sqlClient: e.sql,
+  });
+
+  assertEquals(res.status, 200);
+  assertEquals(limiteConsultado, LIMITE_PADRAO_EMAIL);
+  assertEquals(vtConsultado, VT_PADRAO_EMAIL);
 });
 
 

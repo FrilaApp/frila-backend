@@ -783,4 +783,98 @@ Deno.test("porta: validacao estrita do formato Authorization Bearer rejeita malf
   assertEquals(chamouFetchPositivo, true);
 });
 
+Deno.test("excluir-conta: corpo com JSON quebrado ou invalido retorna 422 campo_obrigatorio confirmar", async () => {
+  const deps = mockDeps({});
+  const req = new Request("http://localhost", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer token-valido",
+      "Content-Type": "application/json",
+    },
+    body: "{ json-quebrado",
+  });
+  const res = await handler(req, deps);
+  assertEquals(res.status, 422);
+  const json = await res.json();
+  assertEquals(json.code, "campo_obrigatorio");
+  assertEquals(json.details, "confirmar");
+});
+
+Deno.test("excluir-conta: usuario sem campo id string em auth/v1/user retorna 401 nao_autenticado", async () => {
+  const deps = mockDeps({});
+  deps.fetchFn = () => Promise.resolve(new Response(JSON.stringify({ id: 12345 }), { status: 200 }));
+
+  const req = new Request("http://localhost", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer token-valido",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ confirmar: true }),
+  });
+  const res = await handler(req, deps);
+  assertEquals(res.status, 401);
+  const json = await res.json();
+  assertEquals(json.code, "nao_autenticado");
+});
+
+Deno.test("excluir-conta: falha em registrarPedido retorna 500 erro_interno", async () => {
+  const deps = mockDeps({});
+  deps.sqlClient = {
+    registrarPedido: () => Promise.reject(new Error("Falha no banco ao registrar pedido")),
+    query: () => Promise.resolve({ dados: {} }),
+  };
+
+  const req = new Request("http://localhost", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer token-valido",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ confirmar: true }),
+  });
+  const res = await handler(req, deps);
+  assertEquals(res.status, 500);
+  const json = await res.json();
+  assertEquals(json.code, "erro_interno");
+});
+
+Deno.test("excluir-conta: falha de rede em auth/v1/user ou admin/users retorna 502 erro_interno", async () => {
+  // 1. Falha de rede em auth/v1/user
+  const depsAuthErro = mockDeps({});
+  depsAuthErro.fetchFn = () => Promise.reject(new TypeError("Failed to fetch auth"));
+
+  const req = new Request("http://localhost", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer token-valido",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ confirmar: true }),
+  });
+  const resAuthErro = await handler(req, depsAuthErro);
+  assertEquals(resAuthErro.status, 502);
+
+  // 2. Falha de rede em admin/users
+  const depsAdminErro = mockDeps({});
+  const fetchOrig = depsAdminErro.fetchFn!;
+  depsAdminErro.fetchFn = (input, init) => {
+    const urlStr = String(input);
+    if (urlStr.includes("admin/users")) {
+      return Promise.reject(new TypeError("Failed to fetch admin"));
+    }
+    return fetchOrig(input, init);
+  };
+  const req2 = new Request("http://localhost", {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer token-valido",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ confirmar: true }),
+  });
+  const resAdminErro = await handler(req2, depsAdminErro);
+  assertEquals(resAdminErro.status, 502);
+});
+
 

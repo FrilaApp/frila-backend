@@ -684,4 +684,40 @@ Deno.test("despachar: mensagem arquivada por teto excedido no banco e repassada 
   assertEquals(json.mensagens[0].erro, "teto_tentativas_excedido");
 });
 
+Deno.test("despachar: recusa metodos GET, PUT e DELETE com 405 metodo_nao_permitido", async () => {
+  for (const method of ["GET", "PUT", "DELETE"]) {
+    const req = new Request("http://localhost/functions/v1/despachar", {
+      method,
+      headers: { "x-agendador-secret": SEGREDO_TESTE },
+    });
+    const res = await handler(req, { agendadorSecret: SEGREDO_TESTE });
+    assertEquals(res.status, 405);
+    const json = await res.json();
+    assertEquals(json.ok, false);
+    assertEquals(json.erro, "metodo_nao_permitido");
+  }
+});
+
+Deno.test("despachar: corpo com JSON quebrado nao falha e processa fila com defaults", async () => {
+  const mockSql = criarMockSqlClient({
+    processarFilaDespacho: () => Promise.resolve([]),
+  });
+  const req = new Request("http://localhost/functions/v1/despachar", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-agendador-secret": SEGREDO_TESTE,
+    },
+    body: "{ json-quebrado",
+  });
+  const res = await handler(req, {
+    agendadorSecret: SEGREDO_TESTE,
+    sqlClient: mockSql,
+  });
+  assertEquals(res.status, 200);
+  const json = await res.json();
+  assertEquals(json.ok, true);
+  assertEquals(json.processados, 0);
+});
+
 

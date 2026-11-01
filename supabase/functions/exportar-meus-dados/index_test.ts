@@ -362,5 +362,34 @@ Deno.test("porta: validacao estrita do formato Authorization Bearer rejeita malf
   assertEquals(ePositivo.chamadasAuth.length, 1);
 });
 
+Deno.test("exportar-meus-dados: usuario com id nao-string no Supabase Auth retorna 401 nao_autenticado", async () => {
+  const e = espiao();
+  e.fetchFn = () => Promise.resolve(new Response(JSON.stringify({ id: 98765 }), { status: 200 }));
+  const res = await chamar(e, requisicao());
+  assertEquals(res.status, 401);
+  assertEquals((await res.json()).code, "nao_autenticado");
+});
+
+Deno.test("exportar-meus-dados: resposta de erro HTTP de auth/v1/user retorna 401 nao_autenticado", async () => {
+  const e = espiao();
+  e.fetchFn = () => Promise.resolve(new Response(JSON.stringify({ message: "error" }), { status: 500 }));
+  const res = await chamar(e, requisicao());
+  assertEquals(res.status, 401);
+  assertEquals((await res.json()).code, "nao_autenticado");
+});
+
+Deno.test("exportar-meus-dados: metodos GET, PUT, DELETE, OPTIONS retornam 405 metodo_nao_permitido", async () => {
+  const e = espiao();
+  for (const method of ["GET", "PUT", "DELETE", "OPTIONS"]) {
+    const req = new Request(`${URL_BASE}/functions/v1/exportar-meus-dados`, {
+      method,
+      headers: { Authorization: "Bearer token-valido" },
+    });
+    const res = await chamar(e, req);
+    assertEquals(res.status, 405);
+    assertEquals((await res.json()).code, "metodo_nao_permitido");
+  }
+});
+
 
 
