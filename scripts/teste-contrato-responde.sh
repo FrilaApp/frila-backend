@@ -7,7 +7,7 @@
 #
 # Não precisa de Postgres: alimenta o validador com corpos sintéticos e confere o veredito.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 PY=.venv-contrato/bin/python
 [ -x "$PY" ] || PY=python3
@@ -189,7 +189,8 @@ julga() {
 
 julga_com_flags() {
   local flags="$1" entrada="$2"
-  saida=$(printf '%s\n%s\n' "$PROMESSA_OK" "$entrada" | "$PY" scripts/contrato_responde.py $flags 2>&1)
+  read -r -a flag_args <<< "$flags"
+  saida=$(printf '%s\n%s\n' "$PROMESSA_OK" "$entrada" | "$PY" scripts/contrato_responde.py "${flag_args[@]}" 2>&1)
   codigo=$?
 }
 

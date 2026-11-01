@@ -20,7 +20,7 @@
 #
 # Uso:  ./scripts/corrida-cadastrar-estabelecimento.sh
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 SEGURA=${SEGURA:-4}   # segundos que A segura o commit
@@ -122,7 +122,7 @@ rodada() { # rótulo uuid_de_B
   fi
 
   wait $pa; local sa=$?
-  wait $pb; local sb=$?
+  wait $pb
 
   [ $sa -eq 0 ] || { falhou "a sessão A falhou: $(cat "$TMP/a.err")"; return; }
   id_a=$(python3 -c "import json,sys; print(json.loads(sys.stdin.readline())['id'])" <"$TMP/a.out")
