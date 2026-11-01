@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
-# Prova determinística de concorrência entre notificar e expurgo (K-001k/K-001l, Risco N1).
+# Prova determinística de concorrência entre notificar e expurgo (K-001k/K-001l/K-001n, Risco N1).
 #
 # O pgTAP roda numa única sessão SQL e não consegue reproduzir a corrida onde
 # `privado.notificar` consulta a tabela antes do expurgo, uma sessão concorrente
 # purga a notificação antiga (60 dias) e comita, e a primeira sessão tenta inserir
 # novamente a mesma chave.
 #
-# Este script abre DUAS sessões concorrentes:
-#   - Sessão 1 (Purga): abre transação, segura lock SHARE em public.notificacao por 1.5s,
-#     purga a notificação expirada e comita.
-#   - Sessão 2 (Notificar): dispara enquanto Sessão 1 segura o lock SHARE.
-#     Com a marca atuando como autoridade atômica, Notificar não recria a notificação
-#     mesmo após a purga apagar a linha antiga.
+# Este script abre DUAS sessões concorrentes com sincronização verificável (K-001n):
+#   - Sessão 1 (Purga): abre transação, adquire lock SHARE em public.notificacao e
+#     aguarda sinal via FIFO.
+#   - O coordenador confirma que a Sessão 1 possui o lock SHARE ativo.
+#   - Sessão 2 (Notificar): disparada concorrentemente contra o banco.
+#   - O coordenador monitora as sessões via pg_stat_activity e pg_locks com timeout:
+#       * Na função com defeito (antiga): notificar tenta INSERT em public.notificacao
+#         e fica bloqueada em wait_event = 'Lock:relation'. O coordenador detecta o bloqueio,
+#         ordena a purga e o commit da Sessão 1. A Sessão 2 desbloqueia e recria o aviso (falha).
+#       * Na função corrigida (nova): a marca durável é a autoridade atômica. A Sessão 2
+#         apenas consulta notificacao (AccessShareLock, compatível com SHARE) e termina
+#         com sucesso ANTES da purga, sem tentar INSERT.
+#       * Se a Sessão 2 atrasar (ex: atraso de 1.8s) ou não atingir o ponto crítico antes
+#         do término da janela de intercalação, o teste FALHA por ausência de intercalação.
 #
 # O que o script exige ao final:
-#   1. A notificação antiga com mais de 60 dias é purgada pela Sessão 1.
-#   2. Notificar não re-insere o aviso expurgado (aviso_recriado = 0).
-#   3. A marca durável em privado.marca_notificacao permanece intacta (marca_preservada = 1).
+#   1. A intercalação foi efetivamente verificada antes da purga.
+#   2. A notificação antiga com mais de 60 dias é purgada pela Sessão 1.
+#   3. Notificar não re-insere o aviso expurgado (aviso_recriado = 0).
+#   4. A marca durável em privado.marca_notificacao permanece intacta (marca_preservada = 1).
 #
 # Uso: ./scripts/corrida-notificar-purga.sh
 set -uo pipefail
@@ -51,6 +60,16 @@ SQL
 }
 
 limpar_tudo() {
+  # Fecha descritor de escrita da Sessão 1 se ainda aberto
+  exec 3>&- 2>/dev/null || true
+  if [ -n "${PID_SESSAO1:-}" ] && kill -0 "$PID_SESSAO1" 2>/dev/null; then
+    kill "$PID_SESSAO1" 2>/dev/null || true
+    wait "$PID_SESSAO1" 2>/dev/null || true
+  fi
+  if [ -n "${PID_SESSAO2:-}" ] && kill -0 "$PID_SESSAO2" 2>/dev/null; then
+    kill "$PID_SESSAO2" 2>/dev/null || true
+    wait "$PID_SESSAO2" 2>/dev/null || true
+  fi
   limpar_dados
   rm -rf "$TMP"
 }
@@ -84,41 +103,109 @@ if [ "$marca_inicial" -ne 1 ]; then
   exit 1
 fi
 
-echo "▸ Disparando sessões concorrentes de purga e notificar"
+echo "▸ Disparando Sessão 1 (Purga) com lock SHARE em public.notificacao"
 
-# Sessão 1: adquire lock SHARE em notificacao, dorme 1.5s, purga a notificação e commita
-psql -tA <<SQL >"$TMP/sessao1.out" 2>"$TMP/sessao1.err" &
-set application_name = 'corrida_purga_sessao1';
-begin;
-set local statement_timeout = '12s';
-lock public.notificacao in share mode;
-select pg_sleep(1.5);
-select 'purgados=' || privado.limpar_notificacoes_antigas(60, 5000);
-commit;
-SQL
+FIFO1="$TMP/sessao1.fifo"
+mkfifo "$FIFO1"
+
+docker exec -i "$DB" psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 < "$FIFO1" > "$TMP/sessao1.out" 2> "$TMP/sessao1.err" &
 PID_SESSAO1=$!
 
-# Aguarda 0.3s para garantir que a Sessão 1 adquiriu o lock SHARE
-sleep 0.3
+# Abre descritor 3 para manter o pipe aberto sem fechar a entrada do psql
+exec 3> "$FIFO1"
 
-# Sessão 2: executa privado.notificar enquanto a Sessão 1 segura o lock SHARE
-psql -tA <<SQL >"$TMP/sessao2.out" 2>"$TMP/sessao2.err" &
+# Sessão 1: adquire lock SHARE e sinaliza prontidão
+printf "set application_name = 'corrida_purga_sessao1';\nbegin;\nset local statement_timeout = '15s';\nlock public.notificacao in share mode;\nselect 'LOCK_SHARE_ADQUIRIDO';\n" >&3
+
+lock_adquirido=0
+for i in $(seq 1 60); do # até 3.0s
+  if grep -q "LOCK_SHARE_ADQUIRIDO" "$TMP/sessao1.out" 2>/dev/null; then
+    lock_adquirido=1
+    break
+  fi
+  sleep 0.05
+done
+
+if [ "$lock_adquirido" -ne 1 ]; then
+  falhou "Sessão 1 não conseguiu adquirir lock SHARE em public.notificacao"
+  exit 1
+fi
+
+ok "Sessão 1 segurando lock SHARE ativo em public.notificacao"
+
+echo "▸ Disparando Sessão 2 (Notificar) concorrentemente"
+
+# Permite injeção de atraso para teste de sensibilidade à ausência de concorrência
+ATRASO_SQL=""
+if [ -n "${ATRASO_SESSAO2:-}" ]; then
+  ATRASO_SQL="select pg_sleep($ATRASO_SESSAO2);"
+fi
+
+docker exec -i "$DB" psql -U postgres -d postgres -X -q -t -A <<SQL >"$TMP/sessao2.out" 2>"$TMP/sessao2.err" &
 set application_name = 'corrida_notificar_sessao2';
-set statement_timeout = '10s';
+set statement_timeout = '12s';
+$ATRASO_SQL
 select privado.notificar('$U_ID', 'lembrete_24h', '$REF_ID');
 SQL
 PID_SESSAO2=$!
 
-# Aguarda ambas as sessões terminarem
-wait $PID_SESSAO1; S1_EXIT=$?
-wait $PID_SESSAO2; S2_EXIT=$?
+echo "▸ Monitorando intercalação verificável das duas sessões"
 
-if [ $S1_EXIT -ne 0 ]; then
-  falhou "Sessão 1 (purga) falhou: $(cat "$TMP/sessao1.err")"
+intercalacao_detectada=""
+# Limite de espera para a intercalação (15 rodadas ~1.2s)
+for i in $(seq 1 15); do
+  # 1. Verifica se a Sessão 2 bloqueou aguardando lock na tabela notificacao
+  # (comportamento da função com defeito, que tenta INSERT e conflita com SHARE lock)
+  wait_event=$(psql -tAc "select coalesce(wait_event_type,'')||':'||coalesce(wait_event,'') from pg_stat_activity where application_name = 'corrida_notificar_sessao2' and state = 'active';" 2>/dev/null || true)
+  if [ "$wait_event" = "Lock:relation" ]; then
+    intercalacao_detectada="bloqueado_no_insert"
+    break
+  fi
+
+  # 2. Verifica se a Sessão 2 terminou
+  if ! kill -0 "$PID_SESSAO2" 2>/dev/null; then
+    # Sessão 2 terminou. Verifica se Sessão 1 AINDA está segurando o lock SHARE
+    lock_ativo=$(psql -tAc "select count(*) from pg_locks l join pg_stat_activity a on l.pid = a.pid where a.application_name = 'corrida_purga_sessao1' and l.relation = 'public.notificacao'::regclass and l.mode = 'ShareLock' and l.granted = true;" 2>/dev/null || echo 0)
+    if [ "$lock_ativo" -eq 1 ]; then
+      intercalacao_detectada="terminou_antes_da_purga"
+      break
+    else
+      intercalacao_detectada="sessao2_apos_purga"
+      break
+    fi
+  fi
+
+  sleep 0.05
+done
+
+if [ "$intercalacao_detectada" = "bloqueado_no_insert" ]; then
+  ok "Intercalação verificada: Sessão 2 aguardando lock de notificacao (tentativa de INSERT bloqueada)"
+elif [ "$intercalacao_detectada" = "terminou_antes_da_purga" ]; then
+  ok "Intercalação verificada: Sessão 2 terminou antes da purga sem tentar INSERT (marca atômica)"
+elif [ "$intercalacao_detectada" = "sessao2_apos_purga" ]; then
+  falhou "Intercalação inválida: Sessão 2 só executou depois que a purga já havia sido concluída."
+else
+  falhou "Intercalação não ocorreu dentro do tempo limite: Sessão 2 não atingiu o lock enquanto Sessão 1 segurava SHARE."
 fi
 
-if [ $S2_EXIT -ne 0 ]; then
-  falhou "Sessão 2 (notificar) falhou: $(cat "$TMP/sessao2.err")"
+# Se a intercalação foi válida, comanda a Sessão 1 a purgar e commitar
+if [ "$intercalacao_detectada" = "bloqueado_no_insert" ] || [ "$intercalacao_detectada" = "terminou_antes_da_purga" ]; then
+  printf "select 'purgados=' || privado.limpar_notificacoes_antigas(60, 5000);\ncommit;\n" >&3
+  exec 3>&- # Fecha FIFO para que psql encerre
+
+  wait $PID_SESSAO1; S1_EXIT=$?
+  wait $PID_SESSAO2; S2_EXIT=$?
+
+  if [ $S1_EXIT -ne 0 ]; then
+    falhou "Sessão 1 (purga) falhou: $(cat "$TMP/sessao1.err")"
+  fi
+  if [ $S2_EXIT -ne 0 ]; then
+    falhou "Sessão 2 (notificar) falhou: $(cat "$TMP/sessao2.err")"
+  fi
+else
+  exec 3>&- 2>/dev/null || true
+  wait $PID_SESSAO1 2>/dev/null || true
+  wait $PID_SESSAO2 2>/dev/null || true
 fi
 
 echo "▸ Verificando resultado da corrida"
