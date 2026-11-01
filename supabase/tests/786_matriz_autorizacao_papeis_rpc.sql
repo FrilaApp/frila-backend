@@ -19,7 +19,7 @@ on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-20 21:00:00+00', true);
 set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 
-select plan(177);
+select plan(180);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -175,15 +175,23 @@ begin
       when sqlstate 'PGRST' then
         declare
           v_code text := SQLERRM::jsonb ->> 'code';
+          v_status int := (SQLERRM::jsonb ->> 'status')::int;
         begin
-          if v_code = 'perfil_incompativel' then
+          if v_code = 'perfil_incompativel' or (v_status = 403 and v_code = 'perfil_incompativel') then
             v_res := '403_PERFIL_INCOMPATIVEL';
-          elsif v_code = 'sem_permissao' then
+          elsif v_code = 'sem_permissao' or (v_status = 403 and v_code = 'sem_permissao') then
             v_res := '403_SEM_PERMISSAO';
-          elsif v_code = 'nao_encontrado' then
+          elsif v_code = 'nao_encontrado' or v_status = 404 then
             v_res := '404_NAO_ENCONTRADO';
+          elsif v_code = 'nao_autenticado' or v_status = 401 then
+            v_res := '401_NAO_AUTENTICADO';
+          elsif v_code in ('conta_existente', 'sem_suspensao_ativa', 'perfil_ja_existe',
+                           'a_caminho_fora_da_janela', 'republicacao_indisponivel',
+                           'candidatura_indisponivel', 'posicao_nao_cancelavel',
+                           'checkin_ja_confirmado') then
+            v_res := 'REGRA:' || v_code;
           else
-            v_res := 'AUTORIZADO';
+            v_res := 'PGRST_OUTRO:' || coalesce(v_code, 'DESCONHECIDO');
           end if;
         exception when others then
           v_res := 'PGRST:' || SQLERRM;
@@ -214,8 +222,8 @@ select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-0
 -- --- criar_conta ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.criar_conta(''profissional''::public.perfil_conta, ''Nome'', ''+5561999999999'', ''1990-01-01''::date, ''1.0'', ''maior_18'')'), '42501_SEM_EXECUTE', 'criar_conta [anon]: anon nao possui EXECUTE em criar_conta');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.criar_conta(''profissional''::public.perfil_conta, ''Nome'', ''+5561999999999'', ''1990-01-01''::date, ''1.0'', ''maior_18'')'), 'AUTORIZADO', 'criar_conta [profissional]: profissional autenticado pode invocar criar_conta');
-select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.criar_conta(''profissional''::public.perfil_conta, ''Nome'', ''+5561999999999'', ''1990-01-01''::date, ''1.0'', ''maior_18'')'), 'AUTORIZADO', 'criar_conta [outro contratante]: outro contratante pode invocar criar_conta');
-select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.criar_conta(''profissional''::public.perfil_conta, ''Nome'', ''+5561999999999'', ''1990-01-01''::date, ''1.0'', ''maior_18'')'), 'AUTORIZADO', 'criar_conta [dono]: dono pode invocar criar_conta');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.criar_conta(''profissional''::public.perfil_conta, ''Nome'', ''+5561999999999'', ''1990-01-01''::date, ''1.0'', ''maior_18'')'), 'REGRA:conta_existente', 'criar_conta [outro contratante]: contratante ja possui conta');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.criar_conta(''profissional''::public.perfil_conta, ''Nome'', ''+5561999999999'', ''1990-01-01''::date, ''1.0'', ''maior_18'')'), 'REGRA:conta_existente', 'criar_conta [dono]: dono ja possui conta');
 
 -- --- minha_conta ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.minha_conta()'), '42501_SEM_EXECUTE', 'minha_conta [anon]: anon nao possui EXECUTE em minha_conta');
@@ -231,9 +239,9 @@ select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-0
 
 -- --- contestar_suspensao ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.contestar_suspensao(''Relato detalhado com mais de dez caracteres'')'), '42501_SEM_EXECUTE', 'contestar_suspensao [anon]: anon nao possui EXECUTE em contestar_suspensao');
-select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.contestar_suspensao(''Relato detalhado com mais de dez caracteres'')'), 'AUTORIZADO', 'contestar_suspensao [profissional]: profissional tem acesso a RPC de contestar_suspensao');
-select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.contestar_suspensao(''Relato detalhado com mais de dez caracteres'')'), 'AUTORIZADO', 'contestar_suspensao [outro contratante]: outro contratante tem acesso a RPC de contestar_suspensao');
-select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.contestar_suspensao(''Relato detalhado com mais de dez caracteres'')'), 'AUTORIZADO', 'contestar_suspensao [dono]: dono tem acesso a RPC de contestar_suspensao');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.contestar_suspensao(''Relato detalhado com mais de dez caracteres'')'), 'REGRA:sem_suspensao_ativa', 'contestar_suspensao [profissional]: conta ativa valida ausencia de suspensao');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.contestar_suspensao(''Relato detalhado com mais de dez caracteres'')'), 'REGRA:sem_suspensao_ativa', 'contestar_suspensao [outro contratante]: conta ativa valida ausencia de suspensao');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.contestar_suspensao(''Relato detalhado com mais de dez caracteres'')'), 'REGRA:sem_suspensao_ativa', 'contestar_suspensao [dono]: conta ativa valida ausencia de suspensao');
 
 -- --- registrar_dispositivo ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.registrar_dispositivo(''token_fcm_valido_com_mais_de_vinte_caracteres'', ''ios'')'), '42501_SEM_EXECUTE', 'registrar_dispositivo [anon]: anon nao possui EXECUTE em registrar_dispositivo');
@@ -273,7 +281,7 @@ select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-0
 
 -- --- criar_perfil_profissional ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.criar_perfil_profissional(array[(select id from public.funcao where nome = ''garçom'' limit 1)], ''{"latitude": -15.79, "longitude": -47.88}''::jsonb, ''[]''::jsonb)'), '42501_SEM_EXECUTE', 'criar_perfil_profissional [anon]: anon nao possui EXECUTE em criar_perfil_profissional');
-select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.criar_perfil_profissional(array[(select id from public.funcao where nome = ''garçom'' limit 1)], ''{"latitude": -15.79, "longitude": -47.88}''::jsonb, ''[]''::jsonb)'), 'AUTORIZADO', 'criar_perfil_profissional [profissional]: profissional tem autorizacao para criar_perfil_profissional');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.criar_perfil_profissional(array[(select id from public.funcao where nome = ''garçom'' limit 1)], ''{"latitude": -15.79, "longitude": -47.88}''::jsonb, ''[]''::jsonb)'), 'REGRA:perfil_ja_existe', 'criar_perfil_profissional [profissional]: profissional ja possui perfil cadastrado');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.criar_perfil_profissional(array[(select id from public.funcao where nome = ''garçom'' limit 1)], ''{"latitude": -15.79, "longitude": -47.88}''::jsonb, ''[]''::jsonb)'), '403_PERFIL_INCOMPATIVEL', 'criar_perfil_profissional [outro contratante]: outro contratante toma 403 perfil_incompativel em criar_perfil_profissional');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.criar_perfil_profissional(array[(select id from public.funcao where nome = ''garçom'' limit 1)], ''{"latitude": -15.79, "longitude": -47.88}''::jsonb, ''[]''::jsonb)'), '403_PERFIL_INCOMPATIVEL', 'criar_perfil_profissional [dono]: dono toma 403 perfil_incompativel em criar_perfil_profissional');
 
@@ -333,7 +341,7 @@ select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-0
 
 -- --- avisar_a_caminho ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.avisar_a_caminho(''78600000-0000-4000-8000-000000000301''::uuid)'), '42501_SEM_EXECUTE', 'avisar_a_caminho [anon]: anon nao possui EXECUTE em avisar_a_caminho');
-select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.avisar_a_caminho(''78600000-0000-4000-8000-000000000301''::uuid)'), 'AUTORIZADO', 'avisar_a_caminho [profissional]: profissional tem autorizacao para avisar_a_caminho');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.avisar_a_caminho(''78600000-0000-4000-8000-000000000301''::uuid)'), 'REGRA:a_caminho_fora_da_janela', 'avisar_a_caminho [profissional]: profissional autorizado mas fora da janela');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.avisar_a_caminho(''78600000-0000-4000-8000-000000000301''::uuid)'), '403_PERFIL_INCOMPATIVEL', 'avisar_a_caminho [outro contratante]: outro contratante toma 403 perfil_incompativel');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.avisar_a_caminho(''78600000-0000-4000-8000-000000000301''::uuid)'), '403_PERFIL_INCOMPATIVEL', 'avisar_a_caminho [dono]: dono toma 403 perfil_incompativel');
 
@@ -383,7 +391,7 @@ select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-0
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.republicar_posicoes_restantes(''78600000-0000-4000-8000-000000000100''::uuid, gen_random_uuid())'), '42501_SEM_EXECUTE', 'republicar_posicoes_restantes [anon]: anon nao possui EXECUTE em republicar_posicoes_restantes');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.republicar_posicoes_restantes(''78600000-0000-4000-8000-000000000100''::uuid, gen_random_uuid())'), '403_PERFIL_INCOMPATIVEL', 'republicar_posicoes_restantes [profissional]: profissional toma 403 perfil_incompativel');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.republicar_posicoes_restantes(''78600000-0000-4000-8000-000000000100''::uuid, gen_random_uuid())'), '403_SEM_PERMISSAO', 'republicar_posicoes_restantes [outro contratante]: outro contratante toma 403 sem_permissao em vaga alheia');
-select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.republicar_posicoes_restantes(''78600000-0000-4000-8000-000000000100''::uuid, gen_random_uuid())'), 'AUTORIZADO', 'republicar_posicoes_restantes [dono]: dono tem autorizacao para republicar posicoes restantes');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.republicar_posicoes_restantes(''78600000-0000-4000-8000-000000000100''::uuid, gen_random_uuid())'), 'REGRA:republicacao_indisponivel', 'republicar_posicoes_restantes [dono]: dono autorizado valida estado da vaga');
 
 -- --- candidatos_da_vaga ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.candidatos_da_vaga(''78600000-0000-4000-8000-000000000100''::uuid)'), '42501_SEM_EXECUTE', 'candidatos_da_vaga [anon]: anon nao possui EXECUTE em candidatos_da_vaga');
@@ -395,13 +403,13 @@ select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-0
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.escolher_candidato(''78600000-0000-4000-8000-000000000201''::uuid)'), '42501_SEM_EXECUTE', 'escolher_candidato [anon]: anon nao possui EXECUTE em escolher_candidato');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.escolher_candidato(''78600000-0000-4000-8000-000000000201''::uuid)'), '403_PERFIL_INCOMPATIVEL', 'escolher_candidato [profissional]: profissional toma 403 perfil_incompativel');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.escolher_candidato(''78600000-0000-4000-8000-000000000201''::uuid)'), '403_SEM_PERMISSAO', 'escolher_candidato [outro contratante]: outro contratante toma 403 sem_permissao em candidatura alheia');
-select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.escolher_candidato(''78600000-0000-4000-8000-000000000201''::uuid)'), 'AUTORIZADO', 'escolher_candidato [dono]: dono escolhe candidato para sua vaga');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.escolher_candidato(''78600000-0000-4000-8000-000000000201''::uuid)'), 'REGRA:candidatura_indisponivel', 'escolher_candidato [dono]: dono autorizado valida estado da candidatura');
 
 -- --- reabrir_por_atraso ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.reabrir_por_atraso(''78600000-0000-4000-8000-000000000101''::uuid)'), '42501_SEM_EXECUTE', 'reabrir_por_atraso [anon]: anon nao possui EXECUTE em reabrir_por_atraso');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.reabrir_por_atraso(''78600000-0000-4000-8000-000000000101''::uuid)'), '403_PERFIL_INCOMPATIVEL', 'reabrir_por_atraso [profissional]: profissional toma 403 perfil_incompativel');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.reabrir_por_atraso(''78600000-0000-4000-8000-000000000101''::uuid)'), '403_SEM_PERMISSAO', 'reabrir_por_atraso [outro contratante]: outro contratante toma 403 sem_permissao em posicao alheia');
-select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.reabrir_por_atraso(''78600000-0000-4000-8000-000000000101''::uuid)'), 'AUTORIZADO', 'reabrir_por_atraso [dono]: dono tem autorizacao para reabrir por atraso');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.reabrir_por_atraso(''78600000-0000-4000-8000-000000000101''::uuid)'), 'REGRA:posicao_nao_cancelavel', 'reabrir_por_atraso [dono]: dono autorizado valida estado da posicao');
 
 -- --- incluir_na_equipe ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.incluir_na_equipe(''78600000-0000-4000-8000-000000000010''::uuid, ''78600000-0000-4000-8000-000000000030''::uuid)'), '42501_SEM_EXECUTE', 'incluir_na_equipe [anon]: anon nao possui EXECUTE em incluir_na_equipe');
@@ -437,7 +445,7 @@ select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-0
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.confirmar_checkin_manual(''78600000-0000-4000-8000-000000000301''::uuid)'), '42501_SEM_EXECUTE', 'confirmar_checkin_manual [anon]: anon nao possui EXECUTE em confirmar_checkin_manual');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.confirmar_checkin_manual(''78600000-0000-4000-8000-000000000301''::uuid)'), '403_SEM_PERMISSAO', 'confirmar_checkin_manual [profissional]: profissional toma 403 ao tentar confirmar proprio checkin');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.confirmar_checkin_manual(''78600000-0000-4000-8000-000000000301''::uuid)'), '403_SEM_PERMISSAO', 'confirmar_checkin_manual [outro contratante]: outro contratante toma 403 sem_permissao em turno alheio');
-select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.confirmar_checkin_manual(''78600000-0000-4000-8000-000000000301''::uuid)'), 'AUTORIZADO', 'confirmar_checkin_manual [dono]: dono tem autorizacao para confirmar checkin manual');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.confirmar_checkin_manual(''78600000-0000-4000-8000-000000000301''::uuid)'), 'REGRA:checkin_ja_confirmado', 'confirmar_checkin_manual [dono]: dono autorizado valida estado do checkin');
 
 -- --- meus_turnos ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.meus_turnos(''2026-11-01 00:00:00+00''::timestamptz, ''2026-11-30 23:59:59+00''::timestamptz, null)'), '42501_SEM_EXECUTE', 'meus_turnos [anon]: anon nao possui EXECUTE em meus_turnos');
@@ -468,6 +476,27 @@ select is(pg_temp.testar_autorizacao('anon', null, 'select public.abrir_suporte(
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.abrir_suporte(''78600000-0000-4000-8000-000000000301''::uuid, ''outro'', gen_random_uuid())'), 'AUTORIZADO', 'abrir_suporte [profissional]: profissional do turno abre suporte');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.abrir_suporte(''78600000-0000-4000-8000-000000000301''::uuid, ''outro'', gen_random_uuid())'), '404_NAO_ENCONTRADO', 'abrir_suporte [outro contratante]: outro contratante toma 404 em turno alheio');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.abrir_suporte(''78600000-0000-4000-8000-000000000301''::uuid, ''outro'', gen_random_uuid())'), 'AUTORIZADO', 'abrir_suporte [dono]: dono abre suporte para turno do seu estabelecimento');
+
+-- ============================================================================
+-- 6. Autoteste e Mutacao do Classificador de Autorizacao (Anti-Falso Positivo)
+-- ============================================================================
+create or replace function pg_temp.mock_rpc_401() returns void language plpgsql as $$
+begin
+  raise exception using errcode = 'PGRST', message = '{"code": "nao_autenticado", "status": 401, "message": "Token ausente ou invalido"}';
+end;
+$$;
+grant execute on function pg_temp.mock_rpc_401() to authenticated;
+
+create or replace function pg_temp.mock_rpc_sucesso() returns void language plpgsql as $$
+begin
+  -- sucesso
+end;
+$$;
+grant execute on function pg_temp.mock_rpc_sucesso() to authenticated;
+
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select pg_temp.mock_rpc_401()'), '401_NAO_AUTENTICADO', 'classificador [mutacao 401]: erro 401 nao_autenticado JAMAIS e classificado como AUTORIZADO');
+select isnt(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select pg_temp.mock_rpc_401()'), 'AUTORIZADO', 'classificador [mutacao 401]: isolamento rigoroso garante rejeicao de 401 no caminho autorizado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select pg_temp.mock_rpc_sucesso()'), 'AUTORIZADO', 'classificador [sucesso]: execucao limpa e classificada como AUTORIZADO');
 
 select * from finish();
 rollback;

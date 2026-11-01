@@ -2,7 +2,7 @@
 
 Fonte de verdade e especificação formal da matriz de controle de acesso e autorização das **44 RPCs públicas** do Frila, implementadas no schema `public` e expostas no contrato da API (`contrato/openapi.yaml`).
 
-Esta matriz é comprovada de ponta a ponta pela suíte automatizada pgTAP em [`supabase/tests/786_matriz_autorizacao_papeis_rpc.sql`](../supabase/tests/786_matriz_autorizacao_papeis_rpc.sql) (177 asserções verdes).
+Esta matriz é comprovada de ponta a ponta pela suíte automatizada pgTAP em [`supabase/tests/786_matriz_autorizacao_papeis_rpc.sql`](../supabase/tests/786_matriz_autorizacao_papeis_rpc.sql) (180 asserções verdes, incluindo testes anti-regressão e mutação de falso positivo).
 
 ---
 
@@ -159,5 +159,12 @@ supabase test db supabase/tests/786_matriz_autorizacao_papeis_rpc.sql
 /Users/cauecarneiro/Documents/Projetos/Frila/orquestracao/scripts/fila.sh soltar banco Martelo
 ```
 
-### 4.1 Isolamento Transacional Anti-Poluição
-Para testar chamadas com mutação de estado (como `cancelar_vaga` ou `cancelar_posicao`) sem invalidar os testes subsequentes do mesmo turno/posição dentro de uma única transação, o teste implementa o motor `pg_temp.testar_autorizacao`. O motor força um rollback pontual via exceção interna `SUCES` em cada chamada bem-sucedida, assegurando que o estado dos dados permaneça imaculado durante todas as 177 asserções.
+### 4.1 Isolamento Transacional e Classificador Rigoroso Anti-Falso-Positivo
+Para testar chamadas com mutação de estado (como `cancelar_vaga` ou `cancelar_posicao`) sem invalidar os testes subsequentes do mesmo turno/posição dentro de uma única transação, o teste implementa o motor `pg_temp.testar_autorizacao`.
+
+O motor força um rollback pontual via exceção interna `SUCES` em cada chamada autorizada bem-sucedida, assegurando que o estado dos dados permaneça imaculado durante todas as 180 asserções.
+
+Além disso, o classificador do motor valida estritamente a autorização:
+- **`AUTORIZADO`**: Exige execução bem-sucedida no caminho permitido (capturada exclusivamente por `SUCES`).
+- **`REGRA:<codigo>`**: Para cenários onde o usuário possui autorização plena mas atinge uma validação de negócio intrínseca à fixture (ex.: `conta_existente`, `sem_suspensao_ativa`, `perfil_ja_existe`, `a_caminho_fora_da_janela`), o teste valida nominalmente o código e status HTTP da recusa de negócio.
+- **`401_NAO_AUTENTICADO`**: Erros de autenticação jamais são classificados como autorizados. O arquivo inclui autotestes de mutação injetando exceções 401 para comprovar que nenhuma regressão de autenticação passe como falso positivo.
