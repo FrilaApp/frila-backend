@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.45
+  version: 0.2.46
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -97,6 +97,43 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.46, de 23/10/2026.** Push FCM data-only para Android e alerta APNs no iOS (RN15):
+
+    - **Android (push data-only e canais por tipo):** O FCM envia a mensagem sem bloco raiz `notification` e
+      sem o bloco `android.notification` (`channel_id`), enviando apenas o bloco `data` com `tipo`,
+      `vinculo_id`, os ids da entidade (`vaga_id`, etc.) e as strings `titulo` e `corpo`. Com isso, o Android
+      executa incondicionalmente `FirebaseMessagingService.onMessageReceived()` em segundo plano ou com o app
+      fechado, permitindo ao `ProcessadorDePush` validar o `vinculo_id` da sessão ativa antes de qualquer
+      exibição (isolamento de conta em aparelho compartilhado, RN15) e selecionar o canal de notificação
+      apropriado conforme a tabela abaixo:
+
+      | `data.tipo` | Canal Android (`channel_id`) | Importância | Finalidade do aviso |
+      | :--- | :--- | :--- | :--- |
+      | `vaga` | `canal_urgencia` | Alta (`IMPORTANCE_HIGH`) | Nova oportunidade de vaga de trabalho |
+      | `vagas_agrupadas` | `canal_urgencia` | Alta (`IMPORTANCE_HIGH`) | Vagas agrupadas pelo teto da RN23 |
+      | `confirmacao` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Confirmação de vaga pelo contratante |
+      | `lembrete_24h` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Lembrete de turno com 24h de antecedência |
+      | `lembrete_3h` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Lembrete de turno com 3h de antecedência |
+      | `inicio_sem_checkin` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Alerta de turno iniciado sem check-in |
+      | `atraso_15min` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Alerta de 15 minutos de tolerância esgotados |
+      | `fim_sem_checkout` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Alerta de turno finalizado sem check-out |
+      | `checkin` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Confirmação de check-in efetuado |
+      | `checkin_manual_pendente` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Solicitação de check-in manual pendente |
+      | `cancelamento` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Cancelamento de candidatura ou turno |
+      | `avaliacao_disponivel` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Liberação de avaliação mútua |
+      | `vaga_vazia` | `canal_sistema` | Padrão (`IMPORTANCE_DEFAULT`) | Vaga expirada sem candidatos |
+      | `candidatura_recusada` | `canal_sistema` | Padrão (`IMPORTANCE_DEFAULT`) | Candidatura não selecionada |
+      | `suspensao` | `canal_sistema` | Padrão (`IMPORTANCE_DEFAULT`) | Notificação de suspensão de conta (RF24) |
+      | `reativacao` | `canal_sistema` | Padrão (`IMPORTANCE_DEFAULT`) | Notificação de reativação de conta |
+      | *(demais / futuro)* | `canal_sistema` | Padrão (`IMPORTANCE_DEFAULT`) | Fallback de sistema |
+
+      *Nota de compatibilidade:* No backend, tipos administrativos/gerais usavam internamente `canal_geral`.
+      No cliente Android, os canais criados são exclusivamente `canal_urgencia`, `canal_turnos` e `canal_sistema`;
+      portanto, `canal_geral` é unificado em `canal_sistema`.
+    - **iOS (alerta via APNs e mutable-content):** O título e corpo são entregues em `apns.payload.aps.alert`
+      (`{ title, body }`), junto de `sound: "default"`, `badge: 1` e `mutable-content: 1`, preservando a
+      interceptação pré-exibição pela Notification Service Extension para validação do `vinculo_id`.
 
     **Versão 0.2.45, de 18/10/2026.** Adições compatíveis no cadastro e na portabilidade de dados:
 
@@ -3214,6 +3251,11 @@ paths:
         push mandado a este aparelho para esta conta, e é por ele que o app sabe que o aviso é de
         quem está no aparelho: o token que era de outra conta passa para quem chama com um
         `vinculo_id` novo, e o aviso que ainda carrega o anterior não é mostrado nem aberto (RN15).
+        No Android, o push chega como payload data-only (com título e corpo em `titulo` e `corpo`),
+        garantindo a interceptação pelo serviço nativo para conferência de `vinculo_id` mesmo em segundo
+        plano ou com app fechado. O cliente Android seleciona o canal de notificação (`canal_urgencia`,
+        `canal_turnos` ou `canal_sistema`) mapeando `data.tipo` conforme a tabela canônica descrita no
+        Estado da versão 0.2.46. No iOS, o alerta vai em `apns.payload.aps.alert` com `mutable-content: 1`.
       x-requisitos: [RF06, RN15, RNF02]
       requestBody:
         required: true
