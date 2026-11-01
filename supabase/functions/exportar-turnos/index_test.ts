@@ -1010,6 +1010,22 @@ Deno.test("seguranca csv: CSV inicia com BOM UTF-8 (\\uFEFF) para compatibilidad
   assert(csv.startsWith("\uFEFF"), "CSV deve iniciar com BOM UTF-8 (\\uFEFF)");
 });
 
+Deno.test("seguranca CORS / metodos: requisicao OPTIONS recebe 405 metodo_nao_permitido e nao expoe Access-Control-Allow-Origin aberto", async () => {
+  const e = criarEspiao();
+  const req = new Request(`${URL_BASE}/functions/v1/exportar-turnos`, {
+    method: "OPTIONS",
+    headers: { Origin: "https://site-malicioso.com" },
+  });
+  const res = await chamar(e, req);
+
+  assertEquals(res.status, 405);
+  const corpo = await res.json();
+  assertEquals(corpo.code, "metodo_nao_permitido");
+  assertEquals(res.headers.get("Access-Control-Allow-Origin"), null, "nao deve refletir nem conceder CORS curinga");
+  assertEquals(e.pedidos, [], "OPTIONS nao deve tocar no banco");
+  assertEquals(e.chamadasAuth, [], "OPTIONS nao deve chamar Auth");
+});
+
 
 
 
