@@ -8,7 +8,7 @@ Não usa Docker nem Supabase CLI. Complementa o ensaio local existente em
 
 ## Configuração e execução manual
 
-Use Bash e bsdtar do macOS, Git, `psql` e `pg_dump` compatível com o servidor.
+Use Bash, `tar` padrão (GNU tar no Linux ou bsdtar no macOS), Git, `psql` e `pg_dump` compatível com o servidor.
 O script consulta `server_version_num` em transação **READ ONLY**, compara a versão
 principal do `pg_dump` e recusa cliente mais antigo antes de criar pasta/dump.
 Use a mesma instalação de `psql`/`pg_dump` no PATH. Para o dev PostgreSQL 17, use
@@ -264,7 +264,7 @@ provou descoberta sem lista fixa, cópia de quatro linhas com aspas, barra,
 quebra de linha, NULL e Unicode, valores de identity e coluna gerada, com hash igual.
 Um usuário sujeito a RLS foi recusado sem publicar backup. A regressão OpenSSL
 com pacote v2 passou, incluindo falha SQL do suplemento e retenção entre formatos
-novos e legados. O bsdtar usa `--no-mac-metadata` para empacotar só os três arquivos.
+novos e legados. O empacotamento com `tar` portátil (usando `COPYFILE_DISABLE=1` no macOS) empacota só os três arquivos (`formato.txt`, `banco.dump`, `extensoes.sql`), compatível tanto com GNU tar no Linux quanto com bsdtar no macOS.
 
 Com as dependências resolvidas, um operador autorizado pode carregar a conexão
 sem colocá-la no histórico e executar o comando da seção inicial:
@@ -279,18 +279,54 @@ unset BACKUP_DB_URL
 Depois, decifrar e restaurar conforme a seção anterior, exclusivamente no destino
 descartável. Medir e conferir os dados antes de considerar o ensaio aprovado.
 
-## Configuração futura do prod e agendamento sugerido
+## Configuração do prod e agendamento diário (.github/workflows/backup-prod.yml)
 
-Somente Cauê/Nick Fury configuram o prod: conexão no ambiente seguro, destinatário
-público, pasta externa própria, custódia da chave privada e cópia dos arquivos
-cifrados para armazenamento fora da máquina. Pasta fora do Git não garante cópia
-fora da máquina. Validar antes no dev e medir restauração em destino isolado.
+O backup diário do `frila-prod` (issue #352, RNF12) é automatizado pelo workflow
+`.github/workflows/backup-prod.yml`. O workflow executa diariamente às **07:00 UTC**
+(04:00 BRT, horário de menor movimento) e sob demanda via `workflow_dispatch`.
 
-Sugestão **não ativada**: LaunchAgent `app.frila.backup-logico`, diariamente às
-04:00, com `StartCalendarInterval` (`Hour=4`, `Minute=0`), `RunAtLoad=false` e
-`ProgramArguments` apontando para um lançador local fora do Git. O lançador deve
-definir PATH absoluto, obter a conexão pelo mecanismo seguro de Cauê e exportar as
-variáveis acima antes de executar o script por caminho absoluto. Não colocar URL,
-senha ou chave privada no plist/argumentos, nem usar `set -x`. Guardar stdout/stderr
-somente do script em pasta restrita; monitorar código de saída e ausência de backup.
-Não foi criado/carregado plist nem configurado serviço ou segredo do prod.
+O fluxo executa `scripts/backup-logico.sh` num diretório temporário isolado do runner
+fora do checkout (`BACKUP_DIR="${RUNNER_TEMP}/frila-backup-prod"`), empacota o dump
+lógico v2 (`banco.dump`, `extensoes.sql` e `formato.txt`), cifra com `age` utilizando
+a chave pública configurada, e transfere o pacote `.tar.age` diretamente para um bucket
+de armazenamento S3-compatível (Cloudflare R2 ou Backblaze B2) utilizando `aws-cli` com
+`--endpoint-url`. O repositório é público: nenhum dump é publicado como artefato do
+GitHub Actions (`upload-artifact` desativado), e todo dado claro em disco é apagado
+pelo próprio script antes da publicação do arquivo cifrado.
+
+### Environment `frila-backup` e segredos necessários
+
+O job utiliza o Environment **`frila-backup`** no GitHub Actions.
+Esse Environment é deliberadamente separado de `frila-prod`: o Environment `frila-prod`
+possui (ou possuirá) revisores humanos obrigatórios para deploys e ações administrativas,
+o que travaria qualquer agendamento automatizado na madrugada exigindo aprovação manual.
+O Environment `frila-backup` isola as credenciais necessárias exclusivamente para a
+rotina de backup, sem revisores impeditivos.
+
+Segredos configurados no Environment `frila-backup` (sem valores reais no repositório):
+
+| Segredo | Finalidade e Requisitos |
+| --- | --- |
+| `BACKUP_DB_URL` | Conexão PostgreSQL com `sslmode=require` apontando para o banco de produção `frila-prod`. Precisa de permissão para leitura de catálogo e exportação de dados via `pg_dump` e transação `READ ONLY`. |
+| `BACKUP_PUBLIC_KEY` | Destinatário público `age` (`age1...`). Apenas a chave pública é necessária para cifrar. A chave privada correspondente **nunca** entra no repositório nem no GitHub Actions, devendo permanecer sob custódia offline segura dos administradores. |
+| `BACKUP_S3_ENDPOINT` | URL do endpoint da API S3-compatível (ex.: `https://<account_id>.r2.cloudflarestorage.com` no Cloudflare R2 ou `https://s3.<region>.backblazeb2.com` no Backblaze B2). |
+| `BACKUP_S3_BUCKET` | Nome do bucket dedicado no storage S3. |
+| `BACKUP_S3_ACCESS_KEY_ID` | Chave de acesso (Access Key ID) com permissão mínima para gravação (`PutObject`). |
+| `BACKUP_S3_SECRET_ACCESS_KEY` | Chave secreta de acesso (Secret Access Key) correspondente. |
+
+Variável opcional (Action Variables):
+- `BACKUP_S3_REGION`: Região S3 (padrão: `auto`).
+
+### Política de Retenção de 14 dias
+
+A política de retenção dos backups é implementada em duas camadas:
+
+1. **No bucket S3 (Primária / Princípio do Menor Privilégio):** Deve ser configurada
+   uma regra de ciclo de vida (Lifecycle Rule) no bucket (R2 ou B2) com expiração e
+   exclusão automática de objetos após 14 dias (`Delete after 14 days`). Dessa forma,
+   a credencial fornecida ao GitHub Actions precisa apenas da permissão `s3:PutObject`,
+   **sem** permissão destrutiva de `s3:DeleteObject`. Isso protege os backups existentes
+   contra deleção acidental ou intencional em caso de comprometimento da esteira de CI.
+2. **No runner local:** O script `scripts/backup-logico.sh` define `BACKUP_KEEP=14`
+   durante sua execução local, e o job limpa completamente o diretório temporário no
+   runner ao final (`if: always()`).

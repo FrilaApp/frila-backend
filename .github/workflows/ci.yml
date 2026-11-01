@@ -368,3 +368,16 @@ jobs:
 
       - name: deno test
         run: deno test --allow-all --lock=deno.lock --frozen supabase/functions/
+
+  # Valida que o empacotamento do pacote de backup v2 opera de forma portável e idêntica
+  # tanto no GNU tar (Linux do runner) quanto no bsdtar (macOS), garantindo ausência de flags
+  # exclusivos do BSD, supressão de arquivos AppleDouble (._*) e integridade estrita na descompactação.
+  backup-empacotamento:
+    name: Portabilidade do empacotamento de backup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Testa empacotamento portátil com GNU tar
+        run: ./scripts/teste-backup-empacotamento.sh
+
