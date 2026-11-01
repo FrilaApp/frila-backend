@@ -16,7 +16,7 @@ set local search_path = extensions, public, pg_temp;
 -- 1. Setup de ambiente e congelamento do relogio
 insert into privado.ambiente(id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
-set local "frila.agora" = '2026-11-20 21:00:00+00';
+select set_config('frila.agora', '2026-11-20 21:00:00+00', true);
 set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 
 select plan(177);
