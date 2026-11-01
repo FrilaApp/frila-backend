@@ -783,4 +783,17 @@ Deno.test("porta: validacao estrita do formato Authorization Bearer rejeita malf
   assertEquals(chamouFetchPositivo, true);
 });
 
+Deno.test("seguranca CORS / metodos: requisicao OPTIONS recebe 405 metodo_nao_permitido e nao expoe Access-Control-Allow-Origin aberto", async () => {
+  const req = new Request("http://localhost/functions/v1/excluir-conta", {
+    method: "OPTIONS",
+    headers: { Origin: "https://site-malicioso.com" },
+  });
+  const res = await handler(req, mockDeps({}));
+
+  assertEquals(res.status, 405);
+  const corpo = await res.json();
+  assertEquals(corpo.code, "metodo_nao_permitido");
+  assertEquals(res.headers.get("Access-Control-Allow-Origin"), null, "nao deve refletir nem conceder CORS curinga");
+});
+
 
