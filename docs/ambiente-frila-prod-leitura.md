@@ -35,15 +35,15 @@ Este documento registra a separação operacional de ambientes de CI/CD para lei
 
 ---
 
-### Passo 2: Validar o Token Localmente (Sem Imprimir o Valor)
-No seu terminal local, valide que o token autoriza leitura mas recusa expressamente qualquer tentativa de escrita:
+### Passo 2: Validar o Token Localmente (Estritamente Somente-Leitura)
+No seu terminal local, valide que o token autoriza a leitura da configuração de Auth em produção, sem executar qualquer operação de mutação (regra fundamental: nenhuma escrita no Prod):
 
 1. Carregue o token em memória de forma oculta (sem salvar em histórico):
    ```bash
    read -s TOKEN   # cole o token e pressione Enter
    ```
 
-2. **Teste de Leitura (deve retornar HTTP 200):**
+2. **Teste de Leitura na Management API (deve retornar HTTP 200):**
    ```bash
    curl -s -o /dev/null -w 'HTTP %{http_code}\n' \
      -H "Authorization: Bearer $TOKEN" \
@@ -51,19 +51,21 @@ No seu terminal local, valide que o token autoriza leitura mas recusa expressame
    ```
    - Confirmação esperada: `HTTP 200`
 
-3. **Teste de Escrita / Fail-Closed (deve retornar HTTP 401 ou 403):**
+3. **Conferência Completa via Script Oficial (Somente-Leitura):**
+   Execute o script do repositório utilizando o token em memória:
    ```bash
-   curl -s -o /dev/null -w 'HTTP %{http_code}\n' -X PATCH \
-     -H "Authorization: Bearer $TOKEN" \
-     -H 'Content-Type: application/json' -d '{"site_url":"http://teste.invalido"}' \
-     https://api.supabase.com/v1/projects/hbjkkcenbudiezmamiak/config/auth
+   SUPABASE_ACCESS_TOKEN="$TOKEN" ./scripts/conferir-auth-remoto.sh hbjkkcenbudiezmamiak
    ```
-   - Confirmação esperada: `HTTP 401` ou `HTTP 403` (comprovando que o token NÃO consegue alterar nada em produção).
+   - Confirmação esperada: Execução verde com todos os critérios avaliados e saída com `exit 0`.
 
 4. Limpe a variável do terminal:
    ```bash
    unset TOKEN
    ```
+
+> [!IMPORTANT]
+> **Proibição de Comandos de Escrita em Produção:**
+> NUNCA execute requisições com métodos de mutação (`PATCH`, `POST`, `PUT`, `DELETE`) contra o endpoint de produção (`hbjkkcenbudiezmamiak`). A recusa de escrita é assegurada na criação do token no painel do Supabase pela seleção estrita de permissões `Read-only` (`Project Settings: Read`). Caso deseje validar o bloqueio de escrita em testes de fail-closed, execute-os exclusivamente contra um projeto descartável de desenvolvimento ou laboratório.
 
 ---
 
