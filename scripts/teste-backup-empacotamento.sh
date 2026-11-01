@@ -87,33 +87,42 @@ for arquivo in formato.txt banco.dump extensoes.sql; do
 done
 printf '   ✓ Descompactação 100%% íntegra (diff idêntico em formato.txt, banco.dump e extensoes.sql).\n'
 
-# 6. Probe em container Linux (se solicitado ou se Docker disponível)
+# 6. Probe em container Linux (se solicitado ou se Docker disponível em ambiente não-Linux)
 com_docker=0
 for arg in "$@"; do
   if [[ "$arg" == '--com-docker' ]]; then com_docker=1; fi
 done
 
-if [[ "$com_docker" == 1 ]] || { [[ $# == 0 ]] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; }; then
-  printf '4. Executando probe de empacotamento em container Ubuntu Linux (GNU tar real)...\n'
-  saida_docker=$(docker run --rm ubuntu:latest /bin/bash -c "
-    set -Eeuo pipefail
-    export LC_ALL=C
-    export COPYFILE_DISABLE=1
-    TMP_DIR=\$(mktemp -d)
-    mkdir -p \"\$TMP_DIR/in\" \"\$TMP_DIR/out\"
-    printf 'frila-backup-v2\n' > \"\$TMP_DIR/in/formato.txt\"
-    printf 'DUMP_PROD\n' > \"\$TMP_DIR/in/banco.dump\"
-    printf 'EXTENSOES\n' > \"\$TMP_DIR/in/extensoes.sql\"
-    COPYFILE_DISABLE=1 tar -cf \"\$TMP_DIR/backup.tar\" -C \"\$TMP_DIR/in\" formato.txt banco.dump extensoes.sql
-    tar -xf \"\$TMP_DIR/backup.tar\" -C \"\$TMP_DIR/out\" formato.txt banco.dump extensoes.sql
-    diff -u \"\$TMP_DIR/in/formato.txt\" \"\$TMP_DIR/out/formato.txt\"
-    diff -u \"\$TMP_DIR/in/banco.dump\" \"\$TMP_DIR/out/banco.dump\"
-    diff -u \"\$TMP_DIR/in/extensoes.sql\" \"\$TMP_DIR/out/extensoes.sql\"
-    tar_ver=\$(tar --version | head -n 1)
-    echo \"GNU_TAR_OK: \$tar_ver\"
-    rm -rf -- \"\$TMP_DIR\"
-  " 2>&1)
-  printf '   ✓ Saída no Linux: %s\n' "$(printf '%s' "$saida_docker" | grep 'GNU_TAR_OK:')"
+if [[ "$com_docker" == 1 ]] || { [[ $# == 0 ]] && [[ "$tipo_tar" != 'GNU tar'* ]] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; }; then
+  if docker image inspect ubuntu:latest >/dev/null 2>&1 || [[ "$com_docker" == 1 ]]; then
+    printf '4. Executando probe de empacotamento em container Ubuntu Linux (GNU tar real)...\n'
+    if saida_docker=$(docker run --rm ubuntu:latest /bin/bash -c "
+      set -Eeuo pipefail
+      export LC_ALL=C
+      export COPYFILE_DISABLE=1
+      TMP_DIR=\$(mktemp -d)
+      mkdir -p \"\$TMP_DIR/in\" \"\$TMP_DIR/out\"
+      printf 'frila-backup-v2\n' > \"\$TMP_DIR/in/formato.txt\"
+      printf 'DUMP_PROD\n' > \"\$TMP_DIR/in/banco.dump\"
+      printf 'EXTENSOES\n' > \"\$TMP_DIR/in/extensoes.sql\"
+      COPYFILE_DISABLE=1 tar -cf \"\$TMP_DIR/backup.tar\" -C \"\$TMP_DIR/in\" formato.txt banco.dump extensoes.sql
+      tar -xf \"\$TMP_DIR/backup.tar\" -C \"\$TMP_DIR/out\" formato.txt banco.dump extensoes.sql
+      diff -u \"\$TMP_DIR/in/formato.txt\" \"\$TMP_DIR/out/formato.txt\"
+      diff -u \"\$TMP_DIR/in/banco.dump\" \"\$TMP_DIR/out/banco.dump\"
+      diff -u \"\$TMP_DIR/in/extensoes.sql\" \"\$TMP_DIR/out/extensoes.sql\"
+      tar_ver=\$(tar --version | head -n 1)
+      echo \"GNU_TAR_OK: \$tar_ver\"
+      rm -rf -- \"\$TMP_DIR\"
+    " 2>&1); then
+      printf '   ✓ Saída no Linux: %s\n' "$(printf '%s' "$saida_docker" | grep 'GNU_TAR_OK:')"
+    else
+      if [[ "$com_docker" == 1 ]]; then
+        falhar "probe Docker falhou: $saida_docker"
+      else
+        printf '   ℹ Probe Docker ignorado (imagem ou runtime indisponível).\n'
+      fi
+    fi
+  fi
 fi
 
 printf '=== Sucesso: Empacotamento de backup comprovadamente portátil (GNU tar e bsdtar) ===\n'
