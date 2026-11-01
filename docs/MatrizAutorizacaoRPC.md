@@ -162,9 +162,11 @@ supabase test db supabase/tests/786_matriz_autorizacao_papeis_rpc.sql
 ### 4.1 Isolamento Transacional e Classificador Rigoroso Anti-Falso-Positivo
 Para testar chamadas com mutação de estado (como `cancelar_vaga` ou `cancelar_posicao`) sem invalidar os testes subsequentes do mesmo turno/posição dentro de uma única transação, o teste implementa o motor `pg_temp.testar_autorizacao`.
 
-O motor força um rollback pontual via exceção interna `SUCES` em cada chamada autorizada bem-sucedida, assegurando que o estado dos dados permaneça imaculado durante todas as 180 asserções.
+O motor força um rollback pontual via exceção interna `SUCES` em cada chamada autorizada bem-sucedida, assegurando que o estado dos dados permaneça imaculado durante todas as 182 asserções.
 
-Além disso, o classificador do motor valida estritamente a autorização:
-- **`AUTORIZADO`**: Exige execução bem-sucedida no caminho permitido (capturada exclusivamente por `SUCES`).
-- **`REGRA:<codigo>`**: Para cenários onde o usuário possui autorização plena mas atinge uma validação de negócio intrínseca à fixture (ex.: `conta_existente`, `sem_suspensao_ativa`, `perfil_ja_existe`, `a_caminho_fora_da_janela`), o teste valida nominalmente o código e status HTTP da recusa de negócio.
-- **`401_NAO_AUTENTICADO`**: Erros de autenticação jamais são classificados como autorizados. O arquivo inclui autotestes de mutação injetando exceções 401 para comprovar que nenhuma regressão de autenticação passe como falso positivo.
+Além disso, o classificador do motor valida estritamente a autorização através do envelope oficial PostgREST/PostgreSQL:
+- **`AUTORIZADO`**: Exige execução bem-sucedida no caminho permitido (capturada exclusivamente por interceptação de exceção interna `SUCES`).
+- **Leitura de Diagnósticos Estrita**: O status HTTP real é extraído de `PG_EXCEPTION_DETAIL` (`GET STACKED DIAGNOSTICS ... PG_EXCEPTION_DETAIL`) conforme o contrato da função `public.erro(status, codigo, motivo)`.
+- **`401_NAO_AUTENTICADO`**: Qualquer exceção com status HTTP 401 no `DETAIL` ou código `nao_autenticado` é classificada como recusa de autenticação, sobrepondo qualquer código de regra de negócio.
+- **`REGRA:<codigo>`**: Para cenários onde o usuário possui autorização plena mas atinge uma validação de negócio intrínseca à fixture (ex.: `conta_existente`, `sem_suspensao_ativa`, `perfil_ja_existe`, `a_caminho_fora_da_janela`), o teste valida nominalmente o código e exige que o status HTTP seja de negócio (rejeitando sumariamente 401 ou 403).
+- **Prova de Morte de Mutante**: O arquivo inclui autotestes de mutação na Seção 6 com o envelope real de `public.erro`, comprovando que tanto erros 401 diretos quanto regras de negócio alteradas artificialmente para emitir status 401 provocam falha imediata dos testes (derrubando 3/3 asserções).
