@@ -8,7 +8,7 @@ Não usa Docker nem Supabase CLI. Complementa o ensaio local existente em
 
 ## Configuração e execução manual
 
-Use Bash e bsdtar do macOS, Git, `psql` e `pg_dump` compatível com o servidor.
+Use Bash, `tar` padrão (GNU tar no Linux ou bsdtar no macOS), Git, `psql` e `pg_dump` compatível com o servidor.
 O script consulta `server_version_num` em transação **READ ONLY**, compara a versão
 principal do `pg_dump` e recusa cliente mais antigo antes de criar pasta/dump.
 Use a mesma instalação de `psql`/`pg_dump` no PATH. Para o dev PostgreSQL 17, use
@@ -264,7 +264,7 @@ provou descoberta sem lista fixa, cópia de quatro linhas com aspas, barra,
 quebra de linha, NULL e Unicode, valores de identity e coluna gerada, com hash igual.
 Um usuário sujeito a RLS foi recusado sem publicar backup. A regressão OpenSSL
 com pacote v2 passou, incluindo falha SQL do suplemento e retenção entre formatos
-novos e legados. O bsdtar usa `--no-mac-metadata` para empacotar só os três arquivos.
+novos e legados. O empacotamento com `tar` portátil (usando `COPYFILE_DISABLE=1` no macOS) empacota só os três arquivos (`formato.txt`, `banco.dump`, `extensoes.sql`), compatível tanto com GNU tar no Linux quanto com bsdtar no macOS.
 
 Com as dependências resolvidas, um operador autorizado pode carregar a conexão
 sem colocá-la no histórico e executar o comando da seção inicial:
