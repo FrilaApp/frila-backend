@@ -28,9 +28,10 @@ Este documento registra a separação operacional de ambientes de CI/CD para lei
 4. **Escopo do Token:**
    - Selecione exclusivamente a organização da Frila.
    - Restrinja **SÓ ao projeto `frila-prod`** (`hbjkkcenbudiezmamiak`).
-5. **Permissões Granulares:**
+5. **Permissões Granulares (Princípio do Menor Privilégio):**
    - Selecione permissões em **Read** (nunca Read-write).
-   - Habilite a permissão que cobre a leitura de configurações de autenticação do projeto (`Project Settings: Read` ou escopo equivalente de configuração).
+   - Habilite estritamente o escopo que cobre a leitura de configurações de autenticação do projeto: **`auth_config_read`** (no painel: *Authentication: Read* ou *Project Settings: Read*).
+   - NUNCA selecione escopos de escrita (`auth_config_write`, `database_write`, etc.).
 6. Copie o token gerado (prefixo `sbp_`).
 
 ---
@@ -63,9 +64,26 @@ No seu terminal local, valide que o token autoriza a leitura da configuração d
    unset TOKEN
    ```
 
-> [!IMPORTANT]
-> **Proibição de Comandos de Escrita em Produção:**
-> NUNCA execute requisições com métodos de mutação (`PATCH`, `POST`, `PUT`, `DELETE`) contra o endpoint de produção (`hbjkkcenbudiezmamiak`). A recusa de escrita é assegurada na criação do token no painel do Supabase pela seleção estrita de permissões `Read-only` (`Project Settings: Read`). Caso deseje validar o bloqueio de escrita em testes de fail-closed, execute-os exclusivamente contra um projeto descartável de desenvolvimento ou laboratório.
+---
+
+### Validação de Menor Privilégio / Fail-Closed (Sem Tocar no Prod)
+
+> [!CAUTION]
+> **Proibição Absoluta de Requisições de Escrita em Produção:**
+> **NUNCA** execute requisições com métodos de mutação (`PATCH`, `POST`, `PUT`, `DELETE`) contra o endpoint de produção (`hbjkkcenbudiezmamiak`). Se o token tiver sido gerado com permissão indevida por engano, um comando de teste alteraria a infraestrutura de autenticação do produto em produção (incidente P1-03).
+
+Para comprovar formalmente que o token opera sob menor privilégio e que a rotina é fail-closed:
+
+1. **Inspeção no Painel do Supabase (A via 100% segura e direta):**
+   Inspecione os metadados do token emitido no painel de controle do Supabase (**Account > Access Tokens**), confirmando que a coluna de escopos restringe-se estritamente a **`auth_config_read`** sobre o projeto `frila-prod` (`hbjkkcenbudiezmamiak`).
+   *(Nota de segurança: Não execute comandos de teste com métodos de mutação contra outros projetos Supabase como `REF_DESCARCAVEL`: o isolamento entre projetos (barreira de tenant) do Supabase rejeita com HTTP 401/403 qualquer requisição a outro projeto, gerando um falso positivo de fail-closed e podendo induzir à criação desnecessária de projetos auxiliares).*
+
+2. **Validação da Lógica Fail-Closed Offline (com Mock/Fixtures Locais):**
+   Para comprovar que a rotina de conferência rejeita configurações incorretas e falha fechada com `exit 1` sem tocar em rede nem criar projetos no Supabase, execute o autoteste offline do repositório:
+   ```bash
+   ./scripts/teste-conferir-auth-remoto.sh
+   ```
+   - O teste executa contra fixtures estáticas locais (`scripts/fixtures/auth_site_url_localhost.json`, `auth_modelo_com_link.json`, `auth_smtp_desligado.json` e `auth_bom.json`), garantindo cobertura completa e fail-closed com zero chamadas externas.
 
 ---
 
@@ -84,7 +102,7 @@ No seu terminal local, valide que o token autoriza a leitura da configuração d
 5. Em **Environment secrets**:
    - Clique em **Add secret**.
    - **Name:** `SUPABASE_ACCESS_TOKEN`
-   - **Value:** Cole o **token de leitura** gerado no Passo 1.
+   - **Value:** Cole o **token de leitura** gerado no Passo 1 (escopo `auth_config_read`).
    - Clique em **Add secret**.
 
 ---
@@ -92,3 +110,21 @@ No seu terminal local, valide que o token autoriza a leitura da configuração d
 ### Passo 4: Cancelar ou Aprovar o Run Legado
 - Acesse a aba **Actions** e cancele o run pendente antigo (`41094976963`) ou aprove-o uma única vez.
 - As próximas execuções do cron rodarão automaticamente no Environment `frila-prod-leitura` com zero intervenção manual e sob isolamento estrito de segurança.
+
+---
+
+## 3. Texto Sugerido para a Seção "Passos necessários do Dono" no Corpo do PR #354
+
+Para sanar definitivamente a contradição apontada no item P1-02, sugere-se a redação abaixo para a seção correspondente no corpo do PR #354:
+
+```markdown
+## 🔒 Passos necessários do Dono (João Paulo / jotape12-Dev)
+
+Para que o job de conferência diária execute sem revisor humano:
+
+1. Acessar **Settings > Environments** no repositório `frila-backend`.
+2. Criar o Environment **`frila-prod-leitura`**.
+3. Em **Deployment protection rules**, deixar *Required reviewers* desmarcado.
+4. Em **Deployment branches**, selecionar *Selected branches* e cadastrar `develop` (e `main` se aplicável).
+5. Em **Environment secrets**, adicionar `SUPABASE_ACCESS_TOKEN` gerando um novo Scoped Personal Access Token no Supabase com escopo estrito **`auth_config_read`** restrito ao projeto `hbjkkcenbudiezmamiak` (conforme guia `docs/ambiente-frila-prod-leitura.md`), **NUNCA reutilizando nem copiando o token existente com poder de escrita de `frila-prod`**.
+```
