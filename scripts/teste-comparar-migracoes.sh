@@ -10,9 +10,57 @@ set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
-PORTAO="$PWD/scripts/comparar-migracoes.sh"
+DIR_RAIZ="$PWD"
+PORTAO="$DIR_RAIZ/scripts/comparar-migracoes.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+
+# ── Fixture: Criação de Repositório Git Sintético e Isolado ─────
+# O autoteste não depende de branches ou da contagem flutuante do repositório remoto real.
+# Cria um repositório git local em $TMP/repo_sintetico com:
+#   - origin/main: 119 migrações base da v1.0.0
+#   - origin/develop: 123 migrações canônicas (119 base + 4 pendentes da release)
+REPO_SINTETICO="$TMP/repo_sintetico"
+mkdir -p "$REPO_SINTETICO/supabase/migrations"
+cd "$REPO_SINTETICO" || exit 1
+git init -q
+
+# 119 migrações da base (todas as migrações até 20261020180000, exceto as 4 da release)
+for f in "$DIR_RAIZ"/supabase/migrations/*.sql; do
+  b=$(basename "$f")
+  ts="${b:0:14}"
+  if [ "$ts" -le "20261020180000" ]; then
+    case "$ts" in
+      20261018050000|20261020100000|20261020150000|20261020180000)
+        ;;
+      *)
+        touch "supabase/migrations/$b"
+        ;;
+    esac
+  fi
+done
+
+git add supabase/migrations
+git -c user.name="Teste" -c user.email="teste@frila.app" commit -q -m "Base 119 migracoes (origin/main)"
+COMMIT_BASE=$(git rev-parse HEAD)
+
+# 4 migrações pendentes adicionadas para compor a develop (total 123)
+for f in "$DIR_RAIZ"/supabase/migrations/*.sql; do
+  b=$(basename "$f")
+  ts="${b:0:14}"
+  case "$ts" in
+    20261018050000|20261020100000|20261020150000|20261020180000)
+      touch "supabase/migrations/$b"
+      ;;
+  esac
+done
+
+git add supabase/migrations
+git -c user.name="Teste" -c user.email="teste@frila.app" commit -q -m "Develop 123 migracoes (origin/develop)"
+COMMIT_DEV=$(git rev-parse HEAD)
+
+git update-ref refs/remotes/origin/main "$COMMIT_BASE"
+git update-ref refs/remotes/origin/develop "$COMMIT_DEV"
 
 falhas=0
 casos=0
