@@ -165,10 +165,12 @@ begin
           exception when others then
             v_status := null;
           end;
-          if v_status = 401 or v_code = 'nao_autenticado' then
+          if v_code = 'nao_autenticado' and v_status = 401 then
             v_res := '401_NAO_AUTENTICADO';
-          elsif v_code = 'sem_permissao' or v_status = 403 then
+          elsif v_code = 'sem_permissao' and v_status = 403 then
             v_res := '403_SEM_PERMISSAO';
+          elsif v_code in ('nao_autenticado', 'sem_permissao') then
+            v_res := 'STATUS_DIVERGENTE_HTTP:' || coalesce(v_status::text, 'NULL') || ':' || v_code;
           else
             v_res := 'PGRST:' || coalesce(v_code, SQLERRM);
           end if;
