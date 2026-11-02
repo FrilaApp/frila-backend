@@ -197,6 +197,41 @@ conferir "commit alvo que edita migração de main reprova no passo 4 com exit 1
     backend-v1.0.0
 cd "$DIR_ORIGEM" || exit 1
 
+# ── 9. Simulação de migração com formato inválido (ex: abc.sql / P2 Lince) ───
+REPO_FORMATO="$TMP/repo_formato"
+mkdir -p "$REPO_FORMATO/scripts" "$REPO_FORMATO/supabase/migrations"
+cp "$PORTAO" "$REPO_FORMATO/scripts/"
+cp "$DIR_ORIGEM/scripts/janela-de-manutencao.sh" "$REPO_FORMATO/scripts/"
+(
+  cd "$REPO_FORMATO" || exit 1
+  git init -q -b main
+  git config user.email "testador@frilabr.com"
+  git config user.name "Testador"
+  echo "create table base();" > supabase/migrations/20260901000000_base.sql
+  git add .
+  git commit -q -m "feat: base main"
+  git checkout -q -b develop
+  # Adiciona migração sem timestamp canônico de 14 dígitos
+  echo "create table invalida();" > supabase/migrations/abc.sql
+  cat <<'EOF' > CHANGELOG.md
+# Changelog
+## [1.0.0] - 2026-10-04
+EOF
+  git add .
+  git commit -q -m "feat: migracao com nome em formato invalido"
+)
+
+SHA_FORMATO=$(git -C "$REPO_FORMATO" rev-parse HEAD)
+cd "$REPO_FORMATO" || exit 1
+conferir "commit alvo com migração fora do formato padrão reprova no passo 5 com exit 1 (P2 Lince)" \
+  1 "arquivo em formato inválido no commit" \
+  env FRILA_AGORA="2026-11-02 10:00" "./scripts/pre-tag.sh" \
+    --base "develop" \
+    --main "main" \
+    --commit "$SHA_FORMATO" \
+    backend-v1.0.0
+cd "$DIR_ORIGEM" || exit 1
+
 echo
 if [ "$falhas" -ne 0 ]; then
   echo "Total de falhas: $falhas de $casos casos." >&2

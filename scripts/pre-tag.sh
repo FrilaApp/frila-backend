@@ -214,8 +214,17 @@ fi
 
 NOMES_MIGRACOES=$(printf '%s\n' "$ARQUIVOS_MIGRACOES_ALVO" | sed 's#^supabase/migrations/##' | grep '\.sql$' || true)
 
+# Valida formato obrigatório da CLI do Supabase (<timestamp de 14 dígitos>_nome.sql)
+IGNORADOS=$(printf '%s\n' "$NOMES_MIGRACOES" | grep -vE '^[0-9]{14}_.+\.sql$' || true)
+if [ -n "$IGNORADOS" ]; then
+  echo "✗ [5/5] Migrações sem colisão: arquivo em formato inválido no commit $COMMIT_ALVO:" >&2
+  printf '%s\n' "$IGNORADOS" | sed 's/^/    /' >&2
+  echo "    Padrão obrigatório da CLI: <timestamp de 14 dígitos>_nome.sql" >&2
+  exit 1
+fi
+
 # Verifica timestamps duplicados (14 dígitos no início do nome)
-COLISOES_ALVO=$(printf '%s\n' "$NOMES_MIGRACOES" | grep -oE '^[0-9]{14}' | sort | uniq -d || true)
+COLISOES_ALVO=$(printf '%s\n' "$NOMES_MIGRACOES" | sed 's/_.*//' | sort | uniq -d || true)
 
 if [ -n "$COLISOES_ALVO" ]; then
   echo "✗ [5/5] Migrações sem colisão: colisão de versão encontrada no commit alvo $COMMIT_ALVO:" >&2
@@ -224,7 +233,7 @@ if [ -n "$COLISOES_ALVO" ]; then
 fi
 
 TOTAL_MIGRACOES=$(printf '%s\n' "$NOMES_MIGRACOES" | grep -c . || true)
-echo "✓ [5/5] Migrações sem colisão: catálogo do commit alvo íntegro ($TOTAL_MIGRACOES migrações sem colisão)."
+echo "✓ [5/5] Migrações sem colisão: catálogo do commit alvo íntegro ($TOTAL_MIGRACOES migrações válidas e sem colisão)."
 
 echo "=================================================="
 echo "✓ Todas as 5 conferências passaram com sucesso."
