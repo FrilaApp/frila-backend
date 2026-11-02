@@ -158,7 +158,8 @@ else
   fi
 fi
 
-if ! printf '%s\n' "$CONTEUDO_CHANGELOG" | grep -qE "^## \[[vV]?${VERSAO}\]"; then
+VERSAO_ESCAPADA=$(printf '%s' "$VERSAO" | sed 's/\./\\./g')
+if ! printf '%s\n' "$CONTEUDO_CHANGELOG" | grep -qE "^## \[[vV]?${VERSAO_ESCAPADA}\]"; then
   echo "✗ [3/5] CHANGELOG: versão [$VERSAO] não encontrada no CHANGELOG do commit $COMMIT_ALVO." >&2
   echo "  Antes de cortar a tag, documente a versão sob '## [$VERSAO] - AAAA-MM-DD'." >&2
   exit 1
@@ -180,7 +181,17 @@ fi
 REF_BASE_MAIN=$(git rev-parse "$BASE_MAIN^{commit}")
 
 # Audita se o commit alvo modificou ou removeu alguma migração já existente em main
-MIGRACOES_EDITADAS=$(git diff --name-only --diff-filter=MD "$REF_BASE_MAIN"...$COMMIT_ALVO -- supabase/migrations/ 2>/dev/null || true)
+# Não mascara erros de git diff: falha de comparação ou ausência de ancestral comum aborta com exit 2
+set +e
+MIGRACOES_EDITADAS=$(git diff --name-only --diff-filter=MD "$REF_BASE_MAIN"..."$COMMIT_ALVO" -- supabase/migrations/ 2>&1)
+DIFF_STATUS=$?
+set -e
+
+if [ "$DIFF_STATUS" -ne 0 ]; then
+  echo "✗ [4/5] Migrações imutáveis: falha ao comparar histórico entre $BASE_MAIN e commit $COMMIT_ALVO (código $DIFF_STATUS):" >&2
+  echo "$MIGRACOES_EDITADAS" | sed 's/^/    /' >&2
+  exit 2
+fi
 
 if [ -n "$MIGRACOES_EDITADAS" ]; then
   echo "✗ [4/5] Migrações imutáveis: migração já existente em $BASE_MAIN foi modificada ou removida no commit alvo:" >&2
@@ -191,18 +202,29 @@ fi
 echo "✓ [4/5] Migrações imutáveis: nenhuma migração de $BASE_MAIN foi violada no commit alvo."
 
 # ─────────────────────────────────────────────────────────────
-# 5. Migrações sem colisão de versão (reuso de migracoes-sem-colisao.sh)
+# 5. Migrações sem colisão de versão no commit alvo
 # ─────────────────────────────────────────────────────────────
-if [ ! -f "$SCRIPT_DIR/migracoes-sem-colisao.sh" ]; then
-  echo "✗ [5/5] Script $SCRIPT_DIR/migracoes-sem-colisao.sh não encontrado." >&2
-  exit 2
-fi
+# Audita o catálogo de migrações existente especificamente no COMMIT_ALVO (sem falso verde por estado local)
+ARQUIVOS_MIGRACOES_ALVO=$(git ls-tree -r --name-only "$COMMIT_ALVO" -- supabase/migrations/ 2>/dev/null || true)
 
-if ! "$SCRIPT_DIR/migracoes-sem-colisao.sh"; then
-  echo "✗ [5/5] Migrações sem colisão: colisão de timestamp ou formato inválido encontrado." >&2
+if [ -z "$ARQUIVOS_MIGRACOES_ALVO" ]; then
+  echo "✗ [5/5] Migrações sem colisão: nenhuma migração encontrada no commit $COMMIT_ALVO." >&2
   exit 1
 fi
-echo "✓ [5/5] Migrações sem colisão: catálogo íntegro."
+
+NOMES_MIGRACOES=$(printf '%s\n' "$ARQUIVOS_MIGRACOES_ALVO" | sed 's#^supabase/migrations/##' | grep '\.sql$' || true)
+
+# Verifica timestamps duplicados (14 dígitos no início do nome)
+COLISOES_ALVO=$(printf '%s\n' "$NOMES_MIGRACOES" | grep -oE '^[0-9]{14}' | sort | uniq -d || true)
+
+if [ -n "$COLISOES_ALVO" ]; then
+  echo "✗ [5/5] Migrações sem colisão: colisão de versão encontrada no commit alvo $COMMIT_ALVO:" >&2
+  echo "$COLISOES_ALVO" | sed 's/^/    /' >&2
+  exit 1
+fi
+
+TOTAL_MIGRACOES=$(printf '%s\n' "$NOMES_MIGRACOES" | grep -c . || true)
+echo "✓ [5/5] Migrações sem colisão: catálogo do commit alvo íntegro ($TOTAL_MIGRACOES migrações sem colisão)."
 
 echo "=================================================="
 echo "✓ Todas as 5 conferências passaram com sucesso."
