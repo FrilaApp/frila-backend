@@ -66,10 +66,10 @@ saida_saude=$(curl -sS --max-time "$TIMEOUT" -w "\nHTTP_STATUS:%{http_code}" "$U
 codigo_saude=$(echo "$saida_saude" | grep -o 'HTTP_STATUS:[0-9]*' | cut -d: -f2 || echo "000")
 corpo_saude=$(echo "$saida_saude" | sed '/HTTP_STATUS:/d')
 
-valida_saude=$(python3 -c "import sys, json
+valida_saude=$(printf '%s' "$corpo_saude" | python3 -c "import sys, json
 try:
-    d = json.loads('''$corpo_saude''')
-    sys.exit(0 if (d.get('ok') is True and d.get('status') in ('saudavel', 'ok')) else 1)
+    d = json.load(sys.stdin)
+    sys.exit(0 if (isinstance(d, dict) and d.get('ok') is True and d.get('status') in ('saudavel', 'ok')) else 1)
 except Exception:
     sys.exit(1)" 2>/dev/null && echo "ok" || echo "erro")
 
@@ -127,10 +127,18 @@ saida_demo=$(curl -sS --max-time "$TIMEOUT" -w "\nHTTP_STATUS:%{http_code}" \
 res_demo=$(echo "$saida_demo" | grep -o 'HTTP_STATUS:[0-9]*' | cut -d: -f2 || echo "000")
 corpo_demo=$(echo "$saida_demo" | sed '/HTTP_STATUS:/d')
 
-if [ "$res_demo" = "404" ] && ! echo "$corpo_demo" | grep -qi "Requested function was not found"; then
+valida_demo=$(printf '%s' "$corpo_demo" | python3 -c "import sys, json
+try:
+    d = json.load(sys.stdin)
+    # Valida positivamente assinatura de recusa uniforme do handler (code=nao_encontrado)
+    sys.exit(0 if (isinstance(d, dict) and d.get('code') == 'nao_encontrado') else 1)
+except Exception:
+    sys.exit(1)" 2>/dev/null && echo "ok" || echo "erro")
+
+if [ "$res_demo" = "404" ] && [ "$valida_demo" = "ok" ]; then
   registrar 1 "GET /functions/v1/entrar-demonstracao" "HTTP 404 (função ativa na borda, retorno próprio do handler)"
 else
-  registrar 0 "GET /functions/v1/entrar-demonstracao" "esperado HTTP 404 do handler da aplicação, veio HTTP $res_demo ($corpo_demo)"
+  registrar 0 "GET /functions/v1/entrar-demonstracao" "esperado HTTP 404 do handler da aplicação com code=nao_encontrado, veio HTTP $res_demo ($corpo_demo)"
 fi
 
 # ─────────────────────────────────────────────────────────────

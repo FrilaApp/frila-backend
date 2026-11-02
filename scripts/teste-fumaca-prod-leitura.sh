@@ -263,6 +263,145 @@ conferir "404 genérico de infraestrutura em entrar-demonstracao reprova com exi
   1 "esperado HTTP 404 do handler da aplicação" \
   "$PORTAO" "http://127.0.0.1:$PORTA_NOTFOUND" "chave-anon-teste"
 
+# ── 8. Prova anti-injeção no parser JSON de saúde (P1 Lince) ───
+PORTA_INJECAO_FILE="$TMP/porta_injecao.txt"
+MARCADOR_INJECAO="$TMP/marcador_exploit.txt"
+python3 - <<PY >/dev/null 2>&1 &
+import http.server, socketserver
+
+class InjecaoHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/functions/v1/saude":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            marcador = "$MARCADOR_INJECAO"
+            payload = '{"ok":true,"status":"saudavel","payload":"' + "''' + str(open(" + repr(marcador) + ", 'w').write('exploit')) + '''" + '"}'
+            self.wfile.write(payload.encode())
+        elif self.path == "/functions/v1/entrar-demonstracao":
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"code":"nao_encontrado"}')
+        elif self.path == "/rest/v1/":
+            self.send_response(401)
+            self.end_headers()
+        else:
+            self.send_response(405)
+            self.end_headers()
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+with socketserver.TCPServer(("127.0.0.1", 0), InjecaoHandler) as httpd:
+    with open("$PORTA_INJECAO_FILE", "w") as f:
+        f.write(str(httpd.server_address[1]))
+    httpd.serve_forever()
+PY
+PID_INJECAO=$!
+trap 'kill $PID_MOCK $PID_FAIL $PID_SEMANTICA $PID_NOTFOUND $PID_INJECAO 2>/dev/null || true; wait $PID_MOCK $PID_FAIL $PID_SEMANTICA $PID_NOTFOUND $PID_INJECAO 2>/dev/null || true; rm -rf "$TMP"' EXIT
+
+for _ in $(seq 1 30); do
+  if [ -f "$PORTA_INJECAO_FILE" ]; then break; fi
+  sleep 0.1
+done
+
+PORTA_INJECAO=$(cat "$PORTA_INJECAO_FILE")
+conferir "payload de saúde com expressão maliciosa é tratado como dado puro sem executar" \
+  0 "HTTP 200 OK" \
+  "$PORTAO" "http://127.0.0.1:$PORTA_INJECAO" "chave-anon-teste"
+
+casos=$((casos + 1))
+if [ -f "$MARCADOR_INJECAO" ]; then
+  echo "  ✗ Falha crítica de segurança: código injetado no parser foi executado!" >&2
+  falhas=$((falhas + 1))
+else
+  echo "  ✓ Prova anti-injeção aprovada: código Python arbitrário não é executado pelo parser"
+fi
+
+# ── 9. Simulação de 404 com corpo vazio em entrar-demonstracao (P2 Lince) ───
+PORTA_EMPTY_FILE="$TMP/porta_empty.txt"
+python3 - <<PY >/dev/null 2>&1 &
+import http.server, socketserver
+
+class EmptyHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/functions/v1/saude":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok": true, "status": "saudavel"}')
+        elif self.path == "/functions/v1/entrar-demonstracao":
+            self.send_response(404)
+            self.end_headers()
+            # Corpo vazio!
+        else:
+            self.send_response(405)
+            self.end_headers()
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+with socketserver.TCPServer(("127.0.0.1", 0), EmptyHandler) as httpd:
+    with open("$PORTA_EMPTY_FILE", "w") as f:
+        f.write(str(httpd.server_address[1]))
+    httpd.serve_forever()
+PY
+PID_EMPTY=$!
+trap 'kill $PID_MOCK $PID_FAIL $PID_SEMANTICA $PID_NOTFOUND $PID_INJECAO $PID_EMPTY 2>/dev/null || true; wait $PID_MOCK $PID_FAIL $PID_SEMANTICA $PID_NOTFOUND $PID_INJECAO $PID_EMPTY 2>/dev/null || true; rm -rf "$TMP"' EXIT
+
+for _ in $(seq 1 30); do
+  if [ -f "$PORTA_EMPTY_FILE" ]; then break; fi
+  sleep 0.1
+done
+
+PORTA_EMPTY=$(cat "$PORTA_EMPTY_FILE")
+conferir "404 com corpo vazio em entrar-demonstracao reprova com exit 1 (P2 Lince)" \
+  1 "esperado HTTP 404 do handler da aplicação" \
+  "$PORTAO" "http://127.0.0.1:$PORTA_EMPTY" "chave-anon-teste"
+
+# ── 10. Simulação de 404 com HTML de gateway em entrar-demonstracao ────────
+PORTA_HTML_FILE="$TMP/porta_html.txt"
+python3 - <<PY >/dev/null 2>&1 &
+import http.server, socketserver
+
+class HtmlHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/functions/v1/saude":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"ok": true, "status": "saudavel"}')
+        elif self.path == "/functions/v1/entrar-demonstracao":
+            self.send_response(404)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(b'<html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1></body></html>')
+        else:
+            self.send_response(405)
+            self.end_headers()
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+with socketserver.TCPServer(("127.0.0.1", 0), HtmlHandler) as httpd:
+    with open("$PORTA_HTML_FILE", "w") as f:
+        f.write(str(httpd.server_address[1]))
+    httpd.serve_forever()
+PY
+PID_HTML=$!
+trap 'kill $PID_MOCK $PID_FAIL $PID_SEMANTICA $PID_NOTFOUND $PID_INJECAO $PID_EMPTY $PID_HTML 2>/dev/null || true; wait $PID_MOCK $PID_FAIL $PID_SEMANTICA $PID_NOTFOUND $PID_INJECAO $PID_EMPTY $PID_HTML 2>/dev/null || true; rm -rf "$TMP"' EXIT
+
+for _ in $(seq 1 30); do
+  if [ -f "$PORTA_HTML_FILE" ]; then break; fi
+  sleep 0.1
+done
+
+PORTA_HTML=$(cat "$PORTA_HTML_FILE")
+conferir "404 com HTML de gateway em entrar-demonstracao reprova com exit 1" \
+  1 "esperado HTTP 404 do handler da aplicação" \
+  "$PORTAO" "http://127.0.0.1:$PORTA_HTML" "chave-anon-teste"
+
 echo
 if [ "$falhas" -ne 0 ]; then
   echo "Total de falhas: $falhas de $casos casos." >&2
