@@ -179,12 +179,15 @@ BEGIN;
 SELECT corrida.tentar(:n);
 END;
 BENCH
-docker cp "$tmp_bench" "$DB":/tmp/corrida.pgbench >/dev/null
+
+container_bench=$(docker exec -i "$DB" mktemp /tmp/corrida.XXXXXX 2>/dev/null || echo "/tmp/corrida-candidatar-$$.pgbench")
+docker cp "$tmp_bench" "$DB":"$container_bench" >/dev/null
 rm -f "$tmp_bench"
 
 echo "▸ $CLIENTES conexões simultâneas"
 docker exec -i "$DB" pgbench -U postgres -d postgres \
-  -c "$CLIENTES" -j 4 -t 1 -n -f /tmp/corrida.pgbench 2>&1 | tail -3
+  -c "$CLIENTES" -j 4 -t 1 -n -f "$container_bench" 2>&1 | tail -3
+docker exec -i "$DB" rm -f "$container_bench" >/dev/null 2>&1 || true
 
 # ── O placar ──────────────────────────────────────────────────────────────────
 confirmadas=$(psql -tAc "select count(*) from corrida.placar where code = 'ok'")

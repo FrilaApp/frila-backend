@@ -83,10 +83,13 @@ falhas_anterior=$falhas
 echo "▸ 3. Verificação contra arquivos temporários fixos inseguros em /tmp"
 for s in "${scripts[@]}"; do
   nome_rel="${s#$ROOT_DIR/}"
+  if [[ "$s" == *"auditar-scripts-backend.sh"* ]] || [[ "$s" == *"teste-auditar-scripts-backend.sh"* ]]; then
+    continue
+  fi
   # Busca por caminhos literais como /tmp/nome_fixo (ignora uso de mktemp ou variáveis como ${TMPDIR:-/tmp})
-  linhas_vulneraveis=$(grep -nE '(\s|"|'\'')/tmp/[a-zA-Z0-9_\.-]+(\s|"|'\'')' "$s" | grep -vE 'mktemp|\$\{TMPDIR|\$TMPDIR|/tmp/frila-teste' || true)
+  linhas_vulneraveis=$(grep -nE '(\s|"|'\'')/tmp/[a-zA-Z0-9_\.-]+' "$s" | grep -vE 'mktemp|\$\{TMPDIR|\$TMPDIR|/tmp/frila-teste' || true)
   if [[ -n "$linhas_vulneraveis" ]]; then
-    erro "$nome_rel" "uso de caminho temporário fixo inseguro em /tmp sem mktemp: $linhas_vulneraveis"
+    erro "$nome_rel" "uso de caminho temporário fixo inseguro em /tmp: $linhas_vulneraveis"
   fi
 done
 if [[ "$falhas" -eq "$falhas_anterior" ]]; then
@@ -125,11 +128,11 @@ falhas_anterior=$falhas
 echo "▸ 5. Verificação de remoções recursivas seguras (rm -rf protegido)"
 for s in "${scripts[@]}"; do
   nome_rel="${s#$ROOT_DIR/}"
-  if [[ "$s" == *"auditar-scripts-backend.sh"* ]]; then
+  if [[ "$s" == *"auditar-scripts-backend.sh"* ]] || [[ "$s" == *"teste-auditar-scripts-backend.sh"* ]]; then
     continue
   fi
   # Busca 'rm -rf /' ou 'rm -rf "$1"' desprotegido
-  if grep -nE 'rm[[:space:]]+-[a-zA-Z]*r[a-zA-Z]*f?[[:space:]]+(/\s|/\$|\"\$1\"|\$1\b)' "$s" >/dev/null; then
+  if grep -nE 'rm[[:space:]]+-[a-zA-Z]*r[a-zA-Z]*f?[[:space:]]+(/($|[[:space:]])|/\$|\"\$1\"|\$1\b)' "$s" >/dev/null; then
     erro "$nome_rel" "comando 'rm -rf' com caminho de alto risco ou desprotegido detectado"
   fi
 done
