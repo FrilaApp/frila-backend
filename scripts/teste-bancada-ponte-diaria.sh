@@ -9,7 +9,7 @@
 # mentira. Nenhum fato é escrito em nenhum dos casos — o que varia é só o exit code
 # das pernas, que é exatamente o que o achado do portão ANBU apontou como engolido.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 REPO="$PWD"
 
 falhas=0

@@ -9,7 +9,7 @@
 # `05 - Registros/` vazio. Assim o teste exercita a porta de escrita de verdade
 # (`registrar-fato.sh`) sem tocar no acervo de ninguém.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 falhas=0
 ok()    { printf '  ✓ %s\n' "$1"; }
