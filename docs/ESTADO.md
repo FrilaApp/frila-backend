@@ -1,4 +1,4 @@
-# Estado do backend — 16/10/2026
+# Estado do backend — 31/10/2026
 
 Onde o trabalho parou e o que a próxima sessão precisa saber. As regras duráveis estão
 no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
@@ -7,47 +7,41 @@ no [`CLAUDE.md`](../CLAUDE.md); aqui fica o que muda.
 
 ## Em uma linha
 
-**A `develop` é o tronco e está à frente do `main`, que não se move desde
-28/09.** O `main` continua inteiramente contido na `develop` (`git log
-origin/develop..origin/main` sai vazio) e parado em `c190836`. A `develop` possui **107 migrações**
-e **108 arquivos de regras pgTAP** (109 na suíte com carga, 100% PASS).
+**A `develop` é o tronco e está à frente do `main` por 69 commits.** O `main` recebeu o PR #308
+(`release/backend-v1.0.0`) em 19/10/2026 (`8d19626`). A `develop` (ref `ca11a68` em 31/10/2026) possui
+**123 migrações**, **198 arquivos pgTAP** no total em `supabase/tests` (197 de regras + 1 de carga),
+**10 Edge Functions** e **56 scripts** em `scripts/`.
 
-Os números abaixo foram consolidados e remedidos em 16/10 (commit de referência `7e011ea` na `develop`):
+Os números abaixo foram consolidados e remedidos em 31/10/2026 (commit de referência `ca11a68` na `develop`):
 
 | | | Comando |
 |---|---|---|
-| Commits à frente do `main` | **439** (em 16/10, ref `7e011ea`) | `git rev-list --count origin/main..origin/develop` |
-| Migrações na `develop` | **107** (veja `scripts/migracoes-sem-colisao.sh`, ref `7e011ea`) | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
-| pgTAP | **108 arquivos de regras** (109 totais com carga, ref `7e011ea`), verde | `Files=109 … Result: PASS`, medido na CI e localmente com `supabase test db` |
+| Commits à frente do `main` | **69** (em 31/10, ref `ca11a68`) | `git rev-list --count origin/main..origin/develop` |
+| Migrações na `develop` | **123** (veja `scripts/migracoes-sem-colisao.sh`, ref `ca11a68`) | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
+| pgTAP | **198 arquivos** (197 de regras + 1 de carga, ref `ca11a68`), verde | `find supabase/tests -name "*.sql"` / `supabase test db` |
 | Portão `contrato-responde.sh` | **151 recusas vigiadas e alcançadas**, verde | 151 de 151 vigiados e alcançados (100% de cobertura; 16 isentas, 0 não vigiadas de 167 declaradas), 46 de 50 respostas 200 validadas, 37 de 37 coleções |
 | Testes em Deno das Edge Functions | **179** na suíte, verde | `ok \| 179 passed \| 0 failed`, medido com `deno test --allow-all --no-check` |
-| Edge Functions | **9** | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
+| Edge Functions | **10** (inclui `limpar-contas-orfas` e `_compartilhado`) | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
 | Testes unitários em `exportar-turnos` | **31**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
-| Scripts em `scripts/` | **39** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
-| Contrato espelhado | **0.2.44** | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
+| Scripts em `scripts/` | **56** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
+| Contrato espelhado | **0.2.45** (canônico no docs: **0.2.46**) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
-Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **108** arquivos de teste de regras,
-e o `prove` conta **109** porque alcança também `supabase/tests/carga/gerar_df.sql`, que é gerador
-de carga e não teste de regra. O número da CI, e o da tabela, é **109 arquivos**.
+Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **197** arquivos de teste de regras,
+e alcança **198** com `supabase/tests/carga/gerar_df.sql`, que é gerador de carga e não teste de regra.
 
-> ## 🟢 O espelho do contrato está em dia (0.2.44) e alinhado ao original
+> ## 🟢 O espelho do contrato está em 0.2.45 (canônico em 0.2.46 no frila-docs)
 >
-> O contrato **0.2.44** está em vigor na raiz de `develop` e alinhado ao `FrilaApp/frila-docs · api/openapi.yaml`.
-> Ele consolida o modo de seleção com menos de 24h em urgência (0.2.38), a remoção de 403 não documentado
-> em rotas sem barreira de perfil (0.2.39), o suporte por e-mail a partir do turno (RPC `abrir_suporte` / Opção C,
-> 0.2.40, PR #169 e operação P6 no PR #171), a republicação de posições restantes (RPC `republicar_posicoes_restantes`,
-> 0.2.41, PR #170), o bloqueio no modo de seleção e alinhamento de corpo sem mudança de superfície em `privado.elegiveis`
-> (0.2.42, PR #193), a liberação de relato sem filtro de termos ofensivos em contestação e denúncia (0.2.43, PR #198)
-> e a documentação textual das recusas de presença em `fazer_checkin`, `confirmar_checkin_manual` e `fazer_checkout` (0.2.44, PR #92).
+> O contrato espelhado localmente em `contrato/openapi.yaml` está na versão **0.2.45** (incorporado no PR #302/#304,
+> trazendo `sinal_idade` no `criarConta` e `eventos_app` em `MeusDados`).
 >
-> A `develop` recebeu o espelho idêntico (`454c08f8bab4528d4158257be9b72ab1803399650d5653d7a12d7bbdab587527`)
-> e todas as implementações, migrações e testes correspondentes.
-> O portão `./scripts/contrato-em-dia.sh` confirma integridade com sha256 exato.
+> O contrato original canônico em `FrilaApp/frila-docs · api/openapi.yaml` avançou para a versão **0.2.46** em 23/10/2026
+> (push FCM data-only para Android e alerta APNs no iOS, RN15). A atualização do espelho local no backend para 0.2.46
+> está pendente de PR no backend.
 >
-> | | Versão | sha256 | bytes |
-> |---|---|---|---|
-> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.44** | `454c08f8bab4528d4158257be9b72ab1803399650d5653d7a12d7bbdab587527` | 250 266 |
-> | original, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.44** | `454c08f8bab4528d4158257be9b72ab1803399650d5653d7a12d7bbdab587527` | 250 266 |
+> | | Versão | Origem |
+> |---|---|---|
+> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.45** | `frila-backend` (commit `692f38e6`) |
+> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.46** | `frila-docs` (commit `5b9ba85` / `6ad9188`) |
 
 > ## 🟢 Instabilidades de concorrência em `Corridas do ciclo` sanadas na raiz
 >
@@ -83,7 +77,7 @@ O repositório conta com mais de 180 PRs mergeados (183 em 16/10, ref develop `7
 4. **PR #170 (Republicar Posições Restantes / Contrato 0.2.41 · merge em 10/10):**
    Implementação da RPC `republicar_posicoes_restantes(vaga_id, chave)` (cartão `D1-C`), permitindo ao contratante reabrir posições remanescentes de vaga fechada sem candidatos em seleção, clonando a vaga em modo urgência com rastreabilidade pela coluna `vaga.republicada_de` e exibição consolidada no painel. Migrações `20261009100000_vaga_republicada_de_e_republicacao_da_selecao.sql` e `20261009110000_republicar_posicoes_restantes_e_painel.sql`. Suíte pgTAP `630_republicar_posicoes_restantes.sql` (55 testes), Cenário 11 em `scripts/corrida-ciclo.sh` e pares vigiados `republicarPosicoesRestantes:401/403/404/422`.
 5. **PR #171 (Operação do Suporte por E-mail P6 · merge em 10/10):**
-   Ajuste operacional de `consultar-ocorrencias.sql` com join interno no autor e exibição de protocolo curto de 8 caracteres; criação do script `fechar-chamado-sem-email.sql` para encerramento manual com resultado `sem_email_recebido` após o prazo regulamentar de 5 dias úteis (D16, SU-RN10); e documentação completa de procedimentos e expurgo seguro LGPD na caixa `suporte@frila.app` em `supabase/operacao/equipe-frila.md` (D9, SU-RN11).
+   Ajuste operacional de `consultar-ocorrencias.sql` com join interno no autor e exibição de protocolo curto de 8 caracteres; criação do script `fechar-chamado-sem-email.sql` para encerramento manual com resultado `sem_email_recebido` após o prazo regulamentar de 5 dias úteis (D16, SU-RN10); e documentação completa de procedimentos e expurgo seguro LGPD na caixa `suporte@frilabr.com` em `supabase/operacao/equipe-frila.md` (D9, SU-RN11).
 6. **PR #178 (Push com mutable-content no iOS / h6RoObK6 · merge em 14/10):**
    Envio de `"mutable-content": 1` em `apns.payload.aps` no payload APNs via FCM v1 no motor de despacho (`supabase/functions/despachar/index.ts` e testes Deno), permitindo à Notification Service Extension do iOS interceptar e tratar o aviso antes da exibição para validação de `vinculo_id` sem expor dados pessoais (RN15).
 7. **PR #179 (Recusa de Contato e Link no Texto da Vaga J5 / pBXTS4vv · merge em 15/10):**
@@ -127,7 +121,7 @@ Medida com `gh pr list --state open` em 16/10:
 
 | | |
 |---|---|
-| local | `supabase start` · Postgres 17 · **107** migrações na `develop` (veja `scripts/migracoes-sem-colisao.sh`), **47** no `main` (em 16/10) |
+| local | `supabase start` · Postgres 17 · **123** migrações na `develop` (veja `scripts/migracoes-sem-colisao.sh`), **119** no `main` (em 31/10/2026) |
 | `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · SMTP próprio ativo (`smtp.gmail.com:465`, código de 6 dígitos) · **Entrega bloqueada** por `frila.agendador_secret` (vide abaixo) |
 | `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **vazio**: aguarda esteira de deploy por tag |
 
@@ -153,8 +147,7 @@ Medida com `gh pr list --state open` em 16/10:
 
 ## O contrato em detalhes
 
-Versão vigente: **0.2.44**, espelhada em `contrato/openapi.yaml` e **em dia com o original**,
-conferido em 17/10 com o portão: *"Espelho em dia com FrilaApp/frila-docs"*.
+Versão espelhada: **0.2.45** em `contrato/openapi.yaml` (contrato original canônico em **0.2.46** em `FrilaApp/frila-docs · api/openapi.yaml`).
 
 Histórico das versões recentes integradas no backend:
 
@@ -177,12 +170,14 @@ Histórico das versões recentes integradas no backend:
 | **0.2.42** | bloqueio de perfil no modo de seleção e alinhamento de corpo sem mudança em `privado.elegiveis` | #193 |
 | **0.2.43** | liberação de relato sem filtro de termos ofensivos em contestação e denúncia | #198 |
 | **0.2.44** | documentação de recusas de presença em `fazer_checkin`, `confirmar_checkin_manual` e `fazer_checkout` (só texto) | #92 |
+| **0.2.45** | adições compatíveis no cadastro (sinal_idade) e telemetria do titular (eventos_app em MeusDados) | #302, #304 |
+| **0.2.46** | push FCM data-only para Android e canais por tipo (canônico em frila-docs, espelho pendente no backend) | pendente |
 
 ---
 
 ## O que existe no banco
 
-Medido no banco de desenvolvimento com a `develop` em `7e011ea`:
+Medido no banco de desenvolvimento com a `develop` em `ca11a68`:
 
 - **22 tabelas** em `public`:
   ```
@@ -191,7 +186,7 @@ Medido no banco de desenvolvimento com a `develop` em `7e011ea`:
   funcao · membro_estabelecimento · notificacao · ocorrencia · pedido_de_exclusao
   posicao · profissional · profissional_funcao · turno · usuario · vaga
   ```
-- **107 migrações** aplicadas sequencialmente sem colisão.
+- **123 migrações** aplicadas sequencialmente sem colisão.
 - RLS ativado em todas as tabelas; escrita exclusivamente através de funções `security definer`.
 - **44 RPCs expostas a `authenticated`** (+ 1 pública `configuracao_do_app`):
   ```
@@ -236,7 +231,7 @@ Medição consolidada da bateria em 16/10 (ref `7e011ea`):
 | `./scripts/teste-contrato-responde.sh` | autoteste de schemas do contrato | 14 de 14 casos verdes |
 | `./scripts/teste-contrato-acompanha.sh` | PR que altera `public` acompanha contrato | 19 de 19 casos verdes |
 | `./scripts/relogio-em-testes.sh` | imunidade contra bombas-relógio de relógio | **108** arquivos pgTAP imunizados |
-| `./scripts/migracoes-sem-colisao.sh` | carimbos de migração únicos | **107** carimbos distintos sem colisão |
+| `./scripts/migracoes-sem-colisao.sh` | carimbos de migração únicos | **123** carimbos distintos sem colisão |
 | `./scripts/migracoes-imutaveis.sh` | migrações passadas não foram alteradas | verde |
 | `./scripts/planos-com-carga.sh` | caminho quente sob volume sintético do DF (PR #180, #196) | verde na CI (aquecimento prévio, melhor de 3 baterias, autoteste de 11 casos em `teste-planos-com-carga.sh`) |
 
@@ -298,7 +293,7 @@ Colunas do esquema com funções de negócio específicas que complementam a Mod
 | `vaga.republicada_de` | referência à vaga de origem na republicação de posições restantes (cartão D1-C, contrato 0.2.41) |
 
 E alinhamentos consolidados de negócio:
-- **Suporte por e-mail a partir do turno (Opção C, contrato 0.2.40, PR #169 e P6 no PR #171):** Chamados abertos via RPC `abrir_suporte` gravam ocorrência com `tipo = 'suporte'`, `origem = 'app'`, `turno_id`, categoria e sem texto livre (`relato` nulo, LGPD/RN15). A fila de operação (`consultar-ocorrencias.sql`) expõe `protocolo_curto` (8 hexadecimais), `origem`, `turno_id` e prazo legal de 5 dias úteis. Chamados sem envio de e-mail pelo usuário são encerrados manualmente pela Equipe via `fechar-chamado-sem-email.sql` com `resultado = 'sem_email_recebido'` (D16, SU-RN10). E-mails tratados são expurgados da caixa `suporte@frila.app` e lixeira conforme diretriz de retenção da LGPD (D9, SU-RN11).
+- **Suporte por e-mail a partir do turno (Opção C, contrato 0.2.40, PR #169 e P6 no PR #171):** Chamados abertos via RPC `abrir_suporte` gravam ocorrência com `tipo = 'suporte'`, `origem = 'app'`, `turno_id`, categoria e sem texto livre (`relato` nulo, LGPD/RN15). A fila de operação (`consultar-ocorrencias.sql`) expõe `protocolo_curto` (8 hexadecimais), `origem`, `turno_id` e prazo legal de 5 dias úteis. Chamados sem envio de e-mail pelo usuário são encerrados manualmente pela Equipe via `fechar-chamado-sem-email.sql` com `resultado = 'sem_email_recebido'` (D16, SU-RN10). E-mails tratados são expurgados da caixa `suporte@frilabr.com` e lixeira conforme diretriz de retenção da LGPD (D9, SU-RN11).
 - **Republicação de posições restantes (D1-C, contrato 0.2.41, PR #170):** Permite ao contratante reabrir posições restantes de vaga fechada sem candidatos em seleção ativa via RPC `republicar_posicoes_restantes(vaga_id, chave)`. Cria nova vaga em modo urgência com posições clonadas vinculadas por `vaga.republicada_de`, validando recusas `401` (`nao_autenticado`), `403` (`sem_permissao`), `404` (`nao_encontrado`) e `422` (`republicacao_indisponivel`), e mantendo o histórico na vaga original.
 - **Avaliação:** Um voto por lado do turno (`unique (turno_id, alvo_tipo)` e `unique (turno_id, autor_id)`). Reenvio do mesmo valor recebe 200; valor divergente recebe `409 avaliacao_ja_registrada`.
 - **Filtro de Bloqueio em `perfil_publico`:** Totalmente implementado e protegido com 404 em caso de bloqueio bidirecional (PR #104, teste 550).
@@ -321,7 +316,7 @@ E alinhamentos consolidados de negócio:
 
 ## Por onde continuar
 
-1. **Homologação e Deploy no `frila-dev`:** Com a aprovação da proposta do Vault e o desbloqueio do erro 42501, aplicar as 107 migrações no projeto remoto `jcobftbhbqdikratzizz` via `scripts/aplicar-remoto.sh`.
+1. **Homologação e Deploy no `frila-dev`:** Com a aprovação da proposta do Vault e o desbloqueio do erro 42501, aplicar as 123 migrações no projeto remoto `jcobftbhbqdikratzizz` via `scripts/aplicar-remoto.sh`.
 2. **Frontend e Clientes Mobile:** As novas funcionalidades (recusa de dados de contato e links em texto livre no PR #179, fechamento automático de vagas expiradas no PR #181, e suporte a push mutável no PR #178) estão 100% disponíveis na `develop`.
 3. **Backlog de Tarefas Backend sem Decisão do Dono:** Seguir com a execução contínua de tarefas que independem de decisões de negócio/infraestrutura externa.
 
