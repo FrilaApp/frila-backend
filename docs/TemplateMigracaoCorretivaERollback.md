@@ -81,25 +81,25 @@ revoke execute on function privado.minha_funcao(uuid) from public, anon, authent
 ```
 
 ### 3.2 Constraints e Índices
-- Reverter constraint restritiva ou com erro de validação:
+- Reverter constraint restritiva ou com erro de validação (exemplo em `candidatura.estado`):
 ```sql
 -- 1. Remove a constraint problemática de forma segura
 alter table public.candidatura
-  drop constraint if exists check_candidatura_status_valido;
+  drop constraint if exists check_candidatura_estado_valido;
 
--- 2. (Opcional) Restaura a constraint anterior tolerante
+-- 2. (Opcional) Restaura a constraint anterior sobre o enum real
 alter table public.candidatura
-  add constraint check_candidatura_status_valido
-  check (status in ('pendente', 'aceita', 'recusada', 'cancelada'));
+  add constraint check_candidatura_estado_valido
+  check (estado in ('pendente', 'aceita', 'recusada', 'retirada', 'expirada'));
 ```
-- Reverter índice que causou lock ou degradação:
+- Reverter índice que causou lock ou degradação (usando colunas existentes como `posicao_id`):
 ```sql
 -- Remove o índice problemático
 drop index if exists public.idx_candidatura_busca_composta;
 
--- Restaura o índice anterior (se necessário)
-create index if not exists idx_candidatura_vaga_id
-  on public.candidatura (vaga_id);
+-- Restaura o índice anterior (se necessário) sobre a chave estrangeira real
+create index if not exists idx_candidatura_posicao_id
+  on public.candidatura (posicao_id);
 ```
 
 ### 3.3 Colunas e Tipos de Dados
@@ -136,13 +136,19 @@ create policy "perfil_leitura_proprio_ou_publico"
 ### 3.5 Saneamento de Dados (Correção Idempotente)
 Se a migração problemática gravou dados corrompidos ou inconsistentes:
 - A correção de dados deve ser **idempotente** e executada em bloco seguro.
-- Use `where` restrito para não afetar linhas saudáveis.
+- Use `where` restrito para não afetar linhas saudáveis e respeite os enums e colunas existentes do schema (ex.: `candidatura.criada_em` e `candidatura.estado`, ou `posicao.inicio_em` e `posicao.estado`).
 ```sql
--- Corrige estados inconsistentes gerados pela falha
+-- Exemplo 1: Saneamento de candidaturas pendentes que expiraram durante o incidente
+update public.candidatura
+   set estado = 'expirada'
+ where estado = 'pendente'
+   and criada_em < '2026-10-30 00:00:00+00';
+
+-- Exemplo 2: Cancelamento de posições abertas que já passaram do horário de início
 update public.posicao
    set estado = 'cancelada'
- where estado = 'invalido'
-   and criado_em >= '2026-10-30 00:00:00+00';
+ where estado = 'aberta'
+   and inicio_em < '2026-10-30 00:00:00+00';
 ```
 
 ---
@@ -191,3 +197,6 @@ Antes de submeter o PR e aplicar a migração corretiva, siga rigorosamente este
 - [ ] Aplicação efetiva executada pelo `[DONO]`: `./scripts/aplicar-remoto.sh <project_ref>`.
 - [ ] Confirmação de registro: `select version from supabase_migrations.schema_migrations order by version desc limit 3;`.
 - [ ] Monitoramento ativo dos logs de Edge Functions e banco pós-aplicação.
+
+> [!WARNING]
+> **Atenção sobre `--seco`:** O script `aplicar-remoto.sh <project_ref> --seco` simula a aplicação das migrações mas **não é estritamente zero DDL**: ele cria previamente o schema e a tabela de controle `supabase_migrations.schema_migrations` se ainda não existirem. Por essa razão, exige permissões de escrita/DDL no banco e **nunca** deve ser executado com credenciais limitadas a leitura (como a credencial do Prod-leitura).
