@@ -1,6 +1,6 @@
 # Governança e Atualização da Lista de Termos Bloqueados
 
-Este documento estabelece o processo operacional, as regras técnicas e a rotina de governança para atualização da lista de termos bloqueados do Frila (`privado.termo_bloqueado`), em cumprimento à **Diretriz 1.2 da App Store** (conteúdo gerado pelo usuário), às regras **RN10, RN15, RF26**, às decisões **J1 a J6** e ao plano de produto documentado em `requisitos/revisao-lista-termos-bloqueados.md`.
+Este documento estabelece o processo operacional, as regras técnicas e a rotina de governança para atualização da lista de termos bloqueados do Frila (`privado.termo_bloqueado`), em cumprimento à **Diretriz 1.2 da App Store** (conteúdo gerado pelo usuário), às regras **RN10, RN15, RF26**, às decisões **J1 a J6** e ao plano de produto documentado em `FrilaApp/frila-docs · requisitos/revisao-lista-termos-bloqueados.md`.
 
 ---
 

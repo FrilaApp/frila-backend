@@ -12,7 +12,7 @@ publicar → notificar → candidatar → confirmar → executar → avaliar
 ```
 
 Loja em 13/11/2026. O que entra em cada versão está em
-[`05-ESCOPO-DO-MVP.md`](https://github.com/FrilaApp/frila-docs/blob/main/Documentos/MD/05-ESCOPO-DO-MVP.md);
+[`05-ESCOPO-DO-MVP.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/05-ESCOPO-DO-MVP.md);
 o plano de trabalho, no [quadro do Trello](https://trello.com/b/0eyqvbRJ/frila).
 
 ## Rodar
@@ -75,7 +75,7 @@ supabase/
 └── tests/         pgTAP — um teste por CHECK e por política, com o nome da regra
 
 contrato/openapi.yaml   Espelho do contrato do Frila. Divergência quebra a CI
-agents/                 Os cinco agentes do pipeline, versionados
+.claude/agents/         Os cinco agentes do pipeline, versionados
 scripts/                bancada-sync, ciclo-completo
 ```
 
