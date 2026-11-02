@@ -137,28 +137,58 @@ SQL
   rm -rf "$TMP"
 }
 
+CRON_JOBS_DESATIVADOS=""
+
 desativar_cron() {
-  psql -q -c "
-    do \$\$
-    begin
-      if to_regclass('cron.job') is not null then
-        update cron.job set active = false where active = true;
-      end if;
-    end \$\$;" >/dev/null 2>&1 || true
+  local existe rc=0
+  existe=$(psql -tA -c "select 1 from pg_extension where extname = 'pg_cron';") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "✗ [pg_cron] Falha ao consultar pg_extension no banco (código de saída $rc)." >&2
+    return 1
+  fi
+  [ "$existe" = "1" ] || return 0
+
+  CRON_JOBS_DESATIVADOS=$(psql -tA -c "select jobid from cron.job where active order by jobid;") || {
+    echo "✗ [pg_cron] Falha ao consultar tarefas ativas em cron.job." >&2
+    return 1
+  }
+
+  if [ -n "$CRON_JOBS_DESATIVADOS" ]; then
+    local lista_ids
+    lista_ids=$(echo "$CRON_JOBS_DESATIVADOS" | paste -sd, -)
+    psql -q -c "
+      do \$\$
+      declare
+        j bigint;
+      begin
+        for j in select unnest(array[$lista_ids]::bigint[]) loop
+          perform cron.alter_job(j, active := false);
+        end loop;
+      end \$\$;" || {
+      echo "✗ [pg_cron] Falha ao desativar tarefas via cron.alter_job." >&2
+      return 1
+    }
+  fi
 }
 
 reativar_cron() {
+  [ -n "${CRON_JOBS_DESATIVADOS:-}" ] || return 0
+  local lista_ids
+  lista_ids=$(echo "$CRON_JOBS_DESATIVADOS" | paste -sd, -)
   psql -q -c "
     do \$\$
+    declare
+      j bigint;
     begin
-      if to_regclass('cron.job') is not null then
-        update cron.job set active = true where active = false;
-      end if;
+      for j in select unnest(array[$lista_ids]::bigint[]) loop
+        perform cron.alter_job(j, active := true);
+      end loop;
     end \$\$;" >/dev/null 2>&1 || true
+  CRON_JOBS_DESATIVADOS=""
 }
 
 [ -n "${MANTER:-}" ] || trap limpar EXIT INT TERM
-desativar_cron
+desativar_cron || exit 1
 
 # ── O palco ───────────────────────────────────────────────────────────────────
 #
