@@ -29,9 +29,10 @@ Este documento registra a separação operacional de ambientes de CI/CD para lei
    - Selecione exclusivamente a organização da Frila.
    - Restrinja **SÓ ao projeto `frila-prod`** (`hbjkkcenbudiezmamiak`).
 5. **Permissões Granulares (Princípio do Menor Privilégio):**
-   - Selecione permissões em **Read** (nunca Read-write).
-   - Habilite estritamente o escopo que cobre a leitura de configurações de autenticação do projeto: **`auth_config_read`** (no painel: *Authentication: Read* ou *Project Settings: Read*).
-   - NUNCA selecione escopos de escrita (`auth_config_write`, `database_write`, etc.).
+   - Comece com **nenhuma permissão selecionada** (sem permissões globais nem de organização).
+   - Na lista de permissões por projeto, selecione **somente o projeto `frila-prod` (`hbjkkcenbudiezmamiak`)**.
+   - Habilite estritamente a permissão exigida pelo endpoint `GET /v1/projects/{ref}/config/auth`: **`Auth Config — Read`** (código de escopo da API: **`auth_config_read`**).
+   - **NÃO selecione** `Project Settings: Read` (esta é outra permissão que não concede acesso ao serviço de autenticação) nem nenhuma permissão de escrita (`auth_config_write`, `database_write`, etc.).
 6. Copie o token gerado (prefixo `sbp_`).
 
 ---
