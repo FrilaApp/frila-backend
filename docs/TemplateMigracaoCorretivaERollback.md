@@ -136,13 +136,16 @@ create policy "perfil_leitura_proprio_ou_publico"
 ### 3.5 Saneamento de Dados (Correção Idempotente)
 Se a migração problemática gravou dados corrompidos ou inconsistentes:
 - A correção de dados deve ser **idempotente** e executada em bloco seguro.
-- Use `where` restrito para não afetar linhas saudáveis e respeite os enums e colunas existentes do schema (ex.: `candidatura.criada_em` e `candidatura.estado`, ou `posicao.inicio_em` e `posicao.estado`).
+- Use `where` restrito para não afetar linhas saudáveis e respeite os enums e colunas existentes do schema (ex.: `candidatura.estado` e `posicao.inicio_em`).
+- Nunca deduza expiração pela idade da candidatura (`criada_em`): a condição real de expiração depende do início do turno da posição (`posicao.inicio_em`). Candidaturas para turnos futuros continuam válidas e abertas.
 ```sql
--- Exemplo 1: Saneamento de candidaturas pendentes que expiraram durante o incidente
-update public.candidatura
+-- Exemplo 1: Saneamento de candidaturas pendentes de posições cujo início já ocorreu durante o incidente
+update public.candidatura c
    set estado = 'expirada'
- where estado = 'pendente'
-   and criada_em < '2026-10-30 00:00:00+00';
+  from public.posicao p
+ where c.posicao_id = p.id
+   and c.estado = 'pendente'
+   and p.inicio_em < '2026-10-30 00:00:00+00';
 
 -- Exemplo 2: Cancelamento de posições abertas que já passaram do horário de início
 update public.posicao
