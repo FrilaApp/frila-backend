@@ -17,10 +17,17 @@ DB=${DB_CONTAINER:-supabase_db_frila-backend}
 
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"; }
 
-ok()     { printf '  ✓ %s\n' "$1"; }
-falhou() { printf '  ✗ %s\n' "$1" >&2; falhas=$((falhas + 1)); }
+TMP_FALHAS=$(mktemp)
+echo "0" > "$TMP_FALHAS"
+trap 'rm -f "$TMP_FALHAS"' EXIT
 
-falhas=0
+ok()     { printf '  ✓ %s\n' "$1"; }
+falhou() {
+  printf '  ✗ %s\n' "$1" >&2
+  local f
+  f=$(cat "$TMP_FALHAS" 2>/dev/null || echo "0")
+  echo "$((f + 1))" > "$TMP_FALHAS"
+}
 
 echo "▸ Testando mecanismo de desativação/reativação do pg_cron"
 
@@ -87,10 +94,12 @@ eval "$(sed -n '/^reativar_cron() {/,/^}/p' scripts/corrida-ciclo.sh)"
   codigo=$?
   if [ "$codigo" -ne 0 ] && echo "$saida" | grep -q "Falha ao consultar pg_extension"; then
     ok "falha transitória na consulta de pg_extension retorna erro em vez de falso sucesso (P2-01)"
+    exit 0
   else
     falhou "falha transitória em pg_extension não retornou erro: código=$codigo saída=$saida"
+    exit 1
   fi
-)
+) || true
 
 # ── 5. Teste: Falha fechada em cron.alter_job (P2-02) ───────────
 (
@@ -116,10 +125,12 @@ eval "$(sed -n '/^reativar_cron() {/,/^}/p' scripts/corrida-ciclo.sh)"
   rm -f "$f_count"
   if [ "$codigo" -ne 0 ] && echo "$saida" | grep -q "Falha ao desativar tarefas via cron.alter_job"; then
     ok "desativar_cron falha fechado (exit != 0) se cron.alter_job falhar (P2-02)"
+    exit 0
   else
     falhou "desativar_cron engoliu erro de cron.alter_job: código=$codigo saída=$saida"
+    exit 1
   fi
-)
+) || true
 
 # ── 6. Teste: Desativação completa no banco real ───────────────
 desativar_cron
@@ -157,6 +168,7 @@ else
 fi
 
 echo
+falhas=$(cat "$TMP_FALHAS" 2>/dev/null || echo "0")
 if [ "$falhas" -ne 0 ]; then
   echo "Total de falhas: $falhas." >&2
   exit 1
