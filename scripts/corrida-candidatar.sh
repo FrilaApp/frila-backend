@@ -172,14 +172,15 @@ SQL
 
 [ $? -eq 0 ] || { echo "não consegui montar a corrida" >&2; exit 1; }
 
-cat > /tmp/corrida-candidatar.pgbench <<'BENCH'
+tmp_bench=$(mktemp "${TMPDIR:-/tmp}/corrida-candidatar.XXXXXX")
+cat > "$tmp_bench" <<'BENCH'
 \set n :client_id + 1
 BEGIN;
 SELECT corrida.tentar(:n);
 END;
 BENCH
-docker cp /tmp/corrida-candidatar.pgbench "$DB":/tmp/corrida.pgbench >/dev/null
-rm -f /tmp/corrida-candidatar.pgbench
+docker cp "$tmp_bench" "$DB":/tmp/corrida.pgbench >/dev/null
+rm -f "$tmp_bench"
 
 echo "▸ $CLIENTES conexões simultâneas"
 docker exec -i "$DB" pgbench -U postgres -d postgres \
