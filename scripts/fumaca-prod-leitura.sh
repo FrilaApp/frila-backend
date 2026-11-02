@@ -4,8 +4,10 @@
 # Baseado na especificação em .maestri/produtos/fumaca-prod-segura.md.
 #
 # REGRA FUNDAMENTAL: ZERO ESCRITAS
-# - Utiliza exclusivamente métodos HTTP GET e HEAD.
-# - SEM POST, sem mutação no banco, sem inserção de dados, sem disparo de e-mails/push.
+# - Utiliza exclusivamente métodos HTTP GET e HEAD (sem POST, PUT, DELETE ou PATCH).
+# - Em operação saudável (200 OK), opera com zero mutações no banco.
+# - NOTA OPERACIONAL: Se o probe de saúde falhar (HTTP 503), o handler oficial de saude
+#   invoca privado.registrar_falha_execucao para registrar telemetria de resiliência.
 # - URL e chave anônima informadas exclusivamente por variáveis de ambiente ou parâmetros.
 #
 # Probes realizados (11 probes de leitura pura):
@@ -64,10 +66,17 @@ saida_saude=$(curl -sS --max-time "$TIMEOUT" -w "\nHTTP_STATUS:%{http_code}" "$U
 codigo_saude=$(echo "$saida_saude" | grep -o 'HTTP_STATUS:[0-9]*' | cut -d: -f2 || echo "000")
 corpo_saude=$(echo "$saida_saude" | sed '/HTTP_STATUS:/d')
 
-if [ "$codigo_saude" = "200" ] && echo "$corpo_saude" | grep -qE '"(ok":true|status":"(saudavel|ok))"'; then
-  registrar 1 "GET /functions/v1/saude" "HTTP 200 OK (Postgres e Deno operacionais)"
+valida_saude=$(python3 -c "import sys, json
+try:
+    d = json.loads('''$corpo_saude''')
+    sys.exit(0 if (d.get('ok') is True and d.get('status') in ('saudavel', 'ok')) else 1)
+except Exception:
+    sys.exit(1)" 2>/dev/null && echo "ok" || echo "erro")
+
+if [ "$codigo_saude" = "200" ] && [ "$valida_saude" = "ok" ]; then
+  registrar 1 "GET /functions/v1/saude" "HTTP 200 OK (Postgres e Deno operacionais, payload íntegro)"
 else
-  registrar 0 "GET /functions/v1/saude" "esperado HTTP 200 com status saudável, veio HTTP $codigo_saude ($corpo_saude)"
+  registrar 0 "GET /functions/v1/saude" "esperado HTTP 200 com status saudável e ok=true, veio HTTP $codigo_saude ($corpo_saude)"
 fi
 
 # HEAD saude (baixa latência)
@@ -93,34 +102,35 @@ for fn in "${FUNCOES_405[@]}"; do
     res_code=$(curl -sS --max-time "$TIMEOUT" -w "%{http_code}" -o /dev/null \
       -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
       "$URL_BASE/functions/v1/$fn" 2>&1 || echo "000")
+    # Com chave anon válida, a Edge Function DEVE responder 405 (Method Not Allowed)
+    if [ "$res_code" = "405" ]; then
+      registrar 1 "GET /functions/v1/$fn" "HTTP 405 Method Not Allowed (função ativa na borda, sem execução)"
+    else
+      registrar 0 "GET /functions/v1/$fn" "esperado HTTP 405 Method Not Allowed, veio HTTP $res_code"
+    fi
   else
     res_code=$(curl -sS --max-time "$TIMEOUT" -w "%{http_code}" -o /dev/null \
       "$URL_BASE/functions/v1/$fn" 2>&1 || echo "000")
-  fi
-
-  # Aceita 405 (Method Not Allowed) ou 401 (Fail-Closed de JWT se sem token)
-  if [ "$res_code" = "405" ] || [ "$res_code" = "401" ]; then
-    registrar 1 "GET /functions/v1/$fn" "HTTP $res_code (roteamento confirmado, sem execução)"
-  else
-    registrar 0 "GET /functions/v1/$fn" "esperado HTTP 405 ou 401, veio HTTP $res_code"
+    # Sem chave anon, aceita 401 (Fail-Closed do gateway) ou 405
+    if [ "$res_code" = "401" ] || [ "$res_code" = "405" ]; then
+      registrar 1 "GET /functions/v1/$fn" "HTTP $res_code (roteamento confirmado, sem execução)"
+    else
+      registrar 0 "GET /functions/v1/$fn" "esperado HTTP 401 ou 405, veio HTTP $res_code"
+    fi
   fi
 done
 
-# entrar-demonstracao (com anon key deve responder 404 de acordo com a rota Deno uniforme;
-# aceitar 401 esconderia o gateway rejeitando a chamada, por isso enviamos Authorization+apikey e exigimos 404)
-if [ -n "$ANON_KEY" ]; then
-  res_demo=$(curl -sS --max-time "$TIMEOUT" -w "%{http_code}" -o /dev/null \
-    -H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY" \
-    "$URL_BASE/functions/v1/entrar-demonstracao" 2>&1 || echo "000")
-else
-  res_demo=$(curl -sS --max-time "$TIMEOUT" -w "%{http_code}" -o /dev/null \
-    "$URL_BASE/functions/v1/entrar-demonstracao" 2>&1 || echo "000")
-fi
+# entrar-demonstracao (deve responder 404 da própria aplicação com retorno uniforme, e não o 404 genérico do gateway)
+saida_demo=$(curl -sS --max-time "$TIMEOUT" -w "\nHTTP_STATUS:%{http_code}" \
+  ${ANON_KEY:+-H "apikey: $ANON_KEY" -H "Authorization: Bearer $ANON_KEY"} \
+  "$URL_BASE/functions/v1/entrar-demonstracao" 2>&1 || true)
+res_demo=$(echo "$saida_demo" | grep -o 'HTTP_STATUS:[0-9]*' | cut -d: -f2 || echo "000")
+corpo_demo=$(echo "$saida_demo" | sed '/HTTP_STATUS:/d')
 
-if [ "$res_demo" = "404" ]; then
-  registrar 1 "GET /functions/v1/entrar-demonstracao" "HTTP 404 (função ativa na borda, rota uniforme)"
+if [ "$res_demo" = "404" ] && ! echo "$corpo_demo" | grep -qi "Requested function was not found"; then
+  registrar 1 "GET /functions/v1/entrar-demonstracao" "HTTP 404 (função ativa na borda, retorno próprio do handler)"
 else
-  registrar 0 "GET /functions/v1/entrar-demonstracao" "esperado HTTP 404, veio HTTP $res_demo"
+  registrar 0 "GET /functions/v1/entrar-demonstracao" "esperado HTTP 404 do handler da aplicação, veio HTTP $res_demo ($corpo_demo)"
 fi
 
 # ─────────────────────────────────────────────────────────────

@@ -125,7 +125,7 @@ PID_MOCK=$!
 trap 'kill $PID_MOCK 2>/dev/null || true; wait $PID_MOCK 2>/dev/null || true; rm -rf "$TMP"' EXIT
 
 # Aguarda subida do servidor mock
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
   if [ -f "$PORTA_FILE" ]; then break; fi
   sleep 0.1
 done
@@ -180,7 +180,7 @@ PY
 PID_FAIL=$!
 trap 'kill $PID_MOCK $PID_FAIL 2>/dev/null || true; wait $PID_MOCK $PID_FAIL 2>/dev/null || true; rm -rf "$TMP"' EXIT
 
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
   if [ -f "$PORTA_FAIL_FILE" ]; then break; fi
   sleep 0.1
 done
@@ -189,6 +189,79 @@ PORTA_FAIL=$(cat "$PORTA_FAIL_FILE")
 conferir "saúde retornando 503 reprova com exit 1" \
   1 "Suíte de fumaça de leitura falhou" \
   "$PORTAO" "http://127.0.0.1:$PORTA_FAIL" "chave-anon-teste"
+
+# ── 6. Simulação de payload de saúde contraditório (ok=false / P2-03 Lince) ──
+PORTA_SEMANTICA_FILE="$TMP/porta_semantica.txt"
+python3 - <<PY >/dev/null 2>&1 &
+import http.server, socketserver
+
+class SemanticaHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        # ok é falso, mesmo contendo a string "saudavel"
+        self.wfile.write(b'{"ok": false, "status": "saudavel"}')
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+with socketserver.TCPServer(("127.0.0.1", 0), SemanticaHandler) as httpd:
+    with open("$PORTA_SEMANTICA_FILE", "w") as f:
+        f.write(str(httpd.server_address[1]))
+    httpd.serve_forever()
+PY
+PID_SEMANTICA=$!
+trap 'kill $PID_MOCK $PID_FAIL $PID_SEMANTICA 2>/dev/null || true; wait $PID_MOCK $PID_FAIL $PID_SEMANTICA 2>/dev/null || true; rm -rf "$TMP"' EXIT
+
+for _ in $(seq 1 30); do
+  if [ -f "$PORTA_SEMANTICA_FILE" ]; then break; fi
+  sleep 0.1
+done
+
+PORTA_SEMANTICA=$(cat "$PORTA_SEMANTICA_FILE")
+conferir "saúde com ok=false mesmo com status saudável reprova com exit 1 (P2-03 Lince)" \
+  1 "esperado HTTP 200 com status saudável e ok=true" \
+  "$PORTAO" "http://127.0.0.1:$PORTA_SEMANTICA" "chave-anon-teste"
+
+# ── 7. Simulação de 404 genérico do gateway em entrar-demonstracao (P2-02 Lince) ──
+PORTA_NOTFOUND_FILE="$TMP/porta_notfound.txt"
+python3 - <<PY >/dev/null 2>&1 &
+import http.server, socketserver
+
+class NotFoundHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200 if self.path == "/functions/v1/saude" else 404)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        if self.path == "/functions/v1/saude":
+            self.wfile.write(b'{"ok": true, "status": "saudavel"}')
+        elif self.path == "/functions/v1/entrar-demonstracao":
+            # 404 genérico de infraestrutura do Kong quando função não foi deployada
+            self.wfile.write(b'{"code": "NOT_FOUND", "message": "Requested function was not found"}')
+        else:
+            self.wfile.write(b'{"erro": "metodo_nao_permitido"}')
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+with socketserver.TCPServer(("127.0.0.1", 0), NotFoundHandler) as httpd:
+    with open("$PORTA_NOTFOUND_FILE", "w") as f:
+        f.write(str(httpd.server_address[1]))
+    httpd.serve_forever()
+PY
+PID_NOTFOUND=$!
+trap 'kill $PID_MOCK $PID_FAIL $PID_SEMANTICA $PID_NOTFOUND 2>/dev/null || true; wait $PID_MOCK $PID_FAIL $PID_SEMANTICA $PID_NOTFOUND 2>/dev/null || true; rm -rf "$TMP"' EXIT
+
+for _ in $(seq 1 30); do
+  if [ -f "$PORTA_NOTFOUND_FILE" ]; then break; fi
+  sleep 0.1
+done
+
+PORTA_NOTFOUND=$(cat "$PORTA_NOTFOUND_FILE")
+conferir "404 genérico de infraestrutura em entrar-demonstracao reprova com exit 1 (P2-02 Lince)" \
+  1 "esperado HTTP 404 do handler da aplicação" \
+  "$PORTAO" "http://127.0.0.1:$PORTA_NOTFOUND" "chave-anon-teste"
 
 echo
 if [ "$falhas" -ne 0 ]; then
