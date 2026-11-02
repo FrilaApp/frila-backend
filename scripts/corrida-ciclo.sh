@@ -140,13 +140,17 @@ SQL
 CRON_JOBS_DESATIVADOS=""
 
 desativar_cron() {
-  local existe
-  existe=$(psql -tA -c "select 1 from pg_extension where extname = 'pg_cron';" 2>/dev/null || true)
+  local existe rc=0
+  existe=$(psql -tA -c "select 1 from pg_extension where extname = 'pg_cron';") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "✗ [pg_cron] Falha ao consultar pg_extension no banco (código de saída $rc)." >&2
+    return 1
+  fi
   [ "$existe" = "1" ] || return 0
 
   CRON_JOBS_DESATIVADOS=$(psql -tA -c "select jobid from cron.job where active order by jobid;") || {
     echo "✗ [pg_cron] Falha ao consultar tarefas ativas em cron.job." >&2
-    exit 1
+    return 1
   }
 
   if [ -n "$CRON_JOBS_DESATIVADOS" ]; then
@@ -162,7 +166,7 @@ desativar_cron() {
         end loop;
       end \$\$;" || {
       echo "✗ [pg_cron] Falha ao desativar tarefas via cron.alter_job." >&2
-      exit 1
+      return 1
     }
   fi
 }
@@ -184,7 +188,7 @@ reativar_cron() {
 }
 
 [ -n "${MANTER:-}" ] || trap limpar EXIT INT TERM
-desativar_cron
+desativar_cron || exit 1
 
 # ── O palco ───────────────────────────────────────────────────────────────────
 #
