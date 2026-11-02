@@ -129,9 +129,6 @@ git ls-tree -r --name-only origin/main:supabase/migrations 2>/dev/null \
 git ls-tree -r --name-only origin/develop:supabase/migrations 2>/dev/null \
   | sed -En 's/^([0-9]{14})_.*/\1/p' | sort -u > "$TMP/todas_develop.txt"
 
-total_main=$(wc -l < "$TMP/todas_main.txt" | tr -d ' ')
-total_dev=$(wc -l < "$TMP/todas_develop.txt" | tr -d ' ')
-
 # ── 3. Cenário REAL: Prod = origin/main (develop menos as 4 pendentes) ──
 # No estado real, o Prod possui as 119 migrações da main.
 # develop possui 123 migrações (incluindo 20261018050000 que tem timestamp anterior a migrações da main).
@@ -242,6 +239,41 @@ conferir "resiliência: linhas com aspas, pipes e cabeçalhos são sanitizadas (
 conferir "flags explícitas --base origin/main e --commit origin/develop com --pendentes-esperadas 4 passam com exit 0" \
   0 "Referência base (produção v1.0.0): origin/main" \
   "$PORTAO" --base origin/main --commit origin/develop --pendentes-esperadas 4 "$TMP/prod_real_119.txt"
+
+# ── 11. Validação de referências Git inválidas / inexistentes (P2-01 e P2-02) ──
+conferir "--commit inexistente reprova com exit 2 mesmo havendo pasta local" \
+  2 "Não foi possível obter o catálogo de migrações na referência alvo 'lince-ref-inexistente'" \
+  "$PORTAO" --commit lince-ref-inexistente "$TMP/prod_real_119.txt"
+
+conferir "--base inexistente reprova com exit 2" \
+  2 "Não foi possível obter o catálogo de migrações na referência base 'lince-ref-inexistente'" \
+  "$PORTAO" --base lince-ref-inexistente "$TMP/prod_real_119.txt"
+
+# ── 12. Validação de faixa numérica para --pendentes-esperadas (P2-05) ──
+conferir "--pendentes-esperadas com número gigantesco (> 5 dígitos) reprova com exit 2" \
+  2 "fora da faixa representável" \
+  "$PORTAO" --pendentes-esperadas 999999999999999999999999999999999999 "$TMP/prod_real_119.txt"
+
+conferir "--pendentes-esperadas com 100000 reprova com exit 2" \
+  2 "fora da faixa representável" \
+  "$PORTAO" --pendentes-esperadas 100000 "$TMP/prod_real_119.txt"
+
+# ── 13. Resiliência a falhas de comando externo / comm (P2-03) ──
+MOCK_BIN="$TMP/mock_bin"
+mkdir -p "$MOCK_BIN"
+cat << 'MOCK_EOF' > "$MOCK_BIN/comm"
+#!/usr/bin/env bash
+if [ "${1:-}" = "-23" ]; then
+  echo "comm: erro sintético de I/O injetado para teste" >&2
+  exit 2
+fi
+exec /usr/bin/comm "$@"
+MOCK_EOF
+chmod +x "$MOCK_BIN/comm"
+
+conferir "falha injetada no comando comm interrompe com exit 2 em vez de falso sucesso" \
+  2 "Falha ao executar comm na comparação de catálogos" \
+  env PATH="$MOCK_BIN:$PATH" "$PORTAO" --pendentes-esperadas 4 "$TMP/prod_real_119.txt"
 
 echo
 if [ "$falhas" -ne 0 ]; then

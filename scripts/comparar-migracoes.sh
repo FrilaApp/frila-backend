@@ -89,6 +89,11 @@ if [ -n "$PENDENTES_ESPERADAS" ]; then
     echo "✗ Erro: --pendentes-esperadas deve ser um número inteiro maior ou igual a zero (recebido: '$PENDENTES_ESPERADAS')." >&2
     exit 2
   fi
+  # Validação de faixa: rejeita inteiros fora da faixa representável ou desarrazoados
+  if [ "${#PENDENTES_ESPERADAS}" -gt 5 ] || ! [ "$PENDENTES_ESPERADAS" -ge 0 ] 2>/dev/null; then
+    echo "✗ Erro: --pendentes-esperadas fora da faixa representável (recebido: '$PENDENTES_ESPERADAS')." >&2
+    exit 2
+  fi
 fi
 
 if [ ! -f "$ARQUIVO_PROD" ]; then
@@ -114,19 +119,18 @@ if git rev-parse --verify "$BASE^{commit}" >/dev/null 2>&1; then
     | sed -En 's/^([0-9]{14})_.*/\1/p' | sort -u > "$tmp_base"
 elif [ -f "$BASE" ]; then
   grep -oE '\b[0-9]{14}\b' "$BASE" | sort -u > "$tmp_base" || true
+elif [ -d "$BASE" ]; then
+  for f in "$BASE"/*.sql; do
+    [ -f "$f" ] && basename "$f"
+  done | sed -En 's/^([0-9]{14})_.*/\1/p' | sort -u > "$tmp_base"
 else
-  # Tenta buscar origin/main se a referência for origin/main
-  if [ "$BASE" = "origin/main" ]; then
-    git fetch origin main >/dev/null 2>&1 || true
-    if git rev-parse --verify "$BASE^{commit}" >/dev/null 2>&1; then
-      git ls-tree -r --name-only "$BASE:supabase/migrations" 2>/dev/null \
-        | sed -En 's/^([0-9]{14})_.*/\1/p' | sort -u > "$tmp_base"
-    fi
-  fi
+  echo "✗ Erro: Não foi possível obter o catálogo de migrações na referência base '$BASE'." >&2
+  echo "Certifique-se de que a referência Git, arquivo ou diretório existe localmente (este script não realiza chamadas de rede/fetch)." >&2
+  exit 2
 fi
 
 if [ ! -s "$tmp_base" ]; then
-  echo "✗ Erro: Não foi possível obter o catálogo de migrações na referência base '$BASE'." >&2
+  echo "✗ Erro: Catálogo de migrações na referência base '$BASE' está vazio ou não contém arquivos válidos." >&2
   exit 2
 fi
 
@@ -138,21 +142,18 @@ if git rev-parse --verify "$REF^{commit}" >/dev/null 2>&1; then
     | sed -En 's/^([0-9]{14})_.*/\1/p' | sort -u > "$tmp_dev"
 elif [ -f "$REF" ]; then
   grep -oE '\b[0-9]{14}\b' "$REF" | sort -u > "$tmp_dev" || true
-elif [ -d "supabase/migrations" ]; then
-  ls -1 supabase/migrations | sed -En 's/^([0-9]{14})_.*/\1/p' | sort -u > "$tmp_dev"
+elif [ -d "$REF" ]; then
+  for f in "$REF"/*.sql; do
+    [ -f "$f" ] && basename "$f"
+  done | sed -En 's/^([0-9]{14})_.*/\1/p' | sort -u > "$tmp_dev"
 else
-  # Tenta buscar origin/develop se a referência for origin/develop
-  if [ "$REF" = "origin/develop" ]; then
-    git fetch origin develop >/dev/null 2>&1 || true
-    if git rev-parse --verify "$REF^{commit}" >/dev/null 2>&1; then
-      git ls-tree -r --name-only "$REF:supabase/migrations" 2>/dev/null \
-        | sed -En 's/^([0-9]{14})_.*/\1/p' | sort -u > "$tmp_dev"
-    fi
-  fi
+  echo "✗ Erro: Não foi possível obter o catálogo de migrações na referência alvo '$REF'." >&2
+  echo "Certifique-se de que a referência Git, arquivo ou diretório existe localmente (este script não realiza chamadas de rede/fetch)." >&2
+  exit 2
 fi
 
 if [ ! -s "$tmp_dev" ]; then
-  echo "✗ Erro: Não foi possível obter o catálogo de migrações na referência alvo '$REF'." >&2
+  echo "✗ Erro: Catálogo de migrações na referência alvo '$REF' está vazio ou não contém arquivos válidos." >&2
   exit 2
 fi
 
@@ -178,12 +179,14 @@ if [ "$total_prod" -eq 0 ]; then
 fi
 
 # 4. Comparações direcionais via comm
-comm -12 "$tmp_dev" "$tmp_prod" > "$tmp_coincidentes"
-comm -23 "$tmp_dev" "$tmp_prod" > "$tmp_faltam"
-comm -13 "$tmp_dev" "$tmp_prod" > "$tmp_anomalias"
-
-comm -12 "$tmp_base" "$tmp_prod" > "$tmp_coincidentes_base"
-comm -23 "$tmp_base" "$tmp_prod" > "$tmp_faltam_base"
+if ! comm -12 "$tmp_dev" "$tmp_prod" > "$tmp_coincidentes" || \
+   ! comm -23 "$tmp_dev" "$tmp_prod" > "$tmp_faltam" || \
+   ! comm -13 "$tmp_dev" "$tmp_prod" > "$tmp_anomalias" || \
+   ! comm -12 "$tmp_base" "$tmp_prod" > "$tmp_coincidentes_base" || \
+   ! comm -23 "$tmp_base" "$tmp_prod" > "$tmp_faltam_base"; then
+  echo "✗ Erro: Falha ao executar comm na comparação de catálogos." >&2
+  exit 2
+fi
 
 total_coincidentes=$(wc -l < "$tmp_coincidentes" | tr -d ' ')
 total_faltam=$(wc -l < "$tmp_faltam" | tr -d ' ')
