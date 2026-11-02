@@ -93,8 +93,10 @@ conferir "versão com caractere não-ponto (1x0x0) é rejeitada com exit 1 (P2-0
     backend-v1.0.0
 
 # ── 5. Ancestralidade estrita contra origin/develop ────────────
-# O commit atual (HEAD desta branch feature) ainda não foi mesclado na develop
-COMMIT_NAO_ANCESTRAL=$(git rev-parse HEAD)
+# Fixture sintética: cria um commit órfão desconectado garantidamente NÃO ancestral
+# de origin/develop, tornando o teste determinístico e independente da branch em que roda.
+EMPTY_TREE=$(git hash-object -t tree -w /dev/null)
+COMMIT_NAO_ANCESTRAL=$(git -c user.name="Teste" -c user.email="teste@frila.app" commit-tree "$EMPTY_TREE" -m "teste: commit fora da develop")
 CHANGELOG_BOM="$TMP/CHANGELOG_BOM.md"
 cat <<'EOF' > "$CHANGELOG_BOM"
 # Changelog
