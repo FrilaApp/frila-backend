@@ -85,7 +85,7 @@ scripts/                bancada-sync, ciclo-completo
 |---|---|
 | local | Cada dev, com `supabase start`. Migração destrutiva e teste de corrida moram aqui |
 | `frila-dev` | Compartilhado: integração com o iOS e o TestFlight |
-| `frila-prod` | Só a partir do Sprint 3 |
+| `frila-prod` | Produção (`hbjkkcenbudiezmamiak` · `sa-east-1`): em uso pelo app 0.5.5 no TestFlight e 9 Edge Functions ativas desde 27/10 (fonte: issue #352). Deploy via tag `backend-v*` com aprovação de revisor |
 
 A chave de serviço fica fora do app e fora do git: só o agendador e a CI a usam.
 
