@@ -148,6 +148,8 @@ aborta no primeiro erro (`:79-82`). Reexecutar pula o que já está registrado (
 **Armadilha, por inferência dessas linhas:** se a migração N falhar em Prod, a N+1 de
 reversão não é aplicada antes da N, porque a N é tentada primeiro de novo. A CI impede
 corrigir a N editando o arquivo. O repositório não resolve esse caso; ver seção 7.
+Para o procedimento e padrões de reversão de migrações que já foram aplicadas, consulte
+[`docs/TemplateMigracaoCorretivaERollback.md`](TemplateMigracaoCorretivaERollback.md).
 
 ---
 
