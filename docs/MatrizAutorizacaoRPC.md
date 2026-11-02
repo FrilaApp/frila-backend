@@ -20,7 +20,7 @@ A autorização no Frila segue o princípio do menor privilégio e opera em defe
 2. Autenticação de Sessão (auth.uid())    ──► Exige JWT válido (401 nao_autenticado)
       │
       ▼
-3. Perfil de Conta (privado.exigir_perfil) ──► profissional vs contratante (403 perfil_incompativel)
+3. Perfil de Conta (privado.exigir_perfil) ──► profissional vs contratante (422 perfil_incompativel)
       │
       ▼
 4. Escopo do Recurso (privado.eh_membro)   ──► dono vs terceiro (403 sem_permissao / 404 nao_encontrado)
@@ -35,11 +35,11 @@ A autorização no Frila segue o princípio do menor privilégio e opera em defe
    - **Regra:** Privilégio `EXECUTE` universalmente revogado do schema `public`, com **uma única exceção contratual**: `public.configuracao_do_app(text)`, necessária para que versões obsoletas do app detectem a obrigatoriedade de atualização antes do login. Todas as outras 43 RPCs são rejeitadas imediatamente no nível do catálogo do PostgreSQL com erro `42501 (insufficient_privilege)`.
 2. **`profissional`:** Usuário autenticado com perfil `'profissional'` em `public.usuario` e perfil correspondente em `public.profissional`.
    - Pode executar rotinas do ciclo do trabalhador (candidaturas, check-in, avaliações como profissional, dados do perfil).
-   - Ao tentar executar rotinas exclusivas de contratante, recebe `403 perfil_incompativel`.
+   - Ao tentar executar rotinas exclusivas de contratante, recebe `422 perfil_incompativel` (RN25).
 3. **`outro contratante`:** Usuário autenticado com perfil `'contratante'`, porém sem vínculo de membro ou administração com o estabelecimento ou vaga em questão.
    - Pode cadastrar estabelecimentos e gerenciar os seus próprios estabelecimentos.
    - Ao tentar operar recursos alheios (publicar vaga em outro local, gerenciar equipe alheia, escolher candidatos em vagas alheias), recebe `403 sem_permissao` ou `404 nao_encontrado` (para evitar vazamento de existência de dados sensíveis).
-   - Ao tentar executar rotinas exclusivas de profissional, recebe `403 perfil_incompativel`.
+   - Ao tentar executar rotinas exclusivas de profissional, recebe `422 perfil_incompativel` (RN25).
 4. **`dono`:** Usuário autenticado com perfil `'contratante'`, proprietário ou membro administrador (`papel = 'administrador'`) do estabelecimento responsável pela vaga, posição ou turno.
    - Possui autorização total para publicar, cancelar, selecionar candidatos, confirmar presença e avaliar o profissional naquele recurso.
 
@@ -50,9 +50,9 @@ A autorização no Frila segue o princípio do menor privilégio e opera em defe
 Legenda de respostas na matriz:
 - **`200 OK`**: Autorizado. Requisição executada com sucesso ou validada pela lógica de negócio interna.
 - **`401`**: Não autenticado (`nao_autenticado`).
-- **`403 PI`**: Perfil incompatível (`403 perfil_incompativel`).
 - **`403 SP`**: Sem permissão no recurso / não é membro (`403 sem_permissao`).
 - **`404 NE`**: Recurso inexistente ou inacessível a terceiros (`404 nao_encontrado`).
+- **`422 PI`**: Perfil incompatível (`422 perfil_incompativel`, RN25).
 - **`42501`**: Privilégio negado no catálogo PostgreSQL (`permission denied for function`).
 
 | # | RPC Pública | `anon` | `profissional` | `outro contratante` | `dono` | Barreira Principal de Autorização |
@@ -68,30 +68,30 @@ Legenda de respostas na matriz:
 | 9 | `perfil_publico` | `42501` | `200 OK` | `200 OK` | `200 OK` | Leitura aberta para autenticados sem bloqueio |
 | 10 | `bloquear` | `42501` | `200 OK` | `200 OK` | `200 OK` | Profissional bloqueia est; Contratante bloqueia prof |
 | 11 | `denunciar` | `42501` | `200 OK` | `200 OK` | `200 OK` | Profissional denuncia est; Contratante denuncia prof |
-| 12 | `criar_perfil_profissional` | `42501` | `200 OK` | `403 PI` | `403 PI` | `privado.exigir_perfil('profissional')` |
+| 12 | `criar_perfil_profissional` | `42501` | `200 OK` | `422 PI` | `422 PI` | `privado.exigir_perfil('profissional')` |
 | 13 | `meu_perfil_profissional` | `42501` | `200 OK` | `404 NE` | `404 NE` | Busca registro em `public.profissional` |
-| 14 | `atualizar_perfil_profissional` | `42501` | `200 OK` | `403 PI` | `403 PI` | `privado.exigir_perfil('profissional')` |
-| 15 | `criterios_de_notificacao` | `42501` | `200 OK` | `403 PI` | `403 PI` | `privado.exigir_perfil('profissional')` |
-| 16 | `pedir_revisao_despacho` | `42501` | `200 OK` | `403 PI` | `403 PI` | `privado.exigir_perfil('profissional')` |
-| 17 | `vagas_abertas` | `42501` | `200 OK` | `403 PI` | `403 PI` | `privado.exigir_perfil('profissional')` |
-| 18 | `detalhe_vaga` | `42501` | `200 OK` | `403 PI` | `403 PI` | `privado.exigir_perfil('profissional')` |
-| 19 | `candidatar` | `42501` | `200 OK` | `403 PI` | `403 PI` | `privado.exigir_perfil('profissional')` |
-| 20 | `retirar_candidatura` | `42501` | `200 OK` | `403 PI` | `403 PI` | `privado.exigir_perfil('profissional')` + dono da candidatura |
-| 21 | `minhas_candidaturas` | `42501` | `200 OK` | `403 PI` | `403 PI` | `privado.exigir_perfil('profissional')` |
-| 22 | `avisar_a_caminho` | `42501` | `200 OK` | `403 PI` | `403 PI` | `privado.exigir_perfil('profissional')` + alocado no turno |
-| 23 | `fazer_checkin` | `42501` | `200 OK` | `403 PI` | `403 PI` | `privado.exigir_perfil('profissional')` + alocado no turno |
-| 24 | `fazer_checkout` | `42501` | `200 OK` | `403 PI` | `403 PI` | `privado.exigir_perfil('profissional')` + alocado no turno |
-| 25 | `cadastrar_estabelecimento` | `42501` | `403 PI` | `200 OK` | `200 OK` | `privado.exigir_perfil('contratante')` |
-| 26 | `meus_estabelecimentos` | `42501` | `403 PI` | `200 OK` | `200 OK` | `privado.exigir_perfil('contratante')` |
-| 27 | `publicar_vaga` | `42501` | `403 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
-| 28 | `cancelar_vaga` | `42501` | `403 PI` | `404 NE` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
-| 29 | `republicar_vaga` | `42501` | `403 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
-| 30 | `republicar_posicoes_restantes` | `42501` | `403 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
-| 31 | `candidatos_da_vaga` | `42501` | `403 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
-| 32 | `escolher_candidato` | `42501` | `403 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
-| 33 | `reabrir_por_atraso` | `42501` | `403 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
-| 34 | `incluir_na_equipe` | `42501` | `403 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + admin do est |
-| 35 | `remover_da_equipe` | `42501` | `403 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + admin do est |
+| 14 | `atualizar_perfil_profissional` | `42501` | `200 OK` | `422 PI` | `422 PI` | `privado.exigir_perfil('profissional')` |
+| 15 | `criterios_de_notificacao` | `42501` | `200 OK` | `422 PI` | `422 PI` | `privado.exigir_perfil('profissional')` |
+| 16 | `pedir_revisao_despacho` | `42501` | `200 OK` | `422 PI` | `422 PI` | `privado.exigir_perfil('profissional')` |
+| 17 | `vagas_abertas` | `42501` | `200 OK` | `422 PI` | `422 PI` | `privado.exigir_perfil('profissional')` |
+| 18 | `detalhe_vaga` | `42501` | `200 OK` | `422 PI` | `422 PI` | `privado.exigir_perfil('profissional')` |
+| 19 | `candidatar` | `42501` | `200 OK` | `422 PI` | `422 PI` | `privado.exigir_perfil('profissional')` |
+| 20 | `retirar_candidatura` | `42501` | `200 OK` | `422 PI` | `422 PI` | `privado.exigir_perfil('profissional')` + dono da candidatura |
+| 21 | `minhas_candidaturas` | `42501` | `200 OK` | `422 PI` | `422 PI` | `privado.exigir_perfil('profissional')` |
+| 22 | `avisar_a_caminho` | `42501` | `200 OK` | `422 PI` | `422 PI` | `privado.exigir_perfil('profissional')` + alocado no turno |
+| 23 | `fazer_checkin` | `42501` | `200 OK` | `422 PI` | `422 PI` | `privado.exigir_perfil('profissional')` + alocado no turno |
+| 24 | `fazer_checkout` | `42501` | `200 OK` | `422 PI` | `422 PI` | `privado.exigir_perfil('profissional')` + alocado no turno |
+| 25 | `cadastrar_estabelecimento` | `42501` | `422 PI` | `200 OK` | `200 OK` | `privado.exigir_perfil('contratante')` |
+| 26 | `meus_estabelecimentos` | `42501` | `422 PI` | `200 OK` | `200 OK` | `privado.exigir_perfil('contratante')` |
+| 27 | `publicar_vaga` | `42501` | `422 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
+| 28 | `cancelar_vaga` | `42501` | `422 PI` | `404 NE` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
+| 29 | `republicar_vaga` | `42501` | `422 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
+| 30 | `republicar_posicoes_restantes` | `42501` | `422 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
+| 31 | `candidatos_da_vaga` | `42501` | `422 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
+| 32 | `escolher_candidato` | `42501` | `422 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
+| 33 | `reabrir_por_atraso` | `42501` | `422 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + membro do est |
+| 34 | `incluir_na_equipe` | `42501` | `422 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + admin do est |
+| 35 | `remover_da_equipe` | `42501` | `422 PI` | `403 SP` | `200 OK` | `privado.exigir_perfil('contratante')` + admin do est |
 | 36 | `meu_estabelecimento` | `42501` | `403 SP` | `403 SP` | `200 OK` | `membro_estabelecimento` (admin ou operador) |
 | 37 | `painel_estabelecimento` | `42501` | `403 SP` | `403 SP` | `200 OK` | `privado.eh_membro(estabelecimento_id)` |
 | 38 | `equipe_de_confianca` | `42501` | `403 SP` | `403 SP` | `200 OK` | `privado.eh_membro(estabelecimento_id)` |
@@ -114,14 +114,14 @@ Legenda de respostas na matriz:
 
 ### 3.2 Rotinas do Perfil Profissional (13 RPCs)
 - Protegidas por `privado.exigir_perfil('profissional')`.
-- Qualquer chamada por contas com perfil `contratante` (inclusive o dono do estabelecimento onde a vaga existe) é sumariamente rejeitada com erro `403 perfil_incompativel`.
+- Qualquer chamada por contas com perfil `contratante` (inclusive o dono do estabelecimento onde a vaga existe) é sumariamente rejeitada com erro `422 perfil_incompativel`.
 - Escopo de propriedade:
   - `retirar_candidatura`: Apenas o profissional que submeteu a candidatura pode cancelá-la.
   - `fazer_checkin`, `fazer_checkout`, `avisar_a_caminho`: Exigem que a posição esteja confirmada para o `profissional_id` correspondente ao chamador.
 
 ### 3.3 Rotinas do Perfil Contratante (11 RPCs)
 - Protegidas por `privado.exigir_perfil('contratante')`.
-- Qualquer chamada por contas com perfil `profissional` recebe `403 perfil_incompativel`.
+- Qualquer chamada por contas com perfil `profissional` recebe `422 perfil_incompativel`.
 - Escopo de estabelecimento:
   - `cadastrar_estabelecimento` e `meus_estabelecimentos`: Operam globalmente na conta do contratante (um contratante pode ter múltiplos estabelecimentos).
   - `publicar_vaga`, `republicar_vaga`, `republicar_posicoes_restantes`, `candidatos_da_vaga`, `escolher_candidato`, `reabrir_por_atraso`: Exigem que o contratante seja membro do estabelecimento (`privado.eh_membro`). Terceiros recebem `403 sem_permissao`.
@@ -162,11 +162,16 @@ supabase test db supabase/tests/786_matriz_autorizacao_papeis_rpc.sql
 ### 4.1 Isolamento Transacional e Classificador Rigoroso Anti-Falso-Positivo
 Para testar chamadas com mutação de estado (como `cancelar_vaga` ou `cancelar_posicao`) sem invalidar os testes subsequentes do mesmo turno/posição dentro de uma única transação, o teste implementa o motor `pg_temp.testar_autorizacao`.
 
-O motor força um rollback pontual via exceção interna `SUCES` em cada chamada autorizada bem-sucedida, assegurando que o estado dos dados permaneça imaculado durante todas as 182 asserções.
+O motor força um rollback pontual via exceção interna `SUCES` em cada chamada autorizada bem-sucedida, assegurando que o estado dos dados permaneça imaculado durante todas as 184 asserções.
 
-Além disso, o classificador do motor valida estritamente a autorização através do envelope oficial PostgREST/PostgreSQL:
+Além disso, o classificador do motor valida estritamente a autorização através do envelope oficial PostgREST/PostgreSQL, exigindo validação conjunta de código e status HTTP no `PG_EXCEPTION_DETAIL` (`GET STACKED DIAGNOSTICS ... PG_EXCEPTION_DETAIL`):
 - **`AUTORIZADO`**: Exige execução bem-sucedida no caminho permitido (capturada exclusivamente por interceptação de exceção interna `SUCES`).
-- **Leitura de Diagnósticos Estrita**: O status HTTP real é extraído de `PG_EXCEPTION_DETAIL` (`GET STACKED DIAGNOSTICS ... PG_EXCEPTION_DETAIL`) conforme o contrato da função `public.erro(status, codigo, motivo)`.
-- **`401_NAO_AUTENTICADO`**: Qualquer exceção com status HTTP 401 no `DETAIL` ou código `nao_autenticado` é classificada como recusa de autenticação, sobrepondo qualquer código de regra de negócio.
+- **`401_NAO_AUTENTICADO`**: Exige conjuntamente `v_code = 'nao_autenticado' AND v_status = 401`.
+- **`422_PERFIL_INCOMPATIVEL`**: Exige conjuntamente `v_code = 'perfil_incompativel' AND v_status = 422` (conforme RN25 e `contrato/openapi.yaml`). Se o status for adulterado (ex.: status 500 no DETAIL), o classificador gera `STATUS_DIVERGENTE_HTTP:500:perfil_incompativel` e derruba a asserção.
+- **`403_SEM_PERMISSAO`**: Exige conjuntamente `v_code = 'sem_permissao' AND v_status = 403`.
+- **`404_NAO_ENCONTRADO`**: Exige conjuntamente `v_code = 'nao_encontrado' AND v_status = 404`.
 - **`REGRA:<codigo>`**: Para cenários onde o usuário possui autorização plena mas atinge uma validação de negócio intrínseca à fixture (ex.: `conta_existente`, `sem_suspensao_ativa`, `perfil_ja_existe`, `a_caminho_fora_da_janela`), o teste valida nominalmente o código e exige que o status HTTP seja de negócio (rejeitando sumariamente 401 ou 403).
-- **Prova de Morte de Mutante**: O arquivo inclui autotestes de mutação na Seção 6 com o envelope real de `public.erro`, comprovando que tanto erros 401 diretos quanto regras de negócio alteradas artificialmente para emitir status 401 provocam falha imediata dos testes (derrubando 3/3 asserções).
+- **Prova de Morte de Mutante**: O arquivo inclui autotestes de mutação na Seção 6 com o envelope real de `public.erro`, comprovando que:
+  1. Erros 401 diretos no detail nunca são classificados como `AUTORIZADO`.
+  2. Regras de negócio alteradas artificialmente para emitir status 401 são rejeitadas como `STATUS_INVALIDO_PARA_REGRA`.
+  3. `perfil_incompativel` adulterado artificialmente com status HTTP 500 é rejeitado como `STATUS_DIVERGENTE_HTTP` e jamais passa como `422_PERFIL_INCOMPATIVEL`.
