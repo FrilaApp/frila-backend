@@ -555,4 +555,85 @@ Deno.test("limpar-contas-orfas: contabilidade precisa em lote heterogeneo com fa
   assertEquals(corpo.erros_remocao[1], { id: ID_TIMEOUT, status: 500 });
 });
 
+Deno.test("limpar-contas-orfas: corpo com JSON quebrado nao falha e assume parametros padrao", async () => {
+  let horasConsultadas = 0;
+  const deps = mockDeps({
+    contasOrfas: [],
+  });
+  deps.sqlClient = {
+    contasOrfas: (horas) => {
+      horasConsultadas = horas;
+      return Promise.resolve([]);
+    },
+    executarRetencao: () => Promise.resolve({ ok: true }),
+  };
+
+  const resposta = await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: {
+        "x-agendador-secret": MOCK_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: "{ json-quebrado",
+    }),
+    deps,
+  );
+
+  assertEquals(resposta.status, 200);
+  assertEquals(horasConsultadas, 24);
+});
+
+Deno.test("limpar-contas-orfas: normalizacao de horas com decimais ou valores nao-finitos", async () => {
+  let horasConsultadas = 0;
+  const deps = mockDeps({});
+  deps.sqlClient = {
+    contasOrfas: (horas) => {
+      horasConsultadas = horas;
+      return Promise.resolve([]);
+    },
+    executarRetencao: () => Promise.resolve({ ok: true }),
+  };
+
+  // 1. Decimais maiores que 24: aplica Math.floor
+  await handler(
+    new Request("http://localhost", {
+      method: "POST",
+      headers: { "x-agendador-secret": MOCK_SECRET },
+      body: JSON.stringify({ horas: 49.9 }),
+    }),
+    deps,
+  );
+  assertEquals(horasConsultadas, 49);
+
+  // 2. Não-numérico ou não-finito preserva default 24h
+  for (const h of ["invalido", null, true, false, -5, 12]) {
+    await handler(
+      new Request("http://localhost", {
+        method: "POST",
+        headers: { "x-agendador-secret": MOCK_SECRET },
+        body: JSON.stringify({ horas: h }),
+      }),
+      deps,
+    );
+    assertEquals(horasConsultadas, 24);
+  }
+});
+
+Deno.test("limpar-contas-orfas: recusa metodos PUT, DELETE e GET com 405 metodo_nao_permitido", async () => {
+  const deps = mockDeps({});
+  for (const method of ["PUT", "DELETE", "GET"]) {
+    const res = await handler(
+      new Request("http://localhost", {
+        method,
+        headers: { "x-agendador-secret": MOCK_SECRET },
+      }),
+      deps,
+    );
+    assertEquals(res.status, 405);
+    const json = await res.json();
+    assertEquals(json.code, "metodo_nao_permitido");
+  }
+});
+
 

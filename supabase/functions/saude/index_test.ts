@@ -232,5 +232,33 @@ Deno.test("mutação: saude inclui header Cache-Control no-store para evitar cac
   assertEquals(res405.headers.get("Cache-Control"), "no-store, no-cache, must-revalidate");
 });
 
+Deno.test("saude: lida com probe sem registrarFalha opcional quando ping falha ou lanca erro", async () => {
+  const probeSemRegistro: SqlProbe = {
+    ping: async () => false,
+  };
+  const req = new Request("http://localhost/functions/v1/saude", { method: "GET" });
+  const resFalso = await processarSaude(req, { sqlProbe: probeSemRegistro });
+  assertEquals(resFalso.status, 503);
+
+  const probeErroSemRegistro: SqlProbe = {
+    ping: async () => {
+      throw new Error("Falha sem registrarFalha");
+    },
+  };
+  const resErro = await processarSaude(req, { sqlProbe: probeErroSemRegistro });
+  assertEquals(resErro.status, 503);
+});
+
+Deno.test("saude: metodos OPTIONS, PUT, DELETE, PATCH retornam 405 metodo_nao_permitido", async () => {
+  for (const method of ["OPTIONS", "PUT", "DELETE", "PATCH"]) {
+    const req = new Request("http://localhost/functions/v1/saude", { method });
+    const res = await processarSaude(req, { sqlProbe: probeMock() });
+    assertEquals(res.status, 405);
+    const json = await res.json();
+    assertEquals(json.ok, false);
+    assertEquals(json.erro, "metodo_nao_permitido");
+  }
+});
+
 
 

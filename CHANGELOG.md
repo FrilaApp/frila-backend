@@ -7,6 +7,12 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Não lançado]
 
+## [1.1.0] - 2026-11-02
+
+Versão base do backend consolidada a partir do tronco `develop` para a release em produção (`frila-prod`).
+
+> **Nota sobre o histórico:** Este changelog documenta os principais marcos consolidados das frentes de trabalho. Cerca de 200 pull requests foram integrados na `develop` desde a versão 1.0.0 de 04/10/2026. Entre as evoluções operacionais não detalhadas individualmente neste arquivo destacam-se: as 4 migrações DDL posteriores à 1.0.0 (`20261018050000` SKIP LOCKED em push no PR #295, `20261020100000` alerta em demonstração no PR #309, `20261020150000` semeadura de revisão no PR #311 e `20261020180000` retenção de falhas no PR #185), push FCM data-only para Android e APNs alert para iOS (RN15, PR #320), núcleo compartilhado de autenticação em tempo constante (PR #319), supressão de mensagens brutas de banco em `tratarErroBanco` (PR #318), sanitização de cabeçalhos SMTP contra injeção CRLF (PR #317 / PR #326), rate limit em demonstração (PR #349) e atualização da caixa de suporte para `suporte@frilabr.com` (PR #339). Para o histórico completo e detalhado de commits e PRs, consulte o `git log origin/develop`.
+
 ### Corrigido
 - **Sanitização de caracteres fora do charset WinAnsi no gerador de PDF de turnos (PR #229):**
   - `supabase/functions/exportar-turnos/index.ts`: sanitiza caracteres não suportados pela fonte Helvetica em WinAnsi substituindo-os por '?', preservando acentuação pt-BR, aspas curvas e travessões; adiciona `try/catch` no handler em volta de `gerarPdf` retornando envelope de erro 500 estruturado em vez de falha não tratada.
@@ -127,7 +133,7 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Ampliação da amostragem (50 chamadas de `vagas_abertas` e 36 de `elegiveis` por bateria) e julgamento pelo melhor resultado entre 3 baterias consecutivas (mínimo independente de mediana e p95), eliminando a vulnerabilidade amostral do p95 de 25 chamadas.
   - Mantida reprovação categórica se houver varredura sequencial (`Seq Scan`) em tabelas grandes ou regressão acima dos tetos.
   - O autoteste `scripts/teste-planos-com-carga.sh` afere regras sobre saídas sintéticas (11/11); mutação real verificada com `MUTAR=cte` (reprova) e `MUTAR=indice` (sai 0, recaindo na chave única).
-- **Follow-up de bloqueio mútuo e recusas indistinguíveis no modo seleção (RF26, RN10, RN19, PR #184):**
+- **Follow-up de bloqueio mútuo e recusas indistinguíveis no modo seleção (RF26, RN10, RN19, PR #192, follow-up ao #184):**
   - Prova estrita de equivalência entre tentativa de escolher candidatura inexistente e candidatura de profissional com bloqueio mútuo ativo: ambas retornam `403 sem_permissao` com payloads de erro indistinguíveis, nos dois sentidos de bloqueio (profissional bloqueia casa e casa bloqueia profissional), preservando o sigilo sem vazar a existência do bloqueio.
   - Validação do fluxo legítimo no modo seleção: confirmação com sucesso, geração de `turno_id`, retorno do contato do profissional em `escolher_candidato` e retorno do contato do estabelecimento ao profissional confirmado em `contato_do_turno`.
   - Suíte pgTAP `671_bloqueio_escolher_candidato_recusa_e_contato.sql` (9 asserções).
@@ -151,7 +157,7 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Adicionada purga de tentativas na porta de demonstração da App Store (`public.entrada_demonstracao`) com mais de 30 dias na rotina periódica `privado.higienizar_tabelas()`, evitando retenção perpétua de registros não cadastrais (Achado 5).
   - Adicionada purga de falhas operacionais registradas (`privado.falha_execucao`) com mais de 60 dias em `privado.higienizar_tabelas()`, estabelecendo janela temporal de retenção para diagnóstico sem acúmulo descontrolado (Achado 6).
   - Prazos propostos como recomendação operacional, aguardando decisão final do dono da plataforma.
-  - Migração `20261015160000_retencao_demonstracao_e_falhas.sql` e suíte pgTAP `680_retencao_demonstracao_e_falhas.sql` (4 asserções cobrindo expurgo temporal e preservação de registros recentes).
+  - Migração `20261020180000_retencao_demonstracao_e_falhas.sql` e suíte pgTAP `752_retencao_demonstracao_e_falhas.sql` (4 asserções cobrindo expurgo temporal e preservação de registros recentes).
 
 ### Corrigido
 - **Otimização do laço de avaliacao_disponivel em fechar_turnos_e_vagas (Achado 2):**
@@ -207,7 +213,7 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
   - Autotestes do portão expandidos para 14 casos verdes (`teste-contrato-responde.sh`).
 
 ### Alterado
-- **Remoção de status 403 não documentado (contrato 0.2.39, PR #166):**
+- **Remoção de status 403 não documentado (contrato 0.2.39, PR #167):**
   - Limpeza de declarações de 403 em operações sem restrição de papel ou perfil.
 - Correções das versões 1.0.x decorrentes dos testes do TestFlight e feedback do piloto no DF (cartão `RzllRo3o`).
 

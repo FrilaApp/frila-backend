@@ -21,7 +21,7 @@
 # no working tree e avisa. Quem publica é a pessoa, com `git push`, e é o `pre-push` do
 # vault que commita o log.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DIAS=3
 SECO=""
