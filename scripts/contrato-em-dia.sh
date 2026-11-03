@@ -87,14 +87,6 @@ if diff -q "$tmp" "$espelho" >/dev/null; then
   exit 0
 fi
 
-if grep -q "proposto, depende da decisão do contrato" "$espelho"; then
-  echo
-  echo "⚠  Espelho marcado como proposto: contrato $versao (depende da decisão do contrato em FrilaApp/frila-docs)."
-  echo "   Divergência conhecida e autorizada para validação da branch de backend (N-024 / N-060)."
-  echo "   Integridade local conferida (sha256 $atual)."
-  exit 0
-fi
-
 echo
 echo "O espelho divergiu do contrato em FrilaApp/frila-docs:"
 # `|| true` obrigatório: `diff` sai **1** justamente quando há diferença, que é o único caso

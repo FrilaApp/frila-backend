@@ -1,5 +1,3 @@
-# Espelho do contrato: proposto em FrilaApp/frila-docs PR #118 (Cartão 72 / RN06)
-# NOTA: proposto, depende da decisão do contrato em FrilaApp/frila-docs (disputa de versão 0.2.47 com PR #110).
 openapi: 3.1.0
 info:
   title: Frila API
