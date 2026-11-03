@@ -9,7 +9,7 @@ Este arquivo contém o texto pronto e estruturado do cartão da decisão **J5** 
 - **Título:** Recusar telefone, e-mail e link no texto livre da vaga
 - **Lista sugerida:** Backlog / V1.1 (ou Sprint em planejamento)
 - **Etiquetas:** Backend, Regra de Negócio, RN10
-- **Referência:** Decisão J5 de `requisitos/revisao-lista-termos-bloqueados.md` (PR #87 do `frila-docs`)
+- **Referência:** Decisão J5 de `FrilaApp/frila-docs · requisitos/revisao-lista-termos-bloqueados.md` (PR #87)
 
 ---
 

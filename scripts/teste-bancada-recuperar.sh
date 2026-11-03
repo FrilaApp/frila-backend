@@ -8,7 +8,7 @@
 # para provar que o filtro filtra. Se o histórico for reescrito a ponto de a data esvaziar,
 # o teste diz isso em vez de passar calado.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DIA=2026-10-01
 falhas=0

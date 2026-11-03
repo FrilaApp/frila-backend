@@ -26,7 +26,7 @@
 #       ./scripts/relogio-deslocado.sh sabado          o último sábado, 23:30 em Brasília
 #       ./scripts/relogio-deslocado.sh '2026-09-26 23:30-03'   um instante qualquer
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }

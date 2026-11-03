@@ -63,7 +63,7 @@
 #       CENARIOS="checkin cancelar teto posicao impasse janela rollback atraso excluir escolher" ./scripts/corrida-ciclo.sh
 #       MANTER=1 ./scripts/corrida-ciclo.sh     # não limpa: o placar fica em corrida_ciclo
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 RODADAS=${RODADAS:-50}
@@ -151,28 +151,58 @@ SQL
   rm -rf "$TMP"
 }
 
+CRON_JOBS_DESATIVADOS=""
+
 desativar_cron() {
-  psql -q -c "
-    do \$\$
-    begin
-      if to_regclass('cron.job') is not null then
-        update cron.job set active = false where active = true;
-      end if;
-    end \$\$;" >/dev/null 2>&1 || true
+  local existe rc=0
+  existe=$(psql -tA -c "select 1 from pg_extension where extname = 'pg_cron';") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "✗ [pg_cron] Falha ao consultar pg_extension no banco (código de saída $rc)." >&2
+    return 1
+  fi
+  [ "$existe" = "1" ] || return 0
+
+  CRON_JOBS_DESATIVADOS=$(psql -tA -c "select jobid from cron.job where active order by jobid;") || {
+    echo "✗ [pg_cron] Falha ao consultar tarefas ativas em cron.job." >&2
+    return 1
+  }
+
+  if [ -n "$CRON_JOBS_DESATIVADOS" ]; then
+    local lista_ids
+    lista_ids=$(echo "$CRON_JOBS_DESATIVADOS" | paste -sd, -)
+    psql -q -c "
+      do \$\$
+      declare
+        j bigint;
+      begin
+        for j in select unnest(array[$lista_ids]::bigint[]) loop
+          perform cron.alter_job(j, active := false);
+        end loop;
+      end \$\$;" || {
+      echo "✗ [pg_cron] Falha ao desativar tarefas via cron.alter_job." >&2
+      return 1
+    }
+  fi
 }
 
 reativar_cron() {
+  [ -n "${CRON_JOBS_DESATIVADOS:-}" ] || return 0
+  local lista_ids
+  lista_ids=$(echo "$CRON_JOBS_DESATIVADOS" | paste -sd, -)
   psql -q -c "
     do \$\$
+    declare
+      j bigint;
     begin
-      if to_regclass('cron.job') is not null then
-        update cron.job set active = true where active = false;
-      end if;
+      for j in select unnest(array[$lista_ids]::bigint[]) loop
+        perform cron.alter_job(j, active := true);
+      end loop;
     end \$\$;" >/dev/null 2>&1 || true
+  CRON_JOBS_DESATIVADOS=""
 }
 
 [ -n "${MANTER:-}" ] || trap limpar EXIT INT TERM
-desativar_cron
+desativar_cron || exit 1
 
 # ── O palco ───────────────────────────────────────────────────────────────────
 #
@@ -799,7 +829,6 @@ SQL
     >"$TMP/impasse"
   # A desistência sai um pouco depois dos outros dois: ela só age sobre a posição que a
   # candidatura já confirmou.
-  local ms
   ms() { printf '0.%03d 0' "$(( ${2:-0} + RANDOM % $1 ))"; }
   while read -r n vaga pos conta; do
     lado impasse "$n" 1 "$DONA"  "select public.cancelar_vaga('$vaga', 'a casa fechou mais cedo')" "$(ms 30)"

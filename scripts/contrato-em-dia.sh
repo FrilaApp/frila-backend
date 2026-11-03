@@ -53,6 +53,7 @@ echo "Espelho íntegro: contrato $versao, sha256 $atual"
 # no `.env` todo esse tempo. Enquanto isso o espelho envelhecia da 0.2.15 para trás de uma
 # 0.2.17 que já existia lá, e o único portão que pega isso era justamente o que estava
 # passando. Os outros scripts do repositório leem o `.env`; este não lia.
+# shellcheck source=/dev/null
 if [ -f .env ]; then set -a; source .env; set +a; fi
 
 token="${FRILA_DOCS_TOKEN:-${GH_TOKEN:-}}"
