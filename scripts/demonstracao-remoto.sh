@@ -56,7 +56,10 @@ validar_segredos_demonstracao() {
   local arquivo="${1:?validar_segredos_demonstracao precisa do arquivo de segredos}"
 
   [ -f "$arquivo" ] || falhou "não achei $arquivo"
-  set -a; source "$arquivo"; set +a
+  set -a
+  # shellcheck source=/dev/null
+  source "$arquivo"
+  set +a
   : "${DEMONSTRACAO_EMAILS:?falta DEMONSTRACAO_EMAILS em $arquivo}"
   : "${DEMONSTRACAO_CODIGO:?falta DEMONSTRACAO_CODIGO em $arquivo}"
   : "${DEMONSTRACAO_ATIVA_ATE:?falta DEMONSTRACAO_ATIVA_ATE em $arquivo}"
@@ -109,7 +112,10 @@ PY
 gravar_segredos_demonstracao() {
   local arquivo="${1:?gravar_segredos_demonstracao precisa do arquivo de segredos}"
   local ref="${2:?gravar_segredos_demonstracao precisa do --project-ref}"
-  set -a; source "$arquivo"; set +a
+  set -a
+  # shellcheck source=/dev/null
+  source "$arquivo"
+  set +a
   ( set +x
     supabase secrets set \
       "DEMONSTRACAO_EMAILS=$DEMONSTRACAO_EMAILS" \

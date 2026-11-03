@@ -20,7 +20,7 @@
 # Uso:  ./scripts/corrida-candidatar.sh
 #       CLIENTES=20 POSICOES=2 ./scripts/corrida-candidatar.sh
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
 CLIENTES=${CLIENTES:-20}
@@ -172,18 +172,22 @@ SQL
 
 [ $? -eq 0 ] || { echo "não consegui montar a corrida" >&2; exit 1; }
 
-cat > /tmp/corrida-candidatar.pgbench <<'BENCH'
+tmp_bench=$(mktemp "${TMPDIR:-/tmp}/corrida-candidatar.XXXXXX")
+cat > "$tmp_bench" <<'BENCH'
 \set n :client_id + 1
 BEGIN;
 SELECT corrida.tentar(:n);
 END;
 BENCH
-docker cp /tmp/corrida-candidatar.pgbench "$DB":/tmp/corrida.pgbench >/dev/null
-rm -f /tmp/corrida-candidatar.pgbench
+
+container_bench=$(docker exec -i "$DB" mktemp /tmp/corrida.XXXXXX 2>/dev/null || echo "/tmp/corrida-candidatar-$$.pgbench")
+docker cp "$tmp_bench" "$DB":"$container_bench" >/dev/null
+rm -f "$tmp_bench"
 
 echo "▸ $CLIENTES conexões simultâneas"
 docker exec -i "$DB" pgbench -U postgres -d postgres \
-  -c "$CLIENTES" -j 4 -t 1 -n -f /tmp/corrida.pgbench 2>&1 | tail -3
+  -c "$CLIENTES" -j 4 -t 1 -n -f "$container_bench" 2>&1 | tail -3
+docker exec -i "$DB" rm -f "$container_bench" >/dev/null 2>&1 || true
 
 # ── O placar ──────────────────────────────────────────────────────────────────
 confirmadas=$(psql -tAc "select count(*) from corrida.placar where code = 'ok'")

@@ -136,8 +136,8 @@ select is((select j->0->'cancelamento' from lista), 'null'::jsonb,
 
 select is(
   (select array_agg(k order by k) from lista, jsonb_object_keys((select j->0->'vaga' from lista)) k),
-  array['fim_em','funcao','id','inicio_em','local','regiao_administrativa','valor_centavos'],
-  'e a vaga vem como VagaResumo, com a função pelo nome');
+  array['fim_em','funcao','id','inicio_em','local','ponto','regiao_administrativa','valor_centavos'],
+  'e a vaga vem como VagaResumo, com a função pelo nome (0.2.47 inclui ponto)');
 
 -- RN10: o telefone tem porta própria, e uma lista que já o trouxesse tornaria o prazo
 -- decorativo.
