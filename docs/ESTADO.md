@@ -24,22 +24,22 @@ Os números abaixo foram consolidados e remedidos em 01/11/2026 (commit de refer
 | Edge Functions | **10** (inclui `limpar-contas-orfas` e `_compartilhado`) | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
 | Testes unitários em `exportar-turnos` | **44**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
 | Scripts em `scripts/` | **56** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
-| Contrato espelhado | **0.2.46** (sincronizado com o canônico no docs via PR #342 / PR #364) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
+| Contrato espelhado | **0.2.48** (sincronizado com o canônico no docs depois do frila-docs#110) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
 Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **197** arquivos de teste de regras,
 e alcança **198** com `supabase/tests/carga/gerar_df.sql`, que é gerador de carga e não teste de regra.
 
-> ## 🟢 O espelho do contrato está em 0.2.46 (alinhado com o canônico em frila-docs)
+> ## 🟢 O espelho do contrato está em 0.2.48 (alinhado com o canônico em frila-docs)
 >
-> O contrato espelhado localmente em `contrato/openapi.yaml` está na versão **0.2.46** (incorporado no PR #342 / commit `4ddc9e5`,
-> trazendo push FCM data-only para Android e canais por tipo, RN15).
-> O checksum SHA-256 está perfeitamente alinhado com `contrato/openapi.yaml.sha256`:
-> `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10`.
+> O contrato espelhado em `contrato/openapi.yaml` está na versão **0.2.48** (frila-docs#110, commit `bd1fe92`).
+> A 0.2.48 é só texto: `cancelar_posicao` recusa pelo estado da posição, não pelo relógio, e `Protocolo`
+> não diz se a contestação já foi respondida. Nenhum comportamento de servidor muda; o
+> `cancelar_posicao` da develop já decide pelo estado (`20261005090000_cancelamento_idempotente.sql`).
 >
 > | | Versão | Origem | SHA-256 |
 > |---|---|---|---|
-> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.46** | `frila-backend` (commit `4ddc9e5`) | `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10` |
-> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.46** | `frila-docs` (commit `760b0b4`) | `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10` |
+> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.48** | `frila-backend` | `b3f936fe0730cbff16ef9e797c8252a34e5aee90cf07c018f6a6f2d3d57800ee` |
+> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.48** | `frila-docs` (commit `bd1fe92`) | `b3f936fe0730cbff16ef9e797c8252a34e5aee90cf07c018f6a6f2d3d57800ee` |
 
 > ## 🟢 Instabilidades de concorrência em `Corridas do ciclo` sanadas na raiz
 >
