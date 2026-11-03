@@ -1010,6 +1010,67 @@ Deno.test("seguranca csv: CSV inicia com BOM UTF-8 (\\uFEFF) para compatibilidad
   assert(csv.startsWith("\uFEFF"), "CSV deve iniciar com BOM UTF-8 (\\uFEFF)");
 });
 
+Deno.test("exportar-turnos: falha interna em gerarPdfFn retorna 500 erro_interno", async () => {
+  const e = criarEspiao(TURNOS_MOCK);
+  const req = requisicao({ formato: "pdf" });
+  const res = await handler(req, {
+    fetchFn: e.fetchFn,
+    sqlClient: e.sql,
+    supabaseUrl: URL_BASE,
+    anonKey: ANON,
+    gerarPdfFn: () => Promise.reject(new Error("Falha interna de renderizacao PDF")),
+  });
+  assertEquals(res.status, 500);
+  const json = await res.json();
+  assertEquals(json.code, "erro_interno");
+});
+
+Deno.test("exportar-turnos: usuario com id nao-string no Auth retorna 401 nao_autenticado", async () => {
+  const e = criarEspiao(TURNOS_MOCK, true, 12345);
+  const req = requisicao({ formato: "csv" });
+  const res = await chamar(e, req);
+  assertEquals(res.status, 401);
+  const json = await res.json();
+  assertEquals(json.code, "nao_autenticado");
+});
+
+Deno.test("exportar-turnos: corpo com JSON quebrado ou nao-objeto retorna 422 campo_obrigatorio formato", async () => {
+  const e = criarEspiao();
+  const reqQuebrado = new Request(`${URL_BASE}/functions/v1/exportar-turnos`, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer token-valido",
+      "Content-Type": "application/json",
+    },
+    body: "{ invalido",
+  });
+  const resQuebrado = await chamar(e, reqQuebrado);
+  assertEquals(resQuebrado.status, 422);
+  assertEquals((await resQuebrado.json()).code, "campo_obrigatorio");
+
+  const reqNaoObj = new Request(`${URL_BASE}/functions/v1/exportar-turnos`, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer token-valido",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify("string-nao-objeto"),
+  });
+  const resNaoObj = await chamar(e, reqNaoObj);
+  assertEquals(resNaoObj.status, 422);
+  assertEquals((await resNaoObj.json()).code, "campo_obrigatorio");
+});
+
+Deno.test("exportar-turnos: metodos PUT e OPTIONS retornam 405 metodo_nao_permitido", async () => {
+  const e = criarEspiao();
+  for (const method of ["PUT", "OPTIONS"]) {
+    const req = requisicao({}, "token-valido", method);
+    const res = await chamar(e, req);
+    assertEquals(res.status, 405);
+    assertEquals((await res.json()).code, "metodo_nao_permitido");
+  }
+});
+
 
 
 
