@@ -145,8 +145,8 @@ Para cada um dos 3 provedores, cronometre e inspecione:
 A integridade das configurações de Auth nos ambientes remotos (`frila-dev` e `frila-prod`) é monitorada de forma contínua pelo workflow [`.github/workflows/confere-auth-remoto.yml`](../../.github/workflows/confere-auth-remoto.yml) e pelo script [`scripts/conferir-auth-remoto.sh`](../../scripts/conferir-auth-remoto.sh).
 
 ### 5.1. Como funciona a conferência
-- **Execução periódica:** 1 vez por dia via agendamento (`cron: '17 11 * * *'`).
-- **Disparo manual:** Pode ser acionado a qualquer momento via `workflow_dispatch` ("Run workflow") no GitHub Actions.
+- **Execução periódica (frila-dev):** 1 vez por dia via agendamento (`cron: '17 11 * * *'`) no ambiente `frila-dev`.
+- **Disparo manual sob demanda (frila-prod e frila-dev):** Pode ser acionado a qualquer momento via `workflow_dispatch` ("Run workflow") no GitHub Actions. No `frila-prod`, a execução requer aprovação de um dos revisores do Environment para liberação da credencial administrativa. No cron diário, o job do `frila-prod` é ignorado (*skipped*) para não reter a esteira aguardando revisor.
 - **Validações realizadas na Management API:**
   1. `site_url`: não pode conter `localhost` ou `127.0.0.1`.
   2. `mailer_otp_length`: deve ser rigorosamente `6` dígitos.
