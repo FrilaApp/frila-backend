@@ -18,7 +18,7 @@
 # Para o autoteste, `DESVIO_LOCAL` e `DESVIO_REMOTO` apontam para arquivos já prontos e
 # pulam as duas consultas.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 REF="${1:-}"
 CONTAINER="${DESVIO_CONTAINER:-supabase_db_frila-backend}"

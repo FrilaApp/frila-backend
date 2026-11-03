@@ -15,7 +15,7 @@
 # desaparece também avisa, porque ou a ferramenta mudou ou o código mudou, e nos dois
 # casos esta lista está desatualizada.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 # função|sqlState — um por linha.
 # Vazio: hoje o lint está limpo. O primeiro achado que aparecer reprova, e quem for

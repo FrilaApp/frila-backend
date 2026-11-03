@@ -55,7 +55,7 @@
 #   2  NÃO mediu — pré-condição ausente. Nunca verde por omissão.
 
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DB="${DB_CONTAINER:-supabase_db_frila-backend}"
 CARGA="supabase/tests/carga/gerar_df.sql"
