@@ -76,3 +76,23 @@ Deno.test("auth._compartilhado: segredoAgendadorValido recusa Bearer quando perm
     true,
   );
 });
+
+Deno.test("auth._compartilhado: segredoAgendadorValido recusa segredo esperado vazio ou com espacos", () => {
+  const req = new Request("http://localhost", {
+    headers: { "x-agendador-secret": "   " },
+  });
+  assertEquals(segredoAgendadorValido(req, ""), false);
+  assertEquals(segredoAgendadorValido(req, "   "), false);
+});
+
+Deno.test("auth._compartilhado: segredoAgendadorValido ignora esquemas de autorizacao nao-Bearer", () => {
+  const reqBasic = new Request("http://localhost", {
+    headers: { Authorization: "Basic dXNlcjpwYXNz" },
+  });
+  assertEquals(segredoAgendadorValido(reqBasic, "dXNlcjpwYXNz"), false);
+
+  const reqToken = new Request("http://localhost", {
+    headers: { Authorization: "Token meu-segredo" },
+  });
+  assertEquals(segredoAgendadorValido(reqToken, "meu-segredo"), false);
+});

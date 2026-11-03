@@ -4,6 +4,7 @@ set +x
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
+export COPYFILE_DISABLE=1
 
 etapa='validar configuração'
 temporario=''
@@ -144,7 +145,7 @@ tempo_dump=$((SECONDS - inicio))
 
 etapa='empacotar dump e suplemento'
 printf 'frila-backup-v2\n' > "$temporario/formato.txt"
-tar --no-mac-metadata -cf "$temporario/backup.tar" -C "$temporario" formato.txt banco.dump extensoes.sql 2>/dev/null
+COPYFILE_DISABLE=1 tar -cf "$temporario/backup.tar" -C "$temporario" formato.txt banco.dump extensoes.sql
 etapa='cifrar pacote'
 inicio_cifra=$SECONDS
 extensao=age
