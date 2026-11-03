@@ -93,6 +93,12 @@ jobs:
       - name: Corrida no lote de push (SKIP LOCKED)
         run: ./scripts/corrida-push.sh
 
+      # O pgTAP roda numa sessão só e não enxerga corrida (K-001l / N1). Duas conexões:
+      # a sessão A purga notificação de 60 dias enquanto a sessão B chama privado.notificar.
+      # A marca como autoridade atômica impede que o aviso expurgado seja recriado.
+      - name: Corrida entre notificar e purga de 60 dias (N1)
+        run: ./scripts/corrida-notificar-purga.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
