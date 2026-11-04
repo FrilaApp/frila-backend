@@ -202,3 +202,194 @@ grant  execute on function privado.documento_hmac(text) to service_role;
 -- deduplicação. Rotação é migração de dados, não ajuste operacional: exige recalcular a
 -- partir de números que o Frila deliberadamente não tem. Em outras palavras, o pepper é
 -- de rotação única por vida do acervo, e isso é consequência aceita do desenho.
+
+-- ── 6. O bucket ───────────────────────────────────────────────────────────────
+--
+-- Privado, com teto de 5 MB por arquivo, e sem política nenhuma: `storage.objects` já tem
+-- RLS, e sem política `anon` e `authenticated` não leem nem escrevem. A política de
+-- INSERT por `auth.uid()` nasce junto com a RPC de upload, em cartão próprio — criar aqui
+-- uma permissão de escrita sem o fluxo que a usa seria abrir porta antes da porta existir.
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('documentos-identidade', 'documentos-identidade', false, 5242880,
+        array['image/jpeg', 'image/png', 'image/heic'])
+on conflict (id) do nothing;
+
+-- ── 7. Expurgo da mídia ───────────────────────────────────────────────────────
+--
+-- A ARMADILHA DESTE CARTÃO, e a razão deste trecho ser em duas fases.
+--
+-- Apagar a linha de `storage.objects` não apaga o byte no Storage: o arquivo vive no
+-- backend de objetos, e quem o remove é a API do Storage. Uma função que fizesse
+-- `delete from storage.objects` e devolvesse "expurgado: 12" entregaria exatamente o pior
+-- resultado possível em LGPD — o registro de que a foto foi apagada, com a foto no bucket.
+-- O índice perdido também tornaria o arquivo inalcançável, e portanto impossível de
+-- apagar depois.
+--
+-- Então: a função do banco ENFILEIRA o pedido e marca `expurgo_pedido_em`. Quem apaga é a
+-- Edge Function com `service_role`, que chama `privado.confirmar_expurgo_midia` ao
+-- terminar; só então os caminhos viram nulos e `expurgo_feito_em` é gravado.
+--
+-- O silêncio que isso cria, e como ele é quebrado: se a Edge Function nunca confirmar, a
+-- linha fica com caminho e sem `expurgo_feito_em` — ou seja, foto vencida no bucket, sem
+-- ninguém sabendo. Por isso o pedido é reenfileirado a cada 24 h e, da quinta tentativa
+-- em diante, cada rodada registra em `privado.falha_execucao`, que é o que o
+-- monitoramento já lê.
+
+-- Idempotente: `pgmq.create` numa fila que já existe levanta erro, e esta migração pode
+-- ser reaplicada num banco que já a tenha (foi o caso do realinhamento do frila-prod em
+-- 20261104100000).
+do $$
+begin
+  if not exists (select 1 from pgmq.list_queues() where queue_name = 'expurgo_midia') then
+    perform pgmq.create('expurgo_midia');
+  end if;
+end $$;
+
+create or replace function privado.confirmar_expurgo_midia(p_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_ok boolean;
+begin
+  update privado.verificacao_identidade v
+     set storage_path_frente = null,
+         storage_path_verso  = null,
+         storage_path_selfie  = null,
+         expurgo_feito_em    = coalesce(v.expurgo_feito_em, privado.agora())
+   where v.id = p_id
+     and v.expurgo_pedido_em is not null
+  returning true into v_ok;
+
+  -- Idempotente: confirmar duas vezes devolve `true` e não reescreve a data, porque a
+  -- Edge Function pode repetir a entrega da mesma mensagem da fila.
+  return coalesce(v_ok, false);
+end $$;
+
+comment on function privado.confirmar_expurgo_midia(uuid) is
+  'Fecha o expurgo de mídia depois que o arquivo saiu do Storage: anula os caminhos e grava expurgo_feito_em. Chamada pela Edge Function que apagou o objeto, nunca antes, porque anular o caminho antes da remoção deixaria o arquivo órfão e inalcançável. Idempotente.';
+
+revoke execute on function privado.confirmar_expurgo_midia(uuid) from public, anon, authenticated;
+grant  execute on function privado.confirmar_expurgo_midia(uuid) to service_role;
+
+create or replace function privado.expurgar_midias_verificacao_identidade(p_limite integer default 200)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_agora      timestamptz := privado.agora();
+  v_pedidos    integer := 0;
+  v_reenvios   integer := 0;
+  v_registro   record;
+  v_atrasados  integer := 0;
+begin
+  for v_registro in
+    select v.id, v.usuario_id,
+           v.storage_path_frente, v.storage_path_verso, v.storage_path_selfie,
+           v.expurgo_pedido_em, v.expurgo_tentativas
+      from privado.verificacao_identidade v
+     where v.expurgo_feito_em is null
+       and v.expurgo_midia_em is not null
+       and v.expurgo_midia_em <= v_agora
+       and (v.storage_path_frente is not null
+            or v.storage_path_verso is not null
+            or v.storage_path_selfie is not null)
+       -- Reenfileira só depois de 24 h sem confirmação: a Edge Function tem a rodada
+       -- inteira para responder, e a fila não vira repetição de si mesma.
+       and (v.expurgo_pedido_em is null or v.expurgo_pedido_em <= v_agora - interval '24 hours')
+     order by v.expurgo_midia_em
+     limit greatest(p_limite, 1)
+     for update
+  loop
+    perform pgmq.send('expurgo_midia', jsonb_build_object(
+      'verificacao_id', v_registro.id,
+      'bucket',         'documentos-identidade',
+      -- Caminho de arquivo, nunca o conteúdo e nunca o número do documento: a mensagem da
+      -- fila é lida por quem opera a fila.
+      'caminhos',       array_remove(array[v_registro.storage_path_frente,
+                                           v_registro.storage_path_verso,
+                                           v_registro.storage_path_selfie], null),
+      'tentativa',      v_registro.expurgo_tentativas + 1
+    ));
+
+    update privado.verificacao_identidade
+       set expurgo_pedido_em  = v_agora,
+           expurgo_tentativas = expurgo_tentativas + 1
+     where id = v_registro.id;
+
+    if v_registro.expurgo_pedido_em is null then
+      v_pedidos := v_pedidos + 1;
+    else
+      v_reenvios := v_reenvios + 1;
+    end if;
+
+    -- Da quinta tentativa em diante, o atraso deixa de ser silêncio e vira falha
+    -- registrada: mídia vencida que não sai do bucket é passivo de LGPD, não detalhe
+    -- operacional.
+    if v_registro.expurgo_tentativas + 1 >= 5 then
+      v_atrasados := v_atrasados + 1;
+      perform privado.registrar_falha_execucao(
+        'expurgar_midias_verificacao_identidade',
+        'expurgo_midia_nao_confirmado',
+        jsonb_build_object('verificacao_id', v_registro.id,
+                           'tentativas',     v_registro.expurgo_tentativas + 1)
+      );
+    end if;
+  end loop;
+
+  return jsonb_build_object(
+    'executado_em',       v_agora,
+    'pedidos_novos',      v_pedidos,
+    'pedidos_reenviados', v_reenvios,
+    'atrasados_5x',       v_atrasados
+  );
+end $$;
+
+comment on function privado.expurgar_midias_verificacao_identidade(integer) is
+  'Enfileira em pgmq (expurgo_midia) a remoção das mídias de verificação vencidas (expurgo_midia_em no passado) e marca expurgo_pedido_em. NÃO apaga arquivo: apagar a linha de storage.objects não apaga o byte no Storage, e quem remove é a Edge Function com service_role, que confirma por privado.confirmar_expurgo_midia. Reenfileira a cada 24 h sem confirmação e, da quinta tentativa em diante, registra em privado.falha_execucao.';
+
+revoke execute on function privado.expurgar_midias_verificacao_identidade(integer) from public, anon, authenticated;
+grant  execute on function privado.expurgar_midias_verificacao_identidade(integer) to service_role;
+
+-- ── 8. O prazo entra na rotina diária que já existe ───────────────────────────
+--
+-- Não há cron novo: `privado.executar_retencao_diaria()` já roda às 06:30 UTC pelo job
+-- `retencao_e_limpeza_diaria`, e é onde a retenção do produto mora. Um job próprio para
+-- isto seria um segundo lugar para olhar quando a mídia não sai.
+--
+-- A função é reproduzida inteira porque é `create or replace`; o que muda é só a chamada
+-- nova e a chave nova no jsonb de retorno.
+
+create or replace function privado.executar_retencao_diaria()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_anonimizadas integer;
+  v_higiene      jsonb;
+  v_expurgo      jsonb;
+begin
+  v_anonimizadas := privado.limpar_contas_anonimizadas(15);
+  v_higiene      := privado.higienizar_tabelas();
+  v_expurgo      := privado.expurgar_midias_verificacao_identidade();
+
+  return jsonb_build_object(
+    'executado_em',               privado.agora(),
+    'contas_anonimizadas_limpas', v_anonimizadas,
+    'higiene',                    v_higiene,
+    'expurgo_midia_identidade',   v_expurgo
+  );
+end $$;
+
+comment on function privado.executar_retencao_diaria() is
+  'Rotina consolidada de retenção: contas anonimizadas (15 dias), higienização de tabelas operacionais e enfileiramento do expurgo de mídia de verificação de identidade (RN14). Rodada diariamente pelo pg_cron às 06:30 UTC.';
+
+revoke execute on function privado.executar_retencao_diaria() from public, anon, authenticated;
+grant  execute on function privado.executar_retencao_diaria() to service_role;
