@@ -205,13 +205,20 @@ begin
 
   select u.perfil into v_perfil
     from public.usuario u
-   where u.id = v_uid and u.estado = 'ativa';
+   where u.id = v_uid and u.estado <> 'anonimizada';
 
   -- Conta encerrada ou anonimizada não lê nem escreve verificação (RF25, RNF08), e a
   -- recusa é 401 antes de qualquer leitura, como nas demais funções desde a 0.2.44.
   if v_perfil is null then
     perform public.erro(401, 'nao_autenticado');
   end if;
+
+  -- Conta SUSPENSA passa, e isto é deliberado: o nível 2 da RN14 existe justamente para a
+  -- apuração de denúncia grave (RN13), e é a conta sob apuração que precisa enviar o
+  -- documento para restabelecer o status regular. Recusar aqui fecharia a porta na cara de
+  -- quem o fluxo foi feito para atender. O contrato 0.2.50 só declara o 401 de conta
+  -- encerrada ou anonimizada e nada diz sobre suspensa; se produto quiser recusar a
+  -- suspensa, isso muda no contrato primeiro.
 
   -- A guarda olha o PERFIL da conta, e não a existência de `public.profissional`. Medido
   -- em 04/11/2026: `public.criar_conta('profissional', …)` cria só a linha de
@@ -230,8 +237,12 @@ end $$;
 comment on function privado.conta_de_profissional_que_chama() is
   'Guarda comum das operações de verificação de identidade: 401 sem token ou com conta não ativa, 403 sem_permissao para quem não é profissional. Devolve o id da conta. Olha o perfil da conta, não a linha de public.profissional, que só nasce quando a pessoa informa o ponto base.';
 
-revoke execute on function privado.conta_de_profissional_que_chama() from public, anon;
-grant  execute on function privado.conta_de_profissional_que_chama() to authenticated, service_role;
+-- `authenticated` NÃO executa função de `privado`, e não precisa: as três RPCs de
+-- `public` são SECURITY DEFINER e rodam como o dono, que é quem chama esta guarda. Conceder
+-- aqui alargaria a superfície autenticada sem necessidade, e é o que os testes 480 e 785
+-- cobram do schema inteiro.
+revoke execute on function privado.conta_de_profissional_que_chama() from public, anon, authenticated;
+grant  execute on function privado.conta_de_profissional_que_chama() to service_role;
 
 -- ── 4. minha_identidade_status ────────────────────────────────────────────────
 
@@ -281,7 +292,10 @@ begin
   -- `20261104110000`, para a moderação registrar o que receber; a porta do app é mais
   -- estreita que a tabela de propósito, e quem alargar uma tem de alargar a outra.
   if v_tipo not in ('rg', 'cnh') then
-    perform public.erro(422, 'documento_invalido', 'documento_tipo');
+    -- `campo_invalido` com `details` do campo é o padrão do contrato para valor recusado
+    -- pela regra (tabela de erros, 422). Código próprio por operação obrigaria o app a
+    -- aprender uma string nova por tela.
+    perform public.erro(422, 'campo_invalido', 'documento_tipo');
   end if;
 
   select v.id, v.status, v.nivel, v.motivo, v.prazo_envio_ate
@@ -373,8 +387,18 @@ begin
     perform public.erro(409, 'verificacao_indisponivel', 'sem_envio_solicitado');
   end if;
 
+  -- A trava é por lista fechada, e não por exceção: só `pendente` e `em_analise` seguem.
+  -- Sem isto, uma verificação `rejeitada` (que tem `respondido_em` preenchido e pode ter
+  -- os caminhos de mídia do episódio anterior) chegaria ao `update` para `em_analise` e
+  -- violaria o `check verificacao_desfecho_datado` — o app receberia 500 no lugar de uma
+  -- recusa de regra. Depois de rejeitada, o caminho é pedir o upload de novo, que abre
+  -- episódio novo.
   if v_linha.status = 'aprovada' then
     perform public.erro(409, 'verificacao_indisponivel', 'aprovada');
+  end if;
+
+  if v_linha.status not in ('pendente', 'em_analise') then
+    perform public.erro(409, 'verificacao_indisponivel', 'sem_envio_solicitado');
   end if;
 
   -- Idempotente: confirmar de novo com a análise já em curso devolve o mesmo estado e não
