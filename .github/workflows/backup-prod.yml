@@ -159,6 +159,13 @@ jobs:
             echo "| Concluído em | $(date -u +'%Y-%m-%d %H:%M:%S UTC') |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Verificar limite de armazenamento do backup
+        env:
+          BACKUP_KEEP: 14
+          BACKUP_LIMITE_GB: ${{ vars.BACKUP_LIMITE_GB || 10 }}
+        run: |
+          ./scripts/verifica-limite-backup.sh "$BACKUP_DIR"
+
       - name: Limpar pasta temporária de backup no runner
         if: always()
         run: |
