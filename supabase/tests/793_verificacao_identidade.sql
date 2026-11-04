@@ -28,7 +28,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
-select plan(56);
+select plan(59);
 
 -- ── Cenário ───────────────────────────────────────────────────────────────────
 
@@ -189,6 +189,43 @@ select throws_ok(
        'motivo', null, 'caminho/frente.jpg', null) $$,
   '23514', null,
   'mídia sem expurgo_midia_em é recusada: prazo que depende de alguém lembrar não acontece');
+
+-- O expurgo é em duas fases, e a ordem das duas é a regra: `expurgo_feito_em` sem
+-- `expurgo_pedido_em` seria "apaguei sem ter pedido", ou seja, caminho anulado sem ninguém
+-- ter ido ao Storage — o arquivo ficaria órfão e inalcançável no bucket.
+select throws_ok(
+  $$ insert into privado.verificacao_identidade
+       (usuario_id, nivel, status, motivo, expurgo_feito_em)
+     values ('aaaaaaaa-0793-0000-0000-000000000001', 2, 'pendente', 'motivo', privado.agora()) $$,
+  '23514', null,
+  'expurgo_feito_em sem expurgo_pedido_em é recusado: não se confirma um expurgo que ninguém pediu');
+
+-- Prazo de envio igual ou anterior à solicitação é prazo que nasce vencido: o profissional
+-- veria "faltam -2 h" e a fila de deliberação receberia o caso no mesmo instante em que a
+-- exigência foi criada, sem ele ter tido chance de enviar nada.
+select throws_ok(
+  $$ insert into privado.verificacao_identidade
+       (usuario_id, nivel, status, motivo, solicitado_em, prazo_envio_ate)
+     values ('aaaaaaaa-0793-0000-0000-000000000001', 2, 'pendente', 'motivo',
+             '2026-11-04T12:00:00Z'::timestamptz, '2026-11-04T12:00:00Z'::timestamptz) $$,
+  '23514', null,
+  'prazo_envio_ate igual à solicitação é recusado: prazo que nasce vencido não é prazo');
+
+-- Uma exigência aberta por conta e por nível. Duas linhas `pendente`/`em_analise` para a
+-- mesma pessoa seriam duas contagens de prazo para o mesmo pedido, e a moderação veria o
+-- caso duplicado na fila.
+insert into privado.verificacao_identidade (usuario_id, nivel, status, motivo)
+values ('aaaaaaaa-0793-0000-0000-000000000001', 2, 'pendente', 'primeira exigência');
+
+select throws_ok(
+  $$ insert into privado.verificacao_identidade (usuario_id, nivel, status, motivo)
+     values ('aaaaaaaa-0793-0000-0000-000000000001', 2, 'em_analise', 'segunda exigência') $$,
+  '23505', null,
+  'segunda exigência aberta no mesmo nível para a mesma conta é recusada pelo índice parcial');
+
+-- Limpa a linha do cenário acima: a seção 5 precisa da conta sem exigência aberta.
+delete from privado.verificacao_identidade
+ where usuario_id = 'aaaaaaaa-0793-0000-0000-000000000001';
 
 -- ── 5. Deduplicação por documento ────────────────────────────────────────────
 
