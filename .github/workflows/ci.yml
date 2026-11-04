@@ -387,3 +387,6 @@ jobs:
       - name: Testa empacotamento portátil com GNU tar
         run: ./scripts/teste-backup-empacotamento.sh
 
+      - name: Testa sanitização de erros do backup lógico
+        run: ./scripts/teste-backup-logico-sanitizacao.sh
+
