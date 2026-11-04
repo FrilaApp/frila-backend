@@ -11,6 +11,31 @@ temporario=''
 trava=''
 tem_trava=0
 falhar() { printf 'ERRO: %s\n' "$1" >&2; exit 1; }
+sanitizar_texto() {
+  local texto="$1"
+  [[ -n "$texto" ]] || return 0
+
+  # Filtro sed para credenciais em URIs, parâmetros e conexões
+  texto=$(printf '%s\n' "$texto" | sed -E \
+    -e 's#postgres(ql)?://[^@]+@#postgresql://[REDACTED_AUTH]@#g' \
+    -e 's#(password[=:][[:space:]]*)[^[:space:]'\''";]+#\1[REDACTED]#gi' \
+    -e 's#[a-zA-Z0-9_.-]+:[^@[:space:]]+@#[REDACTED_AUTH]@#g')
+
+  # Substituição literal segura no bash de BACKUP_DB_URL se presente
+  if [[ -n "${BACKUP_DB_URL:-}" ]]; then
+    texto="${texto//"$BACKUP_DB_URL"/[REDACTED_DB_URL]}"
+  fi
+
+  # Substituição literal da senha extraída de BACKUP_DB_URL se presente
+  if [[ "${BACKUP_DB_URL:-}" =~ ://[^:]+:([^@]+)@ ]]; then
+    local senha_literal="${BASH_REMATCH[1]}"
+    if [[ -n "$senha_literal" && ${#senha_literal} -ge 3 ]]; then
+      texto="${texto//"$senha_literal"/[REDACTED_PASSWORD]}"
+    fi
+  fi
+
+  printf '%s\n' "$texto"
+}
 limpar() {
   local codigo=$?
   trap - EXIT
@@ -100,9 +125,9 @@ etapa='gerar dump e suplemento de extensões no mesmo snapshot'
 # A sessão psql mantém o snapshot vivo enquanto seu filho pg_dump o utiliza.
 # O catálogo define o suplemento; só o log transitório autorizado é excluído.
 export BACKUP_WORK_DIR="$temporario"
-PGSSLMODE="${PGSSLMODE:-require}" PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-15}" \
+if ! PGSSLMODE="${PGSSLMODE:-require}" PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-15}" \
   psql -X -qAt --no-password --set ON_ERROR_STOP=1 --dbname "$BACKUP_DB_URL" \
-    --set suplemento="$temporario/extensoes.sql" >/dev/null 2>&1 <<'SQL'
+    --set suplemento="$temporario/extensoes.sql" 2>"$temporario/psql.err" >/dev/null <<'SQL'
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL DateStyle = 'ISO';
 SET LOCAL IntervalStyle = 'postgres';
@@ -136,11 +161,72 @@ WHERE c.relkind = 'r' AND NOT c.oid = ANY(coalesce(e.extconfig, ARRAY[]::oid[]))
 ORDER BY n.nspname, c.relname
 \gexec
 \o
-\! pg_dump --dbname "$BACKUP_DB_URL" --no-password --format=custom --snapshot="$BACKUP_SNAPSHOT" --exclude-table-data=net._http_response --file "$BACKUP_WORK_DIR/banco.dump" >/dev/null 2>&1 && touch "$BACKUP_WORK_DIR/dump-concluido"
+\! pg_dump --dbname "$BACKUP_DB_URL" --no-password --format=custom --snapshot="$BACKUP_SNAPSHOT" --exclude-table-data=net._http_response --file "$BACKUP_WORK_DIR/banco.dump" 2>"$BACKUP_WORK_DIR/pg_dump.err" >/dev/null && touch "$BACKUP_WORK_DIR/dump-concluido"
 COMMIT;
 SQL
-[[ -f "$temporario/dump-concluido" ]] || falhar 'pg_dump falhou; suplemento não publicado.'
-[[ -s "$temporario/banco.dump" ]] || falhar 'pg_dump não gerou conteúdo.'
+then
+  : # Falha do psql capturada via psql.err e verificada abaixo
+fi
+
+if [[ ! -f "$temporario/dump-concluido" ]]; then
+  erro_coletado=''
+  if [[ -s "$temporario/pg_dump.err" ]]; then
+    erro_coletado=$(cat "$temporario/pg_dump.err")
+  fi
+  if [[ -s "$temporario/psql.err" ]]; then
+    if [[ -n "$erro_coletado" ]]; then
+      erro_coletado=$(printf '%s\n--- psql ---\n%s' "$erro_coletado" "$(cat "$temporario/psql.err")")
+    else
+      erro_coletado=$(cat "$temporario/psql.err")
+    fi
+  fi
+
+  stderr_sanitizado=$(sanitizar_texto "$erro_coletado")
+
+  if [[ -n "$stderr_sanitizado" ]]; then
+    printf 'ERRO: pg_dump falhou; suplemento não publicado.\n--- stderr sanitizado ---\n%s\n-------------------------\n' "$stderr_sanitizado" >&2
+  fi
+
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -w "$GITHUB_STEP_SUMMARY" ]]; then
+    ultima_linha=$(printf '%s\n' "$stderr_sanitizado" | grep -v '^[[:space:]]*$' | tail -n 1 || true)
+    {
+      echo "### ❌ Falha no Backup Lógico (pg_dump)"
+      echo
+      if [[ -n "$ultima_linha" ]]; then
+        echo "**Última linha do erro (sanitizada):**"
+        echo '```'
+        echo "$ultima_linha"
+        echo '```'
+        echo
+      fi
+      if [[ -n "$stderr_sanitizado" ]]; then
+        echo "<details><summary>Stderr completo sanitizado</summary>"
+        echo
+        echo '```'
+        echo "$stderr_sanitizado"
+        echo '```'
+        echo
+        echo "</details>"
+      fi
+    } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+  fi
+
+  falhar 'pg_dump falhou; suplemento não publicado.'
+fi
+
+if [[ ! -s "$temporario/banco.dump" ]]; then
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -w "$GITHUB_STEP_SUMMARY" ]]; then
+    {
+      echo "### ❌ Falha no Backup Lógico (pg_dump)"
+      echo
+      echo "**Última linha do erro:**"
+      echo '```'
+      echo "pg_dump não gerou conteúdo."
+      echo '```'
+    } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+  fi
+  falhar 'pg_dump não gerou conteúdo.'
+fi
 tempo_dump=$((SECONDS - inicio))
 
 etapa='empacotar dump e suplemento'
