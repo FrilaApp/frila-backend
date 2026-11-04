@@ -12,6 +12,11 @@ name: Backup diário do frila-prod
 # manual toda madrugada às 04:00 BRT, travando o agendamento diário. O Environment
 # `frila-backup` isola os segredos do backup sem portão de aprovação manual.
 #
+# Enquanto os 6 segredos do Environment `frila-backup` não forem cadastrados pelo Dono,
+# a execução automática diária via cron é ignorada (skipped) através da guarda no job
+# para não falhar todo dia às 04:00 BRT gerando alertas falsos (mesmo padrão do
+# `confere-auth-remoto.yml`). O disparo manual (workflow_dispatch) permanece ativo.
+#
 # Segredos exigidos (configurados no Environment `frila-backup`):
 #   BACKUP_DB_URL                 Conexão PostgreSQL (com SSL) ao frila-prod
 #   BACKUP_PUBLIC_KEY             Destinatário público age (age1...)
@@ -46,6 +51,7 @@ concurrency:
 jobs:
   backup:
     name: Backup lógico do frila-prod
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: frila-backup
     timeout-minutes: 30
