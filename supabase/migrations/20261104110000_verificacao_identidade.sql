@@ -149,3 +149,56 @@ alter table public.profissional
 
 comment on column public.profissional.identidade_verificada is
   'Selo do nível 3 da RN14, voluntário. É informação de reputação, nunca ordenação nem filtro (RN06): quem não tem selo concorre igual. Revogado o consentimento, volta a false.';
+
+-- ── 5. O número do documento, sem o número ────────────────────────────────────
+--
+-- CPF tem 11 dígitos e RG menos que isso: o espaço de busca é pequeno o bastante para
+-- hash sem segredo ser invertido por força bruta num notebook. Daí HMAC-SHA256 com
+-- *pepper* de servidor, guardado no Vault e nunca em migração, variável de cliente ou
+-- arquivo versionado.
+--
+-- Segredo ausente levanta exceção, e não devolve nulo. O caminho silencioso aqui seria o
+-- pior dos dois: gravar linha sem `documento_hmac` significa deduplicação que não
+-- acontece, e ninguém descobre até o segundo cadastro com o mesmo RG ser aprovado.
+
+create or replace function privado.documento_hmac(p_numero text)
+returns bytea
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_pepper text;
+  v_limpo  text;
+begin
+  -- Só dígito e letra: pontuação de CPF ("123.456.789-00" e "12345678900") não pode
+  -- gerar dois hashes diferentes para o mesmo documento, ou a deduplicação não vale nada.
+  v_limpo := upper(regexp_replace(coalesce(p_numero, ''), '[^0-9A-Za-z]', '', 'g'));
+  if length(v_limpo) < 5 then
+    raise exception 'documento_invalido' using errcode = '22023';
+  end if;
+
+  select decrypted_secret into v_pepper
+    from vault.decrypted_secrets
+   where name = 'documento_pepper'
+   limit 1;
+
+  if v_pepper is null or btrim(v_pepper) = '' then
+    raise exception 'pepper_ausente' using errcode = 'P0002',
+      detail = 'configure o segredo documento_pepper no Vault antes de verificar identidade';
+  end if;
+
+  return extensions.hmac(v_limpo, v_pepper, 'sha256');
+end $$;
+
+comment on function privado.documento_hmac(text) is
+  'HMAC-SHA256 do número do documento com pepper do Vault (documento_pepper). Normaliza pontuação antes de somar, para o mesmo documento não gerar dois hashes. Pepper ausente é erro: hash sem segredo em espaço de 11 dígitos é reversível, e gravar sem hash seria deduplicação que não acontece.';
+
+revoke execute on function privado.documento_hmac(text) from public, anon, authenticated;
+grant  execute on function privado.documento_hmac(text) to service_role;
+
+-- Trocar o `documento_pepper` invalida todos os hashes anteriores e, com eles, a
+-- deduplicação. Rotação é migração de dados, não ajuste operacional: exige recalcular a
+-- partir de números que o Frila deliberadamente não tem. Em outras palavras, o pepper é
+-- de rotação única por vida do acervo, e isso é consequência aceita do desenho.
