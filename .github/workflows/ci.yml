@@ -426,3 +426,6 @@ jobs:
       - name: Testa sanitização de erros do backup lógico
         run: ./scripts/teste-backup-logico-sanitizacao.sh
 
+      - name: Testa guardas e projeções de limite de armazenamento
+        run: ./scripts/teste-verifica-limite-backup.sh
+
