@@ -191,7 +191,12 @@ grant  execute on function privado.status_verificacao_em_json(uuid) to service_r
 create or replace function privado.conta_de_profissional_que_chama()
 returns uuid
 language plpgsql
-stable
+-- VOLATILE, e não STABLE: a guarda chama `public.erro`, que é VOLATILE porque levanta
+-- exceção. STABLE aqui faz o plpgsql_check avisar "routine is marked as STABLE, but
+-- expression is VOLATILE" — e o portão `lint-conhecido.sh` reprova achado novo por
+-- desenho. Declarar o que a função é custa só otimização que ela não precisa: roda uma
+-- vez por chamada de RPC.
+volatile
 security definer
 set search_path = ''
 as $$
@@ -249,7 +254,11 @@ grant  execute on function privado.conta_de_profissional_que_chama() to service_
 create or replace function public.minha_identidade_status()
 returns jsonb
 language plpgsql
-stable
+-- VOLATILE por arrasto da guarda, que é VOLATILE: STABLE aqui traria de volta o mesmo
+-- aviso do plpgsql_check um nível acima. A operação continua sendo leitura sem efeito
+-- colateral — é `GET` no contrato —, e o volátil é declaração de dependência, não de
+-- escrita.
+volatile
 security definer
 set search_path = ''
 as $$
