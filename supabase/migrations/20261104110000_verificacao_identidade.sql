@@ -364,6 +364,13 @@ grant  execute on function privado.expurgar_midias_verificacao_identidade(intege
 --
 -- A função é reproduzida inteira porque é `create or replace`; o que muda é só a chamada
 -- nova e a chave nova no jsonb de retorno.
+--
+-- A base desta cópia é `20260930180000_telemetria_evento_app.sql`, que é a definição mais
+-- recente da função, e não a original de `20260927010000_retencao_e_limpeza.sql`. A
+-- primeira versão desta migração copiou a original e, com isso, apagou
+-- `privado.limpar_eventos_app(90)` e a chave `eventos_app_limpos` — a telemetria pararia
+-- de ser purgada em silêncio, e quem reprovou foi o pgTAP 721. Copiar função de migração
+-- antiga é como reverter a mais nova sem dizer.
 
 create or replace function privado.executar_retencao_diaria()
 returns jsonb
@@ -374,22 +381,25 @@ as $$
 declare
   v_anonimizadas integer;
   v_higiene      jsonb;
+  v_eventos_app  integer;
   v_expurgo      jsonb;
 begin
   v_anonimizadas := privado.limpar_contas_anonimizadas(15);
   v_higiene      := privado.higienizar_tabelas();
+  v_eventos_app  := privado.limpar_eventos_app(90);
   v_expurgo      := privado.expurgar_midias_verificacao_identidade();
 
   return jsonb_build_object(
     'executado_em',               privado.agora(),
     'contas_anonimizadas_limpas', v_anonimizadas,
     'higiene',                    v_higiene,
+    'eventos_app_limpos',         v_eventos_app,
     'expurgo_midia_identidade',   v_expurgo
   );
 end $$;
 
 comment on function privado.executar_retencao_diaria() is
-  'Rotina consolidada de retenção: contas anonimizadas (15 dias), higienização de tabelas operacionais e enfileiramento do expurgo de mídia de verificação de identidade (RN14). Rodada diariamente pelo pg_cron às 06:30 UTC.';
+  'Rotina consolidada de retenção: contas anonimizadas (15 dias), telemetria de app (90 dias), higienização de tabelas operacionais e enfileiramento do expurgo de mídia de verificação de identidade (RN14). Rodada diariamente pelo pg_cron às 06:30 UTC.';
 
 revoke execute on function privado.executar_retencao_diaria() from public, anon, authenticated;
 grant  execute on function privado.executar_retencao_diaria() to service_role;
