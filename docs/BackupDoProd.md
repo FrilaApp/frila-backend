@@ -316,6 +316,7 @@ Segredos configurados no Environment `frila-backup` (sem valores reais no reposi
 
 Variável opcional (Action Variables):
 - `BACKUP_S3_REGION`: Região S3 (padrão: `auto`).
+- `BACKUP_LIMITE_GB`: Limite de armazenamento para projeção de custos e alertas em GB (padrão: `10`, alinhado à cota gratuita de 10 GB da Cloudflare R2 e Backblaze B2). **Variável de Environment (NÃO segredo)**.
 
 ### Política de Retenção de 14 dias
 
@@ -330,3 +331,41 @@ A política de retenção dos backups é implementada em duas camadas:
 2. **No runner local:** O script `scripts/backup-logico.sh` define `BACKUP_KEEP=14`
    durante sua execução local, e o job limpa completamente o diretório temporário no
    runner ao final (`if: always()`).
+
+### Monitoramento e limites de armazenamento do backup (Storage R2 / B2)
+
+O backup diário inclui uma verificação automatizada de consumo de armazenamento (`scripts/verifica-limite-backup.sh`), garantindo que o volume total de backups nunca se aproxime silenciosamente do teto do plano gratuito do storage externo (**10 GB** no Cloudflare R2 e no Backblaze B2).
+
+#### Contexto e fatos medidos
+
+- **Volumetria do banco:** O banco de produção `frila-prod` foi medido em 04/11/2026 totalizando **37 MB** em disco (com aproximadamente 2 MB de dados de aplicação nos esquemas `public` e `privado`, e o restante composto pelo catálogo do PostgreSQL e extensões gerenciadas do Supabase como PostGIS e Vault).
+- **Consumo projetado:** Com o empacotamento v2 e cifra `age`, cada dump gera um arquivo compacto (~2.8 a 3.5 MB compactado/cifrado). Com a política de retenção de **14 dias** (`BACKUP_KEEP=14`), o volume cumulativo mantido no storage é de aproximadamente **500 MB a 600 MB**, correspondendo a cerca de **5% a 6%** da cota gratuita de 10 GB.
+
+#### Restrição arquitetural de privilégio mínimo (Write-Only)
+
+A credencial de acesso S3 configurada no GitHub Actions possui privilégio estritamente restrito a gravação (`s3:PutObject`), sem permissão de `s3:ListBucket` ou `s3:ListObjects`. Essa restrição é mandatória por segurança para evitar que o runner possa inspecionar outros objetos ou receber permissões destrutivas.
+
+Por não poder listar o bucket remotamente, a verificação adota projeção determinística: logo após o upload, o passo `Verificar limite de armazenamento do backup` no workflow lê o tamanho exato do arquivo `.tar.age` recém-enviado, multiplica pela retenção configurada (`BACKUP_KEEP=14`), e compara o resultado contra o limite em `BACKUP_LIMITE_GB`.
+
+#### Portões e alertas operacionais no GitHub Actions
+
+O script `scripts/verifica-limite-backup.sh` opera sob três faixas de controle:
+
+1. **Abaixo de 50% (< 5 GB):** Status seguro (`OK`), conclui com exit code 0 e registra a volumetria e porcentagem no `GITHUB_STEP_SUMMARY`.
+2. **Entre 50% e 80% (5 GB a 8 GB):** Faixa de aviso. Emite anotação `::warning::` no log da Action e destaca o alerta no Step Summary, concluindo com exit code 0 para permitir acompanhamento preventivo sem interromper o serviço.
+3. **A partir de 80% (>= 8 GB):** Limiar crítico de risco. Emite anotação `::error::` e **falha o job com exit code 1**. Essa falha intencional dispara os alertas de execução com falha monitorados pelo Vigia / equipe, garantindo ação imediata antes do esgotamento da cota gratuita.
+
+#### Como alterar o limite (`BACKUP_LIMITE_GB`)
+
+O limite de armazenamento é parametrizável via variável de ambiente do GitHub Actions:
+
+1. Acesse o repositório no GitHub: **Settings** → **Environments** → **`frila-backup`**.
+2. Na seção **Environment variables** (atenção: variável, **NÃO** segredo), adicione ou edite `BACKUP_LIMITE_GB`.
+3. Defina o valor desejado em GB (ex.: `10` para 10 GB, `20` para plano pago de 20 GB, ou `5` para um teto mais restrito). O valor padrão caso a variável não seja configurada é `10`.
+
+#### Alertas nativos nos painéis dos provedores (Defesa em Profundidade)
+
+Como camada adicional de segurança e redundância externa ao GitHub Actions, tanto a Cloudflare quanto o Backblaze B2 permitem a configuração de alertas de faturamento e uso diretamente em seus painéis:
+
+- **Cloudflare R2:** No painel da Cloudflare, acesse **Account Settings** → **Notifications** para configurar alertas de limite de armazenamento e notificações por e-mail caso o uso de R2 alcance um percentual definido da cota.
+- **Backblaze B2:** No painel do Backblaze B2, acesse **Caps & Alerts** para definir limites máximos de armazenamento e configurar alertas por e-mail quando a volumetria do bucket se aproximar do limite gratuito de 10 GB.
