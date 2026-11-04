@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.48
+  version: 0.2.49
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -97,6 +97,27 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.49, de 04/11/2026.** Contato fora do app, Fase 2 (issue #396 do backend), lado do
+    contrato. Decisão de produto de 04/11/2026: a troca de contatos entre contratante e contratado
+    não deve ser praticada nem explicitada no app, o que sobrescreve a US13 e a RN10 e deixa a RN15
+    sem objeto. Mudança compatível: nenhum servidor muda nesta versão, e o app já publicado continua
+    lendo o que lê hoje.
+
+    - **`contato` passa a opcional e nulável em `ResultadoConfirmacao`**, e a opcional em
+      `ResultadoCandidatura` (que já o aceitava nulo no modo seleção). Os dois ficam marcados como
+      `deprecated`. O servidor atual segue preenchendo; o servidor que parar de entregar o contato
+      omite o campo ou manda `null`, e o cliente trata os dois do mesmo jeito.
+    - **`Turno.contato_visivel_ate` passa a opcional e nulável**, também `deprecated`. O prazo de
+      7 dias da RN10 perde o sentido.
+    - **`/rpc/contato_do_turno` fica `deprecated`.** Segue respondendo como na 0.2.48 até a Fase 2
+      do backend. O app novo deixa de chamá-la. O comportamento da resposta depois da desativação
+      (ausência de contato, `404` ou outro) **ainda não está decidido** e será declarado numa
+      versão própria, junto com a implementação.
+    - **O que fica:** o schema `Contato`, o erro `contato_expirado` e as regras de conta
+      encerrada continuam no contrato enquanto o servidor responder como hoje. O telefone
+      obrigatório no cadastro e a migração dos números já gravados são Fase 2 do backend e não
+      mudam o contrato nesta versão.
 
     **Versão 0.2.48, de 01/11/2026.** Só texto: esclarecimento de duas leituras do contrato de cancelamento
     e de protocolo (conteúdo resgatado do PR #73 e renumerado de 0.2.47 para 0.2.48 para acomodar as
@@ -2594,10 +2615,24 @@ paths:
       tags: [Turno]
       operationId: contatoDoTurno
       summary: Contato da outra parte do turno
+      deprecated: true
       description: |
-        Só existe depois da confirmação e só até 7 dias depois do fim do turno (RN10). A base legal é
-        a execução do contrato (LGPD, art. 7º, V). Depois do prazo, `403 contato_expirado`, para os
-        dois lados; o sétimo dia conta inteiro.
+        **Descontinuada na 0.2.49.** Decisão de produto de 04/11/2026: a troca de contatos entre
+        contratante e contratado não deve ser praticada nem explicitada no app. Isso sobrescreve a
+        US13 e a RN10 (contato liberado até 7 dias depois do turno) e deixa a RN15 (telemetria de
+        abertura do WhatsApp) sem objeto. A coordenação do turno passa a ser só pelos sinais que já
+        existem: instruções de chegada, "Estou a caminho", alerta de atraso, check-in, check-out,
+        cancelamento e suporte.
+
+        O app deixa de chamar esta operação. Enquanto o servidor não for alterado (Fase 2, issue
+        #396 do backend), ela segue respondendo como descrito abaixo, para os apps já publicados.
+        Quando a Fase 2 chegar, o servidor deixa de devolver o contato ou desativa a função, e o
+        comportamento exato dessa resposta será declarado numa versão própria do contrato, junto
+        com a implementação. Não gere cliente novo contra esta operação.
+
+        Comportamento vigente até lá: só existe depois da confirmação e só até 7 dias depois do
+        fim do turno (RN10). A base legal é a execução do contrato (LGPD, art. 7º, V). Depois do
+        prazo, `403 contato_expirado`, para os dois lados; o sétimo dia conta inteiro.
 
         Token de conta encerrada/anonimizada não lê contatos (RF25, RNF08): a verificação de conta
         ativa roda antes de qualquer leitura e recusa com `401 nao_autenticado`.
@@ -4602,7 +4637,7 @@ components:
           $ref: '#/components/schemas/Instante'
     ResultadoCandidatura:
       type: object
-      required: [estado, candidatura_id, posicao_id, turno_id, contato]
+      required: [estado, candidatura_id, posicao_id, turno_id]
       properties:
         estado:
           type: string
@@ -4619,12 +4654,19 @@ components:
             - $ref: '#/components/schemas/Uuid'
             - type: 'null'
         contato:
+          deprecated: true
+          description: |
+            Descontinuado na 0.2.49 (decisão de produto de 04/11/2026: o contato não é trocado
+            pelo app). **Opcional e nulável:** o servidor atual ainda o preenche na confirmação em
+            modo urgência; o servidor que parar de entregá-lo omite o campo ou manda `null`. O
+            cliente trata ausente e nulo do mesmo jeito: não há contato a mostrar. Nulo já era o
+            valor no modo seleção, antes da escolha.
           oneOf:
             - $ref: '#/components/schemas/Contato'
             - type: 'null'
     ResultadoConfirmacao:
       type: object
-      required: [estado, posicao_id, turno_id, contato]
+      required: [estado, posicao_id, turno_id]
       properties:
         estado:
           type: string
@@ -4634,7 +4676,15 @@ components:
         turno_id:
           $ref: '#/components/schemas/Uuid'
         contato:
-          $ref: '#/components/schemas/Contato'
+          deprecated: true
+          description: |
+            Descontinuado na 0.2.49 (decisão de produto de 04/11/2026: o contato não é trocado
+            pelo app). **Opcional e nulável:** o servidor atual ainda o preenche; o servidor que
+            parar de entregá-lo omite o campo ou manda `null`. O cliente trata ausente e nulo do
+            mesmo jeito: não há contato a mostrar.
+          oneOf:
+            - $ref: '#/components/schemas/Contato'
+            - type: 'null'
     Candidatura:
       type: object
       required: [id, vaga, estado, criada_em]
@@ -4723,7 +4773,7 @@ components:
           $ref: '#/components/schemas/Instante'
     Turno:
       type: object
-      required: [id, posicao_id, vaga, contraparte, contato_visivel_ate, a_caminho_em, checkin_em, checkin_tipo, checkin_distancia_m, checkin_confirmado_em, checkout_em, checkout_distancia_m, verificacao, valor_acordado_centavos, pode_avaliar]
+      required: [id, posicao_id, vaga, contraparte, a_caminho_em, checkin_em, checkin_tipo, checkin_distancia_m, checkin_confirmado_em, checkout_em, checkout_distancia_m, verificacao, valor_acordado_centavos, pode_avaliar]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -4734,13 +4784,16 @@ components:
         contraparte:
           $ref: '#/components/schemas/PerfilPublico'
         contato_visivel_ate:
+          deprecated: true
           description: |
-            Fim previsto do turno mais 7 dias (RN10). Depois disso `contato_do_turno` responde
-            `403 contato_expirado`, e a tela precisa saber disso **antes** de oferecer o botão —
-            senão o profissional toca em "falar com o contratante" e recebe um erro que ele não
-            tem como prever. É o mesmo instante que `Contato.visivel_ate` carrega; aparece aqui
-            para que a tela do turno não precise pedir o contato só para descobrir se pode.
-          $ref: '#/components/schemas/Instante'
+            Descontinuado na 0.2.49 (decisão de produto de 04/11/2026: o contato não é trocado
+            pelo app, e o prazo de 7 dias da RN10 perde o sentido). **Opcional e nulável:** o
+            servidor atual ainda manda o fim previsto do turno mais 7 dias; o servidor que parar de
+            entregar o contato omite o campo ou manda `null`. O cliente trata ausente e nulo do
+            mesmo jeito: não há prazo a mostrar nem botão de contato a oferecer.
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
         a_caminho_em:
           oneOf:
             - $ref: '#/components/schemas/Instante'
