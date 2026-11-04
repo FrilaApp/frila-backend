@@ -155,11 +155,15 @@ begin
    order by v.solicitado_em desc, v.id desc
    limit 1;
 
+  -- O selo vem depois, e NÃO se usa `found` daqui para diante: `found` vale pela última
+  -- consulta, e a linha de `public.profissional` falta em quem ainda não informou o ponto
+  -- base. Medido em 04/11/2026: com `found` depois desta consulta, uma verificação em
+  -- análise era devolvida como `nao_exigida` para quem não tinha a linha do profissional.
   select coalesce(p.identidade_verificada, false) into v_selo
     from public.profissional p
    where p.usuario_id = p_usuario;
 
-  if not found or v_linha.status is null then
+  if v_linha.status is null then
     return jsonb_build_object(
       'status_verificacao',    'nao_exigida',
       'motivo',                null,
@@ -184,7 +188,7 @@ grant  execute on function privado.status_verificacao_em_json(uuid) to service_r
 
 -- ── 3. Guarda comum das três operações ────────────────────────────────────────
 
-create or replace function privado.profissional_que_chama()
+create or replace function privado.conta_de_profissional_que_chama()
 returns uuid
 language plpgsql
 stable
@@ -192,36 +196,42 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_uid  uuid := (select auth.uid());
-  v_prof uuid;
+  v_uid    uuid := (select auth.uid());
+  v_perfil public.perfil_conta;
 begin
   if v_uid is null then
     perform public.erro(401, 'nao_autenticado');
   end if;
 
+  select u.perfil into v_perfil
+    from public.usuario u
+   where u.id = v_uid and u.estado = 'ativa';
+
   -- Conta encerrada ou anonimizada não lê nem escreve verificação (RF25, RNF08), e a
   -- recusa é 401 antes de qualquer leitura, como nas demais funções desde a 0.2.44.
-  if exists (select 1 from public.usuario u
-              where u.id = v_uid and u.estado <> 'ativa') then
+  if v_perfil is null then
     perform public.erro(401, 'nao_autenticado');
   end if;
 
-  select p.id into v_prof from public.profissional p where p.usuario_id = v_uid;
-
-  if v_prof is null then
+  -- A guarda olha o PERFIL da conta, e não a existência de `public.profissional`. Medido
+  -- em 04/11/2026: `public.criar_conta('profissional', …)` cria só a linha de
+  -- `public.usuario`; a de `public.profissional` nasce depois, quando a pessoa informa o
+  -- ponto base. Exigir a segunda aqui daria 403 a quem acabou de se cadastrar, e o
+  -- contrato 0.2.50 diz que toda conta tem resposta, com `nao_exigida` de estado inicial.
+  if v_perfil <> 'profissional' then
     -- Verificação de identidade é do profissional. Contratante tem o nível 4, que é outro
     -- assunto e não passa por estas funções (RF21).
     perform public.erro(403, 'sem_permissao');
   end if;
 
-  return v_prof;
+  return v_uid;
 end $$;
 
-comment on function privado.profissional_que_chama() is
-  'Guarda comum das operações de verificação de identidade: 401 sem token ou com conta não ativa, 403 sem_permissao para quem não é profissional. Devolve o id do profissional.';
+comment on function privado.conta_de_profissional_que_chama() is
+  'Guarda comum das operações de verificação de identidade: 401 sem token ou com conta não ativa, 403 sem_permissao para quem não é profissional. Devolve o id da conta. Olha o perfil da conta, não a linha de public.profissional, que só nasce quando a pessoa informa o ponto base.';
 
-revoke execute on function privado.profissional_que_chama() from public, anon;
-grant  execute on function privado.profissional_que_chama() to authenticated, service_role;
+revoke execute on function privado.conta_de_profissional_que_chama() from public, anon;
+grant  execute on function privado.conta_de_profissional_que_chama() to authenticated, service_role;
 
 -- ── 4. minha_identidade_status ────────────────────────────────────────────────
 
@@ -235,8 +245,7 @@ as $$
 declare
   v_uid uuid;
 begin
-  perform privado.profissional_que_chama();
-  v_uid := (select auth.uid());
+  v_uid := privado.conta_de_profissional_que_chama();
   return privado.status_verificacao_em_json(v_uid);
 end $$;
 
@@ -256,8 +265,7 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_prof     uuid;
-  v_uid      uuid := (select auth.uid());
+  v_uid      uuid;
   v_tipo     text := lower(btrim(coalesce(solicitar_upload_verificacao.documento_tipo, '')));
   v_linha    record;
   v_id       uuid;
@@ -267,7 +275,7 @@ declare
   v_partes   jsonb := '[]'::jsonb;
   v_parte    text;
 begin
-  v_prof := privado.profissional_que_chama();
+  v_uid := privado.conta_de_profissional_que_chama();
 
   -- O contrato 0.2.50 fecha o catálogo em rg e cnh. A tabela aceita `cin` desde
   -- `20261104110000`, para a moderação registrar o que receber; a porta do app é mais
@@ -347,12 +355,12 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_uid    uuid := (select auth.uid());
+  v_uid    uuid;
   v_linha  record;
   v_parte  text;
   v_caminho text;
 begin
-  perform privado.profissional_que_chama();
+  v_uid := privado.conta_de_profissional_que_chama();
 
   select v.id, v.status, v.storage_path_frente, v.storage_path_verso, v.storage_path_selfie
     into v_linha
