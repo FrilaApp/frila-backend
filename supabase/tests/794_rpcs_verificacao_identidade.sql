@@ -30,7 +30,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
-select plan(38);
+select plan(43);
 
 select vault.create_secret('pepper-sintetico-794', 'documento_pepper');
 select vault.create_secret('segredo-jwt-sintetico-de-teste-com-32-caracteres', 'storage_jwt_secret');
@@ -73,6 +73,7 @@ $$;
 select pg_temp.autenticar('af000000-0000-4000-8000-000000000001', 'prof1@verif794.test');
 select pg_temp.autenticar('af000000-0000-4000-8000-000000000002', 'prof2@verif794.test');
 select pg_temp.autenticar('af000000-0000-4000-8000-0000000000c1', 'casa@verif794.test');
+select pg_temp.autenticar('af000000-0000-4000-8000-000000000003', 'prof3@verif794.test');
 
 select pg_temp.como('af000000-0000-4000-8000-000000000001',
   $$ select public.criar_conta('profissional','Verif Um','+5561955557941','1995-01-01','2026-09-22') $$);
@@ -80,6 +81,20 @@ select pg_temp.como('af000000-0000-4000-8000-000000000002',
   $$ select public.criar_conta('profissional','Verif Dois','+5561955557942','1995-01-01','2026-09-22') $$);
 select pg_temp.como('af000000-0000-4000-8000-0000000000c1',
   $$ select public.criar_conta('contratante','Casa da Verificação','+5561955557943','1980-01-01','2026-09-22') $$);
+
+-- Profissional de conta encerrada: a recusa dele é 401, e vem antes de qualquer leitura
+-- (RF25, RNF08). Quem encerrou a conta não lê nem escreve verificação.
+select pg_temp.como('af000000-0000-4000-8000-000000000003',
+  $$ select public.criar_conta('profissional','Verif Tres','+5561955557944','1995-01-01','2026-09-22') $$);
+update public.usuario set estado = 'anonimizada', anonimizado_em = now()
+ where id = 'af000000-0000-4000-8000-000000000003';
+
+-- Conta suspensa, ao contrário, PASSA: o nível 2 da RN14 existe para a apuração de
+-- denúncia grave (RN13), e é a conta sob apuração que precisa enviar documento para
+-- restabelecer o status regular. Recusar aqui fecharia a porta na cara de quem o fluxo
+-- foi feito para atender.
+update public.usuario set estado = 'suspensa'
+ where id = 'af000000-0000-4000-8000-000000000002';
 
 -- ── 1. Autorização ───────────────────────────────────────────────────────────
 
@@ -116,6 +131,26 @@ select throws_ok(
   'PGRST',
   '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : null, "hint" : null}',
   'contratante recebe 403 sem_permissao em solicitar_upload_verificacao');
+
+select throws_ok(
+  $$ select pg_temp.como('af000000-0000-4000-8000-0000000000c1',
+       $x$ select public.confirmar_envio_verificacao() $x$) $$,
+  'PGRST',
+  '{"code" : "sem_permissao", "message" : "sem_permissao", "details" : null, "hint" : null}',
+  'contratante recebe 403 sem_permissao em confirmar_envio_verificacao');
+
+select throws_ok(
+  $$ select pg_temp.como('af000000-0000-4000-8000-000000000003',
+       $x$ select public.minha_identidade_status() $x$) $$,
+  'PGRST',
+  '{"code" : "nao_autenticado", "message" : "nao_autenticado", "details" : null, "hint" : null}',
+  'conta encerrada recebe 401, e não 403: a recusa vem antes de olhar perfil ou verificação (RF25)');
+
+select is(
+  (select pg_temp.como('af000000-0000-4000-8000-000000000002',
+     $$ select public.minha_identidade_status() $$)->>'status_verificacao'),
+  'nao_exigida',
+  'conta suspensa lê o próprio estado: é ela que precisa enviar documento na apuração (RN13)');
 
 select ok(
   not has_function_privilege('anon', 'public.minha_identidade_status()', 'execute')
@@ -164,8 +199,8 @@ select throws_ok(
   $$ select pg_temp.como('af000000-0000-4000-8000-000000000001',
        $x$ select public.solicitar_upload_verificacao('passaporte') $x$) $$,
   'PGRST',
-  '{"code" : "documento_invalido", "message" : "documento_invalido", "details" : "documento_tipo", "hint" : null}',
-  'documento fora de rg e cnh é recusado com 422 documento_invalido');
+  '{"code" : "campo_invalido", "message" : "campo_invalido", "details" : "documento_tipo", "hint" : null}',
+  'documento fora de rg e cnh é recusado com 422 campo_invalido, o código do contrato para valor recusado pela regra');
 
 create temp table up as select pg_temp.como(
   'af000000-0000-4000-8000-000000000001',
@@ -264,6 +299,16 @@ select throws_ok(
 select pg_temp.subiu('af000000-0000-4000-8000-000000000001',
   (select id from privado.verificacao_identidade where usuario_id = 'af000000-0000-4000-8000-000000000001'),
   'verso');
+
+-- A terceira parte é a selfie, e a recusa tem de nomeá-la também: um 422 que só soubesse
+-- dizer "frente" mandaria o app pedir de novo a foto que já chegou.
+select throws_ok(
+  $$ select pg_temp.como('af000000-0000-4000-8000-000000000001',
+       $x$ select public.confirmar_envio_verificacao() $x$) $$,
+  'PGRST',
+  '{"code" : "evidencia_incompleta", "message" : "evidencia_incompleta", "details" : "selfie", "hint" : null}',
+  'com frente e verso no bucket, a recusa aponta a selfie');
+
 select pg_temp.subiu('af000000-0000-4000-8000-000000000001',
   (select id from privado.verificacao_identidade where usuario_id = 'af000000-0000-4000-8000-000000000001'),
   'selfie');
@@ -354,6 +399,17 @@ select throws_ok(
 update privado.verificacao_identidade
    set status = 'rejeitada', respondido_em = privado.agora()
  where usuario_id = 'af000000-0000-4000-8000-000000000001';
+
+-- A linha rejeitada guarda `respondido_em` e os caminhos do episódio anterior. Sem a trava
+-- por lista fechada, o `update` para `em_analise` violaria o check
+-- `verificacao_desfecho_datado` e o app receberia 500 no lugar de uma recusa de regra.
+-- Medido em 04/11/2026: a versão anterior desta migração quebrava exatamente aqui.
+select throws_ok(
+  $$ select pg_temp.como('af000000-0000-4000-8000-000000000001',
+       $x$ select public.confirmar_envio_verificacao() $x$) $$,
+  'PGRST',
+  '{"code" : "verificacao_indisponivel", "message" : "verificacao_indisponivel", "details" : "sem_envio_solicitado", "hint" : null}',
+  'confirmar com a verificação rejeitada é 409, e nunca 500 por violação de check');
 
 select lives_ok(
   $$ select pg_temp.como('af000000-0000-4000-8000-000000000001',
