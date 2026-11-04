@@ -82,10 +82,13 @@ select columns_are('public', 'usuario', array[
 -- `perfil` repetido aqui é RN25: a coluna existe para a chave estrangeira composta
 -- apontar para o par (id, perfil) de usuario. Remover "porque é redundante" desliga a
 -- última linha de defesa da regra.
+-- `identidade_verificada` é o selo do nível 3 da RN14 (cartão aEqry9vB): voluntário, e
+-- informação de reputação, nunca ordenação nem filtro (RN06). Não está na Modelagem
+-- porque a verificação progressiva nasceu depois dela.
 select columns_are('public', 'profissional', array[
   'id','usuario_id','perfil','ponto_base','taxa_comparecimento','turnos_realizados',
-  'aval_positivas','aval_total'
-], 'profissional tem exatamente as colunas da Modelagem');
+  'aval_positivas','aval_total','identidade_verificada'
+], 'profissional tem exatamente as colunas da Modelagem, mais o selo da RN14');
 
 select columns_are('public', 'candidatura', array[
   'id','posicao_id','profissional_id','criada_em','estado'
