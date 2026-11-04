@@ -27,7 +27,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
-select plan(26);
+select plan(29);
 
 -- ── O cenário ─────────────────────────────────────────────────────────────────
 
@@ -270,6 +270,36 @@ select ok(
 select ok(
   has_function_privilege('service_role', 'privado.parametro_de_despacho_metros(text)', 'execute'),
   'service_role executa a leitura, como na irmã da RN23');
+
+-- O invariante do schema `privado`: 100% das tabelas com RLS, nenhuma com FORCE. Os testes
+-- 738 e 785 conferem isso sobre o schema inteiro, e foi essa conta que a primeira versão
+-- desta migração quebrou — a tabela nasceu sem RLS. A asserção aqui nomeia a tabela, para
+-- a falha apontar o arquivo que a criou em vez de um total de schema.
+select is(
+  (select c.relrowsecurity from pg_class c
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'privado' and c.relname = 'parametro_despacho'),
+  true,
+  'privado.parametro_despacho tem RLS habilitado, como toda tabela de privado (achado 1 da AUDITORIA-RLS)');
+
+select is(
+  (select c.relforcerowsecurity from pg_class c
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'privado' and c.relname = 'parametro_despacho'),
+  false,
+  'privado.parametro_despacho não tem FORCE RLS: forçar tiraria o bypass do dono e quebraria a função SECURITY DEFINER que a lê');
+
+-- Com RLS ligado e nenhuma política, um GRANT concedido por engano não vaza linha. A irmã
+-- da RN23 tem a mesma prova no teste 738.
+grant select on privado.parametro_despacho to authenticated;
+
+select is(
+  (select count(*)::int from pg_policies
+    where schemaname = 'privado' and tablename = 'parametro_despacho'),
+  0,
+  'sem política nenhuma: com RLS ligado, GRANT acidental para authenticated não devolve linha');
+
+revoke select on privado.parametro_despacho from authenticated;
 
 select * from finish();
 

@@ -49,6 +49,18 @@ on conflict (chave) do nothing;
 
 revoke all on table privado.parametro_despacho from public, anon, authenticated;
 
+-- RLS como defesa em profundidade, igual às outras tabelas de `privado`
+-- (`20261017190000_rls_tabelas_privado.sql`): o schema inteiro mantém o invariante de
+-- 100% das tabelas com `relrowsecurity`, e os testes 738 e 785 reprovam a tabela que
+-- nasce sem ele. Sem política nenhuma, `anon` e `authenticated` ficam bloqueados mesmo
+-- sob um GRANT concedido por engano; `privado.parametro_de_despacho_metros` é
+-- SECURITY DEFINER do dono `postgres` e continua lendo pelo bypass do dono.
+--
+-- Sem FORCE ROW LEVEL SECURITY, de propósito: forçar RLS tiraria o bypass do dono e
+-- quebraria exatamente as funções SECURITY DEFINER que leem a tabela. É invariante
+-- próprio, conferido pelos mesmos dois testes.
+alter table privado.parametro_despacho enable row level security;
+
 create or replace function privado.parametro_de_despacho_metros(p_chave text)
 returns integer
 language plpgsql
