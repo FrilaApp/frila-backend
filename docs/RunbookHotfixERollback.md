@@ -105,8 +105,8 @@ visível em PR).
    de numeração é proposta, a confirmar.
 10. **Aprovar o job de Prod** se o Environment tiver revisor (`entrega.yml:126-127`).
     Acompanhe os passos da seção 2 até o `desvio.sh` terminar verde.
-11. **Registrar** no PR e no cartão: SHA, tag, hora, resultado do `desvio.sh`. No fim do dia,
-    `scripts/bancada-sync.sh` leva o dia ao vault.
+11. **Registrar** no PR e no cartão: SHA, tag, hora, resultado do `desvio.sh`. (A ponte da
+    Bancada foi descontinuada em 04/11/2026; o registro vive no PR e no Trello.)
 
 Smoke depois da publicação: `GET` na função `saude` do Prod só lê no caminho de sucesso
 (`select 1`, `supabase/functions/saude/index.ts`); no de falha, grava uma linha em
