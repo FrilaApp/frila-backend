@@ -63,7 +63,6 @@ supabase start -x vector,logflare
 | `./scripts/desvio.sh <ref>` | Compara o projeto remoto com o que as migrações constroem |
 | `./scripts/teste-entrega.sh` | Autoteste da janela de manutenção e do desvio |
 | `./scripts/ciclo-completo.sh` | Smoke test: `criar_conta` → `publicar_vaga` → `candidatar` → check-in → `avaliar` |
-| `./scripts/bancada-sync.sh` | Leva o trabalho do dia para o vault da Bancada |
 
 ## Estrutura
 
@@ -76,7 +75,7 @@ supabase/
 
 contrato/openapi.yaml   Espelho do contrato do Frila. Divergência quebra a CI
 .claude/agents/         Os cinco agentes do pipeline, versionados
-scripts/                bancada-sync, ciclo-completo
+scripts/                ciclo-completo e demais scripts de operação
 ```
 
 ## Ambientes
@@ -218,9 +217,9 @@ Environment `frila-backup`: `BACKUP_DB_URL`, `BACKUP_PUBLIC_KEY`, `BACKUP_S3_END
 |---|---|
 | Histórico formal de versões (1.0.0+) | [`CHANGELOG.md`](CHANGELOG.md) |
 | Documentos de produto, contrato da API, requisitos | [`FrilaApp/frila-docs`](https://github.com/FrilaApp/frila-docs) |
-| Modelagem de banco, diagramas, decisões técnicas | [`FrilaApp/Bancada`](https://github.com/FrilaApp/Bancada) · `doc-harness/07 - Arquitetura/` |
-| Registro do processo, para os mentores | https://bancada-buu.pages.dev |
 | App iOS | [`FrilaApp/frila-frontend`](https://github.com/FrilaApp/frila-frontend) · `iOS/` |
+
+> A ponte da Bancada (vault de registros e `bancada-sync`) foi descontinuada em 04/11/2026.
 
 > O cartão `S0 · Infra · Criar o projeto no Supabase` diz que o backend fica em
 > `Frila/supabase/`. Mudou em 22/09: o código do backend vive aqui. O contrato continua
