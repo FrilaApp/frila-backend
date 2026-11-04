@@ -116,9 +116,11 @@ select set_eq(
     -- Avisa os dois lados quando o fim passa sem check-out (cartão qcVimM84).
     'alertar_fim_sem_checkout',
     -- Varre saúde, filas, falhas e emite alertas à equipe (cartão 5bPJvMIo).
-    'verificar_saude'
+    'verificar_saude',
+    -- Purga periódica de notificações com mais de 60 dias (K-001, LGPD art. 37).
+    'limpar_notificacoes_antigas'
   ],
-  'Os jobs agendados são exatamente os treze conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os quatorze conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;

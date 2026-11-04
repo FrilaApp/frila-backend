@@ -1,7 +1,12 @@
 name: Conferência de Auth remoto
 
-# Confere diariamente (e sob demanda) a configuração remota de Auth do Supabase
-# nos ambientes frila-dev e frila-prod (site_url, tamanho de OTP, SMTP próprio e templates).
+# Confere diariamente a configuração remota de Auth do Supabase no frila-dev (via cron)
+# e no frila-prod sob demanda (via workflow_dispatch manual, com aprovação de revisor
+# do Environment frila-prod).
+#
+# No cron diário, o job do frila-prod é ignorado (skipped) para não reter a esteira
+# aguardando aprovação humana todos os dias. O disparo manual permite auditar a
+# configuração de produção sob demanda mantendo as proteções estritas do Environment.
 #
 # Se algum ambiente estiver com SMTP desligado, OTP diferente de 6, localhost ou
 # modelo contendo links mágicos (ConfirmationURL), o job falha com exit 1 e aponta
@@ -10,7 +15,7 @@ name: Conferência de Auth remoto
 # Segredos: SUPABASE_ACCESS_TOKEN em cada Environment (frila-dev e frila-prod).
 on:
   schedule:
-    # 08:17 BRT = 11:17 UTC
+    # 08:17 BRT = 11:17 UTC (executa apenas frila-dev automaticamente)
     - cron: '17 11 * * *'
   workflow_dispatch:
 
@@ -38,6 +43,7 @@ jobs:
 
   prod:
     name: Conferir Auth no frila-prod
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: frila-prod
     timeout-minutes: 5

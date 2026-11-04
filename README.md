@@ -12,7 +12,7 @@ publicar → notificar → candidatar → confirmar → executar → avaliar
 ```
 
 Loja em 13/11/2026. O que entra em cada versão está em
-[`05-ESCOPO-DO-MVP.md`](https://github.com/FrilaApp/frila-docs/blob/main/Documentos/MD/05-ESCOPO-DO-MVP.md);
+[`05-ESCOPO-DO-MVP.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/05-ESCOPO-DO-MVP.md);
 o plano de trabalho, no [quadro do Trello](https://trello.com/b/0eyqvbRJ/frila).
 
 ## Rodar
@@ -75,7 +75,7 @@ supabase/
 └── tests/         pgTAP — um teste por CHECK e por política, com o nome da regra
 
 contrato/openapi.yaml   Espelho do contrato do Frila. Divergência quebra a CI
-agents/                 Os cinco agentes do pipeline, versionados
+.claude/agents/         Os cinco agentes do pipeline, versionados
 scripts/                bancada-sync, ciclo-completo
 ```
 
@@ -85,7 +85,7 @@ scripts/                bancada-sync, ciclo-completo
 |---|---|
 | local | Cada dev, com `supabase start`. Migração destrutiva e teste de corrida moram aqui |
 | `frila-dev` | Compartilhado: integração com o iOS e o TestFlight |
-| `frila-prod` | Só a partir do Sprint 3 |
+| `frila-prod` | Produção (`hbjkkcenbudiezmamiak` · `sa-east-1`): em uso pelo app 0.5.5 no TestFlight e 9 Edge Functions ativas desde 27/10 (fonte: issue #352). Deploy via tag `backend-v*` com aprovação de revisor |
 
 A chave de serviço fica fora do app e fora do git: só o agendador e a CI a usam.
 
@@ -203,10 +203,14 @@ banco restaurado e imprime o tempo de cada etapa (é o número que vai para o ca
 restauração com dado perdido e estrutura quebrada reprovam). O workflow `.github/workflows/ensaio-backup.yml` roda o autoteste às 04h de Brasília e sob
 demanda, sem segredo e sem guardar artefato (o repositório é público).
 
-**Ainda não existe** o backup do `frila-prod`: faltam o projeto de produção, a chave de
-cifra (fora do repositório), o storage externo e a retenção de 14 dias. Quando existirem,
-entram como passos novos desse workflow, e a política registra que as cópias somem em até
-14 dias.
+**Backup diário do `frila-prod` (issue #352, RNF12):** implementado no workflow
+`.github/workflows/backup-prod.yml`, executado diariamente às 04:00 BRT (07:00 UTC) e sob
+demanda (`workflow_dispatch`). Utiliza o Environment dedicado `frila-backup` (sem revisores
+obrigatórios, evitando bloqueios na rotina noturna), executa `scripts/backup-logico.sh` com
+cifra `age` e envia o pacote v2 cifrado diretamente para um bucket S3-compatível (Cloudflare R2
+ou Backblaze B2) com retenção de 14 dias via Lifecycle Rule no storage. Lista de segredos no
+Environment `frila-backup`: `BACKUP_DB_URL`, `BACKUP_PUBLIC_KEY`, `BACKUP_S3_ENDPOINT`,
+`BACKUP_S3_BUCKET`, `BACKUP_S3_ACCESS_KEY_ID` e `BACKUP_S3_SECRET_ACCESS_KEY`.
 
 ## Onde está o resto
 

@@ -89,7 +89,7 @@ Todas as 9 Edge Functions da v1.0 existem tanto na `main` quanto na `develop`:
 - `limpar-contas-orfas`
 - `saude`
 
-Na `develop`, foi adicionado o diretório `_compartilhado` (`_compartilhado/auth.ts` e `_compartilhado/auth_test.ts`), centralizando validação estrita de Bearer tokens e comparação em tempo constante para eliminar duplicação de lógica entre as Edge Functions (PR #319).
+Na `develop`, foi adicionado o diretório `_compartilhado` (`supabase/functions/_compartilhado/auth.ts` e `supabase/functions/_compartilhado/auth_test.ts`), centralizando validação estrita de Bearer tokens e comparação em tempo constante para eliminar duplicação de lógica entre as Edge Functions (PR #319).
 
 ---
 
@@ -126,7 +126,7 @@ Segredos e credenciais nunca são gravados no repositório. O código da demonst
 
 1. Banco de dados reservado na fila compartilhada:
    ```bash
-   /Users/cauecarneiro/Documents/Projetos/Frila/orquestracao/scripts/fila.sh pegar banco <dono>
+   ./scripts/fila.sh pegar banco <dono>
    ```
 2. Inicialização dos serviços Supabase locais:
    ```bash

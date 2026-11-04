@@ -13,7 +13,7 @@
 # O que este invólucro faz, e o `.py` não: achar o `.env`, avisar alto quando os hooks do
 # vault estão desligados, e lembrar que publicar é do humano.
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 [ -f .env ] || { echo "✗ .env ausente: as credenciais do Trello saem dele" >&2; exit 1; }
 
@@ -23,7 +23,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 # commitado nem publicado, e o aviso tem de ser alto.
 vault_de_aviso() {
   local v
-  v="$(python3 - "$@" <<'PY'
+  v="$(python3 - <<'PY'
 import os, sys
 sys.path.insert(0, os.path.join(os.getcwd(), "scripts"))
 from bancada_trello import achar_vault
@@ -37,7 +37,7 @@ PY
 }
 
 VAULT="$(vault_de_aviso || true)"
-if [ -n "$VAULT" ] && [ -d "$VAULT/.git" -o -n "$(git -C "$VAULT" rev-parse --show-toplevel 2>/dev/null)" ]; then
+if [ -n "$VAULT" ] && { [ -d "$VAULT/.git" ] || [ -n "$(git -C "$VAULT" rev-parse --show-toplevel 2>/dev/null)" ]; }; then
   raiz_git="$(git -C "$VAULT" rev-parse --show-toplevel 2>/dev/null || true)"
   hooks="$(git -C "$VAULT" config core.hooksPath 2>/dev/null || true)"
   if [ -z "$hooks" ] || [ ! -d "$raiz_git/$hooks" ]; then
