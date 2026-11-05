@@ -1508,6 +1508,48 @@ select pg_temp.guarda('promete:solicitarUploadVerificacao:409',
   pg_temp.observado('ee000000-0000-4000-8000-000000000097',
     $$ select public.solicitar_upload_verificacao('rg') $$));
 
+-- ── Listar e desfazer bloqueios (RF26, UC17, contrato 0.2.51, cartão Y18NMyPo) ──
+--
+-- A ordem aqui segue a do arquivo: o que precisa de conta ativa vem antes do
+-- `excluir_conta` do fim, e os dois 401 ficam depois dele, porque é lá que existe conta
+-- anonimizada para medir.
+
+-- A listagem precisa de item real: coleção declarada e nunca exercitada reprova o portão,
+-- e com razão — um array vazio não prova que o corpo de `ItemBloqueio` casa com o schema.
+select pg_temp.guarda('bloquear', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.bloquear('profissional', %L::uuid) $$,
+  (select p.id from public.profissional p where p.usuario_id = 'cc000000-0000-4000-8000-000000000003'))));
+
+-- Resposta feliz da listagem, agora com um item
+select pg_temp.guarda('listarBloqueios', pg_temp.como('cc000000-0000-4000-8000-000000000001',
+  $$ select public.listar_bloqueios() $$));
+
+-- Resposta feliz do desbloqueio: idempotente, devolve 200 mesmo sem bloqueio anterior
+select pg_temp.guarda('desbloquear', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.desbloquear('profissional', %L::uuid) $$,
+  (select p.id from public.profissional p where p.usuario_id = 'cc000000-0000-4000-8000-000000000003'))));
+
+-- desbloquear: 404 nao_encontrado (perfil de profissional que não existe)
+select pg_temp.guarda('promete:desbloquear:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.desbloquear('profissional', 'c0000000-0000-4000-8000-0000000000fe'::uuid) $$));
+
+-- desbloquear: 422 campo_invalido (o perfil decide o alvo; profissional não desbloqueia profissional)
+select pg_temp.guarda('promete:desbloquear:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003', format(
+    $$ select public.desbloquear('profissional', %L::uuid) $$,
+    (select p.id from public.profissional p where p.usuario_id = 'cc000000-0000-4000-8000-000000000003'))));
+
+-- 403 sem_permissao com conta suspensa, nas duas operações (RN13 exige conta ativa)
+select pg_temp.guarda('promete:listarBloqueios:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004',
+    $$ select public.listar_bloqueios() $$));
+
+select pg_temp.guarda('promete:desbloquear:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000004', format(
+    $$ select public.desbloquear('profissional', %L::uuid) $$,
+    (select p.id from public.profissional p where p.usuario_id = 'cc000000-0000-4000-8000-000000000003'))));
+
 -- Por último, e depois de tudo: ela anonimiza a conta e cancela os turnos futuros dela.
 -- Qualquer colheita posterior veria um cenário diferente do que as outras viram. A conta
 -- anonimizada é a `…0003`, a mesma que os dois guardas de `promete:perfilPublico:404`
@@ -1515,6 +1557,15 @@ select pg_temp.guarda('promete:solicitarUploadVerificacao:409',
 -- erro de sintaxe nem conflito: daria colheita sobre conta anonimizada, com portão verde.
 select pg_temp.guarda('excluirConta',
   privado.excluir_conta('cc000000-0000-4000-8000-000000000003'));
+
+-- Os dois 401 do ciclo de bloqueio: conta anonimizada não lista nem desbloqueia (RF25).
+select pg_temp.guarda('promete:listarBloqueios:401',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003',
+    $$ select public.listar_bloqueios() $$));
+
+select pg_temp.guarda('promete:desbloquear:401',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003',
+    $$ select public.desbloquear('estabelecimento', 'c0000000-0000-4000-8000-0000000000fd'::uuid) $$));
 
 -- Os três 401 da verificação de identidade: conta anonimizada não lê nem escreve
 -- verificação (RF25, RNF08), e a recusa vem antes de olhar perfil ou estado. Só aqui,
