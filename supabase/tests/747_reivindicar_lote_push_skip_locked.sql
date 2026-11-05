@@ -1,5 +1,5 @@
 begin;
-select plan(15);
+select plan(16);
 
 insert into privado.ambiente (eh_teste) values (true)
 on conflict do nothing;
@@ -106,9 +106,19 @@ select is(
   'Coluna urgente retornada corresponde ao boolean esperado'
 );
 
+-- O valor devolvido é o de ANTES da reivindicação (aqui, nulo), e não o lease novo. A
+-- Edge Function `enviar-push` pula o item cuja `proxima_tentativa_em` está no futuro; se o
+-- retorno trouxesse o lease, todo item recém-reivindicado seria pulado e o lote nunca
+-- enviaria nada (cartão hQDlvpHi, medido no Prod).
+select is(
+  (select proxima_tentativa_em from lote1 where id = '74700000-0000-4000-8000-000000000001'),
+  null::timestamptz,
+  'proxima_tentativa_em retornada é a de antes da reivindicação, não o lease novo'
+);
+
 select ok(
-  (select proxima_tentativa_em from lote1 where id = '74700000-0000-4000-8000-000000000001') > privado.agora(),
-  'Coluna proxima_tentativa_em retornada reflete o visibility timeout aplicado'
+  (select count(*) = 0 from lote1 where proxima_tentativa_em > privado.agora()),
+  'Nenhum item reivindicado volta com proxima_tentativa_em no futuro'
 );
 
 -- 4. Segunda chamada concorrente/imediata: deve ignorar as 2 reivindicadas e retornar apenas a 3ª restante

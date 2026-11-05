@@ -158,6 +158,12 @@ export async function sendFcmMessage(
       ttl: TTL_ANDROID,
     },
     apns: {
+      // Sem estes dois cabeçalhos o APNs trata o push como de baixa prioridade e o aparelho em
+      // repouso não acende a tela (medido no TestFlight 1.0.0, hQDlvpHi).
+      headers: {
+        "apns-priority": "10",
+        "apns-push-type": "alert",
+      },
       payload: {
         aps: {
           alert: {

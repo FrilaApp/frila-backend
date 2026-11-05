@@ -186,8 +186,14 @@ Deno.test("FCM client: envia android por tipo com TTL, data e apns intactos (200
       ttl: "86400s",
     }, `Configuração Android para ${tipo ?? "tipo ausente"}`);
     assertEquals(corpoFCM?.message?.data, data ?? {});
-    // iOS: alerta segue estruturado em apns.payload.aps.alert com mutable-content
+    // iOS: alerta segue estruturado em apns.payload.aps.alert com mutable-content, e os
+    // cabeçalhos do APNs pedem entrega imediata: sem apns-priority 10 e apns-push-type alert,
+    // o aparelho em repouso recebe o push sem acender a tela (hQDlvpHi).
     assertEquals(corpoFCM?.message?.apns, {
+      headers: {
+        "apns-priority": "10",
+        "apns-push-type": "alert",
+      },
       payload: {
         aps: {
           alert: {
@@ -447,6 +453,80 @@ Deno.test("Bloqueio 3: worker não reenvia notificação antes do vencimento de 
   assertEquals(data.relatorio[0].status, "pendente");
   assertEquals(data.relatorio[0].detalhe, "aguardando_backoff");
   assertEquals(fcmDisparado, false, "FCM não deve ser chamado antes do vencimento do backoff");
+});
+
+Deno.test("Lote reivindicado: o lease recém-gravado em proxima_tentativa_em não é lido como backoff (hQDlvpHi)", async () => {
+  // Medido no Prod: reivindicar_lote_push devolvia a proxima_tentativa_em NOVA (agora + 5 min)
+  // e o laço pulava todo item do lote como aguardando_backoff; o lote nunca enviava nada.
+  // O item vem do lote reivindicado, que o banco já filtrou por proxima_tentativa_em <= agora:
+  // o laço não reavalia o backoff nele.
+  const sa = await gerarContaDeServicoTeste();
+  const chamadasAceite: GravarAceitePushParams[] = [];
+  const lease = new Date(Date.now() + 300000).toISOString();
+  const sqlClient: SqlClient = {
+    ...criarMockSqlClient({ chamadasAceite }),
+    reivindicarLotePendentes: () =>
+      Promise.resolve([
+        {
+          id: "a1000000-0000-4000-8000-000000000001",
+          usuario_id: "u1000000-0000-4000-8000-000000000001",
+          tipo: "vaga",
+          referencia_id: "v1000000-0000-4000-8000-000000000001",
+          payload: {},
+          tentativas: 0,
+          estado_entrega: "pendente",
+          proxima_tentativa_em: lease,
+          urgente: false,
+        },
+      ]),
+  };
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
+    const url = input.toString();
+    if (url === "http://mock-oauth/token") {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([{ id: "disp-1", token_fcm: "fcm_token_device_1", plataforma: "ios" }]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    if (url.includes("/messages:send")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ name: "projects/frila-test-project/messages/msg_lote" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+    body: JSON.stringify({ origem: "fila" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient,
+  });
+
+  assertEquals(res.status, 200);
+  const data = await res.json();
+  assertEquals(data.relatorio[0].status, "enviada", "o item reivindicado deve ser enviado, não pulado");
+  assertEquals(chamadasAceite.length, 1, "o aceite do FCM deve ser gravado");
 });
 
 Deno.test("Bloqueio 3: erro transitório agenda proxima_tentativa_em no banco", async () => {
