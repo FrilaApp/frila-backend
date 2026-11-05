@@ -1,6 +1,6 @@
 -- 786_matriz_autorizacao_papeis_rpc.sql
 --
--- Matriz exaustiva de autorizacao Papel x RPC cobrindo as 47 rotinas publicas do Frila:
+-- Matriz exaustiva de autorizacao Papel x RPC cobrindo as 49 rotinas publicas do Frila:
 --   * Papel anon (nao autenticado / chave publica)
 --   * Papel profissional (autenticado, perfil='profissional')
 --   * Papel outro contratante (autenticado, perfil='contratante', nao proprietario/alheio)
@@ -23,7 +23,7 @@ set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(196);
+select plan(204);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -31,8 +31,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  47::bigint,
-  'censo de RPCs: schema public contem exatamente 47 RPCs expostas'
+  49::bigint,
+  'censo de RPCs: schema public contem exatamente 49 RPCs expostas'
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -321,6 +321,20 @@ select is(pg_temp.testar_autorizacao('anon', null, 'select public.solicitar_uplo
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.solicitar_upload_verificacao(''rg'')'), 'AUTORIZADO', 'solicitar_upload_verificacao [profissional]: profissional pede as URLs assinadas do proprio envio');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.solicitar_upload_verificacao(''rg'')'), '403_SEM_PERMISSAO', 'solicitar_upload_verificacao [outro contratante]: contratante recebe 403');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.solicitar_upload_verificacao(''rg'')'), '403_SEM_PERMISSAO', 'solicitar_upload_verificacao [dono]: contratante dono recebe 403');
+
+-- --- listar_bloqueios / desbloquear ---
+-- Decisão A8 da PO (RF26, UC17, contrato 0.2.51). As duas são de qualquer perfil: o
+-- bloqueio existe nos dois sentidos, e o desbloqueio também. `desbloquear` com o alvo
+-- errado para o perfil é recusa de REGRA (422 campo_invalido), não de permissão.
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.listar_bloqueios()'), '42501_SEM_EXECUTE', 'listar_bloqueios [anon]: anon nao possui EXECUTE em listar_bloqueios');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.listar_bloqueios()'), 'AUTORIZADO', 'listar_bloqueios [profissional]: profissional le os proprios bloqueios');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.listar_bloqueios()'), 'AUTORIZADO', 'listar_bloqueios [outro contratante]: contratante le os proprios bloqueios');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.listar_bloqueios()'), 'AUTORIZADO', 'listar_bloqueios [dono]: dono le os proprios bloqueios');
+
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.desbloquear(''profissional'', ''78600000-0000-4000-8000-0000000000ff''::uuid)'), '42501_SEM_EXECUTE', 'desbloquear [anon]: anon nao possui EXECUTE em desbloquear');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.desbloquear(''estabelecimento'', ''78600000-0000-4000-8000-0000000000ff''::uuid)'), '404_NAO_ENCONTRADO', 'desbloquear [profissional]: alvo inexistente e recusa de regra 404, nao de permissao');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.desbloquear(''profissional'', ''78600000-0000-4000-8000-0000000000ff''::uuid)'), '404_NAO_ENCONTRADO', 'desbloquear [outro contratante]: alvo inexistente e 404');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.desbloquear(''profissional'', ''78600000-0000-4000-8000-0000000000ff''::uuid)'), '404_NAO_ENCONTRADO', 'desbloquear [dono]: alvo inexistente e 404');
 
 -- --- perfil_publico ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.perfil_publico(''78600000-0000-4000-8000-000000000030''::uuid)'), '42501_SEM_EXECUTE', 'perfil_publico [anon]: anon nao possui EXECUTE em perfil_publico');
