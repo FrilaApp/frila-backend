@@ -196,6 +196,12 @@ OUTRAS_VIGIADAS=$(cat <<'EOF'
 {"op":"promete:confirmarEnvioVerificacao:403","corpo":{"status":403,"code":"sem_permissao"}}
 {"op":"promete:confirmarEnvioVerificacao:409","corpo":{"status":409,"code":"verificacao_indisponivel"}}
 {"op":"promete:confirmarEnvioVerificacao:422","corpo":{"status":422,"code":"evidencia_incompleta"}}
+{"op":"promete:listarBloqueios:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:listarBloqueios:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:desbloquear:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:desbloquear:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:desbloquear:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:desbloquear:422","corpo":{"status":422,"code":"campo_invalido"}}
 EOF
 )
 

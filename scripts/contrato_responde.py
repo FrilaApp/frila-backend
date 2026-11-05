@@ -253,6 +253,14 @@ VIGIADAS = {
     ("confirmarEnvioVerificacao", "403"): "sem_permissao",
     ("confirmarEnvioVerificacao", "409"): "verificacao_indisponivel",
     ("confirmarEnvioVerificacao", "422"): "evidencia_incompleta",
+    # Listar e desfazer bloqueios (RF26, UC17, contrato 0.2.51, cartão Y18NMyPo). Entram
+    # vigiadas desde o nascimento, com cenário em `contrato-respostas.sql`.
+    ("listarBloqueios", "401"): "nao_autenticado",
+    ("listarBloqueios", "403"): "sem_permissao",
+    ("desbloquear", "401"): "nao_autenticado",
+    ("desbloquear", "403"): "sem_permissao",
+    ("desbloquear", "404"): "nao_encontrado",
+    ("desbloquear", "422"): "campo_invalido",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
