@@ -1428,6 +1428,86 @@ select pg_temp.guarda('exportarMeusDados',
 select pg_temp.guarda('exportarMeusDados',
   privado.meus_dados('cc000000-0000-4000-8000-000000000001'));
 
+-- ── Verificação de identidade (RN14, contrato 0.2.50, cartão 86CC7PW3) ────────
+--
+-- As três operações e as dez recusas que o contrato promete. A ordem aqui é regra, e não
+-- arrumação: o 422 de `confirmar` precisa de uma conta que pediu o upload e não enviou
+-- nada, e o 409 de `solicitar` precisa de uma que já está `em_analise`. Medir os dois na
+-- mesma conta exigiria desfazer estado no meio, que é como um harness passa a medir a
+-- própria ordem em vez da regra.
+--
+-- A assinatura da URL de upload lê o segredo do Vault; sem ele a função recusa por
+-- desenho (`segredo_ausente`), e a colheita mediria a falta do segredo, não a operação.
+select vault.create_secret('jwt-sintetico-da-colheita-com-mais-de-32-caracteres', 'storage_jwt_secret');
+
+-- Dois profissionais a mais: um para o 409 de `solicitar` (que termina em `em_analise`) e
+-- outro para o 422 e o 409 de `confirmar`, que precisam de estados diferentes.
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado)
+values ('ee000000-0000-4000-8000-000000000097', 'profissional', 'Prof Verificacao', '+5561999999997', 'verif97@frila.test', '1995-01-01', '1.0', now(), 'ativa'),
+       ('ee000000-0000-4000-8000-000000000096', 'profissional', 'Prof Sem Envio', '+5561999999996', 'verif96@frila.test', '1995-01-01', '1.0', now(), 'ativa')
+on conflict do nothing;
+
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
+values ('00000000-0000-0000-0000-000000000000', 'ee000000-0000-4000-8000-000000000097', 'authenticated', 'authenticated', 'verif97@frila.test', privado.agora(), privado.agora(), false, false),
+       ('00000000-0000-0000-0000-000000000000', 'ee000000-0000-4000-8000-000000000096', 'authenticated', 'authenticated', 'verif96@frila.test', privado.agora(), privado.agora(), false, false)
+on conflict do nothing;
+
+-- 1. minhaIdentidadeStatus: resposta feliz, no estado inicial de toda conta
+select pg_temp.guarda('minhaIdentidadeStatus', pg_temp.como('ee000000-0000-4000-8000-000000000097',
+  $$ select public.minha_identidade_status() $$));
+
+-- 2. minhaIdentidadeStatus: 403 sem_permissao (contratante não tem verificação de identidade)
+select pg_temp.guarda('promete:minhaIdentidadeStatus:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.minha_identidade_status() $$));
+
+-- 3. solicitarUploadVerificacao: 422 campo_invalido (documento fora de rg e cnh)
+select pg_temp.guarda('promete:solicitarUploadVerificacao:422',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000097',
+    $$ select public.solicitar_upload_verificacao('passaporte') $$));
+
+-- 4. solicitarUploadVerificacao: 403 sem_permissao (contratante)
+select pg_temp.guarda('promete:solicitarUploadVerificacao:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.solicitar_upload_verificacao('rg') $$));
+
+-- 5. solicitarUploadVerificacao: resposta feliz, três URLs assinadas de 2 h
+select pg_temp.guarda('solicitarUploadVerificacao', pg_temp.como('ee000000-0000-4000-8000-000000000097',
+  $$ select public.solicitar_upload_verificacao('rg') $$));
+
+-- 6. confirmarEnvioVerificacao: 422 evidencia_incompleta (pediu e não enviou nada)
+select pg_temp.guarda('promete:confirmarEnvioVerificacao:422',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000097',
+    $$ select public.confirmar_envio_verificacao() $$));
+
+-- 7. confirmarEnvioVerificacao: 409 verificacao_indisponivel (nunca pediu o upload)
+select pg_temp.guarda('promete:confirmarEnvioVerificacao:409',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000096',
+    $$ select public.confirmar_envio_verificacao() $$));
+
+-- 8. confirmarEnvioVerificacao: 403 sem_permissao (contratante)
+select pg_temp.guarda('promete:confirmarEnvioVerificacao:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.confirmar_envio_verificacao() $$));
+
+-- As mídias chegam ao bucket. `storage.objects` é o índice do Storage, e é nele que a RPC
+-- confere; o byte não existe aqui, e não precisa existir para medir a resposta.
+insert into storage.objects (bucket_id, name, owner, owner_id, metadata)
+select 'documentos-identidade', caminho, v.usuario_id, v.usuario_id::text, '{"size": 1024, "mimetype": "image/jpeg"}'::jsonb
+  from privado.verificacao_identidade v
+  cross join lateral (values (v.storage_path_frente), (v.storage_path_verso), (v.storage_path_selfie)) as partes(caminho)
+ where v.usuario_id = 'ee000000-0000-4000-8000-000000000097'
+on conflict do nothing;
+
+-- 9. confirmarEnvioVerificacao: resposta feliz, a verificação vai para em_analise
+select pg_temp.guarda('confirmarEnvioVerificacao', pg_temp.como('ee000000-0000-4000-8000-000000000097',
+  $$ select public.confirmar_envio_verificacao() $$));
+
+-- 10. solicitarUploadVerificacao: 409 verificacao_indisponivel (análise em curso)
+select pg_temp.guarda('promete:solicitarUploadVerificacao:409',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000097',
+    $$ select public.solicitar_upload_verificacao('rg') $$));
+
 -- Por último, e depois de tudo: ela anonimiza a conta e cancela os turnos futuros dela.
 -- Qualquer colheita posterior veria um cenário diferente do que as outras viram. A conta
 -- anonimizada é a `…0003`, a mesma que os dois guardas de `promete:perfilPublico:404`
@@ -1435,6 +1515,21 @@ select pg_temp.guarda('exportarMeusDados',
 -- erro de sintaxe nem conflito: daria colheita sobre conta anonimizada, com portão verde.
 select pg_temp.guarda('excluirConta',
   privado.excluir_conta('cc000000-0000-4000-8000-000000000003'));
+
+-- Os três 401 da verificação de identidade: conta anonimizada não lê nem escreve
+-- verificação (RF25, RNF08), e a recusa vem antes de olhar perfil ou estado. Só aqui,
+-- depois da exclusão acima, existe uma conta anonimizada para medir.
+select pg_temp.guarda('promete:minhaIdentidadeStatus:401',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003',
+    $$ select public.minha_identidade_status() $$));
+
+select pg_temp.guarda('promete:solicitarUploadVerificacao:401',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003',
+    $$ select public.solicitar_upload_verificacao('rg') $$));
+
+select pg_temp.guarda('promete:confirmarEnvioVerificacao:401',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003',
+    $$ select public.confirmar_envio_verificacao() $$));
 
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o

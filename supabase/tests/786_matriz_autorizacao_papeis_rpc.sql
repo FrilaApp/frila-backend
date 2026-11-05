@@ -1,6 +1,6 @@
 -- 786_matriz_autorizacao_papeis_rpc.sql
 --
--- Matriz exaustiva de autorizacao Papel x RPC cobrindo as 44 rotinas publicas do Frila:
+-- Matriz exaustiva de autorizacao Papel x RPC cobrindo as 47 rotinas publicas do Frila:
 --   * Papel anon (nao autenticado / chave publica)
 --   * Papel profissional (autenticado, perfil='profissional')
 --   * Papel outro contratante (autenticado, perfil='contratante', nao proprietario/alheio)
@@ -19,7 +19,11 @@ on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-20 21:00:00+00', true);
 set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 
-select plan(184);
+-- A verificacao de identidade assina a URL de upload com o segredo do Vault; sem ele a
+-- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
+select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
+
+select plan(196);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -27,8 +31,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  44::bigint,
-  'censo de RPCs: schema public contem exatamente 44 RPCs expostas'
+  47::bigint,
+  'censo de RPCs: schema public contem exatamente 47 RPCs expostas'
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -297,6 +301,26 @@ select is(pg_temp.testar_autorizacao('anon', null, 'select public.registrar_even
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.registrar_evento(''app_aberto'', null, null, null)'), 'AUTORIZADO', 'registrar_evento [profissional]: profissional registra evento de telemetria');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.registrar_evento(''app_aberto'', null, null, null)'), 'AUTORIZADO', 'registrar_evento [outro contratante]: outro contratante registra evento de telemetria');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.registrar_evento(''app_aberto'', null, null, null)'), 'AUTORIZADO', 'registrar_evento [dono]: dono registra evento de telemetria');
+
+-- --- minha_identidade_status / solicitar_upload_verificacao / confirmar_envio_verificacao ---
+-- As tres operacoes da verificacao de identidade (RN14, contrato 0.2.50). Sao do
+-- profissional: contratante recebe 403, porque o nivel 4 da RN14 e outro assunto (RF21).
+-- `confirmar` vem antes de `solicitar` neste bloco de proposito: assim o profissional
+-- ainda nao pediu upload nenhum, e a recusa medida e a de regra, nao a de ordem do arquivo.
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.minha_identidade_status()'), '42501_SEM_EXECUTE', 'minha_identidade_status [anon]: anon nao possui EXECUTE em minha_identidade_status');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.minha_identidade_status()'), 'AUTORIZADO', 'minha_identidade_status [profissional]: profissional le o proprio estado de verificacao');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.minha_identidade_status()'), '403_SEM_PERMISSAO', 'minha_identidade_status [outro contratante]: contratante nao tem verificacao de identidade');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.minha_identidade_status()'), '403_SEM_PERMISSAO', 'minha_identidade_status [dono]: contratante dono tambem recebe 403');
+
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.confirmar_envio_verificacao()'), '42501_SEM_EXECUTE', 'confirmar_envio_verificacao [anon]: anon nao possui EXECUTE em confirmar_envio_verificacao');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.confirmar_envio_verificacao()'), 'PGRST_OUTRO:verificacao_indisponivel:HTTP_409', 'confirmar_envio_verificacao [profissional]: sem upload pedido, recusa de regra 409 e nao de permissao');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.confirmar_envio_verificacao()'), '403_SEM_PERMISSAO', 'confirmar_envio_verificacao [outro contratante]: contratante recebe 403');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.confirmar_envio_verificacao()'), '403_SEM_PERMISSAO', 'confirmar_envio_verificacao [dono]: contratante dono recebe 403');
+
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.solicitar_upload_verificacao(''rg'')'), '42501_SEM_EXECUTE', 'solicitar_upload_verificacao [anon]: anon nao possui EXECUTE em solicitar_upload_verificacao');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.solicitar_upload_verificacao(''rg'')'), 'AUTORIZADO', 'solicitar_upload_verificacao [profissional]: profissional pede as URLs assinadas do proprio envio');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.solicitar_upload_verificacao(''rg'')'), '403_SEM_PERMISSAO', 'solicitar_upload_verificacao [outro contratante]: contratante recebe 403');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.solicitar_upload_verificacao(''rg'')'), '403_SEM_PERMISSAO', 'solicitar_upload_verificacao [dono]: contratante dono recebe 403');
 
 -- --- perfil_publico ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.perfil_publico(''78600000-0000-4000-8000-000000000030''::uuid)'), '42501_SEM_EXECUTE', 'perfil_publico [anon]: anon nao possui EXECUTE em perfil_publico');
