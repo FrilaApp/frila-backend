@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.50
+  version: 0.2.51
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -99,6 +99,20 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.51, de 05/11/2026.** Desbloquear e listar bloqueios (decisão A8 da PO, RF26, RN10).
+    Adição compatível: duas operações novas e um schema novo; nenhuma operação existente muda e
+    nenhum cliente publicado é afetado.
+
+    - **`GET /rpc/listar_bloqueios`** (`listarBloqueios`): devolve um array de `ItemBloqueio`
+      (`alvo_tipo`, `alvo_id`, `nome` e `criado_em`). Nunca expõe o `usuario_id` da outra parte
+      (RN10). Só lista os bloqueios criados pelo chamador.
+    - **`POST /rpc/desbloquear`** (`desbloquear`): recebe `alvo_tipo` e `alvo_id` e devolve
+      `Bloqueio`. Idempotente. Quando o chamador é membro de estabelecimento, desfaz o bloqueio para
+      a casa inteira.
+    - **Erros:** `401`, `403 sem_permissao` com `details: conta_suspensa`, `404 nao_encontrado` e
+      `422` (`campo_obrigatorio`, `campo_invalido`) nas condições descritas em cada operação. Nenhum
+      código novo.
 
     **Versão 0.2.50, de 04/11/2026.** Verificação de identidade (RN14), as três operações que o
     profissional chama sob exigência formal da moderação em apuração de denúncia grave (RN13).
@@ -3279,6 +3293,97 @@ paths:
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
+  /rpc/listar_bloqueios:
+    get:
+      tags: [Confiança e direitos]
+      operationId: listarBloqueios
+      summary: Listar os bloqueios que o chamador criou
+      description: |
+        Devolve os bloqueios criados por quem chama, para que a tela de bloqueados possa mostrá-los e
+        oferecer o desbloqueio (decisão A8 da PO, RF26). Cada item traz o par `alvo_tipo` + `alvo_id`
+        que `/rpc/desbloquear` recebe, o nome público da outra parte e o instante do bloqueio. Do mais
+        recente para o mais antigo. Sem nenhum bloqueio, `200` com lista vazia, e não erro.
+
+        Nunca traz o `usuario_id` da outra parte (RN10): o `alvo_id` é o `id` do `PerfilPublico`, como
+        em `/rpc/bloquear`. Só aparecem bloqueios criados pelo chamador; bloqueio que a outra parte
+        criou contra ele não é listado, para não revelar quem o bloqueou.
+      x-requisitos: [RF26, RN10, UC17]
+      responses:
+        '200':
+          description: Bloqueios do chamador.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ItemBloqueio'
+              examples:
+                dois_bloqueios:
+                  value:
+                    - alvo_tipo: profissional
+                      alvo_id: 7c1d2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d
+                      nome: Carlos Mendes
+                      criado_em: '2026-11-03T14:20:00Z'
+                    - alvo_tipo: estabelecimento
+                      alvo_id: 0b8a7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+                      nome: Bar do Zé
+                      criado_em: '2026-10-28T22:05:00Z'
+                lista_vazia:
+                  value: []
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
+
+  /rpc/desbloquear:
+    post:
+      tags: [Confiança e direitos]
+      operationId: desbloquear
+      summary: Desfazer um bloqueio
+      description: |
+        Desfaz o bloqueio que o chamador criou contra a outra parte (decisão A8 da PO, RF26). A volta
+        é imediata e automática, como o bloqueio: as partes voltam a poder se cruzar em notificação,
+        lista e candidatura. Quando o chamador é membro de estabelecimento, desfaz o bloqueio para a
+        casa inteira, do mesmo jeito que `/rpc/bloquear` vale para as vagas do estabelecimento inteiro.
+
+        Idempotente: desbloquear quem já não está bloqueado devolve `200`, e não `404`.
+
+        Recusas: campo obrigatório ausente (`campo_obrigatorio`, com o nome do campo em `details`:
+        `alvo_tipo` ou `alvo_id`); valor recusado pela regra (`campo_invalido`, com o campo em
+        `details`: `alvo_tipo` fora do enum ou `alvo_id` não UUID). `404 nao_encontrado` quando o alvo
+        não existe ou não é visível para quem pede.
+      x-requisitos: [RF26, RN10, UC17]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [alvo_tipo, alvo_id]
+              properties:
+                alvo_tipo:
+                  $ref: '#/components/schemas/TipoDeAlvo'
+                alvo_id:
+                  description: O `id` do `PerfilPublico` da outra parte, como veio em `/rpc/listar_bloqueios`.
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: |
+            Bloqueio desfeito. Devolve o par recebido e o `criado_em` do bloqueio que deixou de valer.
+            Se já não havia bloqueio, a chamada repetida devolve o mesmo par com o instante da chamada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bloqueio'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
   /rpc/situacao_da_conta:
     get:
       tags: [Confiança e direitos]
@@ -5368,6 +5473,24 @@ components:
           $ref: '#/components/schemas/TipoDeAlvo'
         alvo_id:
           $ref: '#/components/schemas/Uuid'
+        criado_em:
+          $ref: '#/components/schemas/Instante'
+    ItemBloqueio:
+      type: object
+      required: [alvo_tipo, alvo_id, nome, criado_em]
+      description: |
+        Um bloqueio criado pelo chamador, como `/rpc/listar_bloqueios` o mostra. O par
+        `alvo_tipo` + `alvo_id` é o mesmo que `/rpc/bloquear` e `/rpc/desbloquear` recebem. Não traz o
+        id de conta da outra parte (RN10).
+      properties:
+        alvo_tipo:
+          $ref: '#/components/schemas/TipoDeAlvo'
+        alvo_id:
+          description: O `id` do `PerfilPublico` da outra parte.
+          $ref: '#/components/schemas/Uuid'
+        nome:
+          type: string
+          description: Nome público da outra parte, o mesmo de `PerfilPublico.nome`.
         criado_em:
           $ref: '#/components/schemas/Instante'
     SituacaoDaConta:
