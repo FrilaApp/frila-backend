@@ -7,6 +7,54 @@ e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR
 
 ## [Não lançado]
 
+## [1.1.1] - 2026-11-05
+
+Release de correção e de estrutura, consolidada do tronco `develop` em `78a03f3`. São **40 commits** desde a `backend-v1.1.0`, com **7 migrações novas** e **6 suítes pgTAP novas**. Duas frentes dominam: a estrutura da verificação progressiva de identidade (RN14), que nasce completa no banco mas **desligada** por falta de parecer jurídico, e o envio de push no `frila-prod`, que **não acontecia** porque nenhum job chamava a Edge Function.
+
+> **Nota de operação.** Antes de publicar esta versão no `frila-prod`, dois segredos novos precisam existir no Vault: `documento_pepper` e `storage_jwt_secret`. Sem eles, as funções de verificação de identidade recusam com `pepper_ausente` e `segredo_ausente` — recusa por desenho, para não gravar hash inútil nem emitir URL que o Storage rejeita. Nenhuma operação existente depende deles.
+
+### Adicionado
+- **Estrutura da verificação progressiva de identidade (RN14, cartão `aEqry9vB`, PR #398):**
+  - `supabase/migrations/20261104110000_verificacao_identidade.sql`: enum `public.status_verificacao` (`nao_exigida`, `pendente`, `em_analise`, `aprovada`, `rejeitada`), tabela `privado.verificacao_identidade` com RLS habilitado e sem política, coluna `identidade_verificada boolean not null default false` em `public.profissional` (o selo do nível 3), bucket privado `documentos-identidade` e a fila `pgmq` `expurgo_midia`.
+  - Número do documento guardado **só** como HMAC-SHA256 com *pepper* do Vault (`privado.documento_hmac`): CPF tem 11 dígitos, e hash sem segredo nesse espaço é invertível por força bruta. Deduplicação por índice parcial sobre o aprovado, não sobre a tentativa — barrar no envio diria a um fraudador qual documento já está em uso.
+  - **Expurgo de mídia em duas fases** (`privado.expurgar_midias_verificacao_identidade` e `privado.confirmar_expurgo_midia`): apagar a linha de `storage.objects` não apaga o byte no Storage, então o banco enfileira e quem remove é a Edge Function, que confirma depois. Reenfileira a cada 24 h sem confirmação e, da quinta tentativa em diante, registra em `privado.falha_execucao` — mídia vencida que não sai do bucket deixa de ser silêncio.
+  - `privado.executar_retencao_diaria()` passa a enfileirar o expurgo, sem job novo.
+- **As três RPCs da verificação de identidade (cartão `86CC7PW3`, PR #402, contrato 0.2.50):**
+  - `supabase/migrations/20261104130000_rpcs_verificacao_identidade_rn14.sql`: `public.minha_identidade_status()`, `public.solicitar_upload_verificacao(text)` e `public.confirmar_envio_verificacao()`.
+  - A URL assinada de upload é emitida em SQL, válida por 2 h, no formato que o Storage aceita (cabeçalho `{"alg":"HS256"}` e carga `{url, upsert, scope, iat, exp}` em HMAC-SHA256 com o segredo do projeto). O contrato não expõe `documento_hmac`, caminho de arquivo nem score.
+  - Recusas estáveis: `409 verificacao_indisponivel` (com `details` `em_analise`, `aprovada` ou `sem_envio_solicitado`), `422 evidencia_incompleta` nomeando a parte que falta, `422 campo_invalido` para documento fora de `rg`/`cnh`, `403 sem_permissao` para quem não é profissional e `401` para conta anonimizada. **Conta suspensa passa**: é ela que precisa enviar documento na apuração (RN13).
+- **Envio automático de push no `frila-prod` (cartão `hQDlvpHi`, PR #405):**
+  - `supabase/migrations/20261104140200_disparar_push_agendador.sql`: `privado.disparar_push()`, gatilho pós-insert e job `pg_cron` de um minuto. Medido no Prod: `cron.job` não tinha job nenhum chamando `enviar-push`, e as notificações ficavam em `pendente` para sempre.
+  - `supabase/migrations/20261104140100_expirar_notificacoes_pendentes_legadas.sql`: retira da fila as pendentes antigas (54 medidas no Prod) antes de o job ligar, para a plataforma não despejar de uma vez avisos de eventos que já passaram.
+
+### Corrigido
+- **`privado.despachar_vaga` realinhada com o repositório (PR #397):** a definição no `frila-prod` havia divergido do arquivo; `supabase/migrations/20261104100000_realinha_despachar_vaga_prod.sql` recoloca a versão do repositório, com a suíte `792_despachar_vaga_com_rodada.sql` cravando o comportamento.
+- **`privado.reivindicar_lote_push` devolve a `proxima_tentativa_em` de antes da reivindicação (PR #405):** a `20261018050000` avança o campo em 5 minutos como *lease* e devolvia o valor novo; a Edge Function `enviar-push`, que pula item com `proxima_tentativa_em` no futuro, descartava o próprio lote que acabara de reivindicar.
+- **`enviar-push` processa o lote reivindicado e pede entrega imediata (PR #405):** cabeçalhos APNs de `alert` corrigidos.
+- **`privado.executar_retencao_diaria()` voltou a purgar a telemetria de app:** a reprodução da função na migração da verificação de identidade partiu da definição original em vez da mais recente e apagou a chamada a `privado.limpar_eventos_app(90)`. A telemetria pararia de ser purgada em silêncio, com a rotina continuando a responder "ok"; o pgTAP `721` reprovou.
+- **RLS habilitado em `privado.verificacao_identidade`:** a tabela nasceu sem `relrowsecurity` e quebrou o invariante de 100 % do schema `privado` (testes `738` e `785`).
+
+### Alterado
+- **`public.contato_do_turno` marcada como deprecada no catálogo (issue #396, PR #399, contrato 0.2.49):** decisão de produto de 04/11/2026 — o contato não é trocado pelo app, o que sobrescreve a US13 e a RN10 e deixa a RN15 sem objeto. **Nenhum comportamento muda nesta versão:** a função segue respondendo para os apps já publicados, e `candidatar`, `escolher_candidato` e `meus_turnos` continuam entregando `contato` e `contato_visivel_ate`. Parar de entregá-los exige versão própria do contrato e corte por versão mínima de app, porque o app na loja ainda decodifica os dois como obrigatórios.
+- **Espelho do contrato nas versões 0.2.49 e 0.2.50** (`contrato/openapi.yaml`), com a soma regravada.
+- **Ferramentas legadas da Bancada removidas do backend (PR #401).**
+
+### Documentação
+- **Diretrizes operacionais do time, versão 4 (PR #400):** `AGENTS.md` passa a ser a fonte das regras e o `CLAUDE.md` fica enxuto.
+- **`docs/VerificacaoDeIdentidade.md` (PR #398):** o que existe e o que não existe, os prazos de retenção, a ordem do expurgo em duas fases e as consultas de mídia vencida que não saiu do bucket.
+
+### Testes
+- **Novas suítes pgTAP:** `151_contato_do_turno_deprecada.sql` (9 asserções, com arame de tropeço sobre a compatibilidade da 0.2.49), `792_despachar_vaga_com_rodada.sql`, `793_verificacao_identidade.sql` (59), `794_rpcs_verificacao_identidade.sql` (43), `795_expirar_notificacoes_legadas.sql` e `796_disparar_push.sql`.
+- **Censo e matriz atualizados:** `735_rpc_blindagem_global_catalogo.sql` (51 rotinas em `public`, 48 `SECURITY DEFINER`, 47 expostas a `authenticated`) e `786_matriz_autorizacao_papeis_rpc.sql` (47 RPCs e 196 asserções, com as três operações novas em todos os quatro papéis).
+- **Portões de contrato sincronizados:** as três operações entram em `VIGIADAS` com os dez pares de recusa que o contrato promete, com cenário real em `scripts/contrato-respostas.sql`; as fixturas sintéticas de `teste-contrato-responde.sh` e `teste-contrato-promete.sh` acompanham.
+- **Bomba-relógio de modo seleção desarmada em `480`, `481` e `630`:** `publicar_vaga` não passa `publicado_em` no insert, a coluna cai no `default now()` e ignora o `frila.agora` dos testes; o `check selecao_com_antecedencia` passou a reprovar os três arquivos a partir das 20:00 UTC de 04/11, sem ninguém ter mudado código. Os testes passam a fixar o default dentro da própria transação. **A correção definitiva é `publicar_vaga` passar `privado.agora()`**, e segue pendente.
+
+### Pendente para a próxima versão
+- Segredos `documento_pepper` e `storage_jwt_secret` no Vault de cada ambiente.
+- Edge Function que apaga a mídia no Storage e confirma o expurgo: sem ela o ciclo da RN14 não fecha, e nenhuma mídia deve ser enviada ao bucket.
+- Pareceres jurídicos que o contrato 0.2.50 registra como abertos (conservação do `documento_hmac` após pedido de eliminação, RIPD da biometria, cláusulas do DPA do fornecedor).
+- `publicar_vaga` passando `privado.agora()` em `publicado_em`.
+
 ## [1.1.0] - 2026-11-02
 
 Versão base do backend consolidada a partir do tronco `develop` para a release em produção (`frila-prod`).
