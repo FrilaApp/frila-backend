@@ -653,6 +653,7 @@ export async function processarEnvioPush(
   }
 
   let notificacoes: NotificacaoLinha[] = [];
+  let loteReivindicado = false;
 
   if (notificacaoId) {
     const res = await fetchFn(
@@ -672,6 +673,7 @@ export async function processarEnvioPush(
     if (sqlClient && sqlClient.reivindicarLotePendentes) {
       try {
         notificacoes = await sqlClient.reivindicarLotePendentes(limite);
+        loteReivindicado = true;
       } catch (err) {
         const errMensagem = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
         console.error("Erro ao reivindicar lote com SKIP LOCKED:", errMensagem);
@@ -726,8 +728,13 @@ export async function processarEnvioPush(
   }> = [];
 
   for (const n of notificacoes) {
-    // 0. Não reenvia antes do vencimento do backoff exponencial
-    if (n.proxima_tentativa_em && new Date(n.proxima_tentativa_em).getTime() > Date.now()) {
+    // 0. Não reenvia antes do vencimento do backoff exponencial. O lote reivindicado já
+    // passou por esse filtro no banco (proxima_tentativa_em <= agora) e a coluna agora guarda
+    // o lease, não um backoff: reavaliar aqui pularia todo item do lote.
+    if (
+      !loteReivindicado &&
+      n.proxima_tentativa_em && new Date(n.proxima_tentativa_em).getTime() > Date.now()
+    ) {
       relatorio.push({
         notificacao_id: n.id,
         status: "pendente",

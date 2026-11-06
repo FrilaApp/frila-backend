@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.49
+  version: 0.2.51
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -77,6 +77,7 @@ info:
     | 409 | `conta_existente`, `documento_ja_cadastrado` | Cadastro repetido |
     | 409 | `administrador_unico` | Exclusão de conta de quem é o único administrador (UC16) |
     | 409 | `perfil_ja_existe` | `criar_perfil_profissional` numa conta que já tem perfil. Conflito, e não sobrescrita: sobrescrever apagaria a grade de quem tocasse duas vezes no botão |
+    | 409 | `verificacao_indisponivel` | A verificação de identidade não aceita a ação agora; `details`: `em_analise` ou `aprovada` (pedir upload), `aprovada` ou `sem_envio_solicitado` (confirmar envio) (RN14) |
     | 409 | `contestacao_ja_aberta` | Já existe contestação para a suspensão em vigor ou para o despacho, em análise ou já respondida (RF24, RF27) |
     | 422 | `campo_obrigatorio` | Falta campo exigido; `details` diz qual (na vaga, RN02) |
     | 422 | `campo_invalido` | O campo veio, e o valor é recusado pela regra; `details` diz qual campo. Distinto de `campo_obrigatorio`, que é ausência — a tela destaca o mesmo campo, com texto diferente |
@@ -94,9 +95,49 @@ info:
     | 422 | `registro_no_futuro` | Instante de check-in ou check-out adiante do relógio do servidor. O relógio que vale é o do servidor, nunca o do aparelho |
     | 422 | `reabertura_antes_da_tolerancia` | Reabrir por atraso antes dos 15 minutos (D06) |
     | 422 | `sem_suspensao_ativa` | Contestação sem suspensão em vigor (RF24) |
+    | 422 | `evidencia_incompleta` | `confirmar_envio_verificacao` sem todas as partes no bucket; `details`: `frente`, `verso` ou `selfie`, a primeira que falta (RN14) |
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.51, de 05/11/2026.** Desbloquear e listar bloqueios (decisão A8 da PO, RF26, RN10).
+    Adição compatível: duas operações novas e um schema novo; nenhuma operação existente muda e
+    nenhum cliente publicado é afetado.
+
+    - **`GET /rpc/listar_bloqueios`** (`listarBloqueios`): devolve um array de `ItemBloqueio`
+      (`alvo_tipo`, `alvo_id`, `nome` e `criado_em`). Nunca expõe o `usuario_id` da outra parte
+      (RN10). Só lista os bloqueios criados pelo chamador.
+    - **`POST /rpc/desbloquear`** (`desbloquear`): recebe `alvo_tipo` e `alvo_id` e devolve
+      `Bloqueio`. Idempotente. Quando o chamador é membro de estabelecimento, desfaz o bloqueio para
+      a casa inteira.
+    - **Erros:** `401`, `403 sem_permissao` com `details: conta_suspensa`, `404 nao_encontrado` e
+      `422` (`campo_obrigatorio`, `campo_invalido`) nas condições descritas em cada operação. Nenhum
+      código novo.
+
+    **Versão 0.2.50, de 04/11/2026.** Verificação de identidade (RN14), as três operações que o
+    profissional chama sob exigência formal da moderação em apuração de denúncia grave (RN13).
+    Adição compatível: nenhuma operação existente muda e nenhum cliente publicado é afetado. O
+    desenho está em `arquitetura/desenho-verificacao-progressiva-rn14.md` e os requisitos em
+    `requisitos/verificacao-progressiva-rn14.md` (seção 7.1).
+
+    - **`GET /rpc/minha_identidade_status`** (`minhaIdentidadeStatus`): devolve
+      `StatusVerificacao` (`status_verificacao`, `motivo`, `prazo_envio_ate`,
+      `identidade_verificada`). Toda conta tem resposta; `nao_exigida` é o estado inicial.
+    - **`POST /rpc/solicitar_upload_verificacao`** (`solicitarUploadVerificacao`): devolve
+      `UploadVerificacao`, URLs assinadas de upload para o bucket privado `documentos-identidade`,
+      **válidas por 2 horas**.
+    - **`POST /rpc/confirmar_envio_verificacao`** (`confirmarEnvioVerificacao`): confirma o upload e
+      move a verificação para `em_analise`. Idempotente.
+    - **Erros novos:** `409 verificacao_indisponivel` e `422 evidencia_incompleta`, com os
+      `details` descritos na tabela de erros. `401` e `403 sem_permissao` seguem o padrão.
+    - **O que o contrato não expõe:** `documento_hmac`, caminho de arquivo no Storage e score
+      biométrico (VP-71).
+    - **Fica para versão própria:** `identidade_verificada` em `PerfilPublicoProfissional` e
+      `PerfilProfissional` (selo no perfil e na lista de candidatos), e as operações do outro
+      lado, que a moderação usa (`exigir_verificacao`), por não serem chamadas pelo app.
+    - **Pendência de produto e jurídico:** os requisitos condicionam a implementação dos níveis N2
+      e N3 a respostas ainda abertas (itens 1, 2 e 4 da seção 6). O contrato descreve a forma da
+      API e não substitui essa liberação.
 
     **Versão 0.2.49, de 04/11/2026.** Contato fora do app, Fase 2 (issue #396 do backend), lado do
     contrato. Decisão de produto de 04/11/2026: a troca de contatos entre contratante e contratado
@@ -1242,7 +1283,7 @@ tags:
   - name: Painel do gestor
     description: Acompanhamento de vagas e turnos pelo estabelecimento, no app e na web (RF20, UC07).
   - name: Confiança e direitos
-    description: Denúncia, bloqueio, suspensão e contestação (RF24, RF26, RN13).
+    description: Denúncia, bloqueio, suspensão, contestação e verificação de identidade (RF24, RF26, RN13, RN14).
   - name: Dispositivos
     description: Registro do token de push (FCM) de cada aparelho.
   - name: Exportação e conta
@@ -3252,6 +3293,97 @@ paths:
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
+  /rpc/listar_bloqueios:
+    get:
+      tags: [Confiança e direitos]
+      operationId: listarBloqueios
+      summary: Listar os bloqueios que o chamador criou
+      description: |
+        Devolve os bloqueios criados por quem chama, para que a tela de bloqueados possa mostrá-los e
+        oferecer o desbloqueio (decisão A8 da PO, RF26). Cada item traz o par `alvo_tipo` + `alvo_id`
+        que `/rpc/desbloquear` recebe, o nome público da outra parte e o instante do bloqueio. Do mais
+        recente para o mais antigo. Sem nenhum bloqueio, `200` com lista vazia, e não erro.
+
+        Nunca traz o `usuario_id` da outra parte (RN10): o `alvo_id` é o `id` do `PerfilPublico`, como
+        em `/rpc/bloquear`. Só aparecem bloqueios criados pelo chamador; bloqueio que a outra parte
+        criou contra ele não é listado, para não revelar quem o bloqueou.
+      x-requisitos: [RF26, RN10, UC17]
+      responses:
+        '200':
+          description: Bloqueios do chamador.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ItemBloqueio'
+              examples:
+                dois_bloqueios:
+                  value:
+                    - alvo_tipo: profissional
+                      alvo_id: 7c1d2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d
+                      nome: Carlos Mendes
+                      criado_em: '2026-11-03T14:20:00Z'
+                    - alvo_tipo: estabelecimento
+                      alvo_id: 0b8a7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+                      nome: Bar do Zé
+                      criado_em: '2026-10-28T22:05:00Z'
+                lista_vazia:
+                  value: []
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
+
+  /rpc/desbloquear:
+    post:
+      tags: [Confiança e direitos]
+      operationId: desbloquear
+      summary: Desfazer um bloqueio
+      description: |
+        Desfaz o bloqueio que o chamador criou contra a outra parte (decisão A8 da PO, RF26). A volta
+        é imediata e automática, como o bloqueio: as partes voltam a poder se cruzar em notificação,
+        lista e candidatura. Quando o chamador é membro de estabelecimento, desfaz o bloqueio para a
+        casa inteira, do mesmo jeito que `/rpc/bloquear` vale para as vagas do estabelecimento inteiro.
+
+        Idempotente: desbloquear quem já não está bloqueado devolve `200`, e não `404`.
+
+        Recusas: campo obrigatório ausente (`campo_obrigatorio`, com o nome do campo em `details`:
+        `alvo_tipo` ou `alvo_id`); valor recusado pela regra (`campo_invalido`, com o campo em
+        `details`: `alvo_tipo` fora do enum ou `alvo_id` não UUID). `404 nao_encontrado` quando o alvo
+        não existe ou não é visível para quem pede.
+      x-requisitos: [RF26, RN10, UC17]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [alvo_tipo, alvo_id]
+              properties:
+                alvo_tipo:
+                  $ref: '#/components/schemas/TipoDeAlvo'
+                alvo_id:
+                  description: O `id` do `PerfilPublico` da outra parte, como veio em `/rpc/listar_bloqueios`.
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: |
+            Bloqueio desfeito. Devolve o par recebido e o `criado_em` do bloqueio que deixou de valer.
+            Se já não havia bloqueio, a chamada repetida devolve o mesmo par com o instante da chamada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bloqueio'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
   /rpc/situacao_da_conta:
     get:
       tags: [Confiança e direitos]
@@ -3311,6 +3443,156 @@ paths:
                 $ref: '#/components/schemas/Protocolo'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/minha_identidade_status:
+    get:
+      tags: [Confiança e direitos]
+      operationId: minhaIdentidadeStatus
+      summary: Estado da verificação de identidade do profissional autenticado
+      description: |
+        Devolve o estado da verificação de identidade (RN14) do profissional que chama: se há
+        exigência aberta, com que motivo, até quando, e se o selo está ativo. É leitura e não tem
+        efeito colateral; por isso é `GET`, como as demais leituras por função do contrato.
+
+        Só olha para a conta de quem chama. Conta que não é de profissional recebe
+        `403 sem_permissao` (RF21). Conta encerrada ou anonimizada recebe `401 nao_autenticado`
+        (RF25).
+
+        Toda conta tem uma resposta: `nao_exigida` é o estado inicial, com `motivo` e
+        `prazo_envio_ate` nulos.
+      x-requisitos: [RN13, RN14, RN15]
+      responses:
+        '200':
+          description: Estado atual da verificação.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusVerificacao'
+              examples:
+                nao_exigida:
+                  summary: Estado inicial, sem exigência
+                  value:
+                    status_verificacao: nao_exigida
+                    motivo: null
+                    prazo_envio_ate: null
+                    identidade_verificada: false
+                pendente:
+                  summary: Exigência aberta pela moderação
+                  value:
+                    status_verificacao: pendente
+                    motivo: Apuração de denúncia grave
+                    prazo_envio_ate: '2026-11-18T23:59:59Z'
+                    identidade_verificada: false
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
+  /rpc/solicitar_upload_verificacao:
+    post:
+      tags: [Confiança e direitos]
+      operationId: solicitarUploadVerificacao
+      summary: Pedir as URLs assinadas para enviar as evidências da verificação
+      description: |
+        Começa o envio das evidências da verificação de identidade (RN14), voluntário (selo) ou em
+        atendimento a uma exigência formal. Devolve uma URL assinada de upload por parte do
+        documento, para o bucket privado `documentos-identidade`, **válidas por 2 horas**
+        (`expira_em`). Passado esse prazo, o cliente pede de novo.
+
+        O bucket é privado e o app só escreve: leitura é exclusiva da moderação. O aplicativo nunca
+        fala direto com o fornecedor de verificação; se houver um, a integração passa por uma
+        função interna do servidor.
+
+        Só o profissional que chama pode pedir, para a própria conta (`403 sem_permissao` para
+        qualquer outro perfil, RF21). Aceita `nao_exigida`, `pendente` e `rejeitada` (novo envio).
+        Com a análise em curso ou a verificação já aprovada, `409 verificacao_indisponivel`, com
+        `details` `em_analise` ou `aprovada`. Pedir de novo antes de confirmar o envio é permitido e
+        devolve URLs novas.
+
+        Nenhum dado de verificação entra em log, fixture ou captura de tela (RN15).
+      x-requisitos: [RN13, RN14, RN15]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [documento_tipo]
+              properties:
+                documento_tipo:
+                  type: string
+                  enum: [rg, cnh]
+                  description: Tipo do documento que será enviado.
+      responses:
+        '200':
+          description: URLs assinadas emitidas.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadVerificacao'
+              examples:
+                rg:
+                  value:
+                    expira_em: '2026-11-05T14:00:00Z'
+                    partes:
+                      - parte: frente
+                        url: https://frila.supabase.co/storage/v1/object/upload/sign/documentos-identidade/exemplo-frente?token=exemplo
+                      - parte: verso
+                        url: https://frila.supabase.co/storage/v1/object/upload/sign/documentos-identidade/exemplo-verso?token=exemplo
+                      - parte: selfie
+                        url: https://frila.supabase.co/storage/v1/object/upload/sign/documentos-identidade/exemplo-selfie?token=exemplo
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/confirmar_envio_verificacao:
+    post:
+      tags: [Confiança e direitos]
+      operationId: confirmarEnvioVerificacao
+      summary: Avisar que as evidências subiram e a análise pode começar
+      description: |
+        Confirma que o upload das evidências terminou (RN14) e move a verificação para
+        `em_analise`. A partir daí a análise é da moderação humana; não há decisão automática
+        sobre a conta (RN13).
+
+        O servidor confere que todas as partes pedidas em `solicitar_upload_verificacao` chegaram
+        ao bucket. Se alguma faltar, `422 evidencia_incompleta`, com `details` dizendo a parte
+        (`frente`, `verso` ou `selfie`). Sem ter pedido o upload antes, `409
+        verificacao_indisponivel` com `details: sem_envio_solicitado`; com a verificação já
+        `aprovada`, o mesmo código com `details: aprovada`.
+
+        Idempotente: confirmar de novo com a verificação já em `em_analise` devolve o mesmo
+        estado, sem reabrir a análise.
+
+        Só o profissional que chama, para a própria conta (`403 sem_permissao`, RF21).
+      x-requisitos: [RN13, RN14, RN15]
+      responses:
+        '200':
+          description: Envio confirmado; a verificação está em análise.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusVerificacao'
+              examples:
+                em_analise:
+                  value:
+                    status_verificacao: em_analise
+                    motivo: Apuração de denúncia grave
+                    prazo_envio_ate: '2026-11-18T23:59:59Z'
+                    identidade_verificada: false
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
         '409':
           $ref: '#/components/responses/Conflito'
         '422':
@@ -3824,6 +4106,12 @@ components:
                 message: checkin_pendente
                 details: null
                 hint: null
+            verificacao_indisponivel:
+              value:
+                code: verificacao_indisponivel
+                message: verificacao_indisponivel
+                details: em_analise
+                hint: null
     RegraRecusou:
       description: Uma regra de negócio recusou a operação.
       content:
@@ -3831,6 +4119,12 @@ components:
           schema:
             $ref: '#/components/schemas/Erro'
           examples:
+            evidencia_incompleta:
+              value:
+                code: evidencia_incompleta
+                message: evidencia_incompleta
+                details: verso
+                hint: null
             inelegivel:
               value:
                 code: inelegivel
@@ -5082,6 +5376,69 @@ components:
 
     # ── Confiança e direitos
 
+    StatusVerificacao:
+      type: object
+      required: [status_verificacao, motivo, prazo_envio_ate, identidade_verificada]
+      description: |
+        Estado da verificação de identidade da conta (RN14). O cliente vê estado e motivo, nunca
+        evidência: o contrato não expõe `documento_hmac`, caminho de arquivo no Storage nem score
+        biométrico.
+      properties:
+        status_verificacao:
+          type: string
+          enum: [nao_exigida, pendente, em_analise, aprovada, rejeitada]
+          description: |
+            `nao_exigida` é o estado inicial de toda conta; nenhuma conta nasce `pendente`.
+            `pendente` é exigência formal aberta pela moderação em apuração de denúncia grave
+            (RN13). `em_analise` vale depois de `confirmar_envio_verificacao`. `aprovada` e
+            `rejeitada` são o desfecho. Nenhum dos cinco estados é "suspensa": suspensão de conta
+            é assunto da RN13 e continua em `situacao_da_conta`.
+        motivo:
+          description: |
+            Motivo da exigência, quando houver. Nulo em `nao_exigida`. O cliente mostra o motivo,
+            mas não decide nada a partir dele.
+          oneOf:
+            - type: string
+            - type: 'null'
+        prazo_envio_ate:
+          description: |
+            Até quando o envio das evidências é esperado. **Informativo:** o cliente não decide
+            nada a partir dele, porque vencer o prazo não tem consequência automática. Nulo
+            quando não há exigência aberta.
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
+        identidade_verificada:
+          type: boolean
+          description: Verdadeiro quando o selo "Identidade Verificada" está ativo para esta conta.
+          example: false
+    UploadVerificacao:
+      type: object
+      required: [expira_em, partes]
+      description: |
+        URLs assinadas de **upload** para as evidências da verificação de identidade (RN14), no
+        bucket privado `documentos-identidade`. Cada URL é opaca para o cliente: o contrato não
+        expõe o caminho do arquivo no Storage.
+      properties:
+        expira_em:
+          description: Instante em que as URLs deixam de valer, duas horas depois de emitidas.
+          $ref: '#/components/schemas/Instante'
+        partes:
+          type: array
+          description: |
+            Uma URL por parte a enviar: `frente`, `verso` e `selfie`. O cliente envia a imagem
+            na URL da parte, até 5 MB por arquivo. A escrita só é aceita dentro da URL assinada,
+            no caminho da própria conta.
+          items:
+            type: object
+            required: [parte, url]
+            properties:
+              parte:
+                type: string
+                enum: [frente, verso, selfie]
+              url:
+                type: string
+                format: uri
     Protocolo:
       type: object
       required: [ocorrencia_id, tipo, criada_em, prazo_resposta_ate]
@@ -5116,6 +5473,24 @@ components:
           $ref: '#/components/schemas/TipoDeAlvo'
         alvo_id:
           $ref: '#/components/schemas/Uuid'
+        criado_em:
+          $ref: '#/components/schemas/Instante'
+    ItemBloqueio:
+      type: object
+      required: [alvo_tipo, alvo_id, nome, criado_em]
+      description: |
+        Um bloqueio criado pelo chamador, como `/rpc/listar_bloqueios` o mostra. O par
+        `alvo_tipo` + `alvo_id` é o mesmo que `/rpc/bloquear` e `/rpc/desbloquear` recebem. Não traz o
+        id de conta da outra parte (RN10).
+      properties:
+        alvo_tipo:
+          $ref: '#/components/schemas/TipoDeAlvo'
+        alvo_id:
+          description: O `id` do `PerfilPublico` da outra parte.
+          $ref: '#/components/schemas/Uuid'
+        nome:
+          type: string
+          description: Nome público da outra parte, o mesmo de `PerfilPublico.nome`.
         criado_em:
           $ref: '#/components/schemas/Instante'
     SituacaoDaConta:

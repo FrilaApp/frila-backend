@@ -460,6 +460,14 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
+# Expurgo das mídias de verificação de identidade (RN14 · cartão ZZ0WTtu4).
+# Invocada pelo agendador, que manda o segredo no cabeçalho x-agendador-secret (validado na
+# própria Edge Function). verify_jwt fica desligado porque quem chama é o Postgres, que não
+# tem sessão de usuário; com ele ligado, o gateway recusa a chamada antes de a função rodar.
+[functions.expurgar-midias]
+enabled = true
+verify_jwt = false
+
 
 
 [analytics]
