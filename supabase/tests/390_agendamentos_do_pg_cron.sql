@@ -118,9 +118,14 @@ select set_eq(
     -- Varre saúde, filas, falhas e emite alertas à equipe (cartão 5bPJvMIo).
     'verificar_saude',
     -- Purga periódica de notificações com mais de 60 dias (K-001, LGPD art. 37).
-    'limpar_notificacoes_antigas'
+    'limpar_notificacoes_antigas',
+    -- Acorda a Edge Function `enviar-push` quando há notificação pendente (cartão hQDlvpHi).
+    'processar_fila_push',
+    -- Dispara limpar-contas-orfas e expurgar-midias por pg_net (cartão bebr4VIE).
+    'limpar_contas_orfas_diaria',
+    'expurgar_midias_diaria'
   ],
-  'Os jobs agendados são exatamente os quatorze conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os dezessete conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;
