@@ -387,3 +387,6 @@ jobs:
       - name: Testa empacotamento portátil com GNU tar
         run: ./scripts/teste-backup-empacotamento.sh
 
+      - name: Testa guardas e projeções de limite de armazenamento
+        run: ./scripts/teste-verifica-limite-backup.sh
+
