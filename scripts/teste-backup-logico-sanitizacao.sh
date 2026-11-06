@@ -1,6 +1,7 @@
 #!/bin/bash
-# Teste automatizado de sanitização de stderr e relatório de erro do backup lógico.
-# Valida que credenciais (URLs, senhas, parâmetros) nunca vazam no stderr ou no GITHUB_STEP_SUMMARY.
+# Teste automatizado de classificação fechada de erros e relatório seguro do backup lógico.
+# Opção A: nenhuma linha de stderr livre é exposta no console, no GITHUB_STEP_SUMMARY ou em artefatos.
+# Valida contra 6 vetores de vazamento sintéticos e garante grep -F negativo para todos os tokens.
 set -Eeuo pipefail
 umask 077
 export LC_ALL=C
@@ -21,87 +22,124 @@ falhar() {
   exit 1
 }
 
-printf '=== Teste de Sanitização de Erros do Backup Lógico ===\n'
+printf '=== Teste de Classificação Fechada de Erros do Backup Lógico ===\n'
 
-diretorio_teste=$(mktemp -d "${TMPDIR:-/tmp}/frila-teste-backup-sanitizacao.XXXXXX")
+diretorio_teste=$(mktemp -d "${TMPDIR:-/tmp}/frila-teste-backup-classificacao.XXXXXX")
 script_backup="scripts/backup-logico.sh"
 [[ -f "$script_backup" ]] || falhar "Script $script_backup não encontrado."
 
-# 1. Validação unitária da função de sanitização extraída do script real
-printf '1. Validando função de sanitização com credenciais sintéticas...\n'
+# 1. Carrega função classificar_erro diretamente do script
+eval "$(sed -n '/^classificar_erro() {/,/^}/p' "$script_backup")"
 
-url_sensivel="postgresql://backup_ro:SenhaSuperSecreta%23123@aws-0-sa-east-1.pooler.supabase.com:5432/postgres"
-senha_pura="SenhaSuperSecreta%23123"
+# 2. Testes unitários com entradas sintéticas contra vetores de vazamento
+printf '1. Validando classificação fechada contra vetores de vazamento sintéticos...\n'
 
-eval "$(sed -n '/^sanitizar_texto() {/,/^}/p' "$script_backup")"
+# Vetor 1: IPv4 sem parênteses (libpq novo)
+printf '   -> Vetor 1: IPv4 sem parênteses (libpq novo)...\n'
+err_ipv4='psql: error: connection to server at "54.232.123.45", port 5432 failed: Connection refused'
+res_ipv4=$(classificar_erro "$err_ipv4")
+cod_ipv4="${res_ipv4%%|*}"
+msg_ipv4="${res_ipv4#*|}"
+[[ "$cod_ipv4" == "host_inalcancavel" ]] || falhar "Vetor 1: esperado host_inalcancavel, obteve $cod_ipv4."
+[[ -n "$msg_ipv4" ]] || falhar "Vetor 1: mensagem vazia."
+if printf '%s\n' "$res_ipv4" | grep -F -q "54.232.123.45"; then
+  falhar "Vetor 1: IPv4 vazou na saída classificada."
+fi
+printf '      ✓ Código: host_inalcancavel; IPv4 54.232.123.45 ausente (grep -F negativo).\n'
 
-# Caso 1.1: URL completa em mensagem de erro
-saida_1=$(BACKUP_DB_URL="$url_sensivel" sanitizar_texto "pg_dump: error: connection to database \"$url_sensivel\" failed")
-if [[ "$saida_1" == *"$senha_pura"* ]]; then
-  falhar "Senha pura vazou na saída sanitizada (caso 1.1)."
+# Vetor 2: IPv6
+printf '   -> Vetor 2: Endereço IPv6...\n'
+err_ipv6='psql: error: connection to server at "2804:14d:5c73:8900::1", port 5432 failed: Connection refused'
+res_ipv6=$(classificar_erro "$err_ipv6")
+cod_ipv6="${res_ipv6%%|*}"
+[[ "$cod_ipv6" == "host_inalcancavel" ]] || falhar "Vetor 2: esperado host_inalcancavel, obteve $cod_ipv6."
+if printf '%s\n' "$res_ipv6" | grep -F -q "2804:14d:5c73:8900::1"; then
+  falhar "Vetor 2: IPv6 vazou na saída classificada."
 fi
-if [[ "$saida_1" == *"aws-0-sa-east-1.pooler.supabase.com"* ]]; then
-  falhar "Host sensível vazou na saída sanitizada (caso 1.1)."
-fi
-if [[ "$saida_1" != *"[REDACTED_DB_URL]"* && "$saida_1" != *"[REDACTED"* ]]; then
-  falhar "URL não foi devidamente redigida (caso 1.1)."
-fi
-printf '   ✓ Caso 1.1: URL PostgreSQL sanitizada sem vazamento de senha ou host.\n'
+printf '      ✓ Código: host_inalcancavel; IPv6 ausente (grep -F negativo).\n'
 
-# Caso 1.2: Parâmetros password= e host= isolados
-saida_2=$(BACKUP_DB_URL="$url_sensivel" sanitizar_texto "connection failed: password=SenhaSuperSecreta%23123 host=aws.pooler")
-if [[ "$saida_2" == *"$senha_pura"* ]]; then
-  falhar "Senha pura vazou em parâmetro password= (caso 1.2)."
+# Vetor 3: Project ref do Supabase em postgres.PROJECT_REF
+printf '   -> Vetor 3: Project ref do Supabase (postgres.PROJECT_REF)...\n'
+err_proj='FATAL: password authentication failed for user "postgres.abcdefghijklmnop"'
+res_proj=$(classificar_erro "$err_proj")
+cod_proj="${res_proj%%|*}"
+[[ "$cod_proj" == "autenticacao_recusada" ]] || falhar "Vetor 3: esperado autenticacao_recusada, obteve $cod_proj."
+if printf '%s\n' "$res_proj" | grep -F -q "abcdefghijklmnop"; then
+  falhar "Vetor 3: project ref vazou na saída classificada."
 fi
-if [[ "$saida_2" == *"aws.pooler"* ]]; then
-  falhar "Host vazou em parâmetro host= (caso 1.2)."
-fi
-if [[ "$saida_2" != *"password=[REDACTED]"* ]]; then
-  falhar "Parâmetro password=[REDACTED] não aplicado (caso 1.2)."
-fi
-if [[ "$saida_2" != *"host=[REDACTED_HOST]"* ]]; then
-  falhar "Parâmetro host=[REDACTED_HOST] não aplicado (caso 1.2)."
-fi
-printf '   ✓ Caso 1.2: Parâmetros password= e host= mascarados com sucesso.\n'
+printf '      ✓ Código: autenticacao_recusada; project ref ausente (grep -F negativo).\n'
 
-# Caso 1.3: Senha literal isolada no corpo de uma mensagem
-saida_3=$(BACKUP_DB_URL="$url_sensivel" sanitizar_texto "fatal error: token SenhaSuperSecreta%23123 unexpected")
-if [[ "$saida_3" == *"$senha_pura"* ]]; then
-  falhar "Senha pura vazou no caso de ocorrência literal (caso 1.3)."
+# Vetor 4: Senha URL-encoded decodificada pelo psql
+printf '   -> Vetor 4: Senha decodificada pelo cliente psql...\n'
+err_senha='FATAL: password authentication failed for user "backup_ro": token "SenhaDecodificada@123#ComArroba" unexpected'
+res_senha=$(classificar_erro "$err_senha")
+cod_senha="${res_senha%%|*}"
+[[ "$cod_senha" == "autenticacao_recusada" ]] || falhar "Vetor 4: esperado autenticacao_recusada, obteve $cod_senha."
+if printf '%s\n' "$res_senha" | grep -F -q "SenhaDecodificada@123#ComArroba"; then
+  falhar "Vetor 4: senha decodificada vazou na saída classificada."
 fi
-if [[ "$saida_3" != *"[REDACTED_PASSWORD]"* ]]; then
-  falhar "Senha literal não foi substituída por [REDACTED_PASSWORD] (caso 1.3)."
-fi
-printf '   ✓ Caso 1.3: Ocorrência literal da senha mascarada com [REDACTED_PASSWORD].\n'
+printf '      ✓ Código: autenticacao_recusada; senha decodificada ausente (grep -F negativo).\n'
 
-# Caso 1.4: Formato user:password@host genérico
-saida_4=$(sanitizar_texto "error connecting to admin_user:p%40ssw0rd!@10.0.0.1:5432/db")
-if [[ "$saida_4" == *"p%40ssw0rd!"* ]]; then
-  falhar "Senha genérica vazou (caso 1.4)."
+# Vetor 5: Host com maiúsculas
+printf '   -> Vetor 5: Hostname com maiúsculas...\n'
+err_host='could not translate host name "AWS-0-SA-EAST-1.POOLER.SUPABASE.COM" to address: Name or service not known'
+res_host=$(classificar_erro "$err_host")
+cod_host="${res_host%%|*}"
+[[ "$cod_host" == "host_inalcancavel" ]] || falhar "Vetor 5: esperado host_inalcancavel, obteve $cod_host."
+if printf '%s\n' "$res_host" | grep -F -q "AWS-0-SA-EAST-1.POOLER.SUPABASE.COM"; then
+  falhar "Vetor 5: host com maiúsculas vazou na saída classificada."
 fi
-if [[ "$saida_4" == *"10.0.0.1"* ]]; then
-  falhar "Host genérico vazou (caso 1.4)."
-fi
-if [[ "$saida_4" != *"[REDACTED_AUTH]@[REDACTED_HOST]:5432/db"* ]]; then
-  falhar "Autoridade user:password@host não foi sanitizada (caso 1.4)."
-fi
-printf '   ✓ Caso 1.4: user:password@host genérico sanitizado sem vazar senha ou host.\n'
+printf '      ✓ Código: host_inalcancavel; host maiúsculo ausente (grep -F negativo).\n'
 
-# Caso 1.5: Erro de conexão com servidor e IP resolvido em parênteses
-saida_5=$(BACKUP_DB_URL="$url_sensivel" sanitizar_texto "pg_dump: error: connection to server at \"aws-0-sa-east-1.pooler.supabase.com\" (18.231.10.20), port 5432 failed: timeout")
-if [[ "$saida_5" == *"aws-0-sa-east-1.pooler.supabase.com"* ]]; then
-  falhar "Host do servidor vazou na mensagem de erro (caso 1.5)."
+# Vetor 6: Nomes de tabela/coluna em DETAIL e HINT
+printf '   -> Vetor 6: Nomes de tabela e coluna em DETAIL/HINT...\n'
+err_detalhe=$(printf 'ERROR: permission denied for table "usuarios_privados"\nDETAIL: User backup_ro does not have SELECT on column "cpf_criptografado"\nHINT: Check role privileges in table "usuarios_privados"')
+res_detalhe=$(classificar_erro "$err_detalhe")
+cod_detalhe="${res_detalhe%%|*}"
+[[ "$cod_detalhe" == "permissao_negada" ]] || falhar "Vetor 6: esperado permissao_negada, obteve $cod_detalhe."
+if printf '%s\n' "$res_detalhe" | grep -F -q "usuarios_privados"; then
+  falhar "Vetor 6: nome de tabela vazou na saída classificada."
 fi
-if [[ "$saida_5" == *"18.231.10.20"* ]]; then
-  falhar "IP do servidor vazou na mensagem de erro (caso 1.5)."
+if printf '%s\n' "$res_detalhe" | grep -F -q "cpf_criptografado"; then
+  falhar "Vetor 6: nome de coluna vazou na saída classificada."
 fi
-if [[ "$saida_5" != *"server at \"[REDACTED_HOST]\" ([REDACTED_IP])"* ]]; then
-  falhar "Host ou IP resolvido não foram substituídos por marcadores (caso 1.5)."
-fi
-printf '   ✓ Caso 1.5: Erro com server at host e IP resolvido mascarados.\n'
+printf '      ✓ Código: permissao_negada; tabelas/colunas ausentes (grep -F negativo).\n'
 
-# 2. Teste integrado simulando falha do pg_dump e registro no GITHUB_STEP_SUMMARY
-printf '2. Testando integração com GITHUB_STEP_SUMMARY e captura de erro...\n'
+# Vetor 7: Código "outro" para erro não catalogado
+printf '   -> Vetor 7: Código "outro" para erro desconhecido...\n'
+err_outro='pg_dump: error: unexpected internal system malfunction 0xDEADBEEF in core engine'
+res_outro=$(classificar_erro "$err_outro")
+cod_outro="${res_outro%%|*}"
+msg_outro="${res_outro#*|}"
+[[ "$cod_outro" == "outro" ]] || falhar "Vetor 7: esperado código outro, obteve $cod_outro."
+[[ "$msg_outro" == "Erro não classificado durante a execução do pg_dump." ]] || falhar "Vetor 7: mensagem incorreta."
+if printf '%s\n' "$res_outro" | grep -F -q "0xDEADBEEF"; then
+  falhar "Vetor 7: token do erro vazou na saída classificada."
+fi
+printf '      ✓ Código: outro; mensagem fixa correta; token 0xDEADBEEF ausente (grep -F negativo).\n'
+
+# 3. Validação dos demais códigos da lista fixa
+printf '2. Validando demais categorias da lista fechada...\n'
+
+res_timeout=$(classificar_erro 'canceling statement due to statement timeout')
+[[ "${res_timeout%%|*}" == "timeout_conexao" ]] || falhar "Falha ao classificar timeout_conexao."
+
+res_ssl=$(classificar_erro 'server does not support SSL, but SSL was required')
+[[ "${res_ssl%%|*}" == "ssl_exigido" ]] || falhar "Falha ao classificar ssl_exigido."
+
+res_disco=$(classificar_erro 'pg_dump: error: could not write to output file: No space left on device')
+[[ "${res_disco%%|*}" == "espaco_em_disco" ]] || falhar "Falha ao classificar espaco_em_disco."
+
+res_ver=$(classificar_erro 'pg_dump: error: server version mismatch: 17 vs 16')
+[[ "${res_ver%%|*}" == "versao_incompativel" ]] || falhar "Falha ao classificar versao_incompativel."
+
+res_snap=$(classificar_erro 'ERROR: exported snapshot "00000003-00000001-1" does not exist')
+[[ "${res_snap%%|*}" == "snapshot_indisponivel" ]] || falhar "Falha ao classificar snapshot_indisponivel."
+
+printf '   ✓ Todas as categorias fechadas mapeadas com sucesso (timeout, ssl, disco, versao, snapshot).\n'
+
+# 4. Teste integrado simulando falha do pg_dump e registro seguro no GITHUB_STEP_SUMMARY
+printf '3. Testando integração com execução real, stderr seguro e GITHUB_STEP_SUMMARY...\n'
 
 arquivo_summary="$diretorio_teste/step_summary.md"
 export GITHUB_STEP_SUMMARY="$arquivo_summary"
@@ -113,17 +151,13 @@ mkdir -p "$pasta_backup"
 bin_mock="$diretorio_teste/bin"
 mkdir -p "$bin_mock"
 
-# Cria mock de psql que executa normalmente para exportar versão e snapshot, mas falha no pg_dump
 cat << 'EOF' > "$bin_mock/psql"
 #!/bin/bash
 if [[ "$*" == *"server_version_num"* ]]; then
   printf '170006\n'
   exit 0
 fi
-# Quando chamado no bloco de dump, simula execução do script SQL
-# Cria psql.err se necessário ou deixa pg_dump falhar
 if [[ -n "${BACKUP_WORK_DIR:-}" ]]; then
-  # Executa o comando \! pg_dump que foi passado
   export BACKUP_SNAPSHOT="00000003-00000001-1"
   pg_dump --dbname "$BACKUP_DB_URL" 2>"$BACKUP_WORK_DIR/pg_dump.err" || true
 fi
@@ -131,21 +165,22 @@ exit 0
 EOF
 chmod +x "$bin_mock/psql"
 
-# Cria mock de pg_dump que simula falha com erro contendo credenciais
-cat << EOF > "$bin_mock/pg_dump"
+# pg_dump mock emite stderr com múltiplos vetores de vazamento juntos
+cat << 'EOF' > "$bin_mock/pg_dump"
 #!/bin/bash
-if [[ "\$*" == *"--version"* ]]; then
+if [[ "$*" == *"--version"* ]]; then
   printf 'pg_dump (PostgreSQL) 17.6\n'
   exit 0
 fi
-# Simula erro de permissão com URL e senha no stderr
-printf 'pg_dump: error: connection to database "%s" failed: FATAL: password authentication failed for user "backup_ro"\n' "\$BACKUP_DB_URL" >&2
-printf 'pg_dump: error: query failed: ERROR: permission denied for table "segredos"\n' >&2
+printf 'pg_dump: error: connection to server at "54.232.123.45", port 5432 failed\n' >&2
+printf 'FATAL: password authentication failed for user "postgres.abcdefghijklmnop"\n' >&2
+printf 'psql: error: token "SenhaDecodificada@123#ComArroba" unexpected\n' >&2
+printf 'ERROR: permission denied for table "usuarios_privados"\n' >&2
+printf 'DETAIL: User backup_ro does not have SELECT on column "cpf_criptografado"\n' >&2
 exit 1
 EOF
 chmod +x "$bin_mock/pg_dump"
 
-# Cria mock de age que responde à versão e cria arquivo de saída solicitado
 cat << 'EOF' > "$bin_mock/age"
 #!/bin/bash
 if [[ "$*" == *"--version"* ]]; then
@@ -165,7 +200,7 @@ chmod +x "$bin_mock/age"
 
 PATH="$bin_mock:$PATH"
 export PATH
-export BACKUP_DB_URL="$url_sensivel"
+export BACKUP_DB_URL="postgresql://backup_ro:SenhaDecodificada%40123%23ComArroba@AWS-0-SA-EAST-1.POOLER.SUPABASE.COM:5432/postgres"
 export BACKUP_PUBLIC_KEY="age1mockdestinationkey000000000000000000000000000000000000000000000"
 export BACKUP_DIR="$pasta_backup"
 export BACKUP_CIPHER="age"
@@ -175,52 +210,60 @@ saida_exec=$("$script_backup" 2>&1)
 codigo_exec=$?
 set -e
 
-# Asserções da execução
+# Asserções de segurança na saída da execução
 if (( codigo_exec != 1 )); then
   falhar "Script deveria falhar com exit code 1, obteve $codigo_exec."
 fi
 
-if [[ "$saida_exec" == *"$senha_pura"* ]]; then
-  falhar "Senha pura vazou na saída capturada da execução."
-fi
+tokens_sensiveis=(
+  "54.232.123.45"
+  "postgres.abcdefghijklmnop"
+  "abcdefghijklmnop"
+  "SenhaDecodificada@123#ComArroba"
+  "usuarios_privados"
+  "cpf_criptografado"
+  "AWS-0-SA-EAST-1.POOLER.SUPABASE.COM"
+)
 
+for token in "${tokens_sensiveis[@]}"; do
+  if printf '%s\n' "$saida_exec" | grep -F -q "$token"; then
+    falhar "Token sensível '$token' vazou no log de execução do script!"
+  fi
+done
+
+if [[ "$saida_exec" != *"Diagnóstico do erro: ["* ]]; then
+  falhar "Diagnóstico do erro seguro ausente no log de execução."
+fi
 if [[ "$saida_exec" != *"pg_dump falhou; suplemento não publicado."* ]]; then
-  falhar "Mensagem de falha esperada ausente na saída."
+  falhar "Mensagem de falha padrão ausente."
 fi
 
-if [[ "$saida_exec" != *"stderr sanitizado"* ]]; then
-  falhar "Seção de stderr sanitizado ausente na saída."
-fi
+printf '   ✓ Log de execução seguro: nenhum token sensível vazou (grep -F negativo).\n'
 
-if [[ "$saida_exec" != *"permission denied for table \"segredos\""* ]]; then
-  falhar "Detalhes do erro do pg_dump não apareceram na saída sanitizada."
-fi
-printf '   ✓ Execução falha com código 1 e emite stderr 100%% sanitizado.\n'
-
-# 3. Conferência do GITHUB_STEP_SUMMARY
-printf '3. Conferindo integridade do GITHUB_STEP_SUMMARY gerado...\n'
-
+# Asserções de segurança no GITHUB_STEP_SUMMARY
 conteudo_summary=$(cat "$arquivo_summary")
+[[ -n "$conteudo_summary" ]] || falhar "GITHUB_STEP_SUMMARY vazio."
 
-if [[ -z "$conteudo_summary" ]]; then
-  falhar "GITHUB_STEP_SUMMARY vazio após falha."
+for token in "${tokens_sensiveis[@]}"; do
+  if printf '%s\n' "$conteudo_summary" | grep -F -q "$token"; then
+    falhar "Token sensível '$token' vazou no GITHUB_STEP_SUMMARY!"
+  fi
+done
+
+if [[ "$conteudo_summary" != *"### ❌ Falha no Backup Lógico (pg_dump)"* ]]; then
+  falhar "Cabeçalho seguro ausente no GITHUB_STEP_SUMMARY."
+fi
+if [[ "$conteudo_summary" != *"- **Código:** \`"* ]]; then
+  falhar "Formato de código seguro ausente no GITHUB_STEP_SUMMARY."
+fi
+if [[ "$conteudo_summary" != *"- **Descrição:** "* ]]; then
+  falhar "Formato de descrição seguro ausente no GITHUB_STEP_SUMMARY."
 fi
 
-if [[ "$conteudo_summary" == *"$senha_pura"* ]]; then
-  falhar "Senha pura vazou no GITHUB_STEP_SUMMARY."
-fi
+printf '   ✓ GITHUB_STEP_SUMMARY seguro: cabeçalho e diagnóstico presentes, zero vazamento.\n'
 
-if [[ "$conteudo_summary" != *"### ❌ Falha no Backup Lógico"* ]]; then
-  falhar "Cabeçalho de erro ausente no GITHUB_STEP_SUMMARY."
-fi
-
-if [[ "$conteudo_summary" != *"permission denied for table \"segredos\""* ]]; then
-  falhar "Última linha de erro ausente no GITHUB_STEP_SUMMARY."
-fi
-printf '   ✓ GITHUB_STEP_SUMMARY preenchido com cabeçalho, última linha e sem segredos.\n'
-
-# 4. Resiliência sem GITHUB_STEP_SUMMARY
-printf '4. Testando resiliência quando GITHUB_STEP_SUMMARY está ausente...\n'
+# 5. Resiliência sem GITHUB_STEP_SUMMARY
+printf '4. Testando resiliência sem GITHUB_STEP_SUMMARY...\n'
 unset GITHUB_STEP_SUMMARY
 set +e
 saida_sem_summary=$("$script_backup" 2>&1)
@@ -228,11 +271,13 @@ codigo_sem_summary=$?
 set -e
 
 if (( codigo_sem_summary != 1 )); then
-  falhar "Script deveria falhar com código 1 mesmo sem GITHUB_STEP_SUMMARY."
+  falhar "Script deveria falhar com código 1 sem GITHUB_STEP_SUMMARY."
 fi
-if [[ "$saida_sem_summary" == *"$senha_pura"* ]]; then
-  falhar "Senha vazou na execução sem GITHUB_STEP_SUMMARY."
-fi
-printf '   ✓ Resiliente e seguro na ausência de GITHUB_STEP_SUMMARY.\n'
+for token in "${tokens_sensiveis[@]}"; do
+  if printf '%s\n' "$saida_sem_summary" | grep -F -q "$token"; then
+    falhar "Token sensível '$token' vazou no log sem GITHUB_STEP_SUMMARY!"
+  fi
+done
+printf '   ✓ Resiliente e seguro sem GITHUB_STEP_SUMMARY.\n'
 
-printf '=== Todos os testes de sanitização e relatório de erro passaram com SUCESSO! ===\n'
+printf '=== Todos os testes de classificação fechada passaram com SUCESSO! ===\n'

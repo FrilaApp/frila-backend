@@ -11,47 +11,38 @@ temporario=''
 trava=''
 tem_trava=0
 falhar() { printf 'ERRO: %s\n' "$1" >&2; exit 1; }
-sanitizar_texto() {
-  local texto="$1"
-  [[ -n "$texto" ]] || return 0
+classificar_erro() {
+  local texto="${1:-}"
+  local codigo="outro"
+  local mensagem="Erro não classificado durante a execução do pg_dump."
 
-  # 1. Substituição literal segura no bash de BACKUP_DB_URL se presente
-  if [[ -n "${BACKUP_DB_URL:-}" ]]; then
-    texto="${texto//"$BACKUP_DB_URL"/[REDACTED_DB_URL]}"
+  if printf '%s\n' "$texto" | grep -E -i -q "password authentication failed|authentication failed|no password was provided|PAM authentication failed|Ident authentication failed"; then
+    codigo="autenticacao_recusada"
+    mensagem="Autenticação recusada: verifique usuário e senha de conexão."
+  elif printf '%s\n' "$texto" | grep -E -i -q "snapshot .*does not exist|exported snapshot|invalid snapshot identifier|could not import snapshot"; then
+    codigo="snapshot_indisponivel"
+    mensagem="Snapshot da transação indisponível ou expirado."
+  elif printf '%s\n' "$texto" | grep -E -i -q "permission denied|must be owner of|must be member of|insufficient privilege|row-level security"; then
+    codigo="permissao_negada"
+    mensagem="Permissão negada: privilégios insuficientes para tabelas ou objetos."
+  elif printf '%s\n' "$texto" | grep -E -i -q "timeout expired|connection timed out|statement timeout|idle_in_transaction_session_timeout|canceling statement due to statement timeout"; then
+    codigo="timeout_conexao"
+    mensagem="Tempo limite de conexão esgotado (timeout)."
+  elif printf '%s\n' "$texto" | grep -E -i -q "server does not support SSL|SSL connection has been closed|SSL error|certificate verify failed|sslmode"; then
+    codigo="ssl_exigido"
+    mensagem="Falha na negociação SSL/TLS com o servidor."
+  elif printf '%s\n' "$texto" | grep -E -i -q "No space left on device|disk full|out of disk space"; then
+    codigo="espaco_em_disco"
+    mensagem="Espaço insuficiente em disco."
+  elif printf '%s\n' "$texto" | grep -E -i -q "server version mismatch|server version|unsupported version"; then
+    codigo="versao_incompativel"
+    mensagem="Incompatibilidade de versão entre cliente e servidor."
+  elif printf '%s\n' "$texto" | grep -E -i -q "could not translate host name|Name or service not known|nodename nor servname provided|No route to host|could not connect to server|connection to server.*failed|connection to database.*failed|Connection refused|server closed the connection unexpectedly"; then
+    codigo="host_inalcancavel"
+    mensagem="Host inalcançável: servidor ou pooler não responde no endereço configurado."
   fi
 
-  # 2. Substituição literal da senha extraída de BACKUP_DB_URL se presente
-  if [[ "${BACKUP_DB_URL:-}" =~ ://[^:]+:([^@]+)@ ]]; then
-    local senha_literal="${BASH_REMATCH[1]}"
-    if [[ -n "$senha_literal" && ${#senha_literal} -ge 3 ]]; then
-      texto="${texto//"$senha_literal"/[REDACTED_PASSWORD]}"
-    fi
-  fi
-
-  # 3. Substituição literal do host extraído de BACKUP_DB_URL se presente
-  if [[ "${BACKUP_DB_URL:-}" =~ @([^:/]+) ]]; then
-    local host_literal="${BASH_REMATCH[1]}"
-    if [[ -n "$host_literal" && ${#host_literal} -ge 3 ]]; then
-      texto="${texto//"$host_literal"/[REDACTED_HOST]}"
-    fi
-  fi
-
-  # 4. Substituição literal de PGHOST se presente
-  if [[ -n "${PGHOST:-}" && ${#PGHOST} -ge 3 ]]; then
-    texto="${texto//"$PGHOST"/[REDACTED_HOST]}"
-  fi
-
-  # 5. Filtro sed para credenciais e hosts em URIs, parâmetros e conexões
-  texto=$(printf '%s\n' "$texto" | sed -E \
-    -e 's#postgres(ql)?://[^@]+@([^:/[:space:]]+)#postgresql://[REDACTED_AUTH]@[REDACTED_HOST]#g' \
-    -e 's#postgres(ql)?://[^@]+@#postgresql://[REDACTED_AUTH]@#g' \
-    -e 's#(password[=:][[:space:]]*)[^[:space:]'\''";]+#\1[REDACTED]#gi' \
-    -e 's#(host[=:][[:space:]]*)[^[:space:]'\''";]+#\1[REDACTED_HOST]#gi' \
-    -e 's#[a-zA-Z0-9_.-]+:[^@[:space:]]+@([^:/[:space:]]+)#[REDACTED_AUTH]@[REDACTED_HOST]#g' \
-    -e 's#[a-zA-Z0-9_.-]+:[^@[:space:]]+@#[REDACTED_AUTH]@#g' \
-    -e 's#\([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\)#([REDACTED_IP])#g')
-
-  printf '%s\n' "$texto"
+  printf '%s|%s\n' "$codigo" "$mensagem"
 }
 limpar() {
   local codigo=$?
@@ -198,33 +189,19 @@ if [[ ! -f "$temporario/dump-concluido" ]]; then
     fi
   fi
 
-  stderr_sanitizado=$(sanitizar_texto "$erro_coletado")
+  classificacao=$(classificar_erro "$erro_coletado")
+  codigo_erro="${classificacao%%|*}"
+  mensagem_erro="${classificacao#*|}"
 
-  if [[ -n "$stderr_sanitizado" ]]; then
-    printf 'ERRO: pg_dump falhou; suplemento não publicado.\n--- stderr sanitizado ---\n%s\n-------------------------\n' "$stderr_sanitizado" >&2
-  fi
+  printf 'Diagnóstico do erro: [%s] %s\n' "$codigo_erro" "$mensagem_erro" >&2
 
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -w "$GITHUB_STEP_SUMMARY" ]]; then
-    ultima_linha=$(printf '%s\n' "$stderr_sanitizado" | grep -v '^[[:space:]]*$' | tail -n 1 || true)
     {
       echo "### ❌ Falha no Backup Lógico (pg_dump)"
       echo
-      if [[ -n "$ultima_linha" ]]; then
-        echo "**Última linha do erro (sanitizada):**"
-        echo '```'
-        echo "$ultima_linha"
-        echo '```'
-        echo
-      fi
-      if [[ -n "$stderr_sanitizado" ]]; then
-        echo "<details><summary>Stderr completo sanitizado</summary>"
-        echo
-        echo '```'
-        echo "$stderr_sanitizado"
-        echo '```'
-        echo
-        echo "</details>"
-      fi
+      echo "**Diagnóstico seguro:**"
+      echo "- **Código:** \`$codigo_erro\`"
+      echo "- **Descrição:** $mensagem_erro"
     } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
   fi
 
@@ -232,14 +209,14 @@ if [[ ! -f "$temporario/dump-concluido" ]]; then
 fi
 
 if [[ ! -s "$temporario/banco.dump" ]]; then
+  printf 'Diagnóstico do erro: [outro] pg_dump não gerou conteúdo.\n' >&2
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -w "$GITHUB_STEP_SUMMARY" ]]; then
     {
       echo "### ❌ Falha no Backup Lógico (pg_dump)"
       echo
-      echo "**Última linha do erro:**"
-      echo '```'
-      echo "pg_dump não gerou conteúdo."
-      echo '```'
+      echo "**Diagnóstico seguro:**"
+      echo "- **Código:** \`outro\`"
+      echo "- **Descrição:** pg_dump não gerou conteúdo."
     } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
   fi
   falhar 'pg_dump não gerou conteúdo.'
