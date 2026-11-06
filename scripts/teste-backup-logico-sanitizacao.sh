@@ -40,20 +40,29 @@ saida_1=$(BACKUP_DB_URL="$url_sensivel" sanitizar_texto "pg_dump: error: connect
 if [[ "$saida_1" == *"$senha_pura"* ]]; then
   falhar "Senha pura vazou na saída sanitizada (caso 1.1)."
 fi
-if [[ "$saida_1" != *"postgresql://[REDACTED_AUTH]@aws-0-sa-east-1.pooler.supabase.com:5432/postgres"* && "$saida_1" != *"[REDACTED"* ]]; then
+if [[ "$saida_1" == *"aws-0-sa-east-1.pooler.supabase.com"* ]]; then
+  falhar "Host sensível vazou na saída sanitizada (caso 1.1)."
+fi
+if [[ "$saida_1" != *"[REDACTED_DB_URL]"* && "$saida_1" != *"[REDACTED"* ]]; then
   falhar "URL não foi devidamente redigida (caso 1.1)."
 fi
-printf '   ✓ Caso 1.1: URL PostgreSQL sanitizada sem vazamento de senha.\n'
+printf '   ✓ Caso 1.1: URL PostgreSQL sanitizada sem vazamento de senha ou host.\n'
 
-# Caso 1.2: Parâmetro password= isolado
+# Caso 1.2: Parâmetros password= e host= isolados
 saida_2=$(BACKUP_DB_URL="$url_sensivel" sanitizar_texto "connection failed: password=SenhaSuperSecreta%23123 host=aws.pooler")
 if [[ "$saida_2" == *"$senha_pura"* ]]; then
   falhar "Senha pura vazou em parâmetro password= (caso 1.2)."
 fi
+if [[ "$saida_2" == *"aws.pooler"* ]]; then
+  falhar "Host vazou em parâmetro host= (caso 1.2)."
+fi
 if [[ "$saida_2" != *"password=[REDACTED]"* ]]; then
   falhar "Parâmetro password=[REDACTED] não aplicado (caso 1.2)."
 fi
-printf '   ✓ Caso 1.2: Parâmetro password= mascarado com sucesso.\n'
+if [[ "$saida_2" != *"host=[REDACTED_HOST]"* ]]; then
+  falhar "Parâmetro host=[REDACTED_HOST] não aplicado (caso 1.2)."
+fi
+printf '   ✓ Caso 1.2: Parâmetros password= e host= mascarados com sucesso.\n'
 
 # Caso 1.3: Senha literal isolada no corpo de uma mensagem
 saida_3=$(BACKUP_DB_URL="$url_sensivel" sanitizar_texto "fatal error: token SenhaSuperSecreta%23123 unexpected")
@@ -70,10 +79,26 @@ saida_4=$(sanitizar_texto "error connecting to admin_user:p%40ssw0rd!@10.0.0.1:5
 if [[ "$saida_4" == *"p%40ssw0rd!"* ]]; then
   falhar "Senha genérica vazou (caso 1.4)."
 fi
-if [[ "$saida_4" != *"[REDACTED_AUTH]@10.0.0.1:5432/db"* ]]; then
-  falhar "Autoridade user:password não foi sanitizada (caso 1.4)."
+if [[ "$saida_4" == *"10.0.0.1"* ]]; then
+  falhar "Host genérico vazou (caso 1.4)."
 fi
-printf '   ✓ Caso 1.4: user:password@host genérico sanitizado.\n'
+if [[ "$saida_4" != *"[REDACTED_AUTH]@[REDACTED_HOST]:5432/db"* ]]; then
+  falhar "Autoridade user:password@host não foi sanitizada (caso 1.4)."
+fi
+printf '   ✓ Caso 1.4: user:password@host genérico sanitizado sem vazar senha ou host.\n'
+
+# Caso 1.5: Erro de conexão com servidor e IP resolvido em parênteses
+saida_5=$(BACKUP_DB_URL="$url_sensivel" sanitizar_texto "pg_dump: error: connection to server at \"aws-0-sa-east-1.pooler.supabase.com\" (18.231.10.20), port 5432 failed: timeout")
+if [[ "$saida_5" == *"aws-0-sa-east-1.pooler.supabase.com"* ]]; then
+  falhar "Host do servidor vazou na mensagem de erro (caso 1.5)."
+fi
+if [[ "$saida_5" == *"18.231.10.20"* ]]; then
+  falhar "IP do servidor vazou na mensagem de erro (caso 1.5)."
+fi
+if [[ "$saida_5" != *"server at \"[REDACTED_HOST]\" ([REDACTED_IP])"* ]]; then
+  falhar "Host ou IP resolvido não foram substituídos por marcadores (caso 1.5)."
+fi
+printf '   ✓ Caso 1.5: Erro com server at host e IP resolvido mascarados.\n'
 
 # 2. Teste integrado simulando falha do pg_dump e registro no GITHUB_STEP_SUMMARY
 printf '2. Testando integração com GITHUB_STEP_SUMMARY e captura de erro...\n'

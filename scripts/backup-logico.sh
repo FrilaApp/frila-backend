@@ -15,24 +15,41 @@ sanitizar_texto() {
   local texto="$1"
   [[ -n "$texto" ]] || return 0
 
-  # Filtro sed para credenciais em URIs, parâmetros e conexões
-  texto=$(printf '%s\n' "$texto" | sed -E \
-    -e 's#postgres(ql)?://[^@]+@#postgresql://[REDACTED_AUTH]@#g' \
-    -e 's#(password[=:][[:space:]]*)[^[:space:]'\''";]+#\1[REDACTED]#gi' \
-    -e 's#[a-zA-Z0-9_.-]+:[^@[:space:]]+@#[REDACTED_AUTH]@#g')
-
-  # Substituição literal segura no bash de BACKUP_DB_URL se presente
+  # 1. Substituição literal segura no bash de BACKUP_DB_URL se presente
   if [[ -n "${BACKUP_DB_URL:-}" ]]; then
     texto="${texto//"$BACKUP_DB_URL"/[REDACTED_DB_URL]}"
   fi
 
-  # Substituição literal da senha extraída de BACKUP_DB_URL se presente
+  # 2. Substituição literal da senha extraída de BACKUP_DB_URL se presente
   if [[ "${BACKUP_DB_URL:-}" =~ ://[^:]+:([^@]+)@ ]]; then
     local senha_literal="${BASH_REMATCH[1]}"
     if [[ -n "$senha_literal" && ${#senha_literal} -ge 3 ]]; then
       texto="${texto//"$senha_literal"/[REDACTED_PASSWORD]}"
     fi
   fi
+
+  # 3. Substituição literal do host extraído de BACKUP_DB_URL se presente
+  if [[ "${BACKUP_DB_URL:-}" =~ @([^:/]+) ]]; then
+    local host_literal="${BASH_REMATCH[1]}"
+    if [[ -n "$host_literal" && ${#host_literal} -ge 3 ]]; then
+      texto="${texto//"$host_literal"/[REDACTED_HOST]}"
+    fi
+  fi
+
+  # 4. Substituição literal de PGHOST se presente
+  if [[ -n "${PGHOST:-}" && ${#PGHOST} -ge 3 ]]; then
+    texto="${texto//"$PGHOST"/[REDACTED_HOST]}"
+  fi
+
+  # 5. Filtro sed para credenciais e hosts em URIs, parâmetros e conexões
+  texto=$(printf '%s\n' "$texto" | sed -E \
+    -e 's#postgres(ql)?://[^@]+@([^:/[:space:]]+)#postgresql://[REDACTED_AUTH]@[REDACTED_HOST]#g' \
+    -e 's#postgres(ql)?://[^@]+@#postgresql://[REDACTED_AUTH]@#g' \
+    -e 's#(password[=:][[:space:]]*)[^[:space:]'\''";]+#\1[REDACTED]#gi' \
+    -e 's#(host[=:][[:space:]]*)[^[:space:]'\''";]+#\1[REDACTED_HOST]#gi' \
+    -e 's#[a-zA-Z0-9_.-]+:[^@[:space:]]+@([^:/[:space:]]+)#[REDACTED_AUTH]@[REDACTED_HOST]#g' \
+    -e 's#[a-zA-Z0-9_.-]+:[^@[:space:]]+@#[REDACTED_AUTH]@#g' \
+    -e 's#\([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\)#([REDACTED_IP])#g')
 
   printf '%s\n' "$texto"
 }
