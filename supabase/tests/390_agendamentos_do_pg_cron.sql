@@ -123,9 +123,11 @@ select set_eq(
     'processar_fila_push',
     -- Dispara limpar-contas-orfas e expurgar-midias por pg_net (cartão bebr4VIE).
     'limpar_contas_orfas_diaria',
-    'expurgar_midias_diaria'
+    'expurgar_midias_diaria',
+    -- Processa a fila de moderação de mídia periódica (B4c / RN37).
+    'processar_fila_moderacao_midia'
   ],
-  'Os jobs agendados são exatamente os dezessete conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os dezoito conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;
