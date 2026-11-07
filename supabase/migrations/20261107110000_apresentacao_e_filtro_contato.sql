@@ -38,10 +38,10 @@ comment on column public.profissional.idiomas is 'Idiomas declarados, de lista f
 create function privado.texto_sem_contato_ou_pix(texto text) returns boolean
 language plpgsql immutable security definer set search_path = '' as $$
 declare
- v_min text := lower(coalesce(texto, ''));
  -- Intervalo de anos ("2019-2023", "2019 a 2023") não é telefone, a menos que venha colado a um DDD.
  v_sem_anos text := regexp_replace(coalesce(texto, ''),
   '(?<![0-9)+])(?<![0-9)+] )\y(19|20)\d{2}\s*(-|–|até|a)\s*(19|20)\d{2}\y', ' ', 'g');
+ v_min text := lower(v_sem_anos);
 begin
  if v_min = '' then return true; end if;
  if privado.contem_contato_ou_link(v_sem_anos) then return false; end if;
