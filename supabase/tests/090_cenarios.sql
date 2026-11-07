@@ -210,8 +210,8 @@ select is(
     where id::text like 'e0000000-0000-4000-8000-%'), 12,
   'doze profissionais no cenário');
 
-select is((select count(*)::int from public.funcao), 32,
-  'e o catálogo continua com as 32 funções do seed — o cenário não inventa função');
+select is((select count(*)::int from public.funcao), 38,
+  'e o catálogo continua com as 38 funções do seed (32 de antes e 6 de Casa e Festa) — o cenário não inventa função');
 
 select is((select count(distinct estado)::int from public.vaga), 4,
   'vagas nos quatro estados: publicada, preenchida, encerrada e cancelada');

@@ -90,13 +90,13 @@ select throws_ok(
 -- "Garçonete", a elegibilidade de RN05 vira busca por aproximação.
 select is(
   (select count(*)::int from public.funcao),
-  32,
-  'o catálogo tem as 32 funções da Modelagem');
+  38,
+  'o catálogo tem as 32 funções da Modelagem e as 6 de Casa e Festa (RN44)');
 
 select is(
   (select count(distinct categoria)::int from public.funcao),
-  7,
-  'em 7 categorias');
+  9,
+  'em 9 categorias (as 7 da Modelagem, Casa e Festa e eventos sociais)');
 
 select throws_ok(
   $$ insert into public.funcao (nome, categoria) values ('garçom', 'Salão') $$,
