@@ -468,6 +468,14 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
+# Moderação de mídia e sanitização de fotos de perfil (cartão B4c · RN37 · RN15).
+# Invocada pelo agendador com segredo x-agendador-secret ou Bearer.
+# verify_jwt fica desligado porque quem chama é o Postgres/agendador.
+[functions.moderar-midia]
+enabled = true
+verify_jwt = false
+
+
 
 
 [analytics]
