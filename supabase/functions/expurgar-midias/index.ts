@@ -174,10 +174,21 @@ async function removerObjeto(
     return { ausente: false, status: 0 };
   }
 
-  // 404 e 400 do Storage significam "não está lá". Aceitar os dois é o que torna a
-  // função idempotente: a mensagem pode ser reentregue depois de um expurgo parcial.
-  if (resp.ok || resp.status === 404 || resp.status === 400) {
+  // 404 do Storage significa ausência comprovada. 400 só é aceito se o corpo indicar explicitamente
+  // objeto inexistente (ex: not_found / NoSuchKey); erro genérico (ex: InvalidRequest) não comprova ausência.
+  if (resp.ok || resp.status === 404) {
     return { ausente: true, status: resp.status };
+  }
+  if (resp.status === 400) {
+    try {
+      const json = await resp.clone().json();
+      const txt = JSON.stringify(json).toLowerCase();
+      if (txt.includes("not_found") || txt.includes("not found") || txt.includes("nosuchkey")) {
+        return { ausente: true, status: resp.status };
+      }
+    } catch {
+      // corpo ilegível não comprova ausência
+    }
   }
   return { ausente: false, status: resp.status };
 }

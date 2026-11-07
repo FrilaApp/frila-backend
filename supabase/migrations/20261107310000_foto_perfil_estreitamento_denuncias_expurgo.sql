@@ -46,7 +46,7 @@ begin
      set estado = 'expurgada',
          atualizado_em = privado.agora()
    where m.id = p_id
-     and m.estado in ('recusada', 'nao_publicada', 'ocultada', 'removida')
+     and m.estado in ('recusada', 'nao_publicada', 'removida')
   returning true into v_ok;
 
   return coalesce(v_ok, false);
@@ -58,7 +58,7 @@ comment on function privado.confirmar_expurgo_midia_perfil(uuid) is
 revoke execute on function privado.confirmar_expurgo_midia_perfil(uuid) from public, anon, authenticated;
 grant  execute on function privado.confirmar_expurgo_midia_perfil(uuid) to service_role;
 
--- 4. Expurgo em 24 h de mídias recusadas, não publicadas ou ocultadas.
+-- 4. Expurgo em 24 h de mídias recusadas ou não publicadas.
 create or replace function privado.expurgar_midias_recusadas()
 returns integer
 language plpgsql
@@ -73,7 +73,7 @@ begin
   for r in
     select id, storage_path
       from privado.midia
-     where estado in ('recusada', 'nao_publicada', 'ocultada')
+     where estado in ('recusada', 'nao_publicada')
        and atualizado_em < privado.agora() - interval '24 hours'
      for update skip locked
   loop
@@ -101,7 +101,7 @@ begin
 end $$;
 
 comment on function privado.expurgar_midias_recusadas() is
-  'Enfileira para expurgo físico no Storage as fotos recusadas, não publicadas ou ocultadas há mais de 24 horas e marca estado=expurgada. Idempotente.';
+  'Enfileira para expurgo físico no Storage as fotos recusadas ou não publicadas há mais de 24 horas e marca estado=expurgada. Idempotente.';
 
 revoke execute on function privado.expurgar_midias_recusadas() from public, anon, authenticated;
 grant  execute on function privado.expurgar_midias_recusadas() to service_role;

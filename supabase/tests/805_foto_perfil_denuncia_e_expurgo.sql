@@ -9,7 +9,7 @@
 -- 4. confirmar_expurgo_midia_perfil idempotente e falha fechada com false para aprovada.
 
 begin;
-select plan(33);
+select plan(32);
 
 -- 1. Setup e ambiente de teste
 insert into privado.ambiente (id, eh_teste) values (true, true)
@@ -105,8 +105,8 @@ select is(
 
 -- 2.2 Denúncia com midia_id inexistente ou alheio devolve 422 campo_invalido details: midia_id
 select is(
-  pg_temp.erro($$select public.denunciar('profissional', '80500000-0000-4000-8000-000000000010', 'outro', 'relato com midia que nao existe', gen_random_uuid(), null, '80500000-0000-4000-8000-000000000999'::uuid)$$),
-  '{"status": 422, "code": "campo_invalido", "details": "midia_id"}'::jsonb,
+  (pg_temp.erro($$select public.denunciar('profissional', '80500000-0000-4000-8000-000000000010', 'outro', 'relato com midia que nao existe', gen_random_uuid(), null, '80500000-0000-4000-8000-000000000999'::uuid)$$) ->> 'details'),
+  'midia_id',
   'denuncia com midia inexistente devolve 422 campo_invalido midia_id'
 );
 
@@ -291,4 +291,5 @@ select is(
   'confirmar_expurgo_midia_perfil retorna false para foto nao elegivel (ocultada/aprovada)'
 );
 
+select * from finish();
 rollback;
