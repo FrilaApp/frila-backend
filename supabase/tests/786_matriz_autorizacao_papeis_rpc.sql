@@ -1,6 +1,6 @@
 -- 786_matriz_autorizacao_papeis_rpc.sql
 --
--- Matriz exaustiva de autorizacao Papel x RPC cobrindo as 52 rotinas publicas do Frila:
+-- Matriz exaustiva de autorizacao Papel x RPC cobrindo as 57 rotinas publicas do Frila:
 --   * Papel anon (nao autenticado / chave publica)
 --   * Papel profissional (autenticado, perfil='profissional')
 --   * Papel outro contratante (autenticado, perfil='contratante', nao proprietario/alheio)
@@ -23,7 +23,7 @@ set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(220);
+select plan(240);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -31,8 +31,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  53::bigint,
-  'censo de RPCs: schema public contem exatamente 53 RPCs expostas'
+  58::bigint,
+  'censo de RPCs: schema public contem exatamente 58 RPCs expostas'
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -411,6 +411,12 @@ select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-0
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.vagas_abertas(-15.79, -47.88, null, null, null, 10, 0)'), '422_PERFIL_INCOMPATIVEL', 'vagas_abertas [outro contratante]: outro contratante toma 422 perfil_incompativel');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.vagas_abertas(-15.79, -47.88, null, null, null, 10, 0)'), '422_PERFIL_INCOMPATIVEL', 'vagas_abertas [dono]: dono toma 422 perfil_incompativel');
 
+-- --- chamar_profissional (0.2.55): desligada por padrão, todo autenticado toma 403 recurso_desligado ---
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.chamar_profissional(chave => gen_random_uuid(), profissional_id => gen_random_uuid(), estabelecimento_id => gen_random_uuid())'), '42501_SEM_EXECUTE', 'chamar_profissional [anon]: anon nao possui EXECUTE');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.chamar_profissional(chave => gen_random_uuid(), profissional_id => gen_random_uuid(), estabelecimento_id => gen_random_uuid())'), '403_SEM_PERMISSAO', 'chamar_profissional [profissional]: recurso desligado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.chamar_profissional(chave => gen_random_uuid(), profissional_id => gen_random_uuid(), estabelecimento_id => gen_random_uuid())'), '403_SEM_PERMISSAO', 'chamar_profissional [outro contratante]: recurso desligado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.chamar_profissional(chave => gen_random_uuid(), profissional_id => gen_random_uuid(), estabelecimento_id => gen_random_uuid())'), '403_SEM_PERMISSAO', 'chamar_profissional [dono]: recurso desligado');
+
 -- --- detalhe_vaga ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.detalhe_vaga(''78600000-0000-4000-8000-000000000100''::uuid)'), '42501_SEM_EXECUTE', 'detalhe_vaga [anon]: anon nao possui EXECUTE em detalhe_vaga');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.detalhe_vaga(''78600000-0000-4000-8000-000000000100''::uuid)'), 'AUTORIZADO', 'detalhe_vaga [profissional]: profissional consulta detalhe_vaga');
@@ -572,6 +578,31 @@ select is(pg_temp.testar_autorizacao('anon', null, 'select public.abrir_suporte(
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.abrir_suporte(''78600000-0000-4000-8000-000000000301''::uuid, ''outro'', gen_random_uuid())'), 'AUTORIZADO', 'abrir_suporte [profissional]: profissional do turno abre suporte');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.abrir_suporte(''78600000-0000-4000-8000-000000000301''::uuid, ''outro'', gen_random_uuid())'), '404_NAO_ENCONTRADO', 'abrir_suporte [outro contratante]: outro contratante toma 404 em turno alheio');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.abrir_suporte(''78600000-0000-4000-8000-000000000301''::uuid, ''outro'', gen_random_uuid())'), 'AUTORIZADO', 'abrir_suporte [dono]: dono abre suporte para turno do seu estabelecimento');
+
+-- B4a: as quatro RPCs novas entram na mesma matriz de quatro papéis.
+update privado.configuracao_app set foto_de_perfil=true;
+insert into privado.midia(id,dono_usuario_id,estabelecimento_id,dono_tipo,tipo,storage_path,mime,bytes) values
+ ('78600000-0000-4000-8000-000000000801','78600000-0000-4000-8000-000000000003',null,'profissional','foto_perfil','perfil/matriz-prof.jpg','image/jpeg',1),
+ ('78600000-0000-4000-8000-000000000802','78600000-0000-4000-8000-000000000001','78600000-0000-4000-8000-000000000010','estabelecimento','foto_perfil','perfil/matriz-casa.jpg','image/jpeg',1);
+insert into storage.objects(bucket_id,name) values ('midia-perfil','perfil/matriz-prof.jpg'),('midia-perfil','perfil/matriz-casa.jpg');
+select is(pg_temp.testar_autorizacao(papel,conta,
+ case operacao
+   when 'solicitar_upload_midia' then case when rotulo='profissional'
+     then $$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1)$$
+     else $$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1,'78600000-0000-4000-8000-000000000010')$$ end
+   when 'minhas_midias' then 'select public.minhas_midias()'
+   else format('select public.%I(%L)',operacao,case when rotulo='profissional'
+     then '78600000-0000-4000-8000-000000000801' else '78600000-0000-4000-8000-000000000802' end)
+ end),
+ case when papel='anon' then '42501_SEM_EXECUTE'
+   when rotulo='outro contratante' and operacao='solicitar_upload_midia' then '403_SEM_PERMISSAO'
+   when rotulo='outro contratante' and operacao in ('confirmar_upload_midia','remover_midia') then '404_NAO_ENCONTRADO'
+   else 'AUTORIZADO' end, operacao || ' [' || rotulo || ']')
+from (values ('anon',null::uuid,'anon'),
+ ('authenticated','78600000-0000-4000-8000-000000000003'::uuid,'profissional'),
+ ('authenticated','78600000-0000-4000-8000-000000000002'::uuid,'outro contratante'),
+ ('authenticated','78600000-0000-4000-8000-000000000001'::uuid,'dono')) papeis(papel,conta,rotulo)
+cross join unnest(array['solicitar_upload_midia','confirmar_upload_midia','remover_midia','minhas_midias']) operacao;
 
 -- ============================================================================
 -- 6. Autoteste e Mutacao do Classificador de Autorizacao (Anti-Falso Positivo)

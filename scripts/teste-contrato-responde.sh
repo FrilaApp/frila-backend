@@ -205,6 +205,23 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:atualizarApresentacaoProfissional:422","corpo":{"status":422,"code":"campo_invalido"}}
 {"op":"promete:resolverServico:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:resolverServico:422","corpo":{"status":422,"code":"campo_invalido"}}
+{"op":"promete:solicitarUploadMidia:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:solicitarUploadMidia:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:solicitarUploadMidia:422","corpo":{"status":422,"code":"midia_invalida"}}
+{"op":"promete:confirmarUploadMidia:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:confirmarUploadMidia:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:confirmarUploadMidia:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:confirmarUploadMidia:422","corpo":{"status":422,"code":"evidencia_incompleta"}}
+{"op":"promete:removerMidia:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:removerMidia:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:removerMidia:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:minhasMidias:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:minhasMidias:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:chamarProfissional:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:chamarProfissional:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:chamarProfissional:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:chamarProfissional:409","corpo":{"status":409,"code":"chamada_ja_aberta"}}
+{"op":"promete:chamarProfissional:422","corpo":{"status":422,"code":"profissional_indisponivel"}}
 EOF
 )
 

@@ -258,7 +258,7 @@ on conflict (termo, funcao_id) do nothing;
 create or replace function public.resolver_servico(termo text)
 returns jsonb
 language plpgsql
-stable
+volatile
 security definer
 set search_path = ''
 as $$
