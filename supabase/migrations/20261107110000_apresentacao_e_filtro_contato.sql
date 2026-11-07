@@ -2,8 +2,10 @@
 -- contato e Pix. Enums e tamanhos seguem o contrato (ExperienciaFaixa, Idioma, ApresentacaoDoProfissional).
 -- `atende_todo_df` já existe desde a migração de serviços e regiões; esta não o recria.
 
+set lock_timeout = '2s';
+
 -- CHECK não aceita subconsulta: a regra das listas vive numa função imutável, e o CHECK só a chama.
-create function privado.cursos_validos(cursos text[]) returns boolean
+create or replace function privado.cursos_validos(cursos text[]) returns boolean
 language sql immutable set search_path = '' as $$
  select cursos is null or (coalesce(cardinality(cursos), 0) <= 5
   and not exists (select 1 from unnest(cursos) c where c is null or length(c) > 80))
@@ -13,16 +15,27 @@ comment on function privado.cursos_validos(text[]) is
 revoke execute on function privado.cursos_validos(text[]) from public, anon, authenticated;
 
 alter table public.profissional
- add column apresentacao text constraint profissional_apresentacao_check
-  check (apresentacao is null or length(apresentacao) <= 600),
- add column onde_trabalhei text constraint profissional_onde_trabalhei_check
-  check (onde_trabalhei is null or length(onde_trabalhei) <= 400),
- add column experiencia_faixa text constraint profissional_experiencia_faixa_check
+ add column if not exists apresentacao text,
+ add column if not exists onde_trabalhei text,
+ add column if not exists experiencia_faixa text,
+ add column if not exists cursos text[],
+ add column if not exists idiomas text[];
+
+-- Adiciona constraints com NOT VALID para evitar segurar AccessExclusiveLock por tempo excessivo.
+-- A validação ocorre na migração 20261107110001 subsequente.
+alter table public.profissional
+ add constraint profissional_apresentacao_check
+  check (apresentacao is null or length(apresentacao) <= 600) not valid,
+ add constraint profissional_onde_trabalhei_check
+  check (onde_trabalhei is null or length(onde_trabalhei) <= 400) not valid,
+ add constraint profissional_experiencia_faixa_check
   check (experiencia_faixa is null or experiencia_faixa in
-   ('menos_de_1_ano','de_1_a_3_anos','de_3_a_5_anos','de_5_a_10_anos','mais_de_10_anos')),
- add column cursos text[] constraint profissional_cursos_check check (privado.cursos_validos(cursos)),
- add column idiomas text[] constraint profissional_idiomas_check
-  check (idiomas is null or idiomas <@ array['portugues','ingles','espanhol','libras','outro']::text[]);
+   ('menos_de_1_ano','de_1_a_3_anos','de_3_a_5_anos','de_5_a_10_anos','mais_de_10_anos')) not valid,
+ add constraint profissional_cursos_check
+  check (privado.cursos_validos(cursos)) not valid,
+ add constraint profissional_idiomas_check
+  check (idiomas is null or idiomas <@ array['portugues','ingles','espanhol','libras','outro']::text[]) not valid;
+
 comment on column public.profissional.apresentacao is
  '"Sobre mim" em texto livre, até 600 caracteres. Passa pelo filtro de termos e de contato/Pix (RN38). Visível só a contratante com vínculo de leitura (RN39).';
 comment on column public.profissional.onde_trabalhei is
@@ -31,28 +44,62 @@ comment on column public.profissional.experiencia_faixa is 'Faixa de tempo de ex
 comment on column public.profissional.cursos is 'Até 5 cursos ou certificados de até 80 caracteres, declarados pelo próprio profissional.';
 comment on column public.profissional.idiomas is 'Idiomas declarados, de lista fechada (português, inglês, espanhol, Libras, outro).';
 
--- RN38: filtro de contato e Pix. Verdadeiro quando o texto está LIMPO. Reaproveita o detector de
--- telefone, e-mail e link da RN10 e acrescenta o que ele deixa passar: chave aleatória do Pix (UUID,
--- que o detector mascara de propósito), @ de perfil e telefone escrito por extenso. CPF/CNPJ e
--- telefone em dígitos já caem no detector (8 ou mais dígitos com separadores).
-create function privado.texto_sem_contato_ou_pix(texto text) returns boolean
+-- RN38: filtro de contato e Pix normalizado e blindado. Verdadeiro quando o texto está LIMPO.
+create or replace function privado.texto_sem_contato_ou_pix(texto text) returns boolean
 language plpgsql immutable security definer set search_path = '' as $$
 declare
- -- Intervalo de anos ("2019-2023", "2019 a 2023") não é telefone, a menos que venha colado a um DDD.
- v_sem_anos text := regexp_replace(coalesce(texto, ''),
-  '(?<![0-9)+])(?<![0-9)+] )\y(19|20)\d{2}\s*(-|–|até|a)\s*(19|20)\d{2}\y', ' ', 'g');
- v_min text := lower(v_sem_anos);
+  v_norm text;
+  v_sem_anos text;
+  v_sem_abrev text;
 begin
- if v_min = '' then return true; end if;
- if privado.contem_contato_ou_link(v_sem_anos) then return false; end if;
- if v_min ~ '[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}' then return false; end if;
- if position('@' in v_min) > 0 then return false; end if;
- if v_min ~ '((\y(zero|um|uma|dois|duas|tres|três|quatro|cinco|seis|sete|oito|nove)\y|[0-9])[^[:alnum:]]*){8,}' then
-  return false; end if;
- return true;
+  if texto is null or texto = '' then return true; end if;
+
+  -- 1. Normalização Unicode NFKC (decompõe e recompõe para forma canônica de compatibilidade)
+  v_norm := normalize(texto, NFKC);
+
+  -- 2. Remoção de caracteres invisíveis e de formatação (U+200B-U+200F, U+2060, U+FEFF, U+00AD)
+  v_norm := regexp_replace(v_norm, '[\u200B-\u200F\u2060\uFEFF\u00AD]', '', 'g');
+
+  -- 3. Minúsculas
+  v_norm := lower(v_norm);
+
+  -- 4. Transliteração de homóglifos cirílicos comuns em domínios/e-mails
+  v_norm := translate(v_norm, 'асеорху', 'aceopxy');
+
+  -- 5. Tratamento de variantes de arroba e ponto em texto
+  v_norm := regexp_replace(v_norm, '(\(at\)|\[at\]|\s+arroba\s+|\y(arroba|at)\y|[＠﹫])', '@', 'g');
+  v_norm := regexp_replace(v_norm, '\s+ponto\s+', '.', 'g');
+
+  -- 6. @ é proibido (handles de redes sociais e e-mails)
+  if position('@' in v_norm) > 0 then return false; end if;
+
+  -- 7. Chave aleatória Pix (UUID com ou sem hífens ou 32 hexadecimais)
+  if v_norm ~ '[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}' then return false; end if;
+  if v_norm ~ '\y[0-9a-f]{32}\y' then return false; end if;
+
+  -- 8. Domínios e URLs (com e sem esquema), mascarando abreviações legítimas como Sr.Silva
+  v_sem_abrev := regexp_replace(v_norm, '\y(sr|sra|dr|dra|prof|profa|av|rua|eng|vcs?|pág|pag|art|obs|ex)\.([a-z])', '\1 \2', 'g');
+  if v_sem_abrev ~ '(https?://|www\.)[^\s]+'
+     or v_sem_abrev ~ '\y(wa\.me|bit\.ly|t\.me|linktr\.ee)\y'
+     or v_sem_abrev ~ '\y[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,24}\M' then
+    return false;
+  end if;
+
+  -- 9. Telefone e sequências numéricas (dígitos e por extenso)
+  -- Mascara intervalos de anos, horários, valores monetários e datas legítimas
+  v_sem_anos := regexp_replace(v_norm, '(?<![0-9)+])(?<![0-9)+] )\y(19|20)\d{2}\s*(-|–|até|a)\s*(19|20)\d{2}\y', ' ', 'g');
+  v_sem_anos := regexp_replace(v_sem_anos, '\y(0?[1-9]|[12]\d|3[01])/(0?[1-9]|1[0-2])/(19\d{2}|20\d{2}|\d{2})\y', ' ', 'g');
+  v_sem_anos := regexp_replace(v_sem_anos, 'r\$\s*\d+([.,]\d+)*|\y\d+([.,]\d+)*\s*reais\y', ' ', 'g');
+  v_sem_anos := regexp_replace(v_sem_anos, '\y\d{1,2}(:\d{2}|h(\d{2})?)(\s*([–\-\/]|às|a)\s*\d{1,2}(:\d{2}|h(\d{2})?))?\y', ' ', 'g');
+
+  if v_sem_anos ~ '((\y(zero|um|uma|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove)\y|[0-9])[^[:alnum:]]*){8,}' then
+    return false;
+  end if;
+
+  return true;
 end $$;
 comment on function privado.texto_sem_contato_ou_pix(text) is
- 'Verdadeiro quando o texto não traz telefone, e-mail, link, @ nem chave Pix (RN38). Nunca grava nem registra o texto recebido (RN15).';
+ 'Verdadeiro quando o texto não traz telefone, e-mail, link, @ nem chave Pix (RN38). Normaliza em NFKC e remove caracteres invisíveis antes de validar. Nunca grava nem registra o texto recebido (RN15).';
 revoke execute on function privado.texto_sem_contato_ou_pix(text) from public, anon, authenticated;
 grant execute on function privado.texto_sem_contato_ou_pix(text) to service_role;
 
@@ -75,7 +122,7 @@ $$;
 
 -- O corpo é o objeto do contrato (campos no topo), e o PostgREST o entrega inteiro a um parâmetro
 -- jsonb sem nome. É a única forma de separar "omitido" (fica como está) de `null` (limpa o campo).
-create function public.atualizar_apresentacao_profissional(jsonb) returns jsonb
+create or replace function public.atualizar_apresentacao_profissional(jsonb) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
  v_c alias for $1;
@@ -90,7 +137,7 @@ begin
   perform public.erro(422, 'campo_obrigatorio', 'nenhum_campo'); end if;
  for v_campo in select jsonb_object_keys(v_c) loop
   if v_campo <> all (array['apresentacao','onde_trabalhei','experiencia_faixa','cursos','idiomas']) then
-   perform public.erro(422, 'campo_invalido', v_campo); end if;
+   perform public.erro(422, 'campo_invalido', 'campo_desconhecido'); end if;
  end loop;
  select * into v_prof from public.profissional where usuario_id = v_uid for update;
  if not found then perform public.erro(404, 'nao_encontrado'); end if;
@@ -140,3 +187,209 @@ comment on function public.atualizar_apresentacao_profissional(jsonb) is
  '"Sobre mim", onde trabalhou, experiência, cursos e idiomas do próprio profissional (RN26, RN38). Campo enviado substitui, omitido fica, null limpa. Devolve PerfilProfissionalDetalhado.';
 revoke all on function public.atualizar_apresentacao_profissional(jsonb) from public, anon;
 grant execute on function public.atualizar_apresentacao_profissional(jsonb) to authenticated;
+
+-- P1-2: Ciclo de exclusão e expurgo. Atualiza privado.limpar_contas_anonimizadas para incluir
+-- os campos novos da F2 (apresentacao, onde_trabalhei, experiencia_faixa, cursos, idiomas).
+create or replace function privado.limpar_contas_anonimizadas(p_dias integer default 15)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_candidato record;
+  v_total     integer := 0;
+begin
+  for v_candidato in
+    select u.id, p.id as profissional_id
+      from public.usuario u
+      left join public.profissional p on p.usuario_id = u.id
+     where u.estado = 'anonimizada'
+       and u.anonimizado_em <= privado.agora() - (p_dias || ' days')::interval
+       and (
+         u.nascimento is not null
+         or p.ponto_base is not null
+         or p.apresentacao is not null
+         or p.onde_trabalhei is not null
+         or p.experiencia_faixa is not null
+         or p.cursos is not null
+         or p.idiomas is not null
+         or exists (select 1 from public.disponibilidade d where d.profissional_id = p.id)
+         or exists (select 1 from public.profissional_funcao pf where pf.profissional_id = p.id)
+         or exists (select 1 from public.dispositivo disp where disp.usuario_id = u.id)
+         or exists (select 1 from public.ocorrencia o
+                     where o.autor_id = u.id
+                       and (o.motivo <> '[removido por exclusão de conta]' or o.relato is not null))
+         or exists (
+           select 1 from public.vaga g
+            where g.publicado_por = u.id
+              and (
+                (
+                  not (
+                    (g.estado = 'publicada' and g.inicio_em > privado.agora())
+                    or exists (
+                      select 1 from public.posicao po
+                       join public.turno tu on tu.posicao_id = po.id
+                      where po.vaga_id = g.id
+                        and po.estado <> 'cancelada'
+                        and tu.checkout_em is null
+                        and po.fim_em + interval '7 days' >= privado.agora()
+                    )
+                  )
+                  and (
+                    g.responsavel_local <> '[removido por exclusão de conta]'
+                    or g.traje is not null
+                    or g.observacoes is not null
+                  )
+                )
+                or (
+                  g.local <> '[removido por exclusão de conta]'
+                  and not (
+                    (g.estado = 'publicada' and g.inicio_em > privado.agora())
+                    or exists (
+                      select 1 from public.posicao po
+                       join public.turno tu on tu.posicao_id = po.id
+                      where po.vaga_id = g.id
+                        and (
+                          (po.estado <> 'cancelada'
+                           and tu.checkout_em is null
+                           and po.fim_em + interval '7 days' >= privado.agora())
+                          or tu.verificacao = 'verificado'
+                        )
+                    )
+                  )
+                )
+              )
+         )
+       )
+  loop
+    -- Ativa sinal de sessão para permitir substituição de dados imutáveis sob retenção
+    perform set_config('privado.retencao', 'on', true);
+
+    -- 1. Apaga disponibilidade semanal, funções, ponto base e os campos de perfil do profissional
+    if v_candidato.profissional_id is not null then
+      delete from public.disponibilidade where profissional_id = v_candidato.profissional_id;
+      delete from public.profissional_funcao where profissional_id = v_candidato.profissional_id;
+      update public.profissional
+         set ponto_base = null,
+             apresentacao = null,
+             onde_trabalhei = null,
+             experiencia_faixa = null,
+             cursos = null,
+             idiomas = null
+       where id = v_candidato.profissional_id;
+    end if;
+
+    -- 2. Apaga aparelhos registrados
+    delete from public.dispositivo where usuario_id = v_candidato.id;
+
+    -- 3. Substitui o motivo das ocorrências de autoria dela pelo marcador neutro e
+    --    apaga o relato da denúncia
+    update public.ocorrencia
+       set motivo = '[removido por exclusão de conta]',
+           relato = null
+     where autor_id = v_candidato.id
+       and (motivo <> '[removido por exclusão de conta]' or relato is not null);
+
+    -- 4. Zera data de nascimento
+    update public.usuario
+       set nascimento = null
+     where id = v_candidato.id;
+
+    -- 5. Sanitiza texto livre das vagas publicadas pelo titular excluído (K-001, K-001f, K-001h)
+    update public.vaga g
+       set responsavel_local = case
+                                 when exists (
+                                   select 1 from public.posicao po
+                                    join public.turno tu on tu.posicao_id = po.id
+                                   where po.vaga_id = g.id
+                                     and po.estado <> 'cancelada'
+                                     and tu.checkout_em is null
+                                     and po.fim_em + interval '7 days' >= privado.agora()
+                                 ) then g.responsavel_local
+                                 else '[removido por exclusão de conta]'
+                               end,
+           traje             = case
+                                 when exists (
+                                   select 1 from public.posicao po
+                                    join public.turno tu on tu.posicao_id = po.id
+                                   where po.vaga_id = g.id
+                                     and po.estado <> 'cancelada'
+                                     and tu.checkout_em is null
+                                     and po.fim_em + interval '7 days' >= privado.agora()
+                                 ) then g.traje
+                                 else null
+                               end,
+           observacoes       = case
+                                 when exists (
+                                   select 1 from public.posicao po
+                                    join public.turno tu on tu.posicao_id = po.id
+                                   where po.vaga_id = g.id
+                                     and po.estado <> 'cancelada'
+                                     and tu.checkout_em is null
+                                     and po.fim_em + interval '7 days' >= privado.agora()
+                                 ) then g.observacoes
+                                 else null
+                               end,
+           local             = case
+                                 when exists (
+                                   select 1 from public.posicao po
+                                    join public.turno tu on tu.posicao_id = po.id
+                                   where po.vaga_id = g.id
+                                     and po.estado <> 'cancelada'
+                                     and (
+                                       (tu.checkout_em is null and po.fim_em + interval '7 days' >= privado.agora())
+                                       or tu.verificacao = 'verificado'
+                                     )
+                                 ) then g.local
+                                 else '[removido por exclusão de conta]'
+                               end
+     where g.publicado_por = v_candidato.id
+       and (
+         (
+           not (
+             (g.estado = 'publicada' and g.inicio_em > privado.agora())
+             or exists (
+               select 1 from public.posicao po
+                join public.turno tu on tu.posicao_id = po.id
+               where po.vaga_id = g.id
+                 and po.estado <> 'cancelada'
+                 and tu.checkout_em is null
+                 and po.fim_em + interval '7 days' >= privado.agora()
+             )
+           )
+           and (
+             g.responsavel_local <> '[removido por exclusão de conta]'
+             or g.traje is not null
+             or g.observacoes is not null
+           )
+         )
+         or (
+           g.local <> '[removido por exclusão de conta]'
+           and not (
+             (g.estado = 'publicada' and g.inicio_em > privado.agora())
+             or exists (
+               select 1 from public.posicao po
+                join public.turno tu on tu.posicao_id = po.id
+               where po.vaga_id = g.id
+                 and (
+                   (po.estado <> 'cancelada'
+                    and tu.checkout_em is null
+                    and po.fim_em + interval '7 days' >= privado.agora())
+                   or tu.verificacao = 'verificado'
+                 )
+             )
+           )
+         )
+       );
+
+    perform set_config('privado.retencao', 'off', true);
+    v_total := v_total + 1;
+  end loop;
+
+  return v_total;
+end $$;
+comment on function privado.limpar_contas_anonimizadas(integer) is
+ 'Apaga disponibilidade, funções, aparelhos, zera nascimento, ponto base, apresentacao, onde_trabalhei, experiencia_faixa, cursos e idiomas, substitui motivo e apaga relato de ocorrências e sanitiza texto livre de vagas após p_dias dias (LGPD art. 6º, III e art. 18, IV).';
+revoke execute on function privado.limpar_contas_anonimizadas(integer) from public, anon, authenticated;
+grant execute on function privado.limpar_contas_anonimizadas(integer) to service_role;
