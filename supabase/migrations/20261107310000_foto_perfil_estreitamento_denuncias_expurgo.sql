@@ -406,3 +406,209 @@ begin
     'expurgo_midia_perfil',       v_expurgo_perfil
   );
 end $$;
+
+-- 9. Compatibilidade de exportação de dados com PerfilProfissionalDetalhado (contrato 0.2.58+).
+create or replace function privado.meus_dados(p_usuario uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with conta as (
+    select * from public.usuario u where u.id = p_usuario
+  ),
+  prof as (
+    select p.* from public.profissional p where p.usuario_id = p_usuario
+  ),
+  casas as (
+    select m.estabelecimento_id, m.papel, e.nome, e.tipo
+      from public.membro_estabelecimento m
+      join public.estabelecimento e on e.id = m.estabelecimento_id
+     where m.usuario_id = p_usuario
+  )
+  select jsonb_build_object(
+    'gerado_em', privado.agora(),
+
+    'conta', jsonb_build_object(
+      'id',         c.id,
+      'perfil',     c.perfil,
+      'nome',       c.nome,
+      'telefone',   c.telefone,
+      'email',      c.email,
+      'nascimento', c.nascimento,
+      'estado',     c.estado),
+
+    'perfil_profissional',
+      (select public.perfil_profissional_em_json(p) || jsonb_build_object(
+         'apresentacao', null,
+         'onde_trabalhei', null,
+         'experiencia_faixa', null,
+         'cursos', '[]'::jsonb,
+         'idiomas', '[]'::jsonb,
+         'servicos', '[]'::jsonb,
+         'regioes', '[]'::jsonb,
+         'atende_todo_df', false
+       ) from prof p),
+
+    'estabelecimentos', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id',        k.estabelecimento_id,
+               'nome',      k.nome,
+               'tipo',      k.tipo,
+               'papel',     k.papel,
+               'reputacao', privado.estabelecimento_publico(k.estabelecimento_id)->'reputacao')
+             order by k.nome)
+        from casas k), '[]'::jsonb),
+
+    'disponibilidade', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'dia_semana',  d.dia_semana,
+               'hora_inicio', to_char(d.hora_inicio, 'HH24:MI'),
+               'hora_fim',    to_char(d.hora_fim,    'HH24:MI'))
+             order by d.dia_semana, d.hora_inicio)
+        from public.disponibilidade d
+        join prof p on p.id = d.profissional_id), '[]'::jsonb),
+
+    'turnos', coalesce((
+      select jsonb_agg(privado.turno_em_json(t.id, p_usuario) order by po.inicio_em desc)
+        from public.turno t
+        join public.posicao po on po.id = t.posicao_id
+        join public.vaga v     on v.id = po.vaga_id
+       where po.profissional_id in (select p.id from prof p)
+          or v.estabelecimento_id in (select k.estabelecimento_id from casas k)),
+      '[]'::jsonb),
+
+    'avaliacoes_dadas', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'turno_id',  a.turno_id,
+               'resposta',  a.resposta,
+               'criada_em', a.criada_em)
+             order by a.criada_em desc)
+        from public.avaliacao a
+       where a.autor_id = p_usuario), '[]'::jsonb),
+
+    'avaliacoes_recebidas', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'turno_id',  a.turno_id,
+               'resposta',  a.resposta,
+               'criada_em', a.criada_em)
+             order by a.criada_em desc)
+        from public.avaliacao a
+       where (a.alvo_tipo = 'profissional'
+                and a.alvo_id in (select p.id from prof p))
+          or (a.alvo_tipo = 'estabelecimento'
+                and a.alvo_id in (select k.estabelecimento_id from casas k))),
+      '[]'::jsonb),
+
+    'dispositivos', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'plataforma',    di.plataforma,
+               'atualizado_em', di.atualizado_em)
+             order by di.atualizado_em desc)
+        from public.dispositivo di
+       where di.usuario_id = p_usuario), '[]'::jsonb),
+
+    'candidaturas', coalesce((
+      select jsonb_agg(privado.candidatura_em_json(cd.id) order by cd.criada_em desc, cd.id)
+        from public.candidatura cd
+       where cd.profissional_id in (select p.id from prof p)), '[]'::jsonb),
+
+    'ocorrencias', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id',        o.id,
+               'tipo',      o.tipo,
+               'papel',     case when o.autor_id = p_usuario then 'autor' else 'alvo' end,
+               'criada_em',    o.criada_em,
+               'resolvido_em', o.resolvido_em,
+               'motivo',    case
+                              when o.autor_id = p_usuario or o.tipo = 'suspensao'
+                                then o.motivo
+                              else null
+                            end)
+             order by o.criada_em desc)
+        from public.ocorrencia o
+       where o.autor_id = p_usuario or o.usuario_id = p_usuario), '[]'::jsonb),
+
+    'bloqueios', coalesce((
+      select jsonb_agg(x.o order by x.criado_em desc)
+        from (
+          select distinct jsonb_build_object(
+                   'alvo_tipo', 'profissional',
+                   'alvo_id',   pb.id,
+                   'criado_em', b.criado_em) as o,
+                 b.criado_em
+            from public.bloqueio b
+            join public.profissional pb on pb.usuario_id = b.bloqueado_id
+           where b.autor_id = p_usuario
+          union
+          select distinct jsonb_build_object(
+                   'alvo_tipo', 'estabelecimento',
+                   'alvo_id',   mb.estabelecimento_id,
+                   'criado_em', b.criado_em) as o,
+                 b.criado_em
+            from public.bloqueio b
+            join public.usuario ub on ub.id = b.bloqueado_id and ub.perfil = 'contratante'
+            join public.membro_estabelecimento mb on mb.usuario_id = b.bloqueado_id
+           where b.autor_id = p_usuario
+        ) x), '[]'::jsonb),
+
+    'notificacoes', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'tipo',          n.tipo,
+               'referencia_id', n.referencia_id,
+               'payload',       n.payload,
+               'enviada_em',    n.enviada_em,
+               'entregue_em',   n.entregue_em)
+             order by n.enviada_em desc nulls last)
+        from public.notificacao n
+       where n.usuario_id = p_usuario), '[]'::jsonb),
+
+    'despachos', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'vaga_id',   ds.vaga_id,
+               'criado_em', ds.criado_em,
+               'reaberta',  ds.reaberta)
+             order by ds.criado_em desc)
+        from public.despacho ds
+       where ds.profissional_id in (select p.id from prof p)), '[]'::jsonb),
+
+    'equipe_confianca', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'estabelecimento_id', ec.estabelecimento_id,
+               'nome',               es.nome,
+               'adicionado_em',      ec.adicionado_em)
+             order by ec.adicionado_em desc)
+        from public.equipe_confianca ec
+        join public.estabelecimento es on es.id = ec.estabelecimento_id
+       where ec.profissional_id in (select p.id from prof p)), '[]'::jsonb),
+
+    'pedido_de_exclusao', (
+      select jsonb_build_object(
+               'pedido_em',    pe.pedido_em,
+               'estado',       pe.estado,
+               'tentativas',   pe.tentativas,
+               'concluido_em', pe.concluido_em)
+        from public.pedido_de_exclusao pe
+       where pe.usuario_id = p_usuario
+       order by pe.pedido_em desc
+       limit 1),
+
+    'eventos_app', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id',          ea.id,
+               'evento',      ea.evento,
+               'vaga_id',     ea.vaga_id,
+               'turno_id',    ea.turno_id,
+               'ocorrido_em', ea.ocorrido_em,
+               'criado_em',   ea.criado_em)
+             order by ea.ocorrido_em desc, ea.criado_em desc, ea.id desc)
+        from public.evento_app ea
+       where ea.usuario_id = p_usuario), '[]'::jsonb)
+  )
+  from conta c
+$$;
+
+revoke execute on function privado.meus_dados(uuid) from public, anon, authenticated;
+grant  execute on function privado.meus_dados(uuid) to service_role;
+
