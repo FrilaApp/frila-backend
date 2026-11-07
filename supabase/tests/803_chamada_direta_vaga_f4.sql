@@ -5,7 +5,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-07 15:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-803';
-select plan(28);
+select plan(34);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -128,6 +128,28 @@ select is(pg_temp.como('c8030000-0000-4000-8000-000000000003',
   'terceiro não lê a vaga direta pela tabela');
 select ok((pg_temp.como('c8030000-0000-4000-8000-000000000001',
   $$ select to_jsonb(count(*)) from public.vaga where origem = 'chamada_direta' $$))::int >= 1, 'o membro lê');
+
+-- detalhe_vaga e candidatar são SECURITY DEFINER: a recusa tem de estar nelas, não só na política.
+select is(pg_temp.r('c8030000-0000-4000-8000-000000000003',
+  $$ select public.detalhe_vaga('c8030000-0000-4000-8000-0000000000f1') $$),
+  'ok', 'controle: o terceiro abre o detalhe de vaga de publicação');
+select is(pg_temp.r('c8030000-0000-4000-8000-000000000003',
+  format($$ select public.detalhe_vaga(%L) $$, (select j->>'vaga_id' from ch))),
+  'nao_encontrado', 'detalhe_vaga: 404 ao terceiro na vaga direta');
+select is(pg_temp.r('c8030000-0000-4000-8000-000000000003',
+  format($$ select public.candidatar(%L) $$, (select j->>'vaga_id' from ch))),
+  'nao_encontrado', 'candidatar: 404 ao terceiro na vaga direta');
+select is(pg_temp.r('c8030000-0000-4000-8000-000000000002',
+  format($$ select public.candidatar(%L) $$, (select j->>'vaga_id' from ch))),
+  'nao_encontrado', 'candidatar: 404 também ao chamado, o aceite é por responder_chamada (RN28)');
+select is(pg_temp.r('c8030000-0000-4000-8000-000000000002',
+  format($$ select public.detalhe_vaga(%L) $$, (select j->>'vaga_id' from ch))),
+  'nao_encontrado', 'detalhe_vaga: 404 ao chamado antes do aceite (lê por detalhe_chamada)');
+update public.posicao set estado = 'confirmada', profissional_id = (select a from ids), confirmado_em = privado.agora()
+ where vaga_id = (select (j->>'vaga_id')::uuid from ch);
+select is(pg_temp.como('c8030000-0000-4000-8000-000000000002',
+  format($$ select public.detalhe_vaga(%L) $$, (select j->>'vaga_id' from ch)))->>'id', (select j->>'vaga_id' from ch),
+  'detalhe_vaga: o profissional confirmado na vaga direta lê');
 
 -- ── Uma violadora por restrição nova ─────────────────────────────────────────
 select throws_ok($$ update public.vaga set origem = 'outra' where id = 'c8030000-0000-4000-8000-0000000000f1' $$,
