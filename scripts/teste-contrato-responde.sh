@@ -191,6 +191,16 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:republicarPosicoesRestantes:403","corpo":{"status":403,"code":"sem_permissao"}}
 {"op":"promete:republicarPosicoesRestantes:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:republicarPosicoesRestantes:422","corpo":{"status":422,"code":"republicacao_indisponivel"}}
+{"op":"promete:definirServicos:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:definirServicos:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:definirServicos:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:definirServicos:422","corpo":{"status":422,"code":"campo_invalido"}}
+{"op":"promete:definirRegioesAtendidas:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:definirRegioesAtendidas:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:definirRegioesAtendidas:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:definirRegioesAtendidas:422","corpo":{"status":422,"code":"campo_invalido"}}
+{"op":"promete:resolverServico:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:resolverServico:422","corpo":{"status":422,"code":"campo_invalido"}}
 EOF
 )
 
