@@ -271,7 +271,16 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
     }
 
     try {
-      await sqlClient.confirmarExpurgo(msg.verificacao_id, msg.origem);
+      const confirmou = await sqlClient.confirmarExpurgo(msg.verificacao_id, msg.origem);
+      if (!confirmou) {
+        pendentes.push({
+          verificacao_id: msg.verificacao_id,
+          msg_id: msg.msg_id,
+          status: 409,
+          read_ct: msg.read_ct,
+        });
+        continue;
+      }
     } catch (_err) {
       // O arquivo já saiu, mas o banco não soube. Deixar na fila é o certo: a próxima
       // rodada reencontra os caminhos ausentes (404 = sucesso) e confirma.

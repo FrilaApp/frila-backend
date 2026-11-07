@@ -39,6 +39,7 @@ function mockDeps(opcoes: {
   statusPorCaminho?: (caminho: string, bucket?: string) => number;
   erroAoLerFila?: boolean;
   erroAoConfirmar?: boolean;
+  confirmarRetornaFalse?: boolean;
   registro?: Registro;
 }): HandlerDeps {
   const reg = opcoes.registro ?? { apagados: [], confirmados: [], confirmadosDetalhes: [], removidosDaFila: [] };
@@ -74,6 +75,7 @@ function mockDeps(opcoes: {
       },
       confirmarExpurgo: (id: string, origem?: string) => {
         if (opcoes.erroAoConfirmar) return Promise.reject(new Error("banco fora"));
+        if (opcoes.confirmarRetornaFalse) return Promise.resolve(false);
         reg.confirmados.push(id);
         reg.confirmadosDetalhes?.push({ id, origem });
         return Promise.resolve(true);
@@ -338,4 +340,34 @@ Deno.test("mensagem antiga sem origem é verificacao e mensagem nova é foto_per
     { id: FOTO_ID, origem: "foto_perfil" },
   ]);
   assertEquals(reg.removidosDaFila, [91, 92]);
+});
+
+Deno.test("confirmarExpurgo retornando false mantém mensagem na fila e registra em pendentes (achado 5 do Lince Codex)", async () => {
+  const reg: Registro = { apagados: [], confirmados: [], confirmadosDetalhes: [], removidosDaFila: [] };
+  const FOTO_ID = "fd000000-0000-4000-8000-000000000003";
+  const msgFotoPerfil: MensagemExpurgo = {
+    msg_id: 93,
+    read_ct: 1,
+    verificacao_id: FOTO_ID,
+    bucket: "midia-perfil",
+    caminhos: [`perfil/${FOTO_ID}.jpg`],
+    origem: "foto_perfil",
+  };
+
+  const deps = mockDeps({
+    mensagens: [msgFotoPerfil],
+    confirmarRetornaFalse: true,
+    registro: reg,
+  });
+
+  const resp = await handler(pedido(), deps);
+  assertEquals(resp.status, 200);
+  const corpo = await resp.json();
+  assertEquals(corpo.verificacoes_confirmadas, 0);
+  assertEquals(corpo.pendentes.length, 1);
+  assertEquals(corpo.pendentes[0].verificacao_id, FOTO_ID);
+  assertEquals(corpo.pendentes[0].status, 409);
+  assertEquals(reg.confirmados.length, 0);
+  // Não remove da fila quando a confirmação do banco falha/rejeita
+  assertEquals(reg.removidosDaFila.length, 0);
 });
