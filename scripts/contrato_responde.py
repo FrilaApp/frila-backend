@@ -49,6 +49,8 @@ FORA_DO_ALCANCE = {
     "renovarSessao": "a Sessao é emitida pelo Supabase Auth, e não por código deste repositório",
     "entrarDemonstracao": "devolve a Sessao do Supabase Auth; a Edge Function só a repassa",
     "listarFuncoes": "leitura de tabela pelo PostgREST: o corpo é dele, e não de função nossa",
+    "listarRegioesAdministrativas": "leitura de tabela pelo PostgREST: o corpo é dele, e não de função nossa",
+    "listarEspecialidades": "leitura de tabela pelo PostgREST: o corpo é dele, e não de função nossa",
     "exportarTurnos": "devolve text/csv e application/pdf, e não JSON: não há schema para conferir",
     "pedirCodigo": "a resposta não tem corpo",
 }
@@ -261,6 +263,9 @@ VIGIADAS = {
     ("desbloquear", "403"): "sem_permissao",
     ("desbloquear", "404"): "nao_encontrado",
     ("desbloquear", "422"): "campo_invalido",
+    # Resolver serviço (fatia F1, contrato 0.2.52, RN44)
+    ("resolverServico", "401"): "nao_autenticado",
+    ("resolverServico", "422"): "campo_invalido",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
@@ -273,6 +278,8 @@ ISENTAS = {
     ("renovarSessao", "401"): "renovação de sessão é executada pelo Supabase Auth (GoTrue), fora do Postgres",
     # PostgREST direto em tabela, fora do harness de RPC
     ("listarFuncoes", "401"): "leitura direta de tabela via PostgREST, fora do harness de RPC",
+    ("listarRegioesAdministrativas", "401"): "leitura direta de tabela via PostgREST, fora do harness de RPC",
+    ("listarEspecialidades", "401"): "leitura direta de tabela via PostgREST, fora do harness de RPC",
     # Edge Functions (testadas em Deno pelo job de Edge Functions da CI)
     ("entrarDemonstracao", "404"): "código ou e-mail de demonstração inexistente é recusado pela Edge Function entrar-demonstracao",
     ("exportarMeusDados", "401"): "ausência de credencial JWT é tratada pela Edge Function exportar-meus-dados",

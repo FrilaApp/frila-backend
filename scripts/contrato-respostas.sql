@@ -1550,6 +1550,15 @@ select pg_temp.guarda('promete:desbloquear:403',
     $$ select public.desbloquear('profissional', %L::uuid) $$,
     (select p.id from public.profissional p where p.usuario_id = 'cc000000-0000-4000-8000-000000000003'))));
 
+-- Resposta feliz de resolverServico (contrato 0.2.52, fatia F1)
+select pg_temp.guarda('resolverServico', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.resolver_servico('diarista') $$));
+
+-- resolverServico: 422 campo_invalido (termo com menos de 2 caracteres)
+select pg_temp.guarda('promete:resolverServico:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.resolver_servico('a') $$));
+
 -- Por último, e depois de tudo: ela anonimiza a conta e cancela os turnos futuros dela.
 -- Qualquer colheita posterior veria um cenário diferente do que as outras viram. A conta
 -- anonimizada é a `…0003`, a mesma que os dois guardas de `promete:perfilPublico:404`
@@ -1566,6 +1575,11 @@ select pg_temp.guarda('promete:listarBloqueios:401',
 select pg_temp.guarda('promete:desbloquear:401',
   pg_temp.observado('cc000000-0000-4000-8000-000000000003',
     $$ select public.desbloquear('estabelecimento', 'c0000000-0000-4000-8000-0000000000fd'::uuid) $$));
+
+-- 401 de resolverServico: conta anonimizada não busca serviço (RF25)
+select pg_temp.guarda('promete:resolverServico:401',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003',
+    $$ select public.resolver_servico('diarista') $$));
 
 -- Os três 401 da verificação de identidade: conta anonimizada não lê nem escreve
 -- verificação (RF25, RNF08), e a recusa vem antes de olhar perfil ou estado. Só aqui,

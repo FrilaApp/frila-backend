@@ -143,7 +143,7 @@ select is(
 select is(
   pg_temp.contar_como('11111111-0000-0000-0000-000000000001',
     'select count(*)::int from public.funcao'),
-  32,
+  38,
   'o catálogo de funções é aberto a quem está logado');
 
 insert into public.disponibilidade (profissional_id, dia_semana, hora_inicio, hora_fim)

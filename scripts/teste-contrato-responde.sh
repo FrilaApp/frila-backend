@@ -191,6 +191,8 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:republicarPosicoesRestantes:403","corpo":{"status":403,"code":"sem_permissao"}}
 {"op":"promete:republicarPosicoesRestantes:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:republicarPosicoesRestantes:422","corpo":{"status":422,"code":"republicacao_indisponivel"}}
+{"op":"promete:resolverServico:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:resolverServico:422","corpo":{"status":422,"code":"campo_invalido"}}
 EOF
 )
 

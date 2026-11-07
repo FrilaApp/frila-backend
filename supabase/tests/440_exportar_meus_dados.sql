@@ -265,7 +265,11 @@ insert into fora values
 
 create temp table nao_pessoais (t text, motivo text);
 insert into nao_pessoais values
-  ('funcao', 'catálogo de funções do setor, igual para todo mundo');
+  ('funcao', 'catálogo de funções do setor, igual para todo mundo'),
+  ('categoria', 'categorias do catálogo de funções, igual para todo mundo (RN44)'),
+  ('especialidade', 'especialidades curadas de cada função, igual para todo mundo (RN44)'),
+  ('funcao_sinonimo', 'como se chama cada função, igual para todo mundo (RN44)'),
+  ('regiao_administrativa', 'regiões administrativas do DF, igual para todo mundo (RN44)');
 
 create temp table catalogo as
   select tablename::text as t from pg_tables where schemaname = 'public';

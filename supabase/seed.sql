@@ -3,7 +3,7 @@
 -- Dado de teste não entra aqui. Vive em supabase/tests/, para que um seed acidental
 -- em produção não crie estabelecimento fantasma.
 --
--- As 32 funções em 7 categorias saem dos setores mapeados no Documento de Visão e em
+-- As 32 funções em 7 categorias (mais 6 de Casa e Festa, abaixo) saem dos setores mapeados no Documento de Visão e em
 -- 02-O-NEGOCIO. São dado de partida [H]: precisam ser conferidas em campo, e a lista
 -- muda por migração, não à mão no painel.
 
@@ -48,6 +48,40 @@ insert into public.funcao (nome, categoria) values
   ('etiquetador',               'Logística'),
   ('conferente auxiliar',       'Logística')
 on conflict (nome) do update set categoria = excluded.categoria;
+
+-- ── Casa e Festa e eventos sociais (contrato 0.2.52, RN44, decisão D9) ───────
+--
+-- Seis funções novas, todas no formato `servico`. Valem também para vaga normal: o
+-- despacho continua por `funcao_id` (RN05). A migração 20261107010000 já as cria; repeti-las
+-- aqui mantém o catálogo inteiro num só lugar e é idempotente.
+insert into public.funcao (nome, categoria, formato_padrao) values
+  ('faxina residencial',  'Casa',                    'servico'),
+  ('passadeira',          'Casa',                    'servico'),
+  ('faxina comercial',    'Casa',                    'servico'),
+  ('churrasqueiro',       'Festa e eventos sociais', 'servico'),
+  ('cozinheiro de festa', 'Festa e eventos sociais', 'servico'),
+  ('auxiliar de festa',   'Festa e eventos sociais', 'servico')
+on conflict (nome) do update
+  set categoria      = excluded.categoria,
+      formato_padrao = excluded.formato_padrao;
+
+-- Garçom e garçonete aparecem juntos na busca. Isto depende das funções antigas, que num
+-- banco novo só existem depois da migração; por isso mora aqui e não lá.
+update public.funcao
+   set grupo_busca = 'garcom_garconete'
+ where nome in ('garçom', 'garçonete');
+
+-- Especialidades do bartender, pelo mesmo motivo.
+insert into public.especialidade (funcao_id, nome)
+select f.id, e.nome
+  from (values
+    ('bartender', 'drinks autorais'),
+    ('bartender', 'bar móvel'),
+    ('bartender', 'coquetelaria clássica'),
+    ('bartender', 'flair')
+  ) as e (funcao, nome)
+  join public.funcao f on f.nome = e.funcao
+on conflict (funcao_id, nome) do nothing;
 
 -- ── A lista de termos bloqueados (diretriz 1.2 da App Store) ─────────────────
 --
