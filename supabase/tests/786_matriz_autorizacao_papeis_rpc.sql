@@ -23,7 +23,7 @@ set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(240);
+select plan(244);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -356,6 +356,10 @@ select is(pg_temp.testar_autorizacao('anon', null, $f2$select public.atualizar_a
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', $f2$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$f2$), 'AUTORIZADO', 'atualizar_apresentacao_profissional: profissional');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', $f2$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$f2$), '422_PERFIL_INCOMPATIVEL', 'atualizar_apresentacao_profissional: contratante');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', $f2$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$f2$), '422_PERFIL_INCOMPATIVEL', 'atualizar_apresentacao_profissional: dono');
+select is(pg_temp.testar_autorizacao('anon', null, $f2$select public.meu_perfil_detalhado()$f2$), '42501_SEM_EXECUTE', 'meu_perfil_detalhado: anon sem sessão');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', $f2$select public.meu_perfil_detalhado()$f2$), 'AUTORIZADO', 'meu_perfil_detalhado: profissional');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', $f2$select public.meu_perfil_detalhado()$f2$), '422_PERFIL_INCOMPATIVEL', 'meu_perfil_detalhado: contratante');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', $f2$select public.meu_perfil_detalhado()$f2$), '422_PERFIL_INCOMPATIVEL', 'meu_perfil_detalhado: dono');
 
 -- --- perfil_publico ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.perfil_publico(''78600000-0000-4000-8000-000000000030''::uuid)'), '42501_SEM_EXECUTE', 'perfil_publico [anon]: anon nao possui EXECUTE em perfil_publico');

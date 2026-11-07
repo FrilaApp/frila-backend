@@ -277,6 +277,10 @@ VIGIADAS = {
     ("atualizarApresentacaoProfissional", "403"): "sem_permissao",
     ("atualizarApresentacaoProfissional", "404"): "nao_encontrado",
     ("atualizarApresentacaoProfissional", "422"): "campo_invalido",
+    # Leitura do próprio perfil completo (F2, contrato 0.2.53, RN26/RN27).
+    ("meuPerfilDetalhado", "401"): "nao_autenticado",
+    ("meuPerfilDetalhado", "404"): "nao_encontrado",
+    ("meuPerfilDetalhado", "422"): "perfil_incompativel",
     # Resolver serviço (fatia F1, contrato 0.2.52, RN44)
     ("resolverServico", "401"): "nao_autenticado",
     ("resolverServico", "422"): "campo_invalido",
@@ -309,7 +313,6 @@ ISENTAS = {
     **{
         (op, status): "contrato 0.2.57 antecipado; implementação em outra fatia"
         for op, statuses in {
-            "meuPerfilDetalhado": ("401", "404", "422"),
             "pedirNovaAnaliseMidia": ("401", "403", "404", "409"),
             "listarRegioesAdministrativas": ("401",),
             "listarEspecialidades": ("401",),
@@ -352,7 +355,7 @@ ISENTAS = {
 PENDENTES = {op: "contratação direta, ainda sem implementação" for op in (
     "cancelarChamada",
     "definirPreferenciaChamadas", "detalheChamada",
-    "listarEspecialidades", "listarRegioesAdministrativas", "meuPerfilDetalhado", "minhasChamadas",
+    "listarEspecialidades", "listarRegioesAdministrativas", "minhasChamadas",
     "pedirNovaAnaliseMidia", "publicarAPartirDaChamada",
     "responderChamada")}
 

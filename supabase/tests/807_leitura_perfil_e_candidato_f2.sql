@@ -1,0 +1,329 @@
+-- 807_leitura_perfil_e_candidato_f2.sql
+--
+-- Fatia F2 / B3c: Leitura do perfil e cartão de candidato (DOC3, OpenAPI 0.2.53, RN26, RN27).
+--   * Critério 1: Contratante autorizado em candidatos_da_vaga recebe preço/unidade/duração, sem telefone/nascimento/ponto base.
+--   * Critério 2: Campos opcionais vazios seguem DOC3 sem quebrar decodificação do app anterior.
+--   * Critério 3: Conta sem vínculo de leitura tem campos aditivos omitidos em perfil_publico e acessos não autorizados barrados.
+--   * Critério 4: O dono obtém PerfilProfissionalDetalhado completo em meu_perfil_detalhado e o contratante autorizado a projeção correta.
+
+begin;
+insert into privado.ambiente values (true, true) on conflict (id) do update set eh_teste = true;
+set local frila.agora = '2027-01-11 09:00:00+00';
+select no_plan();
+
+create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
+declare r jsonb;
+begin
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', conta, 'role', 'authenticated')::text, true);
+  execute sql into r;
+  reset role;
+  perform set_config('request.jwt.claims', '{}', true);
+  return r;
+end $$;
+
+-- ── 1. Massa sintética ────────────────────────────────────────────────────────
+insert into auth.users (id, aud, role, email) values
+ ('c8070000-0000-4000-8000-000000000001','authenticated','authenticated','prof807_rico@t.test'),
+ ('c8070000-0000-4000-8000-000000000002','authenticated','authenticated','prof807_min@t.test'),
+ ('c8070000-0000-4000-8000-000000000003','authenticated','authenticated','casa807_vinculada@t.test'),
+ ('c8070000-0000-4000-8000-000000000004','authenticated','authenticated','casa807_estranha@t.test'),
+ ('c8070000-0000-4000-8000-000000000005','authenticated','authenticated','semperfil807@t.test');
+
+select pg_temp.como('c8070000-0000-4000-8000-000000000001',
+ $$select public.criar_conta('profissional','Prof Rico','+5561955558071','1992-05-10','2026-09-22')$$);
+select pg_temp.como('c8070000-0000-4000-8000-000000000002',
+ $$select public.criar_conta('profissional','Prof Minimo','+5561955558072','1995-08-15','2026-09-22')$$);
+select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+ $$select public.criar_conta('contratante','Dono Casa Vinculada','+5561955558073','1985-03-20','2026-09-22')$$);
+select pg_temp.como('c8070000-0000-4000-8000-000000000004',
+ $$select public.criar_conta('contratante','Dono Casa Estranha','+5561955558074','1988-11-25','2026-09-22')$$);
+select pg_temp.como('c8070000-0000-4000-8000-000000000005',
+ $$select public.criar_conta('profissional','Sem Perfil','+5561955558075','1990-01-01','2026-09-22')$$);
+
+-- Estabelecimentos
+select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+  $$select public.cadastrar_estabelecimento('Bar do Vinculo','04252011000110','food_service','CLS 405 Bloco A','{"latitude":-15.79,"longitude":-47.88}'::jsonb,'Plano Piloto')$$);
+select pg_temp.como('c8070000-0000-4000-8000-000000000004',
+  $$select public.cadastrar_estabelecimento('Restaurante Estranho','68558622000173','food_service','CLN 102 Bloco B','{"latitude":-15.79,"longitude":-47.88}'::jsonb,'Plano Piloto')$$);
+
+-- Perfis profissionais
+insert into public.profissional (id, usuario_id, ponto_base) values
+ ('c8070000-0000-4000-8000-000000000011', 'c8070000-0000-4000-8000-000000000001', 'POINT(-47.88 -15.79)'),
+ ('c8070000-0000-4000-8000-000000000012', 'c8070000-0000-4000-8000-000000000002', 'POINT(-47.88 -15.79)');
+
+-- Profissional 1 preenche serviços e apresentação
+select pg_temp.como('c8070000-0000-4000-8000-000000000001',
+ $$select public.atualizar_apresentacao_profissional(jsonb_build_object(
+   'apresentacao', 'Garçom profissional com 6 anos de experiência em eventos',
+   'onde_trabalhei', 'Restaurante Lago 2020-2024',
+   'experiencia_faixa', 'de_5_a_10_anos',
+   'cursos', array['Atendimento de Excelência'],
+   'idiomas', array['ingles']
+ ))$$);
+
+select pg_temp.como('c8070000-0000-4000-8000-000000000001',
+ $$select public.definir_servicos(jsonb_build_array(
+   jsonb_build_object(
+     'funcao_id', (select id from public.funcao where nome = 'Garçom'),
+     'unidade', 'diaria',
+     'valor_centavos', 20000,
+     'horas_incluidas', 8,
+     'leva_material', 'nao_se_aplica',
+     'especialidades', jsonb_build_array()
+   )
+ ))$$);
+
+select pg_temp.como('c8070000-0000-4000-8000-000000000001',
+ $$select public.definir_regioes_atendidas(array[(select id from public.regiao_administrativa where nome = 'Plano Piloto')], false)$$);
+
+-- Casa 1 publica vaga no modo seleção e Profissional 1 se candidata
+select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+  format($$select public.publicar_vaga(
+    (select id from public.estabelecimento where nome_fantasia = 'Bar do Vinculo'),
+    (select id from public.funcao where nome = 'Garçom'),
+    now() + interval '3 days',
+    now() + interval '3 days 8 hours',
+    'CLS 405 Bloco A',
+    '{"latitude": -15.79, "longitude": -47.88}'::jsonb,
+    20000,
+    1,
+    true, false, false,
+    'Gerente Marcos',
+    'selecao',
+    %L::uuid,
+    'preto completo',
+    false,
+    null,
+    180,
+    'Plano Piloto'
+  )$$, gen_random_uuid()));
+
+-- Prof 1 se candidata à vaga da Casa 1 (criando o vínculo legítimo de leitura)
+select pg_temp.como('c8070000-0000-4000-8000-000000000001',
+ format($$select public.candidatar((select id from public.vaga where local = 'CLS 405 Bloco A'))$$));
+
+-- ── 2. Testes de meu_perfil_detalhado (Critério 4 e autorização) ──────────────
+
+-- Anon sem sessão é barrado
+select throws_ok(
+  $$select public.meu_perfil_detalhado()$$,
+  '42501',
+  null,
+  'meu_perfil_detalhado: anon sem sessão não possui execute'
+);
+
+-- Chamador não autenticado (via auxiliar erro)
+select is(
+  (select code from public.erro_em_json(pg_temp.como(null, $$select public.meu_perfil_detalhado()$$))),
+  'nao_autenticado',
+  'meu_perfil_detalhado: chamador nulo responde 401 nao_autenticado'
+);
+
+-- Contratante é perfil incompatível (RN25)
+select is(
+  (select code from public.erro_em_json(pg_temp.como('c8070000-0000-4000-8000-000000000003', $$select public.meu_perfil_detalhado()$$))),
+  'perfil_incompativel',
+  'meu_perfil_detalhado: conta contratante responde 422 perfil_incompativel'
+);
+
+-- Profissional sem perfil cadastrado é 404
+select is(
+  (select code from public.erro_em_json(pg_temp.como('c8070000-0000-4000-8000-000000000005', $$select public.meu_perfil_detalhado()$$))),
+  'nao_encontrado',
+  'meu_perfil_detalhado: profissional sem cadastro responde 404 nao_encontrado'
+);
+
+-- Profissional 1 obtém seu PerfilProfissionalDetalhado completo
+select is(
+  (pg_temp.como('c8070000-0000-4000-8000-000000000001', $$select public.meu_perfil_detalhado()$$) ->> 'apresentacao'),
+  'Garçom profissional com 6 anos de experiência em eventos',
+  'meu_perfil_detalhado: dono lê apresentacao'
+);
+select is(
+  (pg_temp.como('c8070000-0000-4000-8000-000000000001', $$select public.meu_perfil_detalhado()$$) ->> 'experiencia_faixa'),
+  'de_5_a_10_anos',
+  'meu_perfil_detalhado: dono lê experiencia_faixa'
+);
+select is(
+  (pg_temp.como('c8070000-0000-4000-8000-000000000001', $$select public.meu_perfil_detalhado()$$) -> 'servicos' -> 0 ->> 'unidade'),
+  'diaria',
+  'meu_perfil_detalhado: dono lê servicos com unidade diaria'
+);
+select is(
+  ((pg_temp.como('c8070000-0000-4000-8000-000000000001', $$select public.meu_perfil_detalhado()$$) -> 'servicos' -> 0 ->> 'valor_centavos')::bigint),
+  20000::bigint,
+  'meu_perfil_detalhado: dono lê valor_centavos do servico'
+);
+
+-- Profissional 2 (mínimo) obtém PerfilProfissionalDetalhado sem quebrar (Critério 2)
+select is(
+  (pg_temp.como('c8070000-0000-4000-8000-000000000002', $$select public.meu_perfil_detalhado()$$) ->> 'apresentacao'),
+  null,
+  'meu_perfil_detalhado minimo: apresentacao e nula'
+);
+select is(
+  (jsonb_array_length(pg_temp.como('c8070000-0000-4000-8000-000000000002', $$select public.meu_perfil_detalhado()$$) -> 'servicos')),
+  0,
+  'meu_perfil_detalhado minimo: servicos e array vazio []'
+);
+select is(
+  (jsonb_array_length(pg_temp.como('c8070000-0000-4000-8000-000000000002', $$select public.meu_perfil_detalhado()$$) -> 'regioes')),
+  0,
+  'meu_perfil_detalhado minimo: regioes e array vazio []'
+);
+
+-- ── 3. Testes de candidatos_da_vaga (Critérios 1, 2 e privacidade) ────────────
+
+-- Contratante da vaga (Casa 1) lê candidatos_da_vaga
+create temp table cands as
+  select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+    format($$select public.candidatos_da_vaga((select id from public.vaga where local = 'CLS 405 Bloco A'))$$)) as res;
+
+select is(
+  (select jsonb_array_length(res) from cands),
+  1,
+  'candidatos_da_vaga: retorna 1 candidato pendente'
+);
+
+-- Critério 1: Contratante autorizado recebe preço, unidade e duração
+select is(
+  (select res -> 0 -> 'profissional' -> 'servicos' -> 0 ->> 'unidade' from cands),
+  'diaria',
+  'Critério 1: candidato no cartao traz unidade diaria'
+);
+select is(
+  (select (res -> 0 -> 'profissional' -> 'servicos' -> 0 ->> 'valor_centavos')::bigint from cands),
+  20000::bigint,
+  'Critério 1: candidato no cartao traz valor_centavos de 20000'
+);
+select is(
+  (select (res -> 0 -> 'profissional' -> 'servicos' -> 0 ->> 'horas_incluidas')::int from cands),
+  8,
+  'Critério 1: candidato no cartao traz horas_incluidas de 8h'
+);
+
+-- Critério 1 (Privacidade): Proibição estrita de telefone, nascimento ou ponto base
+select is(
+  (select res -> 0 -> 'profissional' ? 'telefone' from cands),
+  false,
+  'Critério 1: perfil do candidato NUNCA expoe telefone (RN10)'
+);
+select is(
+  (select res -> 0 -> 'profissional' ? 'nascimento' from cands),
+  false,
+  'Critério 1: perfil do candidato NUNCA expoe data de nascimento'
+);
+select is(
+  (select res -> 0 -> 'profissional' ? 'ponto_base' from cands),
+  false,
+  'Critério 1: perfil do candidato NUNCA expoe ponto base geografico'
+);
+
+-- ── 4. Testes de perfil_publico com e sem vínculo (Critérios 3 e 4) ───────────
+
+-- Casa 1 (COM vínculo por candidatura): recebe campos de perfil rico
+create temp table perf_vinculado as
+  select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+    $$select public.perfil_publico('c8070000-0000-4000-8000-000000000011'::uuid)$$) as res;
+
+select is(
+  (select res ->> 'apresentacao' from perf_vinculado),
+  'Garçom profissional com 6 anos de experiência em eventos',
+  'Critério 4: leitor com vinculo recebe apresentacao em perfil_publico'
+);
+select is(
+  (select res ->> 'no_frila_desde' from perf_vinculado),
+  '2026-09',
+  'Critério 4: leitor com vinculo recebe no_frila_desde (AAAA-MM)'
+);
+select is(
+  (select jsonb_array_length(res -> 'servicos') from perf_vinculado),
+  1,
+  'Critério 4: leitor com vinculo recebe servicos'
+);
+
+-- Casa 2 (SEM vínculo): campos do perfil rico são ESTRITAMENTE OMITIDOS (Critério 3)
+create temp table perf_estranho as
+  select pg_temp.como('c8070000-0000-4000-8000-000000000004',
+    $$select public.perfil_publico('c8070000-0000-4000-8000-000000000011'::uuid)$$) as res;
+
+select is(
+  (select res ->> 'nome' from perf_estranho),
+  'Prof Rico',
+  'Critério 3: leitor sem vinculo recebe o nome publico'
+);
+select is(
+  (select res ? 'apresentacao' from perf_estranho),
+  false,
+  'Critério 3: leitor sem vinculo NAO recebe chave apresentacao'
+);
+select is(
+  (select res ? 'onde_trabalhei' from perf_estranho),
+  false,
+  'Critério 3: leitor sem vinculo NAO recebe chave onde_trabalhei'
+);
+select is(
+  (select res ? 'experiencia_faixa' from perf_estranho),
+  false,
+  'Critério 3: leitor sem vinculo NAO recebe chave experiencia_faixa'
+);
+select is(
+  (select res ? 'servicos' from perf_estranho),
+  false,
+  'Critério 3: leitor sem vinculo NAO recebe chave servicos'
+);
+select is(
+  (select res ? 'regioes' from perf_estranho),
+  false,
+  'Critério 3: leitor sem vinculo NAO recebe chave regioes'
+);
+select is(
+  (select res ? 'cursos' from perf_estranho),
+  false,
+  'Critério 3: leitor sem vinculo NAO recebe chave cursos'
+);
+select is(
+  (select res ? 'idiomas' from perf_estranho),
+  false,
+  'Critério 3: leitor sem vinculo NAO recebe chave idiomas'
+);
+select is(
+  (select res ? 'no_frila_desde' from perf_estranho),
+  false,
+  'Critério 3: leitor sem vinculo NAO recebe chave no_frila_desde'
+);
+
+-- Outro profissional lendo perfil_publico: também não recebe campos de vínculo
+select is(
+  (pg_temp.como('c8070000-0000-4000-8000-000000000002',
+    $$select public.perfil_publico('c8070000-0000-4000-8000-000000000011'::uuid)$$) ? 'apresentacao'),
+  false,
+  'Critério 3: profissional lendo outro profissional nao recebe apresentacao'
+);
+
+-- Estabelecimento estranho tentando ler candidatos de vaga alheia é 403
+select is(
+  (select code from public.erro_em_json(pg_temp.como('c8070000-0000-4000-8000-000000000004',
+    format($$select public.candidatos_da_vaga((select id from public.vaga where local = 'CLS 405 Bloco A'))$$)))),
+  'sem_permissao',
+  'Critério 3: contratante de outro estabelecimento recebe 403 sem_permissao em candidatos_da_vaga'
+);
+
+-- Dinâmica de vínculo: adicionar Prof 2 à equipe de confiança da Casa 2 concede vínculo
+insert into public.equipe_confianca (estabelecimento_id, profissional_id)
+values (
+  (select id from public.estabelecimento where nome_fantasia = 'Restaurante Estranho'),
+  'c8070000-0000-4000-8000-000000000012'
+);
+
+-- Agora Casa 2 tem vínculo com Prof 2 via equipe de confiança
+select is(
+  (pg_temp.como('c8070000-0000-4000-8000-000000000004',
+    $$select public.perfil_publico('c8070000-0000-4000-8000-000000000012'::uuid)$$) ? 'servicos'),
+  true,
+  'Dinamica de vinculo: inclusao em equipe_confianca concede projecao de servicos'
+);
+
+select * from finish();
+rollback;
