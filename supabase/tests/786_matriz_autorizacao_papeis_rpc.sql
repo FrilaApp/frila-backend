@@ -23,7 +23,7 @@ set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(248);
+select plan(264);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -31,8 +31,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  60::bigint,
-  'censo de RPCs: schema public contem exatamente 60 RPCs expostas'
+  64::bigint,
+  'censo de RPCs: schema public contem exatamente 64 RPCs expostas'
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -428,6 +428,30 @@ select is(pg_temp.testar_autorizacao('anon', null, 'select public.cancelar_chama
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.cancelar_chamada(gen_random_uuid())'), '403_SEM_PERMISSAO', 'cancelar_chamada [profissional]: recurso desligado');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.cancelar_chamada(gen_random_uuid())'), '403_SEM_PERMISSAO', 'cancelar_chamada [outro contratante]: recurso desligado');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.cancelar_chamada(gen_random_uuid())'), '403_SEM_PERMISSAO', 'cancelar_chamada [dono]: recurso desligado');
+
+-- --- definir_preferencia_chamadas (0.2.56): desligada por padrão, todo autenticado toma 403 recurso_desligado ---
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.definir_preferencia_chamadas(aceita_de_quem_ja_trabalhou => true)'), '42501_SEM_EXECUTE', 'definir_preferencia_chamadas [anon]: anon nao possui EXECUTE');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.definir_preferencia_chamadas(aceita_de_quem_ja_trabalhou => true)'), '403_SEM_PERMISSAO', 'definir_preferencia_chamadas [profissional]: recurso desligado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.definir_preferencia_chamadas(aceita_de_quem_ja_trabalhou => true)'), '403_SEM_PERMISSAO', 'definir_preferencia_chamadas [outro contratante]: recurso desligado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.definir_preferencia_chamadas(aceita_de_quem_ja_trabalhou => true)'), '403_SEM_PERMISSAO', 'definir_preferencia_chamadas [dono]: recurso desligado');
+
+-- --- minhas_chamadas (0.2.56): desligada por padrão, todo autenticado toma 403 recurso_desligado ---
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.minhas_chamadas()'), '42501_SEM_EXECUTE', 'minhas_chamadas [anon]: anon nao possui EXECUTE');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.minhas_chamadas()'), '403_SEM_PERMISSAO', 'minhas_chamadas [profissional]: recurso desligado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.minhas_chamadas()'), '403_SEM_PERMISSAO', 'minhas_chamadas [outro contratante]: recurso desligado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.minhas_chamadas()'), '403_SEM_PERMISSAO', 'minhas_chamadas [dono]: recurso desligado');
+
+-- --- detalhe_chamada (0.2.56): desligada por padrão, todo autenticado toma 403 recurso_desligado ---
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.detalhe_chamada(gen_random_uuid())'), '42501_SEM_EXECUTE', 'detalhe_chamada [anon]: anon nao possui EXECUTE');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.detalhe_chamada(gen_random_uuid())'), '403_SEM_PERMISSAO', 'detalhe_chamada [profissional]: recurso desligado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.detalhe_chamada(gen_random_uuid())'), '403_SEM_PERMISSAO', 'detalhe_chamada [outro contratante]: recurso desligado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.detalhe_chamada(gen_random_uuid())'), '403_SEM_PERMISSAO', 'detalhe_chamada [dono]: recurso desligado');
+
+-- --- publicar_a_partir_da_chamada (0.2.56): desligada por padrão, todo autenticado toma 403 recurso_desligado ---
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.publicar_a_partir_da_chamada(gen_random_uuid(), gen_random_uuid())'), '42501_SEM_EXECUTE', 'publicar_a_partir_da_chamada [anon]: anon nao possui EXECUTE');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.publicar_a_partir_da_chamada(gen_random_uuid(), gen_random_uuid())'), '403_SEM_PERMISSAO', 'publicar_a_partir_da_chamada [profissional]: recurso desligado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.publicar_a_partir_da_chamada(gen_random_uuid(), gen_random_uuid())'), '403_SEM_PERMISSAO', 'publicar_a_partir_da_chamada [outro contratante]: recurso desligado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.publicar_a_partir_da_chamada(gen_random_uuid(), gen_random_uuid())'), '403_SEM_PERMISSAO', 'publicar_a_partir_da_chamada [dono]: recurso desligado');
 
 -- --- detalhe_vaga ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.detalhe_vaga(''78600000-0000-4000-8000-000000000100''::uuid)'), '42501_SEM_EXECUTE', 'detalhe_vaga [anon]: anon nao possui EXECUTE em detalhe_vaga');
