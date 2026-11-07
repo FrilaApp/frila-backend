@@ -270,6 +270,7 @@ begin
   if v_uid is null then
     perform public.erro(401, 'nao_autenticado');
   end if;
+  perform privado.exigir_conta_ativa();
 
   if resolver_servico.termo is null or length(btrim(resolver_servico.termo)) < 2 then
     perform public.erro(422, 'campo_invalido', 'termo');
