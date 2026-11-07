@@ -36,9 +36,12 @@ alter table public.vaga
 comment on column public.vaga.vaga_origem_id is
   'Vaga direta original a partir da qual esta vaga pública foi convertida (0.2.56, RN35).';
 
--- Atualiza public.registrar_dispositivo para persistir versao_app
+-- Atualiza public.registrar_dispositivo para persistir versao_app (dropa versões antigas)
+drop function if exists public.registrar_dispositivo(text, text);
+drop function if exists public.registrar_dispositivo(text, text, text);
+
 create or replace function public.registrar_dispositivo(
-  token text,
+  token_fcm text,
   plataforma text,
   versao_app text default null
 )
@@ -46,9 +49,10 @@ returns void
 language plpgsql
 security definer set search_path = ''
 as $$
+#variable_conflict use_column
 declare
   v_uid         uuid := (select auth.uid());
-  v_token       text := btrim(registrar_dispositivo.token);
+  v_token       text := btrim(registrar_dispositivo.token_fcm);
   v_plataforma  public.plataforma;
   v_versao      text := nullif(btrim(registrar_dispositivo.versao_app), '');
 begin
@@ -61,11 +65,11 @@ begin
   end if;
 
   if v_token is null or v_token = '' then
-    perform public.erro(422, 'campo_obrigatorio', 'token');
+    perform public.erro(422, 'campo_obrigatorio', 'token_fcm');
   end if;
 
   if length(v_token) > 256 then
-    perform public.erro(422, 'campo_invalido', 'token');
+    perform public.erro(422, 'campo_invalido', 'token_fcm');
   end if;
 
   if registrar_dispositivo.plataforma is null then
@@ -849,6 +853,7 @@ declare
   v_agora     timestamptz := privado.agora();
   v_orig      public.vaga%rowtype;
   v_nova      public.vaga%rowtype;
+  v_pos_id    uuid;
   v_posicoes  uuid[];
   v_c         record;
   v_modo      public.modo_preenchimento := coalesce(publicar_a_partir_da_chamada.modo::public.modo_preenchimento, 'urgencia'::public.modo_preenchimento);
@@ -922,7 +927,8 @@ begin
 
   insert into public.posicao (vaga_id, inicio_em, fim_em)
   values (v_nova.id, v_nova.inicio_em, v_nova.fim_em)
-  returning id into v_posicoes[1];
+  returning id into v_pos_id;
+  v_posicoes := array[v_pos_id];
 
   -- Encerra a vaga direta e suas chamadas abertas
   update public.vaga set estado = 'encerrada' where id = v_orig.id;

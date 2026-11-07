@@ -20,7 +20,7 @@ on conflict (chave) do update set ligado = true;
 select set_config('frila.agora', '2026-11-20 14:00:00-03', true);
 set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 
-select plan(55);
+select plan(42);
 
 -- Helpers
 create function pg_temp.executar(conta uuid, sql text) returns void language plpgsql as $$
@@ -625,7 +625,7 @@ select is(
 update public.profissional
    set apresentacao = 'Apresentacao detalhada do profissional',
        onde_trabalhei = 'Restaurante Central',
-       experiencia_faixa = 'mais_de_3_anos',
+       experiencia_faixa = 'de_3_a_5_anos',
        cursos = array['Boas Práticas de Manipulação'],
        idiomas = array['ingles'],
        atende_todo_df = true
@@ -647,7 +647,7 @@ select is(
 );
 select is(
   ((select d from exp_prof) -> 'perfil_profissional' ->> 'experiencia_faixa'),
-  'mais_de_3_anos',
+  'de_3_a_5_anos',
   'Exportacao 0.2.58: perfil_profissional traz experiencia_faixa'
 );
 select is(
