@@ -4,8 +4,8 @@
 --   * public.meu_perfil_detalhado: leitura completa do próprio perfil pelo profissional.
 --   * privado.contratante_com_vinculo_leitura: identifica contratante com vínculo legítimo de leitura
 --     (equipe de confiança, candidatura em vaga da casa, ou histórico de turno).
---   * privado.enriquecer_perfil_publico: projeção aditiva dos campos F2 (serviços, apresentação,
---     regiões, etc.) para leitores autorizados com vínculo.
+--   * privado.perfil_publico_profissional: projeção aditiva dos campos F2 (serviços, apresentação,
+--     regiões, etc.) quando preenchidos e autorizados por vínculo de leitura.
 --   * public.candidatos_da_vaga: entrega projeção completa aos contratantes da casa,
 --     com preços/serviços para o cartão de candidato, sem vazar dados privados (telefone, ponto base, nascimento).
 --   * public.perfil_publico: entrega projeção enriquecida apenas para contratantes com vínculo legítimo.
@@ -51,75 +51,84 @@ comment on function privado.contratante_com_vinculo_leitura(uuid, uuid) is
 
 revoke all on function privado.contratante_com_vinculo_leitura(uuid, uuid) from public, anon;
 
--- ── 2. Enriquecimento de PerfilPublico com campos F2 ──────────────────────────
-create or replace function privado.enriquecer_perfil_publico(
-  p_base jsonb,
-  p_prof uuid
-) returns jsonb
-language plpgsql stable security definer set search_path = '' as $$
-declare
-  v_p public.profissional%rowtype;
-  v_u public.usuario%rowtype;
-begin
-  if p_base is null then return null; end if;
-  select * into v_p from public.profissional where id = p_prof;
-  if not found then return p_base; end if;
-  select * into v_u from public.usuario where id = v_p.usuario_id;
-
-  return p_base || jsonb_build_object(
-    'apresentacao', v_p.apresentacao,
-    'onde_trabalhei', v_p.onde_trabalhei,
-    'experiencia_faixa', v_p.experiencia_faixa,
-    'cursos', to_jsonb(coalesce(v_p.cursos, '{}'::text[])),
-    'idiomas', to_jsonb(coalesce(v_p.idiomas, '{}'::text[])),
-    'atende_todo_df', v_p.atende_todo_df,
-    'no_frila_desde', to_char(v_u.criado_em, 'YYYY-MM'),
-    'regioes', coalesce((select jsonb_agg(to_jsonb(r) order by r.id)
-                           from public.profissional_regiao pr
-                           join public.regiao_administrativa r on r.id = pr.regiao_id
-                          where pr.profissional_id = v_p.id), '[]'::jsonb),
-    'servicos', coalesce((select jsonb_agg(jsonb_strip_nulls(to_jsonb(s) - array['profissional_id','funcao_id','extras','atualizado_em']) ||
-                         jsonb_build_object('funcao', to_jsonb(f) - 'ativo', 'especialidades', coalesce((select jsonb_agg(to_jsonb(e) order by e.nome)
-                           from public.profissional_servico_especialidade se join public.especialidade e on e.id = se.especialidade_id
-                           where se.profissional_id = s.profissional_id and se.funcao_id = s.funcao_id), '[]'::jsonb)) order by f.nome)
-                         from public.profissional_servico s join public.funcao f on f.id = s.funcao_id
-                        where s.profissional_id = v_p.id), '[]'::jsonb)
-  );
-end $$;
-
-comment on function privado.enriquecer_perfil_publico(jsonb, uuid) is
-  'Projeta os campos aditivos da fatia F2 (apresentação, serviços, regiões, cursos, etc.) sobre um PerfilPublico base quando autorizado por vínculo.';
-
-revoke all on function privado.enriquecer_perfil_publico(jsonb, uuid) from public, anon;
-
--- Restaura a assinatura original de privado.perfil_publico_profissional (1 argumento)
+-- ── 2. Perfil público do profissional com projeção F2 sob demanda ─────────────
 create or replace function privado.perfil_publico_profissional(prof uuid)
 returns jsonb
-language sql stable security definer set search_path = '' as $$
-  select jsonb_build_object(
-    'id',   p.id,
+language plpgsql stable security definer set search_path = '' as $$
+declare
+  v_uid     uuid := (select auth.uid());
+  v_res     jsonb;
+  v_p       public.profissional%rowtype;
+  v_u       public.usuario%rowtype;
+  v_tem_f2  boolean;
+begin
+  select p.* into v_p from public.profissional p where p.id = prof;
+  if not found then return null; end if;
+  select u.* into v_u from public.usuario u where u.id = v_p.usuario_id;
+
+  v_res := jsonb_build_object(
+    'id',   v_p.id,
     'tipo', 'profissional',
-    'nome', case when u.estado = 'anonimizada' then 'Conta encerrada' else u.nome end,
+    'nome', case when v_u.estado = 'anonimizada' then 'Conta encerrada' else v_u.nome end,
     'funcoes', coalesce((select jsonb_agg(f.nome order by f.nome)
                            from public.profissional_funcao pf
                            join public.funcao f on f.id = pf.funcao_id
-                          where pf.profissional_id = p.id), '[]'::jsonb),
+                          where pf.profissional_id = v_p.id), '[]'::jsonb),
     'reputacao', jsonb_build_object(
-      'positivas',           p.aval_positivas,
-      'total',               p.aval_total,
-      'taxa_comparecimento', p.taxa_comparecimento,
-      'turnos_realizados',   p.turnos_realizados,
-      'turnos_considerados', p.turnos_realizados
+      'positivas',           v_p.aval_positivas,
+      'total',               v_p.aval_total,
+      'taxa_comparecimento', v_p.taxa_comparecimento,
+      'turnos_realizados',   v_p.turnos_realizados,
+      'turnos_considerados', v_p.turnos_realizados
                              + (select count(*) from public.posicao x
-                                 where x.profissional_id = p.id and x.falta)))
-    from public.profissional p
-    join public.usuario u on u.id = p.usuario_id
-   where p.id = prof
-$$;
+                                 where x.profissional_id = v_p.id and x.falta))
+  );
+
+  -- Se o leitor é contratante com vínculo E o profissional possui dados de F2 cadastrados:
+  if v_uid is not null and privado.contratante_com_vinculo_leitura(v_p.id, v_uid) then
+    v_tem_f2 := (
+      v_p.apresentacao is not null
+      or v_p.onde_trabalhei is not null
+      or v_p.experiencia_faixa is not null
+      or (v_p.cursos is not null and cardinality(v_p.cursos) > 0)
+      or (v_p.idiomas is not null and cardinality(v_p.idiomas) > 0)
+      or v_p.atende_todo_df
+      or exists (select 1 from public.profissional_servico where profissional_id = v_p.id)
+      or exists (select 1 from public.profissional_regiao where profissional_id = v_p.id)
+    );
+
+    if v_tem_f2 then
+      v_res := v_res || jsonb_build_object(
+        'apresentacao', v_p.apresentacao,
+        'onde_trabalhei', v_p.onde_trabalhei,
+        'experiencia_faixa', v_p.experiencia_faixa,
+        'cursos', to_jsonb(coalesce(v_p.cursos, '{}'::text[])),
+        'idiomas', to_jsonb(coalesce(v_p.idiomas, '{}'::text[])),
+        'atende_todo_df', v_p.atende_todo_df,
+        'no_frila_desde', to_char(v_u.criado_em, 'YYYY-MM'),
+        'regioes', coalesce((select jsonb_agg(to_jsonb(r) order by r.id)
+                               from public.profissional_regiao pr
+                               join public.regiao_administrativa r on r.id = pr.regiao_id
+                              where pr.profissional_id = v_p.id), '[]'::jsonb),
+        'servicos', coalesce((select jsonb_agg(jsonb_strip_nulls(to_jsonb(s) - array['profissional_id','funcao_id','extras','atualizado_em']) ||
+                             jsonb_build_object('funcao', to_jsonb(f) - 'ativo', 'especialidades', coalesce((select jsonb_agg(to_jsonb(e) order by e.nome)
+                               from public.profissional_servico_especialidade se join public.especialidade e on e.id = se.especialidade_id
+                               where se.profissional_id = s.profissional_id and se.funcao_id = s.funcao_id), '[]'::jsonb)) order by f.nome)
+                             from public.profissional_servico s join public.funcao f on f.id = s.funcao_id
+                            where s.profissional_id = v_p.id), '[]'::jsonb)
+      );
+    end if;
+  end if;
+
+  return v_res;
+end $$;
+
+comment on function privado.perfil_publico_profissional(uuid) is
+  'Monta o PerfilPublico de profissional: base estrita de reputação (RN08) e, quando há vínculo com o contratante leitor e dados de F2 cadastrados, projeção rica (0.2.53).';
 
 revoke all on function privado.perfil_publico_profissional(uuid) from public, anon;
 
--- ── 3. Atualização de public.perfil_publico com enriquecimento por vínculo ────
+-- ── 3. Atualização de public.perfil_publico ───────────────────────────────────
 create or replace function public.perfil_publico(id uuid)
 returns jsonb
 language plpgsql security definer set search_path = '' as $$
@@ -154,9 +163,6 @@ begin
     end if;
 
     v_perfil := privado.perfil_publico_profissional(perfil_publico.id);
-    if v_perfil is not null and privado.contratante_com_vinculo_leitura(perfil_publico.id, v_uid) then
-      v_perfil := privado.enriquecer_perfil_publico(v_perfil, perfil_publico.id);
-    end if;
 
   -- 2. Perfil de estabelecimento
   elsif exists (select 1 from public.estabelecimento e where e.id = perfil_publico.id) then
@@ -216,10 +222,7 @@ begin
   return coalesce((
     select jsonb_agg(jsonb_build_object(
              'candidatura_id', c.id,
-             'profissional',   privado.enriquecer_perfil_publico(
-                                 privado.perfil_publico_profissional(c.profissional_id),
-                                 c.profissional_id
-                               ),
+             'profissional',   privado.perfil_publico_profissional(c.profissional_id),
              'da_equipe',      exists(
                                  select 1
                                    from public.equipe_confianca ec
