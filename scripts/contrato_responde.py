@@ -272,6 +272,11 @@ VIGIADAS = {
     ("definirRegioesAtendidas", "403"): "sem_permissao",
     ("definirRegioesAtendidas", "404"): "nao_encontrado",
     ("definirRegioesAtendidas", "422"): "campo_invalido",
+    # Apresentação e filtro de contato (F2, contrato 0.2.53, RN26/RN38).
+    ("atualizarApresentacaoProfissional", "401"): "nao_autenticado",
+    ("atualizarApresentacaoProfissional", "403"): "sem_permissao",
+    ("atualizarApresentacaoProfissional", "404"): "nao_encontrado",
+    ("atualizarApresentacaoProfissional", "422"): "campo_invalido",
     # Resolver serviço (fatia F1, contrato 0.2.52, RN44)
     ("resolverServico", "401"): "nao_autenticado",
     ("resolverServico", "422"): "campo_invalido",
@@ -304,7 +309,6 @@ ISENTAS = {
     **{
         (op, status): "contrato 0.2.57 antecipado; implementação em outra fatia"
         for op, statuses in {
-            "atualizarApresentacaoProfissional": ("401", "403", "404", "422"),
             "meuPerfilDetalhado": ("401", "404", "422"),
             "pedirNovaAnaliseMidia": ("401", "403", "404", "409"),
             "listarRegioesAdministrativas": ("401",),
@@ -346,7 +350,7 @@ ISENTAS = {
 # direta, fatias F2 a F4). Diferente de ISENTAS: estas VÃO entrar pela colheita, e cada uma
 # sai daqui no PR que a implementa. Operação pendente que ganha resposta colhida reprova.
 PENDENTES = {op: "contratação direta, ainda sem implementação" for op in (
-    "atualizarApresentacaoProfissional", "cancelarChamada",
+    "cancelarChamada",
     "definirPreferenciaChamadas", "detalheChamada",
     "listarEspecialidades", "listarRegioesAdministrativas", "meuPerfilDetalhado", "minhasChamadas",
     "pedirNovaAnaliseMidia", "publicarAPartirDaChamada",
