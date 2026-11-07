@@ -24,7 +24,7 @@ on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-05 12:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-799';
 
-select plan(78);
+select plan(79);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -444,6 +444,12 @@ select throws_ok(
   'PGRST',
   '{"code" : "campo_invalido", "message" : "campo_invalido", "details" : "termo", "hint" : null}',
   'termo vazio: 422 campo_invalido');
+
+select throws_ok(
+  $$ select pg_temp.como('c7990000-0000-4000-8000-000000000001', format($x$ select public.resolver_servico(%L) $x$, repeat('a', 61))) $$,
+  'PGRST',
+  '{"code" : "campo_invalido", "message" : "campo_invalido", "details" : "termo", "hint" : null}',
+  'termo acima de 60 caracteres: 422 campo_invalido');
 
 create temp table r_diarista as
 select pg_temp.como('c7990000-0000-4000-8000-000000000001',

@@ -272,7 +272,9 @@ begin
   end if;
   perform privado.exigir_conta_ativa();
 
-  if resolver_servico.termo is null or length(btrim(resolver_servico.termo)) < 2 then
+  if resolver_servico.termo is null
+     or length(btrim(resolver_servico.termo)) < 2
+     or length(btrim(resolver_servico.termo)) > 60 then
     perform public.erro(422, 'campo_invalido', 'termo');
   end if;
 
