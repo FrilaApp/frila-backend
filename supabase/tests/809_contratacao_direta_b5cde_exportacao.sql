@@ -99,7 +99,8 @@ values ('80900000-0000-4000-8000-000000000022', '80900000-0000-4000-8000-0000000
 insert into public.equipe_confianca (estabelecimento_id, profissional_id) values
   ('80900000-0000-4000-8000-000000000021', '80900000-0000-4000-8000-000000000011'),
   ('80900000-0000-4000-8000-000000000021', '80900000-0000-4000-8000-000000000012'),
-  ('80900000-0000-4000-8000-000000000022', '80900000-0000-4000-8000-000000000011');
+  ('80900000-0000-4000-8000-000000000022', '80900000-0000-4000-8000-000000000011'),
+  ('80900000-0000-4000-8000-000000000022', '80900000-0000-4000-8000-000000000012');
 
 -- Liga recurso chamada_direta
 update privado.recurso set ligado = true where chave = 'chamada_direta';
@@ -355,10 +356,10 @@ insert into public.usuario (id, perfil, nome, telefone, email, nascimento, estad
   ('80900000-0000-4000-8000-000000000006', 'profissional', 'P3', '+5561999990006', 'p3@t.test', '1990-01-01', 'ativa', '1.0', now()),
   ('80900000-0000-4000-8000-000000000007', 'profissional', 'P4', '+5561999990007', 'p4@t.test', '1990-01-01', 'ativa', '1.0', now()),
   ('80900000-0000-4000-8000-000000000008', 'profissional', 'P5', '+5561999990008', 'p5@t.test', '1990-01-01', 'ativa', '1.0', now());
-insert into public.profissional (id, usuario_id) values
-  ('80900000-0000-4000-8000-000000000013', '80900000-0000-4000-8000-000000000006'),
-  ('80900000-0000-4000-8000-000000000014', '80900000-0000-4000-8000-000000000007'),
-  ('80900000-0000-4000-8000-000000000015', '80900000-0000-4000-8000-000000000008');
+insert into public.profissional (id, usuario_id, ponto_base) values
+  ('80900000-0000-4000-8000-000000000013', '80900000-0000-4000-8000-000000000006', 'POINT(-47.8825 -15.7942)'::extensions.geography),
+  ('80900000-0000-4000-8000-000000000014', '80900000-0000-4000-8000-000000000007', 'POINT(-47.8825 -15.7942)'::extensions.geography),
+  ('80900000-0000-4000-8000-000000000015', '80900000-0000-4000-8000-000000000008', 'POINT(-47.8825 -15.7942)'::extensions.geography);
 insert into public.profissional_funcao (profissional_id, funcao_id)
 select p_id, f.id from (values
   ('80900000-0000-4000-8000-000000000013'::uuid),
@@ -421,7 +422,7 @@ select is(
 
 -- 4.3 Aviso J7: casa CPF chamando 3ª vez em 7 dias
 -- Já foram 2 chamadas da Casa CPF para P3 no passado ou na sessão. Criamos cenário para 3ª chamada ao mesmo profissional:
-delete from public.chamada where profissional_id = '80900000-0000-4000-8000-000000000013';
+delete from public.chamada where estabelecimento_id = '80900000-0000-4000-8000-000000000021';
 
 -- Chamada 1 para P3
 select pg_temp.como('80900000-0000-4000-8000-000000000003',
@@ -564,7 +565,7 @@ create temp table chamada_conv as
   select pg_temp.como('80900000-0000-4000-8000-000000000004',
     format($$select public.chamar_profissional(
       chave => '80900000-0000-4000-8000-000000000109'::uuid,
-      profissional_id => '80900000-0000-4000-8000-000000000011',
+      profissional_id => '80900000-0000-4000-8000-000000000012',
       estabelecimento_id => '80900000-0000-4000-8000-000000000022',
       funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
       inicio_em => '2026-11-28 18:00:00-03'::timestamptz, fim_em => '2026-11-28 23:00:00-03'::timestamptz,

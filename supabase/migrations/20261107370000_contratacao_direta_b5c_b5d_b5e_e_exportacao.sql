@@ -29,6 +29,13 @@ alter table public.dispositivo
 comment on column public.dispositivo.versao_app is
   'Versão declarada do app no momento do registro. Usada para filtrar envio de pushes de recursos novos como chamada direta.';
 
+-- Coluna vaga_origem_id em public.vaga (B5d, contrato 0.2.56, RN35)
+alter table public.vaga
+  add column if not exists vaga_origem_id uuid references public.vaga(id) on delete set null;
+
+comment on column public.vaga.vaga_origem_id is
+  'Vaga direta original a partir da qual esta vaga pública foi convertida (0.2.56, RN35).';
+
 -- Atualiza public.registrar_dispositivo para persistir versao_app
 create or replace function public.registrar_dispositivo(
   token text,
@@ -111,7 +118,7 @@ begin
     perform public.erro(401, 'nao_autenticado');
   end if;
 
-  if not coalesce((select r.ligado from privado.recurso r where r.chave = 'chamada_direta'), false) then
+  if not coalesce((select rec.ligado from privado.recurso rec where rec.chave = 'chamada_direta'), false) then
     perform public.erro(403, 'sem_permissao', 'recurso_desligado');
   end if;
 
@@ -217,7 +224,7 @@ declare
   v_ultimas_recusas int;
 begin
   if v_uid is null then perform public.erro(401, 'nao_autenticado'); end if;
-  if not coalesce((select r.ligado from privado.recurso r where r.chave = 'chamada_direta'), false) then
+  if not coalesce((select rec.ligado from privado.recurso rec where rec.chave = 'chamada_direta'), false) then
     perform public.erro(403, 'sem_permissao', 'recurso_desligado');
   end if;
   perform privado.exigir_perfil('contratante');
@@ -594,7 +601,7 @@ declare
   v_cont      int := 0;
 begin
   if v_uid is null then perform public.erro(401, 'nao_autenticado'); end if;
-  if not coalesce((select r.ligado from privado.recurso r where r.chave = 'chamada_direta'), false) then
+  if not coalesce((select rec.ligado from privado.recurso rec where rec.chave = 'chamada_direta'), false) then
     perform public.erro(403, 'sem_permissao', 'recurso_desligado');
   end if;
   if exists (select 1 from public.usuario u where u.id = v_uid and u.estado = 'suspensa') then
@@ -735,7 +742,7 @@ declare
   v_res         jsonb;
 begin
   if v_uid is null then perform public.erro(401, 'nao_autenticado'); end if;
-  if not coalesce((select r.ligado from privado.recurso r where r.chave = 'chamada_direta'), false) then
+  if not coalesce((select rec.ligado from privado.recurso rec where rec.chave = 'chamada_direta'), false) then
     perform public.erro(403, 'sem_permissao', 'recurso_desligado');
   end if;
   if exists (select 1 from public.usuario u where u.id = v_uid and u.estado = 'suspensa') then
@@ -847,7 +854,7 @@ declare
   v_modo      public.modo_preenchimento := coalesce(publicar_a_partir_da_chamada.modo::public.modo_preenchimento, 'urgencia'::public.modo_preenchimento);
 begin
   if v_uid is null then perform public.erro(401, 'nao_autenticado'); end if;
-  if not coalesce((select r.ligado from privado.recurso r where r.chave = 'chamada_direta'), false) then
+  if not coalesce((select rec.ligado from privado.recurso rec where rec.chave = 'chamada_direta'), false) then
     perform public.erro(403, 'sem_permissao', 'recurso_desligado');
   end if;
   perform privado.exigir_perfil('contratante');
