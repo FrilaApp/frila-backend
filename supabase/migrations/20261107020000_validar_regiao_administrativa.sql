@@ -56,7 +56,10 @@ insert into privado.regiao_administrativa_apelido (chave, nome) values
   ('por do sol',                'Sol Nascente/Pôr do Sol'),
   ('estrutural',                'SCIA'),
   ('cidade estrutural',         'SCIA'),
-  ('parkway',                   'Park Way');
+  ('scia estrutural',           'SCIA'),
+  ('scia e estrutural',         'SCIA'),
+  ('parkway',                   'Park Way')
+on conflict (chave) do update set nome = excluded.nome;
 
 create or replace function privado.resolver_regiao_administrativa(p_texto text)
 returns text
@@ -154,12 +157,20 @@ select privado.conciliar_regiao_administrativa_legada();
 alter table public.estabelecimento
   add constraint estabelecimento_regiao_administrativa_fkey
   foreign key (regiao_administrativa) references public.regiao_administrativa (nome)
-  on update cascade;
+  on update cascade
+  not valid;
+
+alter table public.estabelecimento
+  validate constraint estabelecimento_regiao_administrativa_fkey;
 
 alter table public.vaga
   add constraint vaga_regiao_administrativa_fkey
   foreign key (regiao_administrativa) references public.regiao_administrativa (nome)
-  on update cascade;
+  on update cascade
+  not valid;
+
+alter table public.vaga
+  validate constraint vaga_regiao_administrativa_fkey;
 
 comment on column public.estabelecimento.regiao_administrativa is
   'Região administrativa do DF onde o estabelecimento fica. Nome oficial do catálogo public.regiao_administrativa (RN44), garantido por chave estrangeira.';
@@ -224,6 +235,9 @@ begin
     'nome',                  v_nome,
     'endereco',              v_end,
     'regiao_administrativa', v_regiao));
+
+  -- Resolve variações e apelidos do catálogo aceitos pelo app legado (ex: 'SCIA / Estrutural' -> 'SCIA')
+  v_regiao := coalesce(privado.resolver_regiao_administrativa(v_regiao), v_regiao);
 
   -- RN44: a região é uma das do catálogo oficial e está ativa. Texto livre não entra mais.
   if not exists (select 1 from public.regiao_administrativa r
@@ -429,6 +443,9 @@ begin
       end if;
     end if;
   end if;
+
+  -- Resolve variações e apelidos do catálogo aceitos pelo app legado (ex: 'SCIA / Estrutural' -> 'SCIA')
+  v_regiao := coalesce(privado.resolver_regiao_administrativa(v_regiao), v_regiao);
 
   -- RN44: seja a informada, seja a herdada da casa, a região existe no catálogo e está ativa.
   if not exists (select 1 from public.regiao_administrativa r

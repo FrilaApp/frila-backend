@@ -23,7 +23,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(33);
+select plan(36);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -255,6 +255,28 @@ create temp table t_contagem as
          (select count(*) from public.posicao)         as posicoes,
          (select count(*) from pgmq.q_despacho)        as fila;
 
+-- Critério 3: Compatibilidade com o app iOS 1.0.0 (35 strings) e recusa de região inválida.
+
+select is(
+  (with app_ras(orig) as (
+     values
+       ('Água Quente'), ('Águas Claras'), ('Arapoanga'), ('Arniqueira'), ('Brazlândia'),
+       ('Candangolândia'), ('Ceilândia'), ('Cruzeiro'), ('Fercal'), ('Gama'),
+       ('Guará'), ('Itapoã'), ('Jardim Botânico'), ('Lago Norte'), ('Lago Sul'),
+       ('Núcleo Bandeirante'), ('Paranoá'), ('Park Way'), ('Planaltina'), ('Plano Piloto'),
+       ('Recanto das Emas'), ('Riacho Fundo'), ('Riacho Fundo II'), ('Samambaia'), ('Santa Maria'),
+       ('São Sebastião'), ('SCIA / Estrutural'), ('SIA'), ('Sobradinho'), ('Sobradinho II'),
+       ('Sol Nascente/Pôr do Sol'), ('Sudoeste/Octogonal'), ('Taguatinga'), ('Varjão'), ('Vicente Pires')
+   )
+   select count(*)::int from app_ras a
+    where not exists (
+      select 1 from public.regiao_administrativa r
+       where r.nome = privado.resolver_regiao_administrativa(a.orig)
+         and r.ativo
+    )),
+  0,
+  'critério 3: todas as 35 strings exatas do app iOS 1.0.0 resolvem para região oficial ativa');
+
 select throws_ok(
   $$ select pg_temp.cadastrar('Bar Nárnia', '19131905000129', 'Nárnia') $$,
   'PGRST',
@@ -265,11 +287,7 @@ select throws_ok(
   'PGRST',
   '{"code" : "campo_invalido", "message" : "campo_invalido", "details" : "regiao_administrativa", "hint" : null}',
   'critério 3: cadastrar_estabelecimento recusa "Área 51" com 422 campo_invalido');
-select throws_ok(
-  $$ select pg_temp.cadastrar('Bar Minúsculo', '19131905000129', 'taguatinga') $$,
-  'PGRST',
-  '{"code" : "campo_invalido", "message" : "campo_invalido", "details" : "regiao_administrativa", "hint" : null}',
-  'critério 3: o nome tem de ser o oficial, exato; "taguatinga" é recusado');
+
 select is(
   (select count(*)::int from public.estabelecimento where documento = '19131905000129'),
   0, 'critério 3: cadastro recusado não deixa estabelecimento parcial');
@@ -309,6 +327,28 @@ select is(
   + (select (select count(*) from pgmq.q_despacho) - fila from t_contagem),
   0::bigint,
   'critério 3: as recusas não criam estabelecimento, vaga, posição nem mensagem de despacho');
+
+-- App legado envia 'SCIA / Estrutural' ou caixa baixa: RPC aceita e normaliza para o catálogo
+create temp table t_estab_scia as
+  select pg_temp.cadastrar('Bar SCIA', '88888011000109', 'SCIA / Estrutural') as r;
+select is(
+  (select regiao_administrativa from public.estabelecimento
+    where id = (select (r->>'id')::uuid from t_estab_scia)),
+  'SCIA', 'critério 3: cadastrar_estabelecimento aceita "SCIA / Estrutural" e normaliza para SCIA');
+
+create temp table t_estab_min as
+  select pg_temp.cadastrar('Bar Minúsculo', '77777011000107', 'taguatinga') as r;
+select is(
+  (select regiao_administrativa from public.estabelecimento
+    where id = (select (r->>'id')::uuid from t_estab_min)),
+  'Taguatinga', 'critério 3: cadastrar_estabelecimento aceita "taguatinga" e normaliza para Taguatinga');
+
+create temp table t_vaga_scia as
+  select pg_temp.publicar((select (r->>'id')::uuid from t_estab_a), -15.7942, -47.8822, 'SCIA / Estrutural') as r;
+select is(
+  (select regiao_administrativa from public.vaga
+    where id = (select (r->>'vaga_id')::uuid from t_vaga_scia)),
+  'SCIA', 'critério 3: publicar_vaga aceita "SCIA / Estrutural" e normaliza para SCIA');
 
 -- ── 4. Região válida: o despacho e a distância seguem iguais ───────────────────
 
