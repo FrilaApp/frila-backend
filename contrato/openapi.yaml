@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.51
+  version: 0.2.52
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -99,6 +99,30 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.52, de 07/11/2026.** Contratação direta, fatia F1: catálogo de serviços de Casa e
+    Festa (decisão D9 do Cauê, 06/11/2026; `requisitos/contratacao-direta-v1.1.md`, RN44;
+    `produto/contratacao-direta/03-taxonomia-de-servicos.md`). Adição compatível: duas leituras de
+    tabela e uma RPC novas, quatro campos opcionais em `Funcao`; nenhuma operação existente muda e
+    nenhum cliente publicado é afetado.
+
+    - **`GET /regiao_administrativa`** (`listarRegioesAdministrativas`): catálogo fechado das
+      regiões administrativas do DF, para o perfil marcar onde atende. Os campos
+      `regiao_administrativa` de estabelecimento e vaga continuam **texto**, como na 0.2.20;
+      validá-los contra este catálogo é mudança própria, numa versão futura.
+    - **`GET /especialidade`** (`listarEspecialidades`): especialidades fechadas por função
+      (ex.: pós-obra na faxina, drinks autorais no bartender). Texto livre nunca decide
+      elegibilidade, filtro nem ordem.
+    - **`GET /rpc/resolver_servico`** (`resolverServico`): devolve até 5 funções para o que a pessoa
+      digitou, por sinônimo e por nome ("diarista" → faxina residencial). `422 campo_invalido` com
+      `details: termo` quando o termo tem menos de 2 caracteres.
+    - **`Funcao` ganha campos opcionais**: `formato_padrao` (`turno` ou `servico`), `grupo_busca`,
+      `dica_perfil` e `exemplo_perfil`. `GET /funcao` com o `select` padrão (`id,nome,categoria`)
+      responde igual a hoje; os campos novos só vêm quando o cliente os pede no `select`.
+    - **Dado, não contrato:** as funções novas de Casa (faxina residencial, passadeira, faxina
+      comercial) e Festa e eventos sociais (churrasqueiro, cozinheiro de festa, auxiliar de festa)
+      entram por migração no backend e valem também para vaga normal (RN05).
+    - **Erros:** nenhum código novo.
 
     **Versão 0.2.51, de 05/11/2026.** Desbloquear e listar bloqueios (decisão A8 da PO, RF26, RN10).
     Adição compatível: duas operações novas e um schema novo; nenhuma operação existente muda e
@@ -1983,6 +2007,128 @@ paths:
                   $ref: '#/components/schemas/Funcao'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+
+  /regiao_administrativa:
+    get:
+      tags: [Catálogo]
+      operationId: listarRegioesAdministrativas
+      summary: Catálogo das regiões administrativas do DF
+      description: |
+        Leitura direta da tabela (PostgREST), aberta a qualquer usuário autenticado. Catálogo fechado,
+        mantido por migração, como o de funções: o perfil do profissional marca as regiões onde atende
+        por `id`, nunca por texto (0.2.52, RN44). Hoje são 35 regiões, da RA I (Plano Piloto) à
+        RA XXXV (Água Quente); região nova entra por migração.
+
+        Os campos `regiao_administrativa` de `NovoEstabelecimento`, `NovaVaga` e das leituras de vaga
+        continuam texto (0.2.20) e não mudam nesta versão.
+      x-requisitos: [RN44]
+      parameters:
+        - name: select
+          in: query
+          schema:
+            type: string
+            default: id,numero,nome
+        - name: ativo
+          in: query
+          description: 'Filtro do PostgREST. Use `eq.true`.'
+          schema:
+            type: string
+            example: eq.true
+        - name: order
+          in: query
+          description: 'Ordem do PostgREST. Use `id.asc` para a ordem oficial (RA I, RA II...).'
+          schema:
+            type: string
+            example: id.asc
+      responses:
+        '200':
+          description: Regiões administrativas.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RegiaoAdministrativa'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /especialidade:
+    get:
+      tags: [Catálogo]
+      operationId: listarEspecialidades
+      summary: Especialidades de cada função
+      description: |
+        Leitura direta da tabela (PostgREST), aberta a qualquer usuário autenticado. Lista fechada por
+        função, curada pela Equipe Frila e mantida por migração (0.2.52, RN44). O perfil marca até 8
+        especialidades por serviço; isso chega com o contrato do perfil.
+      x-requisitos: [RN44]
+      parameters:
+        - name: select
+          in: query
+          schema:
+            type: string
+            default: id,funcao_id,nome
+        - name: funcao_id
+          in: query
+          description: 'Filtro do PostgREST. Ex.: `eq.<uuid da função>`.'
+          schema:
+            type: string
+        - name: ativo
+          in: query
+          description: 'Filtro do PostgREST. Use `eq.true`.'
+          schema:
+            type: string
+            example: eq.true
+      responses:
+        '200':
+          description: Especialidades.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Especialidade'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+
+  /rpc/resolver_servico:
+    get:
+      tags: [Catálogo]
+      operationId: resolverServico
+      summary: Funções que correspondem ao que a pessoa digitou
+      description: |
+        Devolve até 5 funções ativas para o termo digitado, por sinônimo (tabela `funcao_sinonimo`,
+        mantida por migração) e por nome, sem acento e sem diferença de maiúscula (0.2.52, RN44).
+        "diarista" e "faxineira" devolvem faxina residencial; "garçom" devolve também "garçonete",
+        que compartilham `grupo_busca`. Serve à escolha de função no cadastro, na publicação e,
+        depois, na busca. Não altera a elegibilidade: o despacho continua por `funcao_id` (RN05).
+
+        Termo com menos de 2 caracteres, depois de tirar espaços, é `422 campo_invalido` com
+        `details: termo`. Termo sem correspondência devolve lista vazia.
+      x-requisitos: [RN44, RN05]
+      parameters:
+        - name: termo
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 60
+            example: diarista
+      responses:
+        '200':
+          description: Até 5 funções, da correspondência mais exata para a menos exata.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 5
+                items:
+                  $ref: '#/components/schemas/Funcao'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   # ───────────────────────────────────────────── Vagas
 
@@ -4631,7 +4777,67 @@ components:
           example: garçom
         categoria:
           type: string
+          description: |
+            Nome da categoria. Desde a 0.2.52 o catálogo tem também "Casa" e "Festa e eventos
+            sociais", além das sete de antes.
           example: Salão
+        formato_padrao:
+          description: |
+            0.2.52. Só muda o que a tela sugere: `turno` (horário fechado, preço por hora ou diária)
+            ou `servico` (resultado contratado, fim previsto, preço por diária, evento, pacote ou
+            pessoa). Não muda regra: todo trabalho tem início e fim (RN44). Ausente vale `turno`.
+          type: string
+          enum: [turno, servico]
+        grupo_busca:
+          description: |
+            0.2.52. Funções com o mesmo valor aparecem juntas na busca (ex.: garçom e garçonete).
+            Nulo quando a função não tem par.
+          oneOf:
+            - type: string
+            - type: 'null'
+        dica_perfil:
+          description: 0.2.52. Dica para o profissional descrever este serviço no perfil. Nula quando não há.
+          oneOf:
+            - type: string
+            - type: 'null'
+        exemplo_perfil:
+          description: 0.2.52. Exemplo de "Sobre mim" para este serviço. Nulo quando não há.
+          oneOf:
+            - type: string
+            - type: 'null'
+    RegiaoAdministrativa:
+      type: object
+      required: [id, numero, nome]
+      description: 0.2.52. Região administrativa do DF, do catálogo fechado (RN44).
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          description: O número da região em arábico (RA I = 1).
+          example: 1
+        numero:
+          type: string
+          description: Número romano oficial.
+          example: I
+        nome:
+          type: string
+          example: Plano Piloto
+        ativo:
+          type: boolean
+    Especialidade:
+      type: object
+      required: [id, funcao_id, nome]
+      description: 0.2.52. Especialidade fechada de uma função (RN44).
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        funcao_id:
+          $ref: '#/components/schemas/Uuid'
+        nome:
+          type: string
+          example: pós-obra
+        ativo:
+          type: boolean
 
     # ── Reputação
 

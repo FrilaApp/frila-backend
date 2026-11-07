@@ -10,7 +10,8 @@
 --   4. RLS fechado em privado: Papel `authenticated` possui ZERO grants em tabelas do schema `privado`.
 --   5. Isolamento de tabelas internas: `entrada_demonstracao`, `evento_app` e `pedido_de_exclusao`
 --      possuem ZERO grants para clientes (`authenticated` e `anon`).
---   6. Politicas permissivas: Apenas `public.funcao` (catalogo estatico sem dados pessoais) possui USING (true).
+--   6. Politicas permissivas: apenas `public.funcao` e as 4 tabelas de catalogo da F1 (categoria,
+--      especialidade, funcao_sinonimo, regiao_administrativa; RN44; todas sem dados pessoais) possuem USING (true).
 --      Nenhuma outra tabela em `public` ou `privado` admite USING (true).
 --   7. Blindagem de schema: 100% das rotinas SECURITY DEFINER em `public` e `privado` possuem search_path="" estrito.
 --   8. Superficie anonima de RPCs: Exatamente 1 rotina publica concede EXECUTE para `anon` (`configuracao_do_app`).
@@ -200,14 +201,15 @@ drop table public._mutante_grant_indevido;
 -- PARTE 3: Politicas RLS e Invariante de USING (true)
 -- ============================================================================
 
--- 12. Apenas tabelas de catalogo estatico sem dados pessoais (public.funcao) admitem USING (true)
+-- 12. Apenas tabelas de catalogo estatico sem dados pessoais admitem USING (true): public.funcao e,
+--     desde o contrato 0.2.52 (RN44), categoria, especialidade, funcao_sinonimo e regiao_administrativa
 select is(
   (select coalesce(array_agg(tablename::text order by tablename), '{}'::text[])
      from pg_policies
     where schemaname = 'public'
       and (qual = 'true' or with_check = 'true')),
-  array['funcao']::text[],
-  'politicas RLS: apenas public.funcao (catalogo sem dados pessoais) admite politica USING (true)'
+  array['categoria', 'especialidade', 'funcao', 'funcao_sinonimo', 'regiao_administrativa']::text[],
+  'politicas RLS: apenas as 5 tabelas de catalogo sem dados pessoais (funcao e as 4 da F1) admitem politica USING (true)'
 );
 
 -- 13. Nenhuma tabela no schema privado possui politicas RLS (acesso 100% blindado por SECURITY DEFINER)
