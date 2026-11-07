@@ -214,6 +214,9 @@ OUTRAS_VIGIADAS=$(cat <<'EOF'
 {"op":"promete:atualizarApresentacaoProfissional:403","corpo":{"status":403,"code":"sem_permissao"}}
 {"op":"promete:atualizarApresentacaoProfissional:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:atualizarApresentacaoProfissional:422","corpo":{"status":422,"code":"campo_invalido"}}
+{"op":"promete:meuPerfilDetalhado:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:meuPerfilDetalhado:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:meuPerfilDetalhado:422","corpo":{"status":422,"code":"perfil_incompativel"}}
 {"op":"promete:resolverServico:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:resolverServico:422","corpo":{"status":422,"code":"campo_invalido"}}
 {"op":"promete:solicitarUploadMidia:401","corpo":{"status":401,"code":"nao_autenticado"}}
