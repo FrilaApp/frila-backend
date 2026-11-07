@@ -14,12 +14,24 @@ set local search_path = extensions, public, pg_temp;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
+insert into privado.recurso (chave, ligado) values ('chamada_direta', true)
+on conflict (chave) do update set ligado = true;
+
 select set_config('frila.agora', '2026-11-20 14:00:00-03', true);
 set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 
 select plan(55);
 
 -- Helpers
+create function pg_temp.executar(conta uuid, sql text) returns void language plpgsql as $$
+begin
+  execute 'set local role authenticated';
+  perform set_config('request.jwt.claims', jsonb_build_object('sub', conta, 'role', 'authenticated')::text, true);
+  execute sql;
+  reset role;
+  perform set_config('request.jwt.claims', '{}', true);
+end $$;
+
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
 begin
@@ -59,19 +71,19 @@ insert into public.usuario (id, perfil, nome, telefone, email, nascimento, estad
   ('80900000-0000-4000-8000-000000000004', 'contratante', 'Contratante CNPJ', '+5561999990004', 'dono809_cnpj@frila.test', '1982-04-04', 'ativa', '1.0', now()),
   ('80900000-0000-4000-8000-000000000005', 'profissional', 'Estranho', '+5561999990005', 'estranho809@frila.test', '1999-09-09', 'ativa', '1.0', now());
 
-insert into public.profissional (id, usuario_id, ponto_base, sobre_mim) values
+insert into public.profissional (id, usuario_id, ponto_base, apresentacao) values
   ('80900000-0000-4000-8000-000000000011', '80900000-0000-4000-8000-000000000001', 'POINT(-47.8825 -15.7942)'::extensions.geography, 'Sou o prof 1 com experiencia.'),
   ('80900000-0000-4000-8000-000000000012', '80900000-0000-4000-8000-000000000002', 'POINT(-47.8825 -15.7942)'::extensions.geography, 'Sou o prof 2.');
 
 -- Função garçom
 insert into public.profissional_funcao (profissional_id, funcao_id)
-select '80900000-0000-4000-8000-000000000011', id from public.funcao where nome = 'Garçom' limit 1;
+select '80900000-0000-4000-8000-000000000011', id from public.funcao where nome = 'garçom' limit 1;
 insert into public.profissional_funcao (profissional_id, funcao_id)
-select '80900000-0000-4000-8000-000000000012', id from public.funcao where nome = 'Garçom' limit 1;
+select '80900000-0000-4000-8000-000000000012', id from public.funcao where nome = 'garçom' limit 1;
 
 -- Casa 1 (CPF - 11 digitos)
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto, regiao_administrativa)
-values ('80900000-0000-4000-8000-000000000021', 'Festa CPF', '11122233344', 'evento_social', 'SHIS QL 10', 'POINT(-47.8825 -15.7942)'::extensions.geography, 'Lago Sul');
+values ('80900000-0000-4000-8000-000000000021', 'Festa CPF', '11122233344', 'evento', 'SHIS QL 10', 'POINT(-47.8825 -15.7942)'::extensions.geography, 'Lago Sul');
 
 insert into public.membro_estabelecimento (estabelecimento_id, usuario_id, papel)
 values ('80900000-0000-4000-8000-000000000021', '80900000-0000-4000-8000-000000000003', 'administrador');
@@ -145,7 +157,7 @@ select is(
       chave => gen_random_uuid(),
       profissional_id => '80900000-0000-4000-8000-000000000011',
       estabelecimento_id => '80900000-0000-4000-8000-000000000021',
-      funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+      funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
       inicio_em => '2026-11-22 18:00:00-03'::timestamptz,
       fim_em => '2026-11-22 23:00:00-03'::timestamptz,
       local => 'Lago Sul', regiao_administrativa => 'Lago Sul',
@@ -168,7 +180,7 @@ select is(
       chave => gen_random_uuid(),
       profissional_id => '80900000-0000-4000-8000-000000000011',
       estabelecimento_id => '80900000-0000-4000-8000-000000000021',
-      funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+      funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
       inicio_em => '2026-11-22 18:00:00-03'::timestamptz,
       fim_em => '2026-11-22 23:00:00-03'::timestamptz,
       local => 'Lago Sul', regiao_administrativa => 'Lago Sul',
@@ -191,7 +203,7 @@ select is(
       chave => gen_random_uuid(),
       profissional_id => '80900000-0000-4000-8000-000000000011',
       estabelecimento_id => '80900000-0000-4000-8000-000000000022',
-      funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+      funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
       inicio_em => '2026-11-20 20:00:00-03'::timestamptz, -- apenas 6h no futuro
       fim_em => '2026-11-20 23:00:00-03'::timestamptz,
       local => 'Asa Sul', regiao_administrativa => 'Plano Piloto',
@@ -204,11 +216,11 @@ select is(
 );
 
 -- 2.8 Registro de dispositivo com versao_app (B5e)
-select pg_temp.como('80900000-0000-4000-8000-000000000001',
+select pg_temp.executar('80900000-0000-4000-8000-000000000001',
   $$select public.registrar_dispositivo('token_fcm_prof_1_abc', 'ios', '0.2.56')$$);
 
 select is(
-  (select versao_app from public.dispositivo where token = 'token_fcm_prof_1_abc'),
+  (select versao_app from public.dispositivo where token_fcm = 'token_fcm_prof_1_abc'),
   '0.2.56',
   'B5e: versao_app registrada com sucesso em public.dispositivo'
 );
@@ -223,7 +235,7 @@ create temp table chamada_fora_silencio as
       chave => '80900000-0000-4000-8000-000000000101'::uuid,
       profissional_id => '80900000-0000-4000-8000-000000000012',
       estabelecimento_id => '80900000-0000-4000-8000-000000000021',
-      funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+      funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
       inicio_em => '2026-11-21 18:00:00-03'::timestamptz,
       fim_em => '2026-11-21 23:00:00-03'::timestamptz,
       local => 'Lago Sul', regiao_administrativa => 'Lago Sul',
@@ -248,6 +260,10 @@ select is(
 -- Avança o relógio para dentro do horário de silêncio (23:30)
 select set_config('frila.agora', '2026-11-20 23:30:00-03', true);
 
+-- Reseta antecedência do Profissional 1 para o padrão 6h
+select pg_temp.como('80900000-0000-4000-8000-000000000001',
+  $$select public.definir_preferencia_chamadas(antecedencia_minima_h => 6)$$);
+
 -- Chamada enviada no silêncio para início às 20:00 do dia seguinte.
 -- A contagem das 12h deve começar às 07:00 do dia seguinte -> expira às 19:00.
 create temp table chamada_no_silencio as
@@ -256,7 +272,7 @@ create temp table chamada_no_silencio as
       chave => '80900000-0000-4000-8000-000000000102'::uuid,
       profissional_id => '80900000-0000-4000-8000-000000000011',
       estabelecimento_id => '80900000-0000-4000-8000-000000000022',
-      funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+      funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
       inicio_em => '2026-11-21 20:00:00-03'::timestamptz,
       fim_em => '2026-11-21 23:00:00-03'::timestamptz,
       local => 'Asa Sul', regiao_administrativa => 'Plano Piloto',
@@ -298,10 +314,10 @@ select is(
 -- Vamos recusar a chamada aberta da Casa 2 com Prof 1
 select pg_temp.como('80900000-0000-4000-8000-000000000001',
   format($$select public.responder_chamada(
-    chamada_id => (select id from public.chamada where chave = '80900000-0000-4000-8000-000000000102'),
+    chamada_id => %L::uuid,
     resposta => 'recusar',
     motivo_recusa => 'agenda'
-  )$$));
+  )$$, (select id from public.chamada where chave = '80900000-0000-4000-8000-000000000102')));
 
 select is(
   (select estado from public.chamada where chave = '80900000-0000-4000-8000-000000000102'),
@@ -316,7 +332,7 @@ select is(
       chave => gen_random_uuid(),
       profissional_id => '80900000-0000-4000-8000-000000000011',
       estabelecimento_id => '80900000-0000-4000-8000-000000000022',
-      funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+      funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
       inicio_em => '2026-11-23 18:00:00-03'::timestamptz,
       fim_em => '2026-11-23 23:00:00-03'::timestamptz,
       local => 'Asa Sul', regiao_administrativa => 'Plano Piloto',
@@ -348,7 +364,7 @@ select p_id, f.id from (values
   ('80900000-0000-4000-8000-000000000013'::uuid),
   ('80900000-0000-4000-8000-000000000014'::uuid),
   ('80900000-0000-4000-8000-000000000015'::uuid)
-) as t(p_id) cross join public.funcao f where f.nome = 'Garçom';
+) as t(p_id) cross join public.funcao f where f.nome = 'garçom';
 
 insert into public.equipe_confianca (estabelecimento_id, profissional_id) values
   ('80900000-0000-4000-8000-000000000021', '80900000-0000-4000-8000-000000000013'),
@@ -360,7 +376,7 @@ select pg_temp.como('80900000-0000-4000-8000-000000000003',
   format($$select public.chamar_profissional(
     chave => gen_random_uuid(), profissional_id => '80900000-0000-4000-8000-000000000013',
     estabelecimento_id => '80900000-0000-4000-8000-000000000021',
-    funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+    funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
     inicio_em => '2026-11-25 18:00:00-03'::timestamptz, fim_em => '2026-11-25 23:00:00-03'::timestamptz,
     local => 'Lago Sul', regiao_administrativa => 'Lago Sul', ponto => '{"latitude": -15.7942, "longitude": -47.8825}'::jsonb,
     valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'C'
@@ -371,7 +387,7 @@ select pg_temp.como('80900000-0000-4000-8000-000000000003',
   format($$select public.chamar_profissional(
     chave => gen_random_uuid(), profissional_id => '80900000-0000-4000-8000-000000000014',
     estabelecimento_id => '80900000-0000-4000-8000-000000000021',
-    funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+    funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
     inicio_em => '2026-11-25 18:00:00-03'::timestamptz, fim_em => '2026-11-25 23:00:00-03'::timestamptz,
     local => 'Lago Sul', regiao_administrativa => 'Lago Sul', ponto => '{"latitude": -15.7942, "longitude": -47.8825}'::jsonb,
     valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'C'
@@ -382,7 +398,7 @@ select pg_temp.como('80900000-0000-4000-8000-000000000003',
   format($$select public.chamar_profissional(
     chave => gen_random_uuid(), profissional_id => '80900000-0000-4000-8000-000000000015',
     estabelecimento_id => '80900000-0000-4000-8000-000000000021',
-    funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+    funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
     inicio_em => '2026-11-25 18:00:00-03'::timestamptz, fim_em => '2026-11-25 23:00:00-03'::timestamptz,
     local => 'Lago Sul', regiao_administrativa => 'Lago Sul', ponto => '{"latitude": -15.7942, "longitude": -47.8825}'::jsonb,
     valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'C'
@@ -394,7 +410,7 @@ select is(
     format($$select public.chamar_profissional(
       chave => gen_random_uuid(), profissional_id => '80900000-0000-4000-8000-000000000012',
       estabelecimento_id => '80900000-0000-4000-8000-000000000021',
-      funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+      funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
       inicio_em => '2026-11-25 18:00:00-03'::timestamptz, fim_em => '2026-11-25 23:00:00-03'::timestamptz,
       local => 'Lago Sul', regiao_administrativa => 'Lago Sul', ponto => '{"latitude": -15.7942, "longitude": -47.8825}'::jsonb,
       valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'C'
@@ -412,7 +428,7 @@ select pg_temp.como('80900000-0000-4000-8000-000000000003',
   format($$select public.chamar_profissional(
     chave => gen_random_uuid(), profissional_id => '80900000-0000-4000-8000-000000000013',
     estabelecimento_id => '80900000-0000-4000-8000-000000000021',
-    funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+    funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
     inicio_em => '2026-11-26 18:00:00-03'::timestamptz, fim_em => '2026-11-26 23:00:00-03'::timestamptz,
     local => 'Lago Sul', regiao_administrativa => 'Lago Sul', ponto => '{"latitude": -15.7942, "longitude": -47.8825}'::jsonb,
     valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'C'
@@ -425,7 +441,7 @@ select pg_temp.como('80900000-0000-4000-8000-000000000003',
   format($$select public.chamar_profissional(
     chave => gen_random_uuid(), profissional_id => '80900000-0000-4000-8000-000000000013',
     estabelecimento_id => '80900000-0000-4000-8000-000000000021',
-    funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+    funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
     inicio_em => '2026-11-27 18:00:00-03'::timestamptz, fim_em => '2026-11-27 23:00:00-03'::timestamptz,
     local => 'Lago Sul', regiao_administrativa => 'Lago Sul', ponto => '{"latitude": -15.7942, "longitude": -47.8825}'::jsonb,
     valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'C'
@@ -438,7 +454,7 @@ select is(
     format($$select public.chamar_profissional(
       chave => gen_random_uuid(), profissional_id => '80900000-0000-4000-8000-000000000013',
       estabelecimento_id => '80900000-0000-4000-8000-000000000021',
-      funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+      funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
       inicio_em => '2026-11-28 18:00:00-03'::timestamptz, fim_em => '2026-11-28 23:00:00-03'::timestamptz,
       local => 'Lago Sul', regiao_administrativa => 'Lago Sul', ponto => '{"latitude": -15.7942, "longitude": -47.8825}'::jsonb,
       valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'C',
@@ -454,7 +470,7 @@ select is(
     format($$select public.chamar_profissional(
       chave => '80900000-0000-4000-8000-000000000105'::uuid, profissional_id => '80900000-0000-4000-8000-000000000013',
       estabelecimento_id => '80900000-0000-4000-8000-000000000021',
-      funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+      funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
       inicio_em => '2026-11-28 18:00:00-03'::timestamptz, fim_em => '2026-11-28 23:00:00-03'::timestamptz,
       local => 'Lago Sul', regiao_administrativa => 'Lago Sul', ponto => '{"latitude": -15.7942, "longitude": -47.8825}'::jsonb,
       valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'C',
@@ -522,9 +538,9 @@ select is(
 -- Profissional 3 aceita a chamada
 select pg_temp.como('80900000-0000-4000-8000-000000000006',
   format($$select public.responder_chamada(
-    chamada_id => (select id from public.chamada where chave = '80900000-0000-4000-8000-000000000105'),
+    chamada_id => %L::uuid,
     resposta => 'aceitar'
-  )$$));
+  )$$, (select id from public.chamada where chave = '80900000-0000-4000-8000-000000000105')));
 
 -- Agora detalhe_chamada exibe local e ponto
 create temp table det_aceita as
@@ -550,7 +566,7 @@ create temp table chamada_conv as
       chave => '80900000-0000-4000-8000-000000000109'::uuid,
       profissional_id => '80900000-0000-4000-8000-000000000011',
       estabelecimento_id => '80900000-0000-4000-8000-000000000022',
-      funcao_id => (select id from public.funcao where nome = 'Garçom' limit 1),
+      funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
       inicio_em => '2026-11-28 18:00:00-03'::timestamptz, fim_em => '2026-11-28 23:00:00-03'::timestamptz,
       local => 'Asa Sul', regiao_administrativa => 'Plano Piloto', ponto => '{"latitude": -15.7942, "longitude": -47.8825}'::jsonb,
       valor_centavos => 20000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'Gerente'
@@ -560,10 +576,10 @@ create temp table chamada_conv as
 create temp table vaga_conv as
   select pg_temp.como('80900000-0000-4000-8000-000000000004',
     format($$select public.publicar_a_partir_da_chamada(
-      vaga_id => (select vaga_id from public.chamada where chave = '80900000-0000-4000-8000-000000000109'),
+      vaga_id => %L::uuid,
       chave => '80900000-0000-4000-8000-000000000201'::uuid,
       modo => 'urgencia'
-    )$$)) as r;
+    )$$, (select vaga_id from public.chamada where chave = '80900000-0000-4000-8000-000000000109'))) as r;
 
 select is(
   (select r from vaga_conv) ? 'vaga_id',
@@ -595,10 +611,10 @@ select is(
 select is(
   (pg_temp.como('80900000-0000-4000-8000-000000000004',
     format($$select public.publicar_a_partir_da_chamada(
-      vaga_id => (select vaga_id from public.chamada where chave = '80900000-0000-4000-8000-000000000109'),
+      vaga_id => %L::uuid,
       chave => '80900000-0000-4000-8000-000000000201'::uuid,
       modo => 'urgencia'
-    )$$)) ->> 'vaga_id'),
+    )$$, (select vaga_id from public.chamada where chave = '80900000-0000-4000-8000-000000000109'))) ->> 'vaga_id'),
   ((select r from vaga_conv) ->> 'vaga_id'),
   'B5d: publicar_a_partir_da_chamada e idempotente pela chave'
 );

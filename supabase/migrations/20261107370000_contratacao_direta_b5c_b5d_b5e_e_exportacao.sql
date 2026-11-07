@@ -75,9 +75,9 @@ begin
     perform public.erro(422, 'campo_invalido', 'versao_app');
   end if;
 
-  insert into public.dispositivo (usuario_id, token, plataforma, versao_app, atualizado_em)
+  insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app, atualizado_em)
   values (v_uid, v_token, v_plataforma, v_versao, now())
-  on conflict (token) do update
+  on conflict (token_fcm) do update
     set usuario_id    = excluded.usuario_id,
         plataforma    = excluded.plataforma,
         versao_app    = coalesce(excluded.versao_app, public.dispositivo.versao_app),
@@ -158,12 +158,12 @@ begin
     now()
   )
   on conflict (profissional_id) do update
-    set aceita_de_quem_ja_trabalhou = coalesce(excluded.aceita_de_quem_ja_trabalhou, public.profissional_preferencia_chamada.aceita_de_quem_ja_trabalhou),
+    set aceita_de_quem_ja_trabalhou = coalesce(definir_preferencia_chamadas.aceita_de_quem_ja_trabalhou, public.profissional_preferencia_chamada.aceita_de_quem_ja_trabalhou),
         pausado_ate                 = case when remover_pausa then null
-                                           when excluded.pausado_ate is not null then excluded.pausado_ate
+                                           when definir_preferencia_chamadas.pausado_ate is not null then definir_preferencia_chamadas.pausado_ate
                                            else public.profissional_preferencia_chamada.pausado_ate end,
-        antecedencia_minima_h       = coalesce(excluded.antecedencia_minima_h, public.profissional_preferencia_chamada.antecedencia_minima_h),
-        aceita_de                   = coalesce(excluded.aceita_de, public.profissional_preferencia_chamada.aceita_de),
+        antecedencia_minima_h       = coalesce(definir_preferencia_chamadas.antecedencia_minima_h, public.profissional_preferencia_chamada.antecedencia_minima_h),
+        aceita_de                   = coalesce(definir_preferencia_chamadas.aceita_de, public.profissional_preferencia_chamada.aceita_de),
         atualizado_em               = now()
   returning * into v_pref;
 
@@ -1145,15 +1145,11 @@ as $$
 
     -- 0.2.59: mídias ativas do titular
     'midias', coalesce((
-      select jsonb_agg(jsonb_build_object(
-               'id',            m.id,
-               'tipo',          m.tipo,
-               'estado',        m.estado,
-               'criada_em',     m.criada_em,
-               'atualizada_em', m.atualizada_em)
-             order by m.criada_em desc)
+      select jsonb_agg(privado.midia_em_json(m)
+             order by m.criado_em desc)
         from privado.midia m
-       where m.usuario_id = p_usuario), '[]'::jsonb),
+       where (m.estabelecimento_id is null and m.dono_usuario_id = p_usuario
+              or m.estabelecimento_id in (select k.estabelecimento_id from casas k))), '[]'::jsonb),
 
     -- 0.2.59: chamadas do titular (como profissional chamado ou membro da casa)
     'chamadas', coalesce((
