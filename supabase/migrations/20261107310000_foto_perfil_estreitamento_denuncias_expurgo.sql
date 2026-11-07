@@ -1,10 +1,35 @@
 -- B4b: Estreitamento da foto de perfil, remoção de colunas mortas,
 -- ocultação por 2 denúncias distintas e expurgo em 24 h (RN37, CA4).
 
--- 1. Estreitamento de midia_tipo para ('foto_perfil') e remoção de colunas mortas (PR #175 / contrato 0.2.61).
+set local lock_timeout = '2s';
+
+-- 1. Preflights de segurança antes das alterações estruturais DDL (achado 3 do Lince Codex).
+-- Aborta a migração de forma segura caso existam dados em produção fora do esperado.
+do $$
+declare
+  v_invalidas bigint;
+  v_com_dados bigint;
+begin
+  select count(*) into v_invalidas
+    from privado.midia
+   where tipo not in ('foto_perfil');
+  if v_invalidas > 0 then
+    raise exception 'Abortando migracao: existem % midias com tipo diferente de foto_perfil', v_invalidas;
+  end if;
+
+  select count(*) into v_com_dados
+    from privado.midia
+   where legenda is not null or funcao_id is not null or ordem is not null;
+  if v_com_dados > 0 then
+    raise exception 'Abortando migracao: existem % midias com metadados preenchidos (legenda/funcao_id/ordem)', v_com_dados;
+  end if;
+end $$;
+
+-- Estreitamento de midia_tipo para ('foto_perfil') com lock curto (ADD NOT VALID).
+-- A validação da constraint (VALIDATE) ocorre na migração subsequente 20261107310001
+-- em transação separada para liberar leituras e escritas concorrentes na tabela.
 alter table privado.midia drop constraint if exists midia_tipo;
 alter table privado.midia add constraint midia_tipo check (tipo in ('foto_perfil')) not valid;
-alter table privado.midia validate constraint midia_tipo;
 
 alter table privado.midia drop column if exists legenda;
 alter table privado.midia drop column if exists funcao_id;
