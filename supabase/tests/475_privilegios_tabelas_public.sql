@@ -58,15 +58,15 @@ select is(
   0,
   'anon não tem privilégio MAINTAIN em nenhuma tabela de public');
 
--- ── 2. Authenticated mantém SELECT sob RLS nas 23 tabelas de produto ───────────
+-- ── 2. Authenticated mantém SELECT sob RLS nas 26 tabelas de produto ───────────
 
 select is(
   (select count(*)::int from pg_class c
      join pg_namespace n on n.oid = c.relnamespace
     where n.nspname = 'public' and c.relkind in ('r', 'p')
       and has_table_privilege('authenticated', c.oid, 'select')),
-  23,
-  'authenticated mantém SELECT nas 23 tabelas de produto de public (as 19 de antes e as 4 do catálogo, RN44)');
+  26,
+  'authenticated mantém SELECT nas 26 tabelas de produto de public (19 anteriores, 4 de catálogo e 3 de serviços e regiões, F2)');
 
 -- ── 3. graphql_public não tem tabelas com privilégios excessivos ───────────────
 

@@ -41,8 +41,8 @@ select columns_are('public', 'vaga', array[
   'valor_centavos','posicoes','inclui_refeicao','inclui_transporte','exige_material_proprio',
   'responsavel_local','traje','participa_rateio','observacoes','modo','alerta_antecedencia',
   'estado','publicado_em','chave_cliente','publicado_por','regiao_administrativa',
-  'rodada_despacho','republicada_de'
-], 'vaga tem exatamente as colunas da Modelagem, mais quem publicou, regiao_administrativa, rodada_despacho e republicada_de');
+  'rodada_despacho','republicada_de','origem'
+], 'vaga tem exatamente as colunas da Modelagem, mais quem publicou, regiao_administrativa, rodada_despacho, republicada_de e origem');
 
 -- `checkin_recebido_em` e `checkout_recebido_em` não estão na Modelagem: nasceram com
 -- o registro de presença. `checkin_em` é a hora do toque e `checkin_recebido_em` a hora
@@ -87,8 +87,8 @@ select columns_are('public', 'usuario', array[
 -- porque a verificação progressiva nasceu depois dela.
 select columns_are('public', 'profissional', array[
   'id','usuario_id','perfil','ponto_base','taxa_comparecimento','turnos_realizados',
-  'aval_positivas','aval_total','identidade_verificada'
-], 'profissional tem exatamente as colunas da Modelagem, mais o selo da RN14');
+  'aval_positivas','aval_total','identidade_verificada','atende_todo_df'
+], 'profissional tem exatamente as colunas da Modelagem, mais o selo da RN14 e atendimento em todo o DF (F2)');
 
 select columns_are('public', 'candidatura', array[
   'id','posicao_id','profissional_id','criada_em','estado'

@@ -10,6 +10,8 @@
 # do produto sob controle; `contrato_responde.py` julga cada uma contra o
 # `contrato/openapi.yaml`.
 #
+# As sete recusas das próximas fatias B3b/B3c estão temporariamente em ISENTAS
+# de contrato_responde.py, compartilhadas pelo harness e pelo autoteste.
 # Uso:  ./scripts/contrato-responde.sh
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1

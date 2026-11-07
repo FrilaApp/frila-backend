@@ -446,6 +446,33 @@ select pg_temp.guarda('erro:contestacao_ja_aberta',
   pg_temp.recusa('cc000000-0000-4000-8000-000000000004',
     $$ select public.contestar_suspensao('Segunda tentativa de contestacao enquanto a primeira esta aberta.') $$));
 
+-- ── Chamada direta, F4 parte A (0.2.55) ───────────────────────────────────────
+-- O Pê Três está na equipe de confiança (vínculo na v1.1, RN28). O Pê do Contrato, com início
+-- em 1 h, cai em 422 profissional_indisponivel. O interruptor nasce desligado: mede o 403.
+create function pg_temp.chamar(prof text, daqui interval default '1 day') returns text
+language sql as $$ select format($c$ select public.chamar_profissional(chave => gen_random_uuid(),
+  profissional_id => %L,
+  estabelecimento_id => %L, funcao_id => %L, inicio_em => %L, fim_em => %L, local => 'CLN 108',
+  regiao_administrativa => 'Plano Piloto', ponto => '{"latitude":-15.7905,"longitude":-47.8855}',
+  valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false,
+  exige_material_proprio => false, responsavel_local => 'Gerente', recado => 'Precisamos de você no sábado') $c$,
+  coalesce((select p.id from public.profissional p where p.usuario_id = prof::uuid), prof::uuid), (select casa_id from ids), (select id from f), privado.agora() + daqui, privado.agora() + daqui + interval '5 hours') $$;
+insert into public.equipe_confianca (estabelecimento_id, profissional_id)
+select (select casa_id from ids), p.id from public.profissional p where p.usuario_id = 'cc000000-0000-4000-8000-000000000005';
+select pg_temp.guarda('promete:chamarProfissional:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
+update privado.recurso set ligado = true where chave = 'chamada_direta';
+select pg_temp.guarda('chamarProfissional', pg_temp.como('cc000000-0000-4000-8000-000000000001',
+  pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
+select pg_temp.guarda('promete:chamarProfissional:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
+select pg_temp.guarda('promete:chamarProfissional:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', pg_temp.chamar('cc000000-0000-4000-8000-000000000002', interval '1 hour')));
+select pg_temp.guarda('promete:chamarProfissional:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', pg_temp.chamar('cc000000-0000-4000-8000-0000000000fe')));
+select pg_temp.guarda('promete:chamarProfissional:401',
+  pg_temp.observado(null, pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
+
 -- ── A direção contrato-à-frente: a recusa que o contrato promete ─────────────
 --
 -- Cartão `EFveOeIb`. Os outros portões medem o contrato ATRÁS do código — espelho
@@ -852,6 +879,9 @@ select pg_temp.guarda('promete:atualizarPerfilProfissional:404',
   pg_temp.observado('ee000000-0000-4000-8000-000000000096', format(
     $$ select public.atualizar_perfil_profissional(array[%L::uuid], null, null) $$, (select id from f))));
 
+-- F2: perfil ainda não cadastrado.
+select pg_temp.guarda('promete:definirServicos:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.definir_servicos('[]')$$));
+select pg_temp.guarda('promete:definirRegioesAtendidas:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.definir_regioes_atendidas('{}',false)$$));
 delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000096';
 delete from auth.users where id = 'ee000000-0000-4000-8000-000000000096';
 
@@ -1558,6 +1588,58 @@ select pg_temp.guarda('resolverServico', pg_temp.como('cc000000-0000-4000-8000-0
 select pg_temp.guarda('promete:resolverServico:422',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002',
     $$ select public.resolver_servico('a') $$));
+
+-- F2: respostas com serviço, especialidade e região reais.
+insert into public.profissional_funcao (profissional_id,funcao_id)
+ select p.id,f.id from public.profissional p cross join public.funcao f
+ where p.usuario_id='cc000000-0000-4000-8000-000000000002' and f.nome='faxina residencial' on conflict do nothing;
+select pg_temp.guarda('definirServicos', pg_temp.como('cc000000-0000-4000-8000-000000000002',format(
+ $$select public.definir_servicos(%L::jsonb)$$, (select jsonb_build_array(jsonb_build_object('funcao_id',f.id,
+ 'unidade','diaria','valor_centavos',15000,'horas_incluidas',8,'especialidade_ids',jsonb_build_array(e.id)))
+ from public.funcao f join public.especialidade e on e.funcao_id=f.id where f.nome='faxina residencial' limit 1))));
+select pg_temp.guarda('definirRegioesAtendidas', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+ $$select public.definir_regioes_atendidas(array[1,2],false)$$));
+select pg_temp.guarda('promete:definirServicos:401',pg_temp.observado(null,$$select public.definir_servicos('[]')$$));
+select pg_temp.guarda('promete:definirServicos:403',pg_temp.observado('cc000000-0000-4000-8000-000000000004',$$select public.definir_servicos('[]')$$));
+select pg_temp.guarda('promete:definirServicos:422',pg_temp.observado('cc000000-0000-4000-8000-000000000002',$$select public.definir_servicos('{}')$$));
+select pg_temp.guarda('promete:definirRegioesAtendidas:401',pg_temp.observado(null,$$select public.definir_regioes_atendidas('{}',false)$$));
+select pg_temp.guarda('promete:definirRegioesAtendidas:403',pg_temp.observado('cc000000-0000-4000-8000-000000000004',$$select public.definir_regioes_atendidas('{}',false)$$));
+select pg_temp.guarda('promete:definirRegioesAtendidas:422',pg_temp.observado('cc000000-0000-4000-8000-000000000002',$$select public.definir_regioes_atendidas(array[999],false)$$));
+
+-- B4a: URLs e projeções de mídia, incluindo cada recusa declarada no contrato.
+create temp table midia_colheita as
+select 'ee000000-0000-4000-8000-000000000097'::uuid conta;
+update privado.configuracao_app set foto_de_perfil=false;
+select pg_temp.guarda('promete:solicitarUploadMidia:403', pg_temp.observado(conta,
+  $$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1024)$$)) from midia_colheita;
+select pg_temp.guarda('promete:confirmarUploadMidia:403', pg_temp.observado(conta,
+  $$select public.confirmar_upload_midia('80200000-0000-4000-8000-000000000099')$$)) from midia_colheita;
+update privado.configuracao_app set foto_de_perfil=true;
+create temp table midia_upload as select pg_temp.como(conta,
+  $$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1024)$$) resposta from midia_colheita;
+select pg_temp.guarda('solicitarUploadMidia', resposta) from midia_upload;
+select pg_temp.guarda('promete:solicitarUploadMidia:422', pg_temp.observado(conta,
+  $$select public.solicitar_upload_midia('foto_perfil','image/png',1024)$$)) from midia_colheita;
+select pg_temp.guarda('promete:confirmarUploadMidia:422', pg_temp.observado(conta,
+  format('select public.confirmar_upload_midia(%L)', resposta->>'midia_id'))) from midia_colheita cross join midia_upload;
+insert into storage.objects(bucket_id,name) select 'midia-perfil', storage_path from privado.midia
+  where id=(select (resposta->>'midia_id')::uuid from midia_upload);
+select pg_temp.guarda('confirmarUploadMidia', pg_temp.como(conta,
+  format('select public.confirmar_upload_midia(%L)', resposta->>'midia_id'))) from midia_colheita cross join midia_upload;
+select pg_temp.guarda('minhasMidias', pg_temp.como(conta, $$select public.minhas_midias()$$)) from midia_colheita;
+select pg_temp.guarda('removerMidia', pg_temp.como(conta,
+  format('select public.remover_midia(%L)', resposta->>'midia_id'))) from midia_colheita cross join midia_upload;
+select pg_temp.guarda('promete:' || op || ':401', pg_temp.observado(null, sql)) from (values
+  ('solicitarUploadMidia', $$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1)$$),
+  ('confirmarUploadMidia', $$select public.confirmar_upload_midia('80200000-0000-4000-8000-000000000099')$$),
+  ('removerMidia', $$select public.remover_midia('80200000-0000-4000-8000-000000000099')$$),
+  ('minhasMidias', $$select public.minhas_midias()$$)) t(op,sql);
+select pg_temp.guarda('promete:' || op || ':404', pg_temp.observado(conta, sql)) from midia_colheita cross join (values
+  ('confirmarUploadMidia', $$select public.confirmar_upload_midia('80200000-0000-4000-8000-000000000099')$$),
+  ('removerMidia', $$select public.remover_midia('80200000-0000-4000-8000-000000000099')$$)) t(op,sql);
+select pg_temp.guarda('promete:' || op || ':403', pg_temp.observado('cc000000-0000-4000-8000-000000000004',sql)) from (values
+  ('removerMidia', $$select public.remover_midia('80200000-0000-4000-8000-000000000099')$$),
+  ('minhasMidias', $$select public.minhas_midias()$$)) t(op,sql);
 
 -- Por último, e depois de tudo: ela anonimiza a conta e cancela os turnos futuros dela.
 -- Qualquer colheita posterior veria um cenário diferente do que as outras viram. A conta

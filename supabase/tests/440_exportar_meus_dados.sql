@@ -17,7 +17,7 @@
 -- avaliações; Zélia (b…01) administra o Bar do Cerrado (c…01).
 
 begin;
-select plan(69);
+select plan(70);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -241,6 +241,10 @@ insert into cobertas values
   ('usuario',                'conta'),
   ('profissional',           'perfil_profissional'),
   ('profissional_funcao',    'perfil_profissional.funcoes'),
+  -- Destino aprovado para consolidação no contrato 0.2.58; implementação em fatia seguinte.
+  ('profissional_servico',   'perfil_profissional'),
+  ('profissional_servico_especialidade', 'perfil_profissional'),
+  ('profissional_regiao',    'perfil_profissional'),
   ('disponibilidade',        'disponibilidade e perfil_profissional.disponibilidades'),
   ('dispositivo',            'dispositivos, sem o token'),
   ('membro_estabelecimento', 'estabelecimentos'),
@@ -263,6 +267,12 @@ insert into fora values
   ('evento',               'agenda da casa, e não do titular'),
   ('entrada_demonstracao', 'conta de revisão da App Store: não há titular de dado pessoal aqui');
 
+-- Dado do titular que a exportação ainda não traz porque o contrato não o declara: espera o
+-- aditivo de MeusDados no frila-docs (chamada, F4). Não é `fora`: lá só fica o que não é do titular.
+create temp table pendente_de_contrato (t text, motivo text);
+insert into pendente_de_contrato values
+  ('chamada', 'aditivo de MeusDados em aberto no frila-docs; recurso chamada_direta desligado até lá');
+
 create temp table nao_pessoais (t text, motivo text);
 insert into nao_pessoais values
   ('funcao', 'catálogo de funções do setor, igual para todo mundo'),
@@ -278,6 +288,7 @@ select is(
   (select string_agg(t, ',' order by t) from catalogo
     where t not in (select t from cobertas)
       and t not in (select t from fora)
+      and t not in (select t from pendente_de_contrato)
       and t not in (select t from nao_pessoais)),
   null,
   'toda tabela de public está coberta, declarada como exceção ou declarada como impessoal (critério 1)');
@@ -285,10 +296,10 @@ select is(
 select is(
   (select string_agg(t, ',' order by t)
      from (select t from cobertas union all select t from fora
-           union all select t from nao_pessoais) x
+           union all select t from pendente_de_contrato union all select t from nao_pessoais) x
     where t not in (select t from catalogo)),
   null,
-  'e nenhuma das três listas cita tabela que não existe mais');
+  'e nenhuma das quatro listas cita tabela que não existe mais');
 
 -- Aqui havia uma asserção que fixava a divergência: seis tabelas com dado do titular que
 -- o contrato não declarava. O cartão IrtkCWDz a resolveu, as sete entraram em `cobertas`, e
@@ -299,6 +310,10 @@ select is(
   (select string_agg(t, ',' order by t) from fora),
   'entrada_demonstracao,evento',
   'só duas tabelas ficam de fora, e nenhuma delas guarda dado do titular');
+
+-- A pendência tem nome e não cresce em silêncio: sai daqui no PR que exporta a chamada.
+select is((select string_agg(t, ',' order by t) from pendente_de_contrato), 'chamada',
+  'só a chamada espera o aditivo de MeusDados');
 
 -- ── 5b. As sete coleções do contrato 0.2.27 ──────────────────────────────────
 -- Uma asserção por campo, e cada uma também cobra o que o campo NÃO leva. Sem a segunda

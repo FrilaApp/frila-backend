@@ -1,10 +1,10 @@
 -- 735_rpc_blindagem_global_catalogo.sql
 --
--- Cobertura transversal e auditoria do catálogo das 50 RPCs expostas no schema public:
+-- Cobertura transversal e auditoria do catálogo das 57 RPCs expostas no schema public:
 --   * Censo estrito de rotinas públicas (pg_proc e pg_namespace).
 --   * Auditoria de SECURITY DEFINER e search_path="" em 100% das rotinas.
 --   * Blindagem absoluta contra acesso anônimo: apenas public.configuracao_do_app
---     possui privilégio de EXECUTE concedido a anon (43 RPCs estritamente negadas).
+--     possui privilégio de EXECUTE concedido a anon (56 rotinas estritamente negadas).
 --   * Revogação universal de EXECUTE do papel público (PUBLIC) em todas as rotinas.
 --   * Prova de mutação dinâmica: detecção imediata caso qualquer RPC sofra grant inadvertido a anon.
 --   * Prova de idempotência por chave em public.republicar_vaga(uuid, timestamptz, timestamptz, uuid)
@@ -38,18 +38,18 @@ $$;
 -- PARTE 1: Censo de Rotinas e Blindagem de Catálogo do Schema public
 -- ============================================================================
 
--- Total de rotinas existentes em public (50 RPCs + 1 event trigger + 3 helpers)
+-- Total de rotinas existentes em public (57 RPCs + 1 event trigger + 3 helpers)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace),
-  54::bigint,
-  'censo de catalogo: schema public contem exatamente 54 rotinas catalogadas'
+  61::bigint,
+  'censo de catalogo: schema public contem exatamente 61 rotinas catalogadas'
 );
 
--- Total de rotinas declaradas como SECURITY DEFINER (50 RPCs + 1 event trigger rls_auto_enable)
+-- Total de rotinas declaradas como SECURITY DEFINER (57 RPCs + 1 event trigger rls_auto_enable)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prosecdef = true),
-  51::bigint,
-  'seguranca de privilegios: exatamente 51 rotinas sao SECURITY DEFINER (50 RPCs + rls_auto_enable)'
+  58::bigint,
+  'seguranca de privilegios: exatamente 58 rotinas sao SECURITY DEFINER (57 RPCs + rls_auto_enable)'
 );
 
 -- 100% das rotinas de public possuem search_path="" estrito configurado em proconfig
@@ -57,8 +57,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and p.proconfig @> array['search_path=""']),
-  54::bigint,
-  'mitigacao de sequestro de schema: 100% das rotinas (54 de 54) possuem search_path="" estrito'
+  61::bigint,
+  'mitigacao de sequestro de schema: 100% das rotinas (61 de 61) possuem search_path="" estrito'
 );
 
 -- Apenas 1 única função possui privilégio de execução concedido ao papel anon
@@ -80,22 +80,22 @@ select is(
   'rotina anonima autorizada e estritamente configuracao_do_app'
 );
 
--- 47 rotinas possuem EXECUTE estritamente FALSO para o papel anon
+-- 56 rotinas possuem EXECUTE estritamente FALSO para o papel anon
 select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and not has_function_privilege('anon', p.oid, 'execute')),
-  53::bigint,
-  'superficie anonima blindada: 53 de 54 rotinas negam execucao para o papel anon'
+  60::bigint,
+  'superficie anonima blindada: 60 de 61 rotinas negam execucao para o papel anon'
 );
 
--- Papel authenticated possui EXECUTE concedido em exatamente 50 RPCs
+-- Papel authenticated possui EXECUTE concedido em exatamente 57 RPCs
 select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and has_function_privilege('authenticated', p.oid, 'execute')),
-  50::bigint,
-  'superficie autenticada: exatamente 50 RPCs publicas concedem execucao a authenticated'
+  57::bigint,
+  'superficie autenticada: exatamente 57 RPCs publicas concedem execucao a authenticated'
 );
 
 -- Papel authenticated NÃO possui privilégio em rotinas internas (erro, conta_em_json, perfil_profissional_em_json, rls_auto_enable)

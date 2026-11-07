@@ -263,14 +263,61 @@ VIGIADAS = {
     ("desbloquear", "403"): "sem_permissao",
     ("desbloquear", "404"): "nao_encontrado",
     ("desbloquear", "422"): "campo_invalido",
+    # Serviços e regiões (F2, contrato 0.2.53).
+    ("definirServicos", "401"): "nao_autenticado",
+    ("definirServicos", "403"): "sem_permissao",
+    ("definirServicos", "404"): "nao_encontrado",
+    ("definirServicos", "422"): "campo_invalido",
+    ("definirRegioesAtendidas", "401"): "nao_autenticado",
+    ("definirRegioesAtendidas", "403"): "sem_permissao",
+    ("definirRegioesAtendidas", "404"): "nao_encontrado",
+    ("definirRegioesAtendidas", "422"): "campo_invalido",
     # Resolver serviço (fatia F1, contrato 0.2.52, RN44)
     ("resolverServico", "401"): "nao_autenticado",
     ("resolverServico", "422"): "campo_invalido",
+    # B4a: upload privado e ciclo de vida da foto (RN37, contrato 0.2.57).
+    ("solicitarUploadMidia", "401"): "nao_autenticado",
+    ("solicitarUploadMidia", "403"): "sem_permissao",
+    ("solicitarUploadMidia", "422"): "midia_invalida",
+    ("confirmarUploadMidia", "401"): "nao_autenticado",
+    ("confirmarUploadMidia", "403"): "sem_permissao",
+    ("confirmarUploadMidia", "404"): "nao_encontrado",
+    ("confirmarUploadMidia", "422"): "evidencia_incompleta",
+    ("removerMidia", "401"): "nao_autenticado",
+    ("removerMidia", "403"): "sem_permissao",
+    ("removerMidia", "404"): "nao_encontrado",
+    ("minhasMidias", "401"): "nao_autenticado",
+    ("minhasMidias", "403"): "sem_permissao",
+    # Chamada direta, F4 parte A (contrato 0.2.55): vigiada desde o nascimento.
+    ("chamarProfissional", "401"): "nao_autenticado",
+    ("chamarProfissional", "403"): "sem_permissao",
+    ("chamarProfissional", "404"): "nao_encontrado",
+    ("chamarProfissional", "409"): "chamada_ja_aberta",
+    ("chamarProfissional", "422"): "profissional_indisponivel",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
 # vigiados" porque são coisas diferentes: estes nunca vão entrar pela colheita no banco.
 ISENTAS = {
+    # O espelho inclui F1/F2/F4 e B4c, entregues em PRs próprios. Lista fechada:
+    # ao implementar uma dessas operações, trocar a isenção por cenário e VIGIADAS.
+    **{
+        (op, status): "contrato 0.2.57 antecipado; implementação em outra fatia"
+        for op, statuses in {
+            "atualizarApresentacaoProfissional": ("401", "403", "404", "422"),
+            "meuPerfilDetalhado": ("401", "404", "422"),
+            "pedirNovaAnaliseMidia": ("401", "403", "404", "409"),
+            "listarRegioesAdministrativas": ("401",),
+            "listarEspecialidades": ("401",),
+            "responderChamada": ("401", "403", "404", "409", "422"),
+            "cancelarChamada": ("401", "403", "404", "409"),
+            "minhasChamadas": ("401", "403", "422"),
+            "detalheChamada": ("401", "403", "404"),
+            "publicarAPartirDaChamada": ("401", "403", "404", "409", "422"),
+            "definirPreferenciaChamadas": ("401", "403", "404", "422"),
+        }.items()
+        for status in statuses
+    },
     # Supabase Auth (GoTrue), fora do Postgres
     ("entrarDemonstracao", "429"): "limite de tentativas do Supabase Auth, fora do Postgres",
     ("pedirCodigo", "429"): "limite de reenvio do Supabase Auth, fora do Postgres",
@@ -294,6 +341,16 @@ ISENTAS = {
     ("excluirConta", "422"): "confirmação explícita no corpo ({ confirmar: true }) é exigida pela Edge Function excluir-conta",
 }
 
+
+# Operações que o contrato 0.2.52 a 0.2.57 declara e que ainda não têm RPC (contratação
+# direta, fatias F2 a F4). Diferente de ISENTAS: estas VÃO entrar pela colheita, e cada uma
+# sai daqui no PR que a implementa. Operação pendente que ganha resposta colhida reprova.
+PENDENTES = {op: "contratação direta, ainda sem implementação" for op in (
+    "atualizarApresentacaoProfissional", "cancelarChamada",
+    "definirPreferenciaChamadas", "detalheChamada",
+    "listarEspecialidades", "listarRegioesAdministrativas", "meuPerfilDetalhado", "minhasChamadas",
+    "pedirNovaAnaliseMidia", "publicarAPartirDaChamada",
+    "responderChamada")}
 
 def recusas_declaradas(doc):
     """operationId -> conjunto de status de recusa que o contrato declara."""
@@ -528,7 +585,10 @@ def main():
     # Todo par declarado no contrato precisa estar vigiado em VIGIADAS ou isento em ISENTAS.
     # Operação ou recusa nova solta quebra o portão.
     todas_declaradas = {(op, st) for op, sts in declaradas.items() for st in sts}
-    nao_vigiados_pares = sorted(todas_declaradas - set(VIGIADAS) - set(ISENTAS))
+    nao_vigiados_pares = sorted(par for par in todas_declaradas - set(VIGIADAS) - set(ISENTAS)
+                                if par[0] not in PENDENTES)
+    for op in sorted(set(PENDENTES) & ({o for o, _ in observados} | validadas)):
+        promessas_quebradas.append(f"{op}: tem resposta colhida e continua em PENDENTES. Tire-a da lista")
     nao_vigiados = len(nao_vigiados_pares)
     for operacao, esperado in nao_vigiados_pares:
         promessas_quebradas.append(
@@ -576,6 +636,7 @@ def main():
     print(f"    vigiados e alcançados:  {vigiadas_ok} de {len(VIGIADAS)}")
     print(f"    isentos, com motivo:    {len(ISENTAS)}")
     print(f"    ainda não vigiados:     {nao_vigiados}")
+    print(f"    operações pendentes:    {len(PENDENTES)}")
 
     # ── Auditoria de coleções declaradas e exercitadas ─────────────────────────
     #

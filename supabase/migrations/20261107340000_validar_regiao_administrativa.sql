@@ -148,7 +148,7 @@ begin
 end $$;
 
 comment on function privado.conciliar_regiao_administrativa_legada() is
-  'Normaliza regiao_administrativa legada em estabelecimento e vaga para o nome oficial do catálogo (RN44). O que não casa com nenhuma região vira Plano Piloto, com o texto original guardado em privado.pendencia_regiao_administrativa. Idempotente. Rodou uma vez na migração 20261107020000.';
+  'Normaliza regiao_administrativa legada em estabelecimento e vaga para o nome oficial do catálogo (RN44). O que não casa com nenhuma região vira Plano Piloto, com o texto original guardado em privado.pendencia_regiao_administrativa. Idempotente. Rodou uma vez na migração 20261107340000.';
 
 revoke execute on function privado.conciliar_regiao_administrativa_legada() from public, anon, authenticated;
 
