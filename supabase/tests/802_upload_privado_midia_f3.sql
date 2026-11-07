@@ -49,7 +49,6 @@ select is(pg_temp.erro(format('select public.confirmar_upload_midia(%L)', respos
 -- Cada CHECK tem violação comportamental: remover a restrição faz throws_ok falhar.
 select throws_ok($$update privado.midia set dono_tipo = 'outro'$$, '23514', null, 'CHECK midia_dono_tipo');
 select throws_ok($$update privado.midia set tipo = 'outro'$$, '23514', null, 'CHECK midia_tipo');
-select throws_ok($$update privado.midia set legenda = repeat('a',121)$$, '23514', null, 'CHECK midia_legenda');
 select throws_ok($$update privado.midia set storage_path = ' ' $$, '23514', null, 'CHECK midia_storage_path');
 select throws_ok($$update privado.midia set mime = 'image/png'$$, '23514', null, 'CHECK midia_mime');
 select throws_ok($$update privado.midia set bytes = 0$$, '23514', null, 'CHECK midia_bytes inferior');

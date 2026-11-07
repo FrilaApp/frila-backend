@@ -338,17 +338,17 @@ select is(
   'Critério 3: contratante de outro estabelecimento recebe 403 sem_permissao em candidatos_da_vaga'
 );
 
--- Dinâmica de vínculo: adicionar Prof 2 à equipe de confiança da Casa 2 concede vínculo
+-- Dinâmica de vínculo: adicionar Prof 1 à equipe de confiança da Casa 2 concede vínculo
 insert into public.equipe_confianca (estabelecimento_id, profissional_id)
 values (
   (select id from public.estabelecimento where nome = 'Restaurante Estranho'),
-  'c8070000-0000-4000-8000-000000000012'
+  'c8070000-0000-4000-8000-000000000011'
 );
 
--- Agora Casa 2 tem vínculo com Prof 2 via equipe de confiança
+-- Agora Casa 2 tem vínculo com Prof 1 via equipe de confiança
 select is(
   (pg_temp.como('c8070000-0000-4000-8000-000000000004',
-    $$select public.perfil_publico('c8070000-0000-4000-8000-000000000012'::uuid)$$) ? 'servicos'),
+    $$select public.perfil_publico('c8070000-0000-4000-8000-000000000011'::uuid)$$) ? 'servicos'),
   true,
   'Dinamica de vinculo: inclusao em equipe_confianca concede projecao de servicos'
 );

@@ -1,9 +1,9 @@
--- 20261107120000_leitura_perfil_e_candidato.sql
+-- 20261107360000_leitura_perfil_e_candidato.sql
 --
 -- Fatia F2 / B3c: Leitura do perfil e cartão de candidato (DOC3, OpenAPI 0.2.53, RN26, RN27).
 --   * public.meu_perfil_detalhado: leitura completa do próprio perfil pelo profissional.
 --   * privado.contratante_com_vinculo_leitura: identifica contratante com vínculo legítimo de leitura
---     (equipe de confiança, candidatura em vaga da casa, ou histórico de turno).
+--     (equipe de confiança, candidatura em vaga da casa, histórico de turno ou chamada direta).
 --   * privado.perfil_publico_profissional: projeção aditiva dos campos F2 (serviços, apresentação,
 --     regiões, etc.) quando preenchidos e autorizados por vínculo de leitura.
 --   * public.candidatos_da_vaga: entrega projeção completa aos contratantes da casa,
@@ -42,14 +42,21 @@ language sql stable security definer set search_path = '' as $$
             where v.estabelecimento_id = me.estabelecimento_id
               and pos.profissional_id = p_prof
          )
+         -- 4. Chamada direta entre a casa e o profissional
+         or exists (
+           select 1 from public.chamada ch
+            where ch.estabelecimento_id = me.estabelecimento_id
+              and ch.profissional_id = p_prof
+         )
        )
   );
 $$;
 
 comment on function privado.contratante_com_vinculo_leitura(uuid, uuid) is
-  'Verifica se o usuário é contratante com vínculo legítimo de leitura com o profissional: candidatura em vaga da casa, turno entre eles ou equipe de confiança (DOC3, OpenAPI 0.2.53).';
+  'Verifica se o usuário é contratante com vínculo legítimo de leitura com o profissional: equipe de confiança, candidatura em vaga da casa, turno ou chamada direta (DOC3, OpenAPI 0.2.53).';
 
-revoke all on function privado.contratante_com_vinculo_leitura(uuid, uuid) from public, anon;
+revoke all on function privado.contratante_com_vinculo_leitura(uuid, uuid) from public, anon, authenticated;
+grant execute on function privado.contratante_com_vinculo_leitura(uuid, uuid) to service_role;
 
 -- ── 2. Perfil público do profissional com projeção F2 sob demanda ─────────────
 create or replace function privado.perfil_publico_profissional(prof uuid)
@@ -126,7 +133,8 @@ end $$;
 comment on function privado.perfil_publico_profissional(uuid) is
   'Monta o PerfilPublico de profissional: base estrita de reputação (RN08) e, quando há vínculo com o contratante leitor e dados de F2 cadastrados, projeção rica (0.2.53).';
 
-revoke all on function privado.perfil_publico_profissional(uuid) from public, anon;
+revoke all on function privado.perfil_publico_profissional(uuid) from public, anon, authenticated;
+grant execute on function privado.perfil_publico_profissional(uuid) to service_role;
 
 -- ── 3. Atualização de public.perfil_publico ───────────────────────────────────
 create or replace function public.perfil_publico(id uuid)
@@ -200,7 +208,6 @@ begin
     perform public.erro(401, 'nao_autenticado');
   end if;
 
-  perform privado.exigir_conta_ativa();
   perform privado.exigir_perfil('contratante');
 
   if candidatos_da_vaga.vaga_id is null then
@@ -252,12 +259,23 @@ returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
   v_uid uuid := (select auth.uid());
-  v_prof public.profissional;
+  v_prof public.profissional%rowtype;
 begin
-  if v_uid is null then perform public.erro(401, 'nao_autenticado'); end if;
+  if v_uid is null then
+    perform public.erro(401, 'nao_autenticado');
+  end if;
+
+  if exists (select 1 from public.usuario u where u.id = v_uid and u.estado = 'anonimizada') then
+    perform public.erro(401, 'nao_autenticado');
+  end if;
+
   perform privado.exigir_perfil('profissional');
-  select * into v_prof from public.profissional where usuario_id = v_uid;
-  if not found then perform public.erro(404, 'nao_encontrado'); end if;
+
+  select * into v_prof from public.profissional p where p.usuario_id = v_uid;
+  if not found then
+    perform public.erro(404, 'nao_encontrado');
+  end if;
+
   return privado.perfil_com_servicos(v_prof);
 end $$;
 

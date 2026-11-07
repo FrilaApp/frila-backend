@@ -57,16 +57,45 @@ update public.profissional set apresentacao = null, onde_trabalhei = null, exper
  where id = 'c8040000-0000-4000-8000-000000000011';
 
 -- Filtro RN38 direto: (texto, deve ser limpo).
-select is(privado.texto_sem_contato_ou_pix(t), limpo, 'filtro RN38: ' || t)
+select is(privado.texto_sem_contato_ou_pix(t), limpo, 'filtro RN38: ' || coalesce(t, 'null'))
  from (values
   ('Trabalho com eventos há dez anos', true), ('Bar do Zé de 2019 a 2023', true), ('Bar do Zé 2019-2023', true),
   ('Das 14h às 22h, R$ 150,00 a diária', true), (null, true), ('', true),
+  ('Garçom com 5 anos de experiência em eventos corporativos e casamentos.', true),
+  ('Atendo no Plano Piloto, Águas Claras e Taguatinga.', true),
+  ('Sr. Silva foi meu supervisor no hotel.', true),
+  ('Sr.Silva foi meu supervisor no hotel.', true),
+  ('Curso de Inglês at Work', true),
+  ('R$ 1.200,00 por semana', true),
   ('(61) 98888-7777', false), ('61988887777', false), ('61 9 8888 7777', false), ('+55 61 98888-7777', false),
   ('meu zap é seis um nove oito oito oito oito sete sete sete sete', false), ('liga 61 nove 8888 7777', false),
   ('(61) 2019-2023', false), ('joao@exemplo.com', false), ('segue @joaodobar', false),
   ('https://exemplo.com/joao', false), ('www.joao.net', false), ('joaodobar.com.br', false), ('wa.me/5561988887777', false),
   ('pix cpf 123.456.789-09', false), ('chave pix 12345678909', false), ('pix 12.345.678/0001-95', false),
-  ('chave 123e4567-e89b-12d3-a456-426614174000', false), ('chave 123e4567e89b12d3a456426614174000', false)
+  ('chave 123e4567-e89b-12d3-a456-426614174000', false), ('chave 123e4567e89b12d3a456426614174000', false),
+  -- Regressões das 11 variantes de ataque do Lince Codex R1
+  ('segue ＠perfilteste', false),
+  ('segue ﹫perfilteste', false),
+  ('pessoa＠exemplo．com', false),
+  ('perfil．example．com', false),
+  ('nove ' || chr(8203) || 'oito sete seis cinco quatro três dois', false),
+  ('nove oito sete seis cinco quatro tre' || chr(770) || 's dois', false),
+  ('d94bfb19' || chr(8203) || '-0a5d-4fc0-a8e8-3b8f6a5c2d11', false),
+  ('perfil.exemplo.br', false),
+  ('perfil.example.xyz', false),
+  ('example.c' || U&'\043E' || 'm', false),
+  ('pessoa arroba exemplo ponto com', false),
+  -- Regressões das 10 variantes de ataque do Lince Codex R2
+  ('٦١٩٨٨٨٨٧٧٧٧', false),
+  ('۶۱۹۸۸۸۸۷۷۷۷', false),
+  ('६१९८८८८७७७७', false),
+  ('acesse prof.site', false),
+  ('veja dr.com', false),
+  ('veja ex.com', false),
+  ('pix R$ 12345678909', false),
+  ('zap 61988887777 reais', false),
+  ('d94bfb19' || U&'\FE0F' || '-0a5d-4fc0-a8e8-3b8f6a5c2d11', false),
+  ('se' || U&'\2061' || 'is nove oito sete seis cinco quatro três dois', false)
  ) v(t, limpo);
 
 -- A RPC: feliz, omitido preserva, null limpa.
@@ -97,6 +126,8 @@ select is(jsonb_array_length(pg_temp.atualiza('{"idiomas":[]}') -> 'idiomas'), 0
 select is(pg_temp.erro('{}') ->> 'details', 'nenhum_campo', 'corpo vazio: nenhum_campo');
 select is(pg_temp.erro('{}') ->> 'code', 'campo_obrigatorio', 'corpo vazio: campo_obrigatorio');
 select is(pg_temp.erro('[]') ->> 'details', 'nenhum_campo', 'corpo que não é objeto: nenhum_campo');
+select is(pg_temp.erro('{"pessoa@exemplo.test":"x"}') ->> 'details', 'campo_desconhecido', 'P2: chave desconhecida não ecoa entrada arbitrária');
+select is(pg_temp.erro('{"campo_novo":"x"}') ->> 'details', 'campo_desconhecido', 'P2: campo desconhecido devolve identificador fixo');
 select is((pg_temp.erro(c) ->> 'code') || ':' || (pg_temp.erro(c) ->> 'details'), 'campo_invalido:' || campo, 'recusa ' || campo || ': ' || c::text)
  from (values
   ('{"apresentacao":1}'::jsonb,'apresentacao'), (jsonb_build_object('apresentacao', repeat('x',601)),'apresentacao'),
@@ -104,11 +135,17 @@ select is((pg_temp.erro(c) ->> 'code') || ':' || (pg_temp.erro(c) ->> 'details')
   ('{"experiencia_faixa":3}','experiencia_faixa'), ('{"cursos":"Coquetelaria"}','cursos'), ('{"cursos":[1]}','cursos'),
   ('{"cursos":["a","b","c","d","e","f"]}','cursos'), (jsonb_build_object('cursos', jsonb_build_array(repeat('x',81))),'cursos'),
   ('{"idiomas":["klingon"]}','idiomas'), ('{"idiomas":["ingles","ingles"]}','idiomas'), ('{"idiomas":"ingles"}','idiomas'),
-  ('{"atende_todo_df":true}','atende_todo_df'), ('{"campo_novo":"x"}','campo_novo'),
+  ('{"atende_todo_df":true}','campo_desconhecido'),
   ('{"apresentacao":"ligue 61 98888-7777"}','apresentacao'), ('{"onde_trabalhei":"veja joao@exemplo.com"}','onde_trabalhei'),
   ('{"apresentacao":"meu pix 123e4567-e89b-12d3-a456-426614174000"}','apresentacao'),
   ('{"onde_trabalhei":"https://exemplo.com"}','onde_trabalhei'), ('{"cursos":["me chame no @joao"]}','cursos'),
-  ('{"cursos":["zap 61988887777"]}','cursos')
+  ('{"cursos":["zap 61988887777"]}','cursos'),
+  -- Bateria ponta a ponta com variantes de R2
+  ('{"apresentacao":"acesse prof.site"}','apresentacao'),
+  ('{"onde_trabalhei":"veja dr.com"}','onde_trabalhei'),
+  ('{"cursos":["zap 61988887777 reais"]}','cursos'),
+  ('{"apresentacao":"٦١٩٨٨٨٨٧٧٧٧"}','apresentacao'),
+  ('{"onde_trabalhei":"pix R$ 12345678909"}','onde_trabalhei')
  ) t(c, campo);
 select is(pg_temp.erro(jsonb_build_object('apresentacao', 'Turno com ' || (select termo from privado.termo_bloqueado order by termo limit 1))) ->> 'details',
  'apresentacao', 'termo bloqueado continua recusado em apresentacao');
@@ -120,5 +157,41 @@ select throws_ok($$select public.atualizar_apresentacao_profissional('{"apresent
 select ok(not has_function_privilege('anon', 'public.atualizar_apresentacao_profissional(jsonb)', 'EXECUTE')
  and has_function_privilege('authenticated', 'public.atualizar_apresentacao_profissional(jsonb)', 'EXECUTE'), 'só authenticated executa a RPC');
 select ok(not has_function_privilege('authenticated', 'privado.texto_sem_contato_ou_pix(text)', 'EXECUTE'), 'o filtro não é chamável pelo app');
+
+-- P1-2: Ciclo de exclusão e retenção dos novos campos
+do $$
+declare
+  v_uid uuid := 'c8040000-0000-4000-8000-000000000001';
+  v_prof_id uuid := 'c8040000-0000-4000-8000-000000000011';
+begin
+  -- Popula apresentação e novos dados
+  update public.profissional set
+    apresentacao = 'Texto para expurgo',
+    onde_trabalhei = 'Local antigo',
+    experiencia_faixa = 'de_1_a_3_anos',
+    cursos = array['Curso Retencao'],
+    idiomas = array['portugues']
+  where id = v_prof_id;
+
+  -- 1. Exclui a conta
+  perform privado.excluir_conta(v_uid);
+
+  -- 2. Imediatamente após exclusão, dados ainda existem sob retenção
+  assert (select apresentacao from public.profissional where id = v_prof_id) is not null, 'dados devem existir sob retencao';
+
+  -- 3. Avança o relógio além de 21 dias e executa a limpeza
+  perform set_config('frila.agora', '2027-02-05 10:00:00+00', true);
+  perform privado.limpar_contas_anonimizadas(15);
+
+  -- 4. Todos os 5 campos devem estar NULL
+  assert (select count(*) from public.profissional where id = v_prof_id
+          and apresentacao is null
+          and onde_trabalhei is null
+          and experiencia_faixa is null
+          and cursos is null
+          and idiomas is null) = 1, 'todos os campos novos devem ser limpos por limpar_contas_anonimizadas';
+end $$;
+select pass('P1-2: Retenção LGPD: apresentacao, onde_trabalhei, cursos, idiomas e faixa zerados por limpar_contas_anonimizadas');
+
 select * from finish();
 rollback;
