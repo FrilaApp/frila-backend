@@ -285,10 +285,10 @@ VIGIADAS = {
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
 # vigiados" porque são coisas diferentes: estes nunca vão entrar pela colheita no banco.
 ISENTAS = {
-    # Isenções transitórias aprovadas para as próximas fatias; remover em B3b/B3c.
-    ("meuPerfilDetalhado", "401"): "implementado em B3b/B3c",
-    ("meuPerfilDetalhado", "404"): "implementado em B3b/B3c",
-    ("meuPerfilDetalhado", "422"): "implementado em B3b/B3c",
+    # Isenções transitórias aprovadas para a próxima fatia; remover em B3c.
+    ("meuPerfilDetalhado", "401"): "implementado em B3c",
+    ("meuPerfilDetalhado", "404"): "implementado em B3c",
+    ("meuPerfilDetalhado", "422"): "implementado em B3c",
     # Supabase Auth (GoTrue), fora do Postgres
     ("entrarDemonstracao", "429"): "limite de tentativas do Supabase Auth, fora do Postgres",
     ("pedirCodigo", "429"): "limite de reenvio do Supabase Auth, fora do Postgres",
