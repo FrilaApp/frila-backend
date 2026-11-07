@@ -288,6 +288,12 @@ VIGIADAS = {
     ("removerMidia", "404"): "nao_encontrado",
     ("minhasMidias", "401"): "nao_autenticado",
     ("minhasMidias", "403"): "sem_permissao",
+    # Chamada direta, F4 parte A (contrato 0.2.55): vigiada desde o nascimento.
+    ("chamarProfissional", "401"): "nao_autenticado",
+    ("chamarProfissional", "403"): "sem_permissao",
+    ("chamarProfissional", "404"): "nao_encontrado",
+    ("chamarProfissional", "409"): "chamada_ja_aberta",
+    ("chamarProfissional", "422"): "profissional_indisponivel",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
@@ -303,7 +309,6 @@ ISENTAS = {
             "pedirNovaAnaliseMidia": ("401", "403", "404", "409"),
             "listarRegioesAdministrativas": ("401",),
             "listarEspecialidades": ("401",),
-            "chamarProfissional": ("401", "403", "404", "409", "422"),
             "responderChamada": ("401", "403", "404", "409", "422"),
             "cancelarChamada": ("401", "403", "404", "409"),
             "minhasChamadas": ("401", "403", "422"),
@@ -336,6 +341,16 @@ ISENTAS = {
     ("excluirConta", "422"): "confirmação explícita no corpo ({ confirmar: true }) é exigida pela Edge Function excluir-conta",
 }
 
+
+# Operações que o contrato 0.2.52 a 0.2.57 declara e que ainda não têm RPC (contratação
+# direta, fatias F2 a F4). Diferente de ISENTAS: estas VÃO entrar pela colheita, e cada uma
+# sai daqui no PR que a implementa. Operação pendente que ganha resposta colhida reprova.
+PENDENTES = {op: "contratação direta, ainda sem implementação" for op in (
+    "atualizarApresentacaoProfissional", "cancelarChamada",
+    "definirPreferenciaChamadas", "detalheChamada",
+    "listarEspecialidades", "listarRegioesAdministrativas", "meuPerfilDetalhado", "minhasChamadas",
+    "pedirNovaAnaliseMidia", "publicarAPartirDaChamada",
+    "responderChamada")}
 
 def recusas_declaradas(doc):
     """operationId -> conjunto de status de recusa que o contrato declara."""
@@ -570,7 +585,10 @@ def main():
     # Todo par declarado no contrato precisa estar vigiado em VIGIADAS ou isento em ISENTAS.
     # Operação ou recusa nova solta quebra o portão.
     todas_declaradas = {(op, st) for op, sts in declaradas.items() for st in sts}
-    nao_vigiados_pares = sorted(todas_declaradas - set(VIGIADAS) - set(ISENTAS))
+    nao_vigiados_pares = sorted(par for par in todas_declaradas - set(VIGIADAS) - set(ISENTAS)
+                                if par[0] not in PENDENTES)
+    for op in sorted(set(PENDENTES) & ({o for o, _ in observados} | validadas)):
+        promessas_quebradas.append(f"{op}: tem resposta colhida e continua em PENDENTES. Tire-a da lista")
     nao_vigiados = len(nao_vigiados_pares)
     for operacao, esperado in nao_vigiados_pares:
         promessas_quebradas.append(
@@ -618,6 +636,7 @@ def main():
     print(f"    vigiados e alcançados:  {vigiadas_ok} de {len(VIGIADAS)}")
     print(f"    isentos, com motivo:    {len(ISENTAS)}")
     print(f"    ainda não vigiados:     {nao_vigiados}")
+    print(f"    operações pendentes:    {len(PENDENTES)}")
 
     # ── Auditoria de coleções declaradas e exercitadas ─────────────────────────
     #
