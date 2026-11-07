@@ -10,6 +10,7 @@ alter table privado.midia drop column if exists funcao_id;
 alter table privado.midia drop column if exists ordem;
 
 -- 2. Atualiza minhas_midias para ordenar por criado_em, id (sem ordem).
+-- contrato: corpo-sem-mudanca-de-superficie public.minhas_midias 0.2.57
 create or replace function public.minhas_midias() returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare v_uid uuid := privado.usuario_midia();
@@ -95,6 +96,7 @@ revoke execute on function privado.expurgar_midias_recusadas() from public, anon
 grant  execute on function privado.expurgar_midias_recusadas() to service_role;
 
 -- 5. Atualiza remover_midia para enfileirar expurgo imediatamente.
+-- contrato: corpo-sem-mudanca-de-superficie public.remover_midia 0.2.57
 create or replace function public.remover_midia(midia_id uuid) returns jsonb
 language plpgsql security definer set search_path = '' as $$
 declare
