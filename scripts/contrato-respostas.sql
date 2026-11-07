@@ -1579,6 +1579,41 @@ select pg_temp.guarda('promete:definirRegioesAtendidas:401',pg_temp.observado(nu
 select pg_temp.guarda('promete:definirRegioesAtendidas:403',pg_temp.observado('cc000000-0000-4000-8000-000000000004',$$select public.definir_regioes_atendidas('{}',false)$$));
 select pg_temp.guarda('promete:definirRegioesAtendidas:422',pg_temp.observado('cc000000-0000-4000-8000-000000000002',$$select public.definir_regioes_atendidas(array[999],false)$$));
 
+-- B4a: URLs e projeções de mídia, incluindo cada recusa declarada no contrato.
+create temp table midia_colheita as
+select 'ee000000-0000-4000-8000-000000000097'::uuid conta;
+update privado.configuracao_app set foto_de_perfil=false;
+select pg_temp.guarda('promete:solicitarUploadMidia:403', pg_temp.observado(conta,
+  $$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1024)$$)) from midia_colheita;
+select pg_temp.guarda('promete:confirmarUploadMidia:403', pg_temp.observado(conta,
+  $$select public.confirmar_upload_midia('80200000-0000-4000-8000-000000000099')$$)) from midia_colheita;
+update privado.configuracao_app set foto_de_perfil=true;
+create temp table midia_upload as select pg_temp.como(conta,
+  $$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1024)$$) resposta from midia_colheita;
+select pg_temp.guarda('solicitarUploadMidia', resposta) from midia_upload;
+select pg_temp.guarda('promete:solicitarUploadMidia:422', pg_temp.observado(conta,
+  $$select public.solicitar_upload_midia('foto_perfil','image/png',1024)$$)) from midia_colheita;
+select pg_temp.guarda('promete:confirmarUploadMidia:422', pg_temp.observado(conta,
+  format('select public.confirmar_upload_midia(%L)', resposta->>'midia_id'))) from midia_colheita cross join midia_upload;
+insert into storage.objects(bucket_id,name) select 'midia-perfil', storage_path from privado.midia
+  where id=(select (resposta->>'midia_id')::uuid from midia_upload);
+select pg_temp.guarda('confirmarUploadMidia', pg_temp.como(conta,
+  format('select public.confirmar_upload_midia(%L)', resposta->>'midia_id'))) from midia_colheita cross join midia_upload;
+select pg_temp.guarda('minhasMidias', pg_temp.como(conta, $$select public.minhas_midias()$$)) from midia_colheita;
+select pg_temp.guarda('removerMidia', pg_temp.como(conta,
+  format('select public.remover_midia(%L)', resposta->>'midia_id'))) from midia_colheita cross join midia_upload;
+select pg_temp.guarda('promete:' || op || ':401', pg_temp.observado(null, sql)) from (values
+  ('solicitarUploadMidia', $$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1)$$),
+  ('confirmarUploadMidia', $$select public.confirmar_upload_midia('80200000-0000-4000-8000-000000000099')$$),
+  ('removerMidia', $$select public.remover_midia('80200000-0000-4000-8000-000000000099')$$),
+  ('minhasMidias', $$select public.minhas_midias()$$)) t(op,sql);
+select pg_temp.guarda('promete:' || op || ':404', pg_temp.observado(conta, sql)) from midia_colheita cross join (values
+  ('confirmarUploadMidia', $$select public.confirmar_upload_midia('80200000-0000-4000-8000-000000000099')$$),
+  ('removerMidia', $$select public.remover_midia('80200000-0000-4000-8000-000000000099')$$)) t(op,sql);
+select pg_temp.guarda('promete:' || op || ':403', pg_temp.observado('cc000000-0000-4000-8000-000000000004',sql)) from (values
+  ('removerMidia', $$select public.remover_midia('80200000-0000-4000-8000-000000000099')$$),
+  ('minhasMidias', $$select public.minhas_midias()$$)) t(op,sql);
+
 -- Por último, e depois de tudo: ela anonimiza a conta e cancela os turnos futuros dela.
 -- Qualquer colheita posterior veria um cenário diferente do que as outras viram. A conta
 -- anonimizada é a `…0003`, a mesma que os dois guardas de `promete:perfilPublico:404`

@@ -275,19 +275,44 @@ VIGIADAS = {
     # Resolver serviço (fatia F1, contrato 0.2.52, RN44)
     ("resolverServico", "401"): "nao_autenticado",
     ("resolverServico", "422"): "campo_invalido",
+    # B4a: upload privado e ciclo de vida da foto (RN37, contrato 0.2.57).
+    ("solicitarUploadMidia", "401"): "nao_autenticado",
+    ("solicitarUploadMidia", "403"): "sem_permissao",
+    ("solicitarUploadMidia", "422"): "midia_invalida",
+    ("confirmarUploadMidia", "401"): "nao_autenticado",
+    ("confirmarUploadMidia", "403"): "sem_permissao",
+    ("confirmarUploadMidia", "404"): "nao_encontrado",
+    ("confirmarUploadMidia", "422"): "evidencia_incompleta",
+    ("removerMidia", "401"): "nao_autenticado",
+    ("removerMidia", "403"): "sem_permissao",
+    ("removerMidia", "404"): "nao_encontrado",
+    ("minhasMidias", "401"): "nao_autenticado",
+    ("minhasMidias", "403"): "sem_permissao",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
 # vigiados" porque são coisas diferentes: estes nunca vão entrar pela colheita no banco.
 ISENTAS = {
-    # Isenções transitórias aprovadas para as próximas fatias; remover em B3b/B3c.
-    ("atualizarApresentacaoProfissional", "401"): "implementado em B3b/B3c",
-    ("atualizarApresentacaoProfissional", "403"): "implementado em B3b/B3c",
-    ("atualizarApresentacaoProfissional", "404"): "implementado em B3b/B3c",
-    ("atualizarApresentacaoProfissional", "422"): "implementado em B3b/B3c",
-    ("meuPerfilDetalhado", "401"): "implementado em B3b/B3c",
-    ("meuPerfilDetalhado", "404"): "implementado em B3b/B3c",
-    ("meuPerfilDetalhado", "422"): "implementado em B3b/B3c",
+    # O espelho inclui F1/F2/F4 e B4c, entregues em PRs próprios. Lista fechada:
+    # ao implementar uma dessas operações, trocar a isenção por cenário e VIGIADAS.
+    **{
+        (op, status): "contrato 0.2.57 antecipado; implementação em outra fatia"
+        for op, statuses in {
+            "atualizarApresentacaoProfissional": ("401", "403", "404", "422"),
+            "meuPerfilDetalhado": ("401", "404", "422"),
+            "pedirNovaAnaliseMidia": ("401", "403", "404", "409"),
+            "listarRegioesAdministrativas": ("401",),
+            "listarEspecialidades": ("401",),
+            "chamarProfissional": ("401", "403", "404", "409", "422"),
+            "responderChamada": ("401", "403", "404", "409", "422"),
+            "cancelarChamada": ("401", "403", "404", "409"),
+            "minhasChamadas": ("401", "403", "422"),
+            "detalheChamada": ("401", "403", "404"),
+            "publicarAPartirDaChamada": ("401", "403", "404", "409", "422"),
+            "definirPreferenciaChamadas": ("401", "403", "404", "422"),
+        }.items()
+        for status in statuses
+    },
     # Supabase Auth (GoTrue), fora do Postgres
     ("entrarDemonstracao", "429"): "limite de tentativas do Supabase Auth, fora do Postgres",
     ("pedirCodigo", "429"): "limite de reenvio do Supabase Auth, fora do Postgres",
