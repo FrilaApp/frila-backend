@@ -852,6 +852,9 @@ select pg_temp.guarda('promete:atualizarPerfilProfissional:404',
   pg_temp.observado('ee000000-0000-4000-8000-000000000096', format(
     $$ select public.atualizar_perfil_profissional(array[%L::uuid], null, null) $$, (select id from f))));
 
+-- F2: perfil ainda não cadastrado.
+select pg_temp.guarda('promete:definirServicos:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.definir_servicos('[]')$$));
+select pg_temp.guarda('promete:definirRegioesAtendidas:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.definir_regioes_atendidas('{}',false)$$));
 delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000096';
 delete from auth.users where id = 'ee000000-0000-4000-8000-000000000096';
 
@@ -1558,6 +1561,23 @@ select pg_temp.guarda('resolverServico', pg_temp.como('cc000000-0000-4000-8000-0
 select pg_temp.guarda('promete:resolverServico:422',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002',
     $$ select public.resolver_servico('a') $$));
+
+-- F2: respostas com serviço, especialidade e região reais.
+insert into public.profissional_funcao (profissional_id,funcao_id)
+ select p.id,f.id from public.profissional p cross join public.funcao f
+ where p.usuario_id='cc000000-0000-4000-8000-000000000002' and f.nome='faxina residencial' on conflict do nothing;
+select pg_temp.guarda('definirServicos', pg_temp.como('cc000000-0000-4000-8000-000000000002',format(
+ $$select public.definir_servicos(%L::jsonb)$$, (select jsonb_build_array(jsonb_build_object('funcao_id',f.id,
+ 'unidade','diaria','valor_centavos',15000,'horas_incluidas',8,'especialidade_ids',jsonb_build_array(e.id)))
+ from public.funcao f join public.especialidade e on e.funcao_id=f.id where f.nome='faxina residencial' limit 1))));
+select pg_temp.guarda('definirRegioesAtendidas', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+ $$select public.definir_regioes_atendidas(array[1,2],false)$$));
+select pg_temp.guarda('promete:definirServicos:401',pg_temp.observado(null,$$select public.definir_servicos('[]')$$));
+select pg_temp.guarda('promete:definirServicos:403',pg_temp.observado('cc000000-0000-4000-8000-000000000004',$$select public.definir_servicos('[]')$$));
+select pg_temp.guarda('promete:definirServicos:422',pg_temp.observado('cc000000-0000-4000-8000-000000000002',$$select public.definir_servicos('{}')$$));
+select pg_temp.guarda('promete:definirRegioesAtendidas:401',pg_temp.observado(null,$$select public.definir_regioes_atendidas('{}',false)$$));
+select pg_temp.guarda('promete:definirRegioesAtendidas:403',pg_temp.observado('cc000000-0000-4000-8000-000000000004',$$select public.definir_regioes_atendidas('{}',false)$$));
+select pg_temp.guarda('promete:definirRegioesAtendidas:422',pg_temp.observado('cc000000-0000-4000-8000-000000000002',$$select public.definir_regioes_atendidas(array[999],false)$$));
 
 -- Por último, e depois de tudo: ela anonimiza a conta e cancela os turnos futuros dela.
 -- Qualquer colheita posterior veria um cenário diferente do que as outras viram. A conta

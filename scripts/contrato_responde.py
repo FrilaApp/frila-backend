@@ -263,6 +263,15 @@ VIGIADAS = {
     ("desbloquear", "403"): "sem_permissao",
     ("desbloquear", "404"): "nao_encontrado",
     ("desbloquear", "422"): "campo_invalido",
+    # Serviços e regiões (F2, contrato 0.2.53).
+    ("definirServicos", "401"): "nao_autenticado",
+    ("definirServicos", "403"): "sem_permissao",
+    ("definirServicos", "404"): "nao_encontrado",
+    ("definirServicos", "422"): "campo_invalido",
+    ("definirRegioesAtendidas", "401"): "nao_autenticado",
+    ("definirRegioesAtendidas", "403"): "sem_permissao",
+    ("definirRegioesAtendidas", "404"): "nao_encontrado",
+    ("definirRegioesAtendidas", "422"): "campo_invalido",
     # Resolver serviço (fatia F1, contrato 0.2.52, RN44)
     ("resolverServico", "401"): "nao_autenticado",
     ("resolverServico", "422"): "campo_invalido",
