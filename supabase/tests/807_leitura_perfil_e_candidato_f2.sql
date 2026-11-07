@@ -353,5 +353,162 @@ select is(
   'Dinamica de vinculo: inclusao em equipe_confianca concede projecao de servicos'
 );
 
+-- ── 5. Regressões contra vazamento de dados pessoais (Bloqueio Mútuo e Conta Excluída) ──
+
+-- Casa 1 escolhe o candidato Prof 1 para confirmar turno
+select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+  format($$select public.escolher_candidato(%L)$$, (select id from public.candidatura where profissional_id = 'c8070000-0000-4000-8000-000000000011')));
+
+-- Antes de qualquer bloqueio: contratante da casa lê turno e painel com dados F2
+create temp table turnos_antes as
+  select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+    format($$select public.meus_turnos(null, null, %L)$$, (select id from public.estabelecimento where nome = 'Bar do Vinculo'))) as r;
+select is(
+  ((select r from turnos_antes) -> 0 -> 'contraparte' ? 'apresentacao'),
+  true,
+  'Baseline com vinculo: contraparte no turno possui apresentacao F2'
+);
+
+-- Cenário A: Profissional bloqueia o estabelecimento
+select pg_temp.como('c8070000-0000-4000-8000-000000000001',
+  format($$select public.bloquear('estabelecimento', %L)$$, (select id from public.estabelecimento where nome = 'Bar do Vinculo')));
+
+-- 1. Perfil público direto responde 404
+select is(
+  pg_temp.erro_codigo('c8070000-0000-4000-8000-000000000003',
+    $$select public.perfil_publico('c8070000-0000-4000-8000-000000000011'::uuid)$$),
+  'nao_encontrado',
+  'Bloqueio Prof->Casa: perfil_publico responde 404'
+);
+
+-- 2. meus_turnos da casa OMITA apresentação e dados F2 da contraparte
+create temp table turnos_bloq_prof as
+  select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+    format($$select public.meus_turnos(null, null, %L)$$, (select id from public.estabelecimento where nome = 'Bar do Vinculo'))) as r;
+select is(
+  ((select r from turnos_bloq_prof) -> 0 -> 'contraparte' ? 'apresentacao'),
+  false,
+  'Bloqueio Prof->Casa: meus_turnos omite apresentacao F2'
+);
+
+-- 3. painel_estabelecimento da casa OMITA histórico de emprego / texto livre F2
+create temp table painel_bloq_prof as
+  select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+    format($$select public.painel_estabelecimento(%L, '2027-01-01'::timestamptz, '2027-02-01'::timestamptz)$$,
+      (select id from public.estabelecimento where nome = 'Bar do Vinculo'))) as r;
+select is(
+  ((select r from painel_bloq_prof)::text like '%Restaurante Lago 2020-2024%'),
+  false,
+  'Bloqueio Prof->Casa: painel_estabelecimento omite historico profissional F2'
+);
+
+-- Remove bloqueio do profissional
+delete from public.bloqueio where autor_id = 'c8070000-0000-4000-8000-000000000001';
+
+-- Cenário B: Casa bloqueia o profissional
+select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+  $$select public.bloquear('profissional', 'c8070000-0000-4000-8000-000000000011')$$);
+
+-- 1. Perfil público direto responde 404
+select is(
+  pg_temp.erro_codigo('c8070000-0000-4000-8000-000000000003',
+    $$select public.perfil_publico('c8070000-0000-4000-8000-000000000011'::uuid)$$),
+  'nao_encontrado',
+  'Bloqueio Casa->Prof: perfil_publico responde 404'
+);
+
+-- 2. meus_turnos da casa OMITA apresentação F2 da contraparte
+create temp table turnos_bloq_casa as
+  select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+    format($$select public.meus_turnos(null, null, %L)$$, (select id from public.estabelecimento where nome = 'Bar do Vinculo'))) as r;
+select is(
+  ((select r from turnos_bloq_casa) -> 0 -> 'contraparte' ? 'apresentacao'),
+  false,
+  'Bloqueio Casa->Prof: meus_turnos omite apresentacao F2'
+);
+
+-- 3. painel_estabelecimento da casa OMITA histórico de emprego F2
+create temp table painel_bloq_casa as
+  select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+    format($$select public.painel_estabelecimento(%L, '2027-01-01'::timestamptz, '2027-02-01'::timestamptz)$$,
+      (select id from public.estabelecimento where nome = 'Bar do Vinculo'))) as r;
+select is(
+  ((select r from painel_bloq_casa)::text like '%Restaurante Lago 2020-2024%'),
+  false,
+  'Bloqueio Casa->Prof: painel_estabelecimento omite historico profissional F2'
+);
+
+-- Remove bloqueio da casa
+delete from public.bloqueio where autor_id = 'c8070000-0000-4000-8000-000000000003';
+
+-- Cenário C: Exclusão real da conta do profissional (privado.excluir_conta)
+select privado.excluir_conta('c8070000-0000-4000-8000-000000000001');
+
+-- 1. perfil_publico responde 200 'Conta encerrada' e OMITA apresentação e campos F2
+create temp table perfil_excluido as
+  select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+    $$select public.perfil_publico('c8070000-0000-4000-8000-000000000011'::uuid)$$) as r;
+select is(
+  ((select r from perfil_excluido) ->> 'nome'),
+  'Conta encerrada',
+  'Conta excluida: nome exibido e Conta encerrada'
+);
+select is(
+  ((select r from perfil_excluido) ? 'apresentacao'),
+  false,
+  'Conta excluida: perfil_publico omite apresentacao'
+);
+select is(
+  ((select r from perfil_excluido) ? 'onde_trabalhei'),
+  false,
+  'Conta excluida: perfil_publico omite onde_trabalhei'
+);
+select is(
+  ((select r from perfil_excluido) ? 'cursos'),
+  false,
+  'Conta excluida: perfil_publico omite cursos'
+);
+select is(
+  ((select r from perfil_excluido) ? 'idiomas'),
+  false,
+  'Conta excluida: perfil_publico omite idiomas'
+);
+select is(
+  ((select r from perfil_excluido) ? 'servicos'),
+  false,
+  'Conta excluida: perfil_publico omite servicos'
+);
+select is(
+  ((select r from perfil_excluido) ? 'regioes'),
+  false,
+  'Conta excluida: perfil_publico omite regioes'
+);
+
+-- 2. meus_turnos da contraparte tem 'Conta encerrada' e OMITA apresentacao
+create temp table turnos_excluido as
+  select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+    format($$select public.meus_turnos(null, null, %L)$$, (select id from public.estabelecimento where nome = 'Bar do Vinculo'))) as r;
+select is(
+  ((select r from turnos_excluido) -> 0 -> 'contraparte' ->> 'nome'),
+  'Conta encerrada',
+  'Conta excluida: contraparte em meus_turnos tem nome Conta encerrada'
+);
+select is(
+  ((select r from turnos_excluido) -> 0 -> 'contraparte' ? 'apresentacao'),
+  false,
+  'Conta excluida: contraparte em meus_turnos omite apresentacao'
+);
+
+-- 3. painel_estabelecimento da contraparte OMITA histórico de emprego F2
+create temp table painel_excluido as
+  select pg_temp.como('c8070000-0000-4000-8000-000000000003',
+    format($$select public.painel_estabelecimento(%L, '2027-01-01'::timestamptz, '2027-02-01'::timestamptz)$$,
+      (select id from public.estabelecimento where nome = 'Bar do Vinculo'))) as r;
+select is(
+  ((select r from painel_excluido)::text like '%Restaurante Lago 2020-2024%'),
+  false,
+  'Conta excluida: painel_estabelecimento omite historico profissional F2'
+);
+
 select * from finish();
 rollback;

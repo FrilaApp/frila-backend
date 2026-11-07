@@ -63,11 +63,12 @@ create or replace function privado.perfil_publico_profissional(prof uuid)
 returns jsonb
 language plpgsql stable security definer set search_path = '' as $$
 declare
-  v_uid     uuid := (select auth.uid());
-  v_res     jsonb;
-  p         public.profissional%rowtype;
-  u         public.usuario%rowtype;
-  v_tem_f2  boolean;
+  v_uid         uuid := (select auth.uid());
+  v_res         jsonb;
+  p             public.profissional%rowtype;
+  u             public.usuario%rowtype;
+  v_tem_f2      boolean;
+  v_bloqueado   boolean;
 begin
   select * into p from public.profissional where id = prof;
   if not found then return null; end if;
@@ -91,8 +92,28 @@ begin
                                  where x.profissional_id = p.id and x.falta))
   );
 
-  -- Se o leitor é contratante com vínculo E o profissional possui dados de F2 cadastrados:
-  if v_uid is not null and privado.contratante_com_vinculo_leitura(p.id, v_uid) then
+  -- Bloqueio mútuo em qualquer direção com o leitor ou estabelecimentos do leitor:
+  if v_uid is not null then
+    v_bloqueado := exists (
+      select 1 from public.bloqueio b
+       where (b.autor_id = v_uid and b.bloqueado_id = p.usuario_id)
+          or (b.autor_id = p.usuario_id and b.bloqueado_id = v_uid)
+    ) or exists (
+      select 1 from public.membro_estabelecimento me
+       where me.usuario_id = v_uid
+         and privado.bloqueado_com_estabelecimento(p.usuario_id, me.estabelecimento_id)
+    );
+  else
+    v_bloqueado := false;
+  end if;
+
+  -- Se o alvo NÃO está anonimizado/encerrado, o leitor está autenticado,
+  -- NÃO há bloqueio mútuo, o leitor possui vínculo legítimo e o profissional preencheu dados F2:
+  if u.estado <> 'anonimizada'
+     and v_uid is not null
+     and not v_bloqueado
+     and privado.contratante_com_vinculo_leitura(p.id, v_uid) then
+
     v_tem_f2 := (
       p.apresentacao is not null
       or p.onde_trabalhei is not null
