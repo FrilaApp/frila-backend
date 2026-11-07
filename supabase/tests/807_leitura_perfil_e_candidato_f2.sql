@@ -9,6 +9,7 @@
 begin;
 insert into privado.ambiente values (true, true) on conflict (id) do update set eh_teste = true;
 set local frila.agora = '2027-01-11 09:00:00+00';
+set local frila.agendador_secret = 'segredo-de-teste-807';
 select no_plan();
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
@@ -20,6 +21,28 @@ begin
   reset role;
   perform set_config('request.jwt.claims', '{}', true);
   return r;
+end $$;
+
+create function pg_temp.como_anon(sql text) returns jsonb language plpgsql as $$
+declare r jsonb;
+begin
+  execute 'set local role anon';
+  perform set_config('request.jwt.claims', '{}', true);
+  execute sql into r;
+  reset role;
+  return r;
+end $$;
+
+create function pg_temp.erro_codigo(conta uuid, sql text) returns text language plpgsql as $$
+declare
+  r jsonb;
+  msg text;
+begin
+  perform pg_temp.como(conta, sql);
+  return null;
+exception when sqlstate 'PGRST' then
+  get stacked diagnostics msg = message_text;
+  return (msg::jsonb ->> 'code');
 end $$;
 
 -- ── 1. Massa sintética ────────────────────────────────────────────────────────
@@ -52,6 +75,11 @@ insert into public.profissional (id, usuario_id, ponto_base) values
  ('c8070000-0000-4000-8000-000000000011', 'c8070000-0000-4000-8000-000000000001', 'POINT(-47.88 -15.79)'),
  ('c8070000-0000-4000-8000-000000000012', 'c8070000-0000-4000-8000-000000000002', 'POINT(-47.88 -15.79)');
 
+insert into public.profissional_funcao (profissional_id, funcao_id)
+select 'c8070000-0000-4000-8000-000000000011'::uuid, id from public.funcao where nome = 'garçom'
+union all
+select 'c8070000-0000-4000-8000-000000000012'::uuid, id from public.funcao where nome = 'garçom';
+
 -- Profissional 1 preenche serviços e apresentação
 select pg_temp.como('c8070000-0000-4000-8000-000000000001',
  $$select public.atualizar_apresentacao_profissional(jsonb_build_object(
@@ -65,12 +93,12 @@ select pg_temp.como('c8070000-0000-4000-8000-000000000001',
 select pg_temp.como('c8070000-0000-4000-8000-000000000001',
  $$select public.definir_servicos(jsonb_build_array(
    jsonb_build_object(
-     'funcao_id', (select id from public.funcao where nome = 'Garçom'),
+     'funcao_id', (select id from public.funcao where nome = 'garçom'),
      'unidade', 'diaria',
      'valor_centavos', 20000,
      'horas_incluidas', 8,
-     'leva_material', 'nao_se_aplica',
-     'especialidades', jsonb_build_array()
+     'leva_material', 'nao',
+     'especialidade_ids', jsonb_build_array()
    )
  ))$$);
 
@@ -80,10 +108,10 @@ select pg_temp.como('c8070000-0000-4000-8000-000000000001',
 -- Casa 1 publica vaga no modo seleção e Profissional 1 se candidata
 select pg_temp.como('c8070000-0000-4000-8000-000000000003',
   format($$select public.publicar_vaga(
-    (select id from public.estabelecimento where nome_fantasia = 'Bar do Vinculo'),
-    (select id from public.funcao where nome = 'Garçom'),
-    now() + interval '3 days',
-    now() + interval '3 days 8 hours',
+    (select id from public.estabelecimento where nome = 'Bar do Vinculo'),
+    (select id from public.funcao where nome = 'garçom'),
+    '2027-01-15 18:00:00+00'::timestamptz,
+    '2027-01-16 02:00:00+00'::timestamptz,
     'CLS 405 Bloco A',
     '{"latitude": -15.79, "longitude": -47.88}'::jsonb,
     20000,
@@ -107,7 +135,7 @@ select pg_temp.como('c8070000-0000-4000-8000-000000000001',
 
 -- Anon sem sessão é barrado
 select throws_ok(
-  $$select public.meu_perfil_detalhado()$$,
+  $$select pg_temp.como_anon('select public.meu_perfil_detalhado()')$$ ,
   '42501',
   null,
   'meu_perfil_detalhado: anon sem sessão não possui execute'
@@ -115,21 +143,21 @@ select throws_ok(
 
 -- Chamador não autenticado (via auxiliar erro)
 select is(
-  (select code from public.erro_em_json(pg_temp.como(null, $$select public.meu_perfil_detalhado()$$))),
+  pg_temp.erro_codigo(null, $$select public.meu_perfil_detalhado()$$),
   'nao_autenticado',
   'meu_perfil_detalhado: chamador nulo responde 401 nao_autenticado'
 );
 
 -- Contratante é perfil incompatível (RN25)
 select is(
-  (select code from public.erro_em_json(pg_temp.como('c8070000-0000-4000-8000-000000000003', $$select public.meu_perfil_detalhado()$$))),
+  pg_temp.erro_codigo('c8070000-0000-4000-8000-000000000003', $$select public.meu_perfil_detalhado()$$),
   'perfil_incompativel',
   'meu_perfil_detalhado: conta contratante responde 422 perfil_incompativel'
 );
 
 -- Profissional sem perfil cadastrado é 404
 select is(
-  (select code from public.erro_em_json(pg_temp.como('c8070000-0000-4000-8000-000000000005', $$select public.meu_perfil_detalhado()$$))),
+  pg_temp.erro_codigo('c8070000-0000-4000-8000-000000000005', $$select public.meu_perfil_detalhado()$$),
   'nao_encontrado',
   'meu_perfil_detalhado: profissional sem cadastro responde 404 nao_encontrado'
 );
@@ -234,7 +262,7 @@ select is(
 );
 select is(
   (select res ->> 'no_frila_desde' from perf_vinculado),
-  '2026-09',
+  to_char(now(), 'YYYY-MM'),
   'Critério 4: leitor com vinculo recebe no_frila_desde (AAAA-MM)'
 );
 select is(
@@ -304,8 +332,8 @@ select is(
 
 -- Estabelecimento estranho tentando ler candidatos de vaga alheia é 403
 select is(
-  (select code from public.erro_em_json(pg_temp.como('c8070000-0000-4000-8000-000000000004',
-    format($$select public.candidatos_da_vaga((select id from public.vaga where local = 'CLS 405 Bloco A'))$$)))),
+  pg_temp.erro_codigo('c8070000-0000-4000-8000-000000000004',
+    format($$select public.candidatos_da_vaga(%L::uuid)$$, (select id from public.vaga where local = 'CLS 405 Bloco A'))),
   'sem_permissao',
   'Critério 3: contratante de outro estabelecimento recebe 403 sem_permissao em candidatos_da_vaga'
 );
@@ -313,7 +341,7 @@ select is(
 -- Dinâmica de vínculo: adicionar Prof 2 à equipe de confiança da Casa 2 concede vínculo
 insert into public.equipe_confianca (estabelecimento_id, profissional_id)
 values (
-  (select id from public.estabelecimento where nome_fantasia = 'Restaurante Estranho'),
+  (select id from public.estabelecimento where nome = 'Restaurante Estranho'),
   'c8070000-0000-4000-8000-000000000012'
 );
 
