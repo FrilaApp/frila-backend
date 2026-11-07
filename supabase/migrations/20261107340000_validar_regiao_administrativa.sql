@@ -178,7 +178,7 @@ comment on column public.vaga.regiao_administrativa is
   'Região administrativa do DF onde a vaga acontece. Nome oficial do catálogo public.regiao_administrativa (RN44), garantido por chave estrangeira. Herda a do estabelecimento se omitida na publicação.';
 
 -- ── 4. cadastrar_estabelecimento valida a região contra o catálogo ────────────
--- contrato: corpo-sem-mudanca-de-superficie public.cadastrar_estabelecimento 0.2.52
+-- contrato: corpo-sem-mudanca-de-superficie public.cadastrar_estabelecimento 0.2.61
 
 create or replace function public.cadastrar_estabelecimento(
   nome                  text,
@@ -305,7 +305,7 @@ grant  execute on function public.cadastrar_estabelecimento(text, text, public.t
   to authenticated;
 
 -- ── 5. publicar_vaga valida a região contra o catálogo ────────────────────────
--- contrato: corpo-sem-mudanca-de-superficie public.publicar_vaga 0.2.52
+-- contrato: corpo-sem-mudanca-de-superficie public.publicar_vaga 0.2.61
 
 create or replace function public.publicar_vaga(
   estabelecimento_id      uuid,
