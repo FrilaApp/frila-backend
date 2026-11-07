@@ -46,7 +46,7 @@ begin
      set estado = 'expurgada',
          atualizado_em = privado.agora()
    where m.id = p_id
-     and m.estado in ('recusada', 'nao_publicada', 'removida')
+     and m.estado in ('recusada', 'nao_publicada', 'ocultada', 'removida')
   returning true into v_ok;
 
   return coalesce(v_ok, false);
@@ -58,7 +58,7 @@ comment on function privado.confirmar_expurgo_midia_perfil(uuid) is
 revoke execute on function privado.confirmar_expurgo_midia_perfil(uuid) from public, anon, authenticated;
 grant  execute on function privado.confirmar_expurgo_midia_perfil(uuid) to service_role;
 
--- 4. Expurgo em 24 h de mídias recusadas ou não publicadas.
+-- 4. Expurgo em 24 h de mídias recusadas, não publicadas ou ocultadas.
 create or replace function privado.expurgar_midias_recusadas()
 returns integer
 language plpgsql
@@ -73,7 +73,7 @@ begin
   for r in
     select id, storage_path
       from privado.midia
-     where estado in ('recusada', 'nao_publicada')
+     where estado in ('recusada', 'nao_publicada', 'ocultada')
        and atualizado_em < privado.agora() - interval '24 hours'
      for update skip locked
   loop
@@ -101,7 +101,7 @@ begin
 end $$;
 
 comment on function privado.expurgar_midias_recusadas() is
-  'Enfileira para expurgo físico no Storage as fotos recusadas ou não publicadas há mais de 24 horas e marca estado=expurgada. Idempotente.';
+  'Enfileira para expurgo físico no Storage as fotos recusadas, não publicadas ou ocultadas há mais de 24 horas e marca estado=expurgada. Idempotente.';
 
 revoke execute on function privado.expurgar_midias_recusadas() from public, anon, authenticated;
 grant  execute on function privado.expurgar_midias_recusadas() to service_role;
@@ -138,6 +138,7 @@ end $$;
 
 -- 6. Atualiza public.denunciar para aceitar midia_id opcional (contrato 0.2.54).
 -- contrato: corpo-sem-mudanca-de-superficie public.denunciar 0.2.57
+drop function if exists public.denunciar(text, uuid, text, text, uuid, uuid);
 create or replace function public.denunciar(
   alvo_tipo text,
   alvo_id   uuid,
@@ -275,11 +276,20 @@ begin
 
   insert into public.ocorrencia (
     tipo, turno_id, usuario_id, estabelecimento_id, autor_id,
-    motivo, relato, chave_cliente, midia_id
+    motivo, relato, chave_cliente, criada_em, midia_id
   ) values (
     'denuncia', v_turno, v_usuario, v_estab, v_uid,
-    v_motivo::public.motivo_denuncia, v_relato, v_chave, v_midia
-  ) returning * into v_oc;
+    v_motivo::public.motivo_denuncia, v_relato, v_chave, privado.agora(), v_midia
+  )
+  on conflict (autor_id, chave_cliente) do nothing
+  returning * into v_oc;
+
+  if v_oc.id is null then
+    select * into v_oc from public.ocorrencia o
+     where o.autor_id = v_uid and o.chave_cliente = v_chave and o.tipo = 'denuncia';
+  else
+    perform pgmq.send('email', jsonb_build_object('tipo', 'denuncia', 'ocorrencia_id', v_oc.id));
+  end if;
 
   return jsonb_build_object(
     'ocorrencia_id', v_oc.id,
@@ -288,6 +298,12 @@ begin
     'prazo_resposta_ate', privado.prazo_de_resposta(v_oc.criada_em)
   );
 end $$;
+
+comment on function public.denunciar(text, uuid, text, text, uuid, uuid, uuid) is
+  'Registra denúncia contra a outra parte (RF26, RN13, RN15, UC17, CD-M07), opcionalmente vinculada a midia_id, e enfileira o e-mail à Equipe Frila na fila email, só com o id (RN15). Idempotente pela chave do app. Devolve o Protocolo com prazo de 5 dias úteis.';
+
+revoke execute on function public.denunciar(text, uuid, text, text, uuid, uuid, uuid) from public, anon;
+grant  execute on function public.denunciar(text, uuid, text, text, uuid, uuid, uuid) to authenticated;
 
 -- 7. Trigger de 2 denúncias distintas para ocultar foto de perfil aprovada (CD-M07 / CA4).
 create or replace function privado.processar_denuncia_midia()
@@ -298,7 +314,6 @@ set search_path = ''
 as $$
 declare
   v_distintas bigint;
-  v_alvo_id uuid := coalesce(new.usuario_id, new.estabelecimento_id);
 begin
   -- Só denúncia com midia_id vinculada pode afetar a foto de perfil (CD-M07 / CA4).
   -- Denúncia genérica sobre o perfil não toca na foto.
@@ -308,27 +323,42 @@ begin
 
   -- Conta denunciantes distintos elegíveis desta foto:
   -- 1) Autor com conta ativa (u.estado = 'ativa')
-  -- 2) Sem bloqueio recíproco entre autor e alvo
-  select count(distinct o.autor_id) into v_distintas
-    from public.ocorrencia o
-    join public.usuario u on u.id = o.autor_id
-   where o.midia_id = new.midia_id
-     and o.tipo = 'denuncia'
-     and u.estado = 'ativa'
-     and not exists (
-       select 1 from public.bloqueio b
-        where (b.autor_id = o.autor_id and b.alvo_id = v_alvo_id)
-           or (b.autor_id = v_alvo_id and b.alvo_id = o.autor_id)
-     );
+  -- 2) Sem bloqueio recíproco entre autor e o alvo
+  if new.usuario_id is not null then
+    select count(distinct o.autor_id) into v_distintas
+      from public.ocorrencia o
+      join public.usuario u on u.id = o.autor_id
+     where o.midia_id = new.midia_id
+       and o.tipo = 'denuncia'
+       and u.estado = 'ativa'
+       and not exists (
+         select 1 from public.bloqueio b
+          where (b.autor_id = o.autor_id and b.bloqueado_id = new.usuario_id)
+             or (b.autor_id = new.usuario_id and b.bloqueado_id = o.autor_id)
+       );
+  elsif new.estabelecimento_id is not null then
+    select count(distinct o.autor_id) into v_distintas
+      from public.ocorrencia o
+      join public.usuario u on u.id = o.autor_id
+     where o.midia_id = new.midia_id
+       and o.tipo = 'denuncia'
+       and u.estado = 'ativa'
+       and not exists (
+         select 1 from public.membro_estabelecimento m
+         join public.bloqueio b on (b.autor_id = o.autor_id and b.bloqueado_id = m.usuario_id)
+                                or (b.autor_id = m.usuario_id and b.bloqueado_id = o.autor_id)
+          where m.estabelecimento_id = new.estabelecimento_id
+       );
+  end if;
 
   update privado.midia
-     set denuncias_distintas = v_distintas::smallint,
-         estado = case when v_distintas >= 2 and estado = 'aprovada' then 'ocultada' else estado end,
+     set denuncias_distintas = coalesce(v_distintas, 0)::smallint,
+         estado = case when coalesce(v_distintas, 0) >= 2 and estado = 'aprovada' then 'ocultada' else estado end,
          atualizado_em = privado.agora()
    where id = new.midia_id;
 
   -- Se ocultada por atingir o limiar de 2 denúncias, dispara reanálise automática
-  if v_distintas >= 2 then
+  if coalesce(v_distintas, 0) >= 2 then
     perform pgmq.send(
       'moderacao_midia',
       jsonb_build_object(

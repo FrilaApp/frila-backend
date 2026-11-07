@@ -47,8 +47,8 @@ insert into public.profissional (id, usuario_id, ponto_base) values
   ('80500000-0000-4000-8000-000000000010', '80500000-0000-4000-8000-000000000001', 'POINT(-47.8822 -15.7942)'::extensions.geography);
 
 -- Bloqueio entre profissional e o contratante 4
-insert into public.bloqueio (autor_id, alvo_id, motivo) values
-  ('80500000-0000-4000-8000-000000000001', '80500000-0000-4000-8000-000000000004', 'bloqueio preventivo de teste');
+insert into public.bloqueio (autor_id, bloqueado_id) values
+  ('80500000-0000-4000-8000-000000000001', '80500000-0000-4000-8000-000000000004');
 
 -- PARTE 1: Estreitamento de CHECK midia_tipo e colunas removidas
 select throws_ok(
