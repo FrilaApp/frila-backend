@@ -9,7 +9,7 @@
 -- 4. confirmar_expurgo_midia_perfil idempotente e falha fechada com false para aprovada.
 
 begin;
-select plan(32);
+select plan(38);
 
 -- 1. Setup e ambiente de teste
 insert into privado.ambiente (id, eh_teste) values (true, true)
@@ -189,11 +189,22 @@ select is(
   'ocultacao por denuncia enfileira reanalise automatica em moderacao_midia'
 );
 
--- PARTE 3: Expurgo em 24 h de fotos recusadas e nao_publicadas (achado 3 do Lince Codex)
--- Foto recusada há 23 h (não deve ser expurgada)
+-- PARTE 3: Expurgo em 24 h de fotos recusadas e nao_publicadas (achados 1 e 3 do Lince Codex)
+-- Fronteiras: 23h59m59s (retida), 24h00m00s (expurgada), 24h29m59s (expurgada), 25h (expurgada)
+-- Foto recusada há 23h59m59s (não deve ser expurgada ainda)
 insert into privado.midia (id, dono_usuario_id, dono_tipo, tipo, storage_path, mime, bytes, estado, criado_em, atualizado_em)
 values ('80500000-0000-4000-8000-000000000201', '80500000-0000-4000-8000-000000000001', 'profissional', 'foto_perfil', 'perfil/recusada_recente.jpg', 'image/jpeg', 100, 'recusada',
-        privado.agora() - interval '23 hours', privado.agora() - interval '23 hours');
+        privado.agora() - interval '23 hours 59 minutes 59 seconds', privado.agora() - interval '23 hours 59 minutes 59 seconds');
+
+-- Foto recusada na fronteira exata de 24h00m00s (deve ser expurgada)
+insert into privado.midia (id, dono_usuario_id, dono_tipo, tipo, storage_path, mime, bytes, estado, criado_em, atualizado_em)
+values ('80500000-0000-4000-8000-000000000205', '80500000-0000-4000-8000-000000000001', 'profissional', 'foto_perfil', 'perfil/recusada_24h.jpg', 'image/jpeg', 100, 'recusada',
+        privado.agora() - interval '24 hours', privado.agora() - interval '24 hours');
+
+-- Foto recusada há 24h29m59s (deve ser expurgada)
+insert into privado.midia (id, dono_usuario_id, dono_tipo, tipo, storage_path, mime, bytes, estado, criado_em, atualizado_em)
+values ('80500000-0000-4000-8000-000000000206', '80500000-0000-4000-8000-000000000001', 'profissional', 'foto_perfil', 'perfil/recusada_24h30.jpg', 'image/jpeg', 100, 'recusada',
+        privado.agora() - interval '24 hours 29 minutes 59 seconds', privado.agora() - interval '24 hours 29 minutes 59 seconds');
 
 -- Foto recusada há 25 h (deve ser expurgada)
 insert into privado.midia (id, dono_usuario_id, dono_tipo, tipo, storage_path, mime, bytes, estado, criado_em, atualizado_em)
@@ -212,14 +223,26 @@ values ('80500000-0000-4000-8000-000000000204', '80500000-0000-4000-8000-0000000
 
 select is(
   privado.expurgar_midias_recusadas(),
-  2,
-  'expurgar_midias_recusadas processa fotos recusadas e nao_publicadas com mais de 24h'
+  4,
+  'expurgar_midias_recusadas processa fotos recusadas e nao_publicadas com 24h ou mais'
 );
 
 select is(
   (select estado from privado.midia where id = '80500000-0000-4000-8000-000000000201'),
   'recusada',
-  'foto recusada ha 23h permanece como recusada'
+  'foto recusada ha 23h59m59s permanece como recusada'
+);
+
+select is(
+  (select estado from privado.midia where id = '80500000-0000-4000-8000-000000000205'),
+  'expurgada',
+  'foto recusada ha 24h00m00s transiciona para expurgada'
+);
+
+select is(
+  (select estado from privado.midia where id = '80500000-0000-4000-8000-000000000206'),
+  'expurgada',
+  'foto recusada ha 24h29m59s transiciona para expurgada'
 );
 
 select is(
@@ -241,9 +264,9 @@ select is(
 );
 
 select is(
-  (select count(*) from pgmq.q_expurgo_midia where message->>'verificacao_id' in ('80500000-0000-4000-8000-000000000202', '80500000-0000-4000-8000-000000000203')),
-  2::bigint,
-  '2 mensagens enfileiradas em expurgo_midia com bucket midia-perfil'
+  (select count(*) from pgmq.q_expurgo_midia where message->>'verificacao_id' in ('80500000-0000-4000-8000-000000000202', '80500000-0000-4000-8000-000000000203', '80500000-0000-4000-8000-000000000205', '80500000-0000-4000-8000-000000000206')),
+  4::bigint,
+  '4 mensagens enfileiradas em expurgo_midia com bucket midia-perfil'
 );
 
 -- PARTE 4: Remoção pelo dono enfileira expurgo imediatamente
@@ -289,6 +312,31 @@ select is(
   privado.confirmar_expurgo_midia_perfil('80500000-0000-4000-8000-000000000100'),
   false,
   'confirmar_expurgo_midia_perfil retorna false para foto nao elegivel (ocultada/aprovada)'
+);
+
+-- PARTE 5b: Validação prévia de elegibilidade de expurgo (achado 4 do Lince Codex)
+select is(
+  privado.validar_expurgo_midia_perfil('80500000-0000-4000-8000-000000000300', 'midia-perfil', '["perfil/remover.jpg"]'::jsonb),
+  true,
+  'validar_expurgo_midia_perfil aprova foto em estado expurgada/removida com bucket e caminho corretos'
+);
+
+select is(
+  privado.validar_expurgo_midia_perfil('80500000-0000-4000-8000-000000000100', 'midia-perfil', '["perfil/valida.jpg"]'::jsonb),
+  false,
+  'validar_expurgo_midia_perfil recusa foto com estado aprovada'
+);
+
+select is(
+  privado.validar_expurgo_midia_perfil('80500000-0000-4000-8000-000000000300', 'bucket-invalido', '["perfil/remover.jpg"]'::jsonb),
+  false,
+  'validar_expurgo_midia_perfil recusa bucket incorreto'
+);
+
+select is(
+  privado.validar_expurgo_midia_perfil('80500000-0000-4000-8000-000000000300', 'midia-perfil', '["perfil/caminho_estranho.jpg"]'::jsonb),
+  false,
+  'validar_expurgo_midia_perfil recusa caminhos que nao pertencem a midia'
 );
 
 select * from finish();

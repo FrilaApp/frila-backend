@@ -125,9 +125,11 @@ select set_eq(
     'limpar_contas_orfas_diaria',
     'expurgar_midias_diaria',
     -- Processa a fila de moderação de mídia periódica (B4c / RN37).
-    'processar_fila_moderacao_midia'
+    'processar_fila_moderacao_midia',
+    -- Expurgo horário de mídias recusadas ou não publicadas (B4b / RN37).
+    'expurgar_midias_horario'
   ],
-  'Os jobs agendados são exatamente os dezoito conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os dezenove conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;
