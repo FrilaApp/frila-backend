@@ -97,7 +97,6 @@ select is(
   58::bigint,
   'superficie autenticada: exatamente 58 RPCs publicas concedem execucao a authenticated'
 );
-);
 
 -- Papel authenticated NÃO possui privilégio em rotinas internas (erro, conta_em_json, perfil_profissional_em_json, rls_auto_enable)
 select is(
