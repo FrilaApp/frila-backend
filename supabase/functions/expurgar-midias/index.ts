@@ -47,11 +47,12 @@ export interface MensagemExpurgo {
   verificacao_id: string;
   bucket: string;
   caminhos: string[];
+  origem?: string;
 }
 
 export interface SqlClient {
   lerLote: (quantidade: number, visibilidade: number) => Promise<MensagemExpurgo[]>;
-  confirmarExpurgo: (verificacaoId: string) => Promise<boolean>;
+  confirmarExpurgo: (verificacaoId: string, origem?: string) => Promise<boolean>;
   removerDaFila: (msgId: number) => Promise<void>;
 }
 
@@ -99,7 +100,8 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
                  read_ct,
                  message->>'verificacao_id' as verificacao_id,
                  coalesce(message->>'bucket', ${BUCKET_PADRAO}) as bucket,
-                 coalesce(message->'caminhos', '[]'::jsonb) as caminhos
+                 coalesce(message->'caminhos', '[]'::jsonb) as caminhos,
+                 coalesce(message->>'origem', 'verificacao') as origem
             from pgmq.read('expurgo_midia', ${visibilidade}::integer, ${quantidade}::integer)
         `;
         return res.map((r) => ({
@@ -108,18 +110,26 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
           verificacao_id: String(r.verificacao_id ?? ""),
           bucket: String(r.bucket ?? BUCKET_PADRAO),
           caminhos: Array.isArray(r.caminhos) ? (r.caminhos as string[]) : [],
+          origem: String(r.origem ?? "verificacao"),
         }));
       } finally {
         await sql.end({ timeout: 2 });
       }
     },
-    async confirmarExpurgo(verificacaoId: string): Promise<boolean> {
+    async confirmarExpurgo(verificacaoId: string, origem?: string): Promise<boolean> {
       const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
       try {
-        const res = await sql`
-          select privado.confirmar_expurgo_midia(${verificacaoId}::uuid) as ok
-        `;
-        return res[0]?.ok === true;
+        if (origem === "foto_perfil") {
+          const res = await sql`
+            select privado.confirmar_expurgo_midia_perfil(${verificacaoId}::uuid) as ok
+          `;
+          return res[0]?.ok === true;
+        } else {
+          const res = await sql`
+            select privado.confirmar_expurgo_midia(${verificacaoId}::uuid) as ok
+          `;
+          return res[0]?.ok === true;
+        }
       } finally {
         await sql.end({ timeout: 2 });
       }
@@ -164,10 +174,21 @@ async function removerObjeto(
     return { ausente: false, status: 0 };
   }
 
-  // 404 e 400 do Storage significam "não está lá". Aceitar os dois é o que torna a
-  // função idempotente: a mensagem pode ser reentregue depois de um expurgo parcial.
-  if (resp.ok || resp.status === 404 || resp.status === 400) {
+  // 404 do Storage significa ausência comprovada. 400 só é aceito se o corpo indicar explicitamente
+  // objeto inexistente (ex: not_found / NoSuchKey); erro genérico (ex: InvalidRequest) não comprova ausência.
+  if (resp.ok || resp.status === 404) {
     return { ausente: true, status: resp.status };
+  }
+  if (resp.status === 400) {
+    try {
+      const json = await resp.clone().json();
+      const txt = JSON.stringify(json).toLowerCase();
+      if (txt.includes("not_found") || txt.includes("not found") || txt.includes("nosuchkey")) {
+        return { ausente: true, status: resp.status };
+      }
+    } catch {
+      // corpo ilegível não comprova ausência
+    }
   }
   return { ausente: false, status: resp.status };
 }
@@ -261,7 +282,16 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
     }
 
     try {
-      await sqlClient.confirmarExpurgo(msg.verificacao_id);
+      const confirmou = await sqlClient.confirmarExpurgo(msg.verificacao_id, msg.origem);
+      if (!confirmou) {
+        pendentes.push({
+          verificacao_id: msg.verificacao_id,
+          msg_id: msg.msg_id,
+          status: 409,
+          read_ct: msg.read_ct,
+        });
+        continue;
+      }
     } catch (_err) {
       // O arquivo já saiu, mas o banco não soube. Deixar na fila é o certo: a próxima
       // rodada reencontra os caminhos ausentes (404 = sucesso) e confirma.
