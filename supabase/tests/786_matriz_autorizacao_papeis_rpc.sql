@@ -1,6 +1,6 @@
 -- 786_matriz_autorizacao_papeis_rpc.sql
 --
--- Matriz exaustiva de autorizacao Papel x RPC cobrindo as 49 rotinas publicas do Frila:
+-- Matriz exaustiva de autorizacao Papel x RPC cobrindo as 50 rotinas publicas do Frila:
 --   * Papel anon (nao autenticado / chave publica)
 --   * Papel profissional (autenticado, perfil='profissional')
 --   * Papel outro contratante (autenticado, perfil='contratante', nao proprietario/alheio)
@@ -23,7 +23,7 @@ set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(204);
+select plan(208);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -31,8 +31,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  49::bigint,
-  'censo de RPCs: schema public contem exatamente 49 RPCs expostas'
+  50::bigint,
+  'censo de RPCs: schema public contem exatamente 50 RPCs expostas'
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -335,6 +335,13 @@ select is(pg_temp.testar_autorizacao('anon', null, 'select public.desbloquear(''
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.desbloquear(''estabelecimento'', ''78600000-0000-4000-8000-0000000000ff''::uuid)'), '404_NAO_ENCONTRADO', 'desbloquear [profissional]: alvo inexistente e recusa de regra 404, nao de permissao');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.desbloquear(''profissional'', ''78600000-0000-4000-8000-0000000000ff''::uuid)'), '404_NAO_ENCONTRADO', 'desbloquear [outro contratante]: alvo inexistente e 404');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.desbloquear(''profissional'', ''78600000-0000-4000-8000-0000000000ff''::uuid)'), '404_NAO_ENCONTRADO', 'desbloquear [dono]: alvo inexistente e 404');
+
+-- --- resolver_servico ---
+-- Contrato 0.2.52 (RN44). Qualquer conta logada consulta o catalogo; anon nao tem EXECUTE.
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.resolver_servico(''diarista'')'), '42501_SEM_EXECUTE', 'resolver_servico [anon]: anon nao possui EXECUTE em resolver_servico');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.resolver_servico(''diarista'')'), 'AUTORIZADO', 'resolver_servico [profissional]: profissional consulta o catalogo');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.resolver_servico(''diarista'')'), 'AUTORIZADO', 'resolver_servico [outro contratante]: contratante consulta o catalogo');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.resolver_servico(''diarista'')'), 'AUTORIZADO', 'resolver_servico [dono]: dono consulta o catalogo');
 
 -- --- perfil_publico ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.perfil_publico(''78600000-0000-4000-8000-000000000030''::uuid)'), '42501_SEM_EXECUTE', 'perfil_publico [anon]: anon nao possui EXECUTE em perfil_publico');
