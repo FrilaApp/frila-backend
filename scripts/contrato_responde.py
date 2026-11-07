@@ -350,7 +350,7 @@ ISENTAS = {
 # direta, fatias F2 a F4). Diferente de ISENTAS: estas VÃO entrar pela colheita, e cada uma
 # sai daqui no PR que a implementa. Operação pendente que ganha resposta colhida reprova.
 PENDENTES = {op: "contratação direta, ainda sem implementação" for op in (
-    "atualizarApresentacaoProfissional", "cancelarChamada",
+    "cancelarChamada",
     "definirPreferenciaChamadas", "detalheChamada",
     "listarEspecialidades", "listarRegioesAdministrativas", "meuPerfilDetalhado", "minhasChamadas",
     "pedirNovaAnaliseMidia", "publicarAPartirDaChamada",
