@@ -6,7 +6,7 @@
 --   * Papel outro contratante (autenticado, perfil='contratante', nao proprietario/alheio)
 --   * Papel dono (autenticado, proprietario/membro autorizado do recurso)
 --
--- A matriz inclui as duas RPCs F2 nos quatro papéis (216 asserções no total).
+-- A matriz inclui as três RPCs F2 nos quatro papéis (220 asserções no total).
 
 begin;
 
@@ -23,7 +23,7 @@ set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(216);
+select plan(220);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -31,8 +31,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  52::bigint,
-  'censo de RPCs: schema public contem exatamente 52 RPCs expostas'
+  53::bigint,
+  'censo de RPCs: schema public contem exatamente 53 RPCs expostas'
 );
 
 -- 3. Fixtures e contas representativas da matriz
