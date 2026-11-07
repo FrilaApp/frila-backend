@@ -65,13 +65,15 @@ select is(privado.texto_sem_contato_ou_pix(t), limpo, 'filtro RN38: ' || coalesc
   ('Atendo no Plano Piloto, Águas Claras e Taguatinga.', true),
   ('Sr. Silva foi meu supervisor no hotel.', true),
   ('Sr.Silva foi meu supervisor no hotel.', true),
+  ('Curso de Inglês at Work', true),
+  ('R$ 1.200,00 por semana', true),
   ('(61) 98888-7777', false), ('61988887777', false), ('61 9 8888 7777', false), ('+55 61 98888-7777', false),
   ('meu zap é seis um nove oito oito oito oito sete sete sete sete', false), ('liga 61 nove 8888 7777', false),
   ('(61) 2019-2023', false), ('joao@exemplo.com', false), ('segue @joaodobar', false),
   ('https://exemplo.com/joao', false), ('www.joao.net', false), ('joaodobar.com.br', false), ('wa.me/5561988887777', false),
   ('pix cpf 123.456.789-09', false), ('chave pix 12345678909', false), ('pix 12.345.678/0001-95', false),
   ('chave 123e4567-e89b-12d3-a456-426614174000', false), ('chave 123e4567e89b12d3a456426614174000', false),
-  -- Regressões das 11 variantes de ataque do Lince Codex
+  -- Regressões das 11 variantes de ataque do Lince Codex R1
   ('segue ＠perfilteste', false),
   ('segue ﹫perfilteste', false),
   ('pessoa＠exemplo．com', false),
@@ -82,7 +84,18 @@ select is(privado.texto_sem_contato_ou_pix(t), limpo, 'filtro RN38: ' || coalesc
   ('perfil.exemplo.br', false),
   ('perfil.example.xyz', false),
   ('example.c' || U&'\043E' || 'm', false),
-  ('pessoa arroba exemplo ponto com', false)
+  ('pessoa arroba exemplo ponto com', false),
+  -- Regressões das 10 variantes de ataque do Lince Codex R2
+  ('٦١٩٨٨٨٨٧٧٧٧', false),
+  ('۶۱۹۸۸۸۸۷۷۷۷', false),
+  ('६१९८८८८७७७७', false),
+  ('acesse prof.site', false),
+  ('veja dr.com', false),
+  ('veja ex.com', false),
+  ('pix R$ 12345678909', false),
+  ('zap 61988887777 reais', false),
+  ('d94bfb19' || U&'\FE0F' || '-0a5d-4fc0-a8e8-3b8f6a5c2d11', false),
+  ('se' || U&'\2061' || 'is nove oito sete seis cinco quatro três dois', false)
  ) v(t, limpo);
 
 -- A RPC: feliz, omitido preserva, null limpa.
@@ -126,7 +139,13 @@ select is((pg_temp.erro(c) ->> 'code') || ':' || (pg_temp.erro(c) ->> 'details')
   ('{"apresentacao":"ligue 61 98888-7777"}','apresentacao'), ('{"onde_trabalhei":"veja joao@exemplo.com"}','onde_trabalhei'),
   ('{"apresentacao":"meu pix 123e4567-e89b-12d3-a456-426614174000"}','apresentacao'),
   ('{"onde_trabalhei":"https://exemplo.com"}','onde_trabalhei'), ('{"cursos":["me chame no @joao"]}','cursos'),
-  ('{"cursos":["zap 61988887777"]}','cursos')
+  ('{"cursos":["zap 61988887777"]}','cursos'),
+  -- Bateria ponta a ponta com variantes de R2
+  ('{"apresentacao":"acesse prof.site"}','apresentacao'),
+  ('{"onde_trabalhei":"veja dr.com"}','onde_trabalhei'),
+  ('{"cursos":["zap 61988887777 reais"]}','cursos'),
+  ('{"apresentacao":"٦١٩٨٨٨٨٧٧٧٧"}','apresentacao'),
+  ('{"onde_trabalhei":"pix R$ 12345678909"}','onde_trabalhei')
  ) t(c, campo);
 select is(pg_temp.erro(jsonb_build_object('apresentacao', 'Turno com ' || (select termo from privado.termo_bloqueado order by termo limit 1))) ->> 'details',
  'apresentacao', 'termo bloqueado continua recusado em apresentacao');
