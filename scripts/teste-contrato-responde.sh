@@ -191,6 +191,7 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:republicarPosicoesRestantes:403","corpo":{"status":403,"code":"sem_permissao"}}
 {"op":"promete:republicarPosicoesRestantes:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:republicarPosicoesRestantes:422","corpo":{"status":422,"code":"republicacao_indisponivel"}}
+<<<<<<< HEAD
 {"op":"promete:definirServicos:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:definirServicos:403","corpo":{"status":403,"code":"sem_permissao"}}
 {"op":"promete:definirServicos:404","corpo":{"status":404,"code":"nao_encontrado"}}
@@ -213,6 +214,13 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:removerMidia:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:minhasMidias:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:minhasMidias:403","corpo":{"status":403,"code":"sem_permissao"}}
+=======
+{"op":"promete:chamarProfissional:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:chamarProfissional:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:chamarProfissional:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:chamarProfissional:409","corpo":{"status":409,"code":"chamada_ja_aberta"}}
+{"op":"promete:chamarProfissional:422","corpo":{"status":422,"code":"profissional_indisponivel"}}
+>>>>>>> origin/feat/chamada-direta-vaga
 EOF
 )
 

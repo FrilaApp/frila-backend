@@ -1,6 +1,10 @@
 -- 786_matriz_autorizacao_papeis_rpc.sql
 --
+<<<<<<< HEAD
 -- Matriz exaustiva de autorizacao Papel x RPC cobrindo as 52 rotinas publicas do Frila:
+=======
+-- Matriz exaustiva de autorizacao Papel x RPC cobrindo as 50 rotinas publicas do Frila:
+>>>>>>> origin/feat/chamada-direta-vaga
 --   * Papel anon (nao autenticado / chave publica)
 --   * Papel profissional (autenticado, perfil='profissional')
 --   * Papel outro contratante (autenticado, perfil='contratante', nao proprietario/alheio)
@@ -23,7 +27,11 @@ set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
+<<<<<<< HEAD
 select plan(232);
+=======
+select plan(208);
+>>>>>>> origin/feat/chamada-direta-vaga
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -31,8 +39,13 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
+<<<<<<< HEAD
   56::bigint,
   'censo de RPCs: schema public contem exatamente 56 RPCs expostas'
+=======
+  50::bigint,
+  'censo de RPCs: schema public contem exatamente 50 RPCs expostas'
+>>>>>>> origin/feat/chamada-direta-vaga
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -406,6 +419,12 @@ select is(pg_temp.testar_autorizacao('anon', null, 'select public.vagas_abertas(
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.vagas_abertas(-15.79, -47.88, null, null, null, 10, 0)'), 'AUTORIZADO', 'vagas_abertas [profissional]: profissional consulta vagas_abertas');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.vagas_abertas(-15.79, -47.88, null, null, null, 10, 0)'), '422_PERFIL_INCOMPATIVEL', 'vagas_abertas [outro contratante]: outro contratante toma 422 perfil_incompativel');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.vagas_abertas(-15.79, -47.88, null, null, null, 10, 0)'), '422_PERFIL_INCOMPATIVEL', 'vagas_abertas [dono]: dono toma 422 perfil_incompativel');
+
+-- --- chamar_profissional (0.2.55): desligada por padrão, todo autenticado toma 403 recurso_desligado ---
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.chamar_profissional(chave => gen_random_uuid(), profissional_id => gen_random_uuid(), estabelecimento_id => gen_random_uuid())'), '42501_SEM_EXECUTE', 'chamar_profissional [anon]: anon nao possui EXECUTE');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.chamar_profissional(chave => gen_random_uuid(), profissional_id => gen_random_uuid(), estabelecimento_id => gen_random_uuid())'), '403_SEM_PERMISSAO', 'chamar_profissional [profissional]: recurso desligado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.chamar_profissional(chave => gen_random_uuid(), profissional_id => gen_random_uuid(), estabelecimento_id => gen_random_uuid())'), '403_SEM_PERMISSAO', 'chamar_profissional [outro contratante]: recurso desligado');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.chamar_profissional(chave => gen_random_uuid(), profissional_id => gen_random_uuid(), estabelecimento_id => gen_random_uuid())'), '403_SEM_PERMISSAO', 'chamar_profissional [dono]: recurso desligado');
 
 -- --- detalhe_vaga ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.detalhe_vaga(''78600000-0000-4000-8000-000000000100''::uuid)'), '42501_SEM_EXECUTE', 'detalhe_vaga [anon]: anon nao possui EXECUTE em detalhe_vaga');

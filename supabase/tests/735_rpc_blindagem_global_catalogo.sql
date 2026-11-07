@@ -1,6 +1,10 @@
 -- 735_rpc_blindagem_global_catalogo.sql
 --
+<<<<<<< HEAD
 -- Cobertura transversal e auditoria do catálogo das 56 RPCs expostas no schema public:
+=======
+-- Cobertura transversal e auditoria do catálogo das 50 RPCs expostas no schema public:
+>>>>>>> origin/feat/chamada-direta-vaga
 --   * Censo estrito de rotinas públicas (pg_proc e pg_namespace).
 --   * Auditoria de SECURITY DEFINER e search_path="" em 100% das rotinas.
 --   * Blindagem absoluta contra acesso anônimo: apenas public.configuracao_do_app
@@ -38,6 +42,7 @@ $$;
 -- PARTE 1: Censo de Rotinas e Blindagem de Catálogo do Schema public
 -- ============================================================================
 
+<<<<<<< HEAD
 -- Total de rotinas existentes em public (56 RPCs + 1 event trigger + 3 helpers)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace),
@@ -50,6 +55,20 @@ select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prosecdef = true),
   57::bigint,
   'seguranca de privilegios: exatamente 57 rotinas sao SECURITY DEFINER (56 RPCs + rls_auto_enable)'
+=======
+-- Total de rotinas existentes em public (50 RPCs + 1 event trigger + 3 helpers)
+select is(
+  (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace),
+  54::bigint,
+  'censo de catalogo: schema public contem exatamente 54 rotinas catalogadas'
+);
+
+-- Total de rotinas declaradas como SECURITY DEFINER (50 RPCs + 1 event trigger rls_auto_enable)
+select is(
+  (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prosecdef = true),
+  51::bigint,
+  'seguranca de privilegios: exatamente 51 rotinas sao SECURITY DEFINER (50 RPCs + rls_auto_enable)'
+>>>>>>> origin/feat/chamada-direta-vaga
 );
 
 -- 100% das rotinas de public possuem search_path="" estrito configurado em proconfig
@@ -57,9 +76,14 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and p.proconfig @> array['search_path=""']),
+<<<<<<< HEAD
   60::bigint,
   'mitigacao de sequestro de schema: 100% das rotinas (60 de 60) possuem search_path="" estrito'
 );
+=======
+  54::bigint,
+  'mitigacao de sequestro de schema: 100% das rotinas (54 de 54) possuem search_path="" estrito'
+>>>>>>> origin/feat/chamada-direta-vaga
 );
 
 -- Apenas 1 única função possui privilégio de execução concedido ao papel anon
@@ -86,17 +110,30 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and not has_function_privilege('anon', p.oid, 'execute')),
+<<<<<<< HEAD
   59::bigint,
   'superficie anonima blindada: 59 de 60 rotinas negam execucao para o papel anon'
 );
 
 -- Papel authenticated possui EXECUTE concedido em exatamente 56 RPCs
+=======
+  53::bigint,
+  'superficie anonima blindada: 53 de 54 rotinas negam execucao para o papel anon'
+);
+
+-- Papel authenticated possui EXECUTE concedido em exatamente 50 RPCs
+>>>>>>> origin/feat/chamada-direta-vaga
 select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and has_function_privilege('authenticated', p.oid, 'execute')),
+<<<<<<< HEAD
   56::bigint,
   'superficie autenticada: exatamente 56 RPCs publicas concedem execucao a authenticated'
+=======
+  50::bigint,
+  'superficie autenticada: exatamente 50 RPCs publicas concedem execucao a authenticated'
+>>>>>>> origin/feat/chamada-direta-vaga
 );
 
 -- Papel authenticated NÃO possui privilégio em rotinas internas (erro, conta_em_json, perfil_profissional_em_json, rls_auto_enable)
