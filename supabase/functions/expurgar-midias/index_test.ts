@@ -30,17 +30,20 @@ function mensagem(id: string, msgId: number, readCt = 1): MensagemExpurgo {
 interface Registro {
   apagados: string[];
   confirmados: string[];
+  confirmadosDetalhes?: Array<{ id: string; origem?: string }>;
   removidosDaFila: number[];
 }
 
 function mockDeps(opcoes: {
   mensagens?: MensagemExpurgo[];
-  statusPorCaminho?: (caminho: string) => number;
+  statusPorCaminho?: (caminho: string, bucket?: string) => number;
   erroAoLerFila?: boolean;
   erroAoConfirmar?: boolean;
+  confirmarRetornaFalse?: boolean;
   registro?: Registro;
 }): HandlerDeps {
-  const reg = opcoes.registro ?? { apagados: [], confirmados: [], removidosDaFila: [] };
+  const reg = opcoes.registro ?? { apagados: [], confirmados: [], confirmadosDetalhes: [], removidosDaFila: [] };
+  if (!reg.confirmadosDetalhes) reg.confirmadosDetalhes = [];
 
   const fetchFn = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -51,9 +54,10 @@ function mockDeps(opcoes: {
       return Promise.resolve(new Response("{}", { status: 401 }));
     }
 
-    const m = url.match(/\/storage\/v1\/object\/documentos-identidade\/(.+)$/);
-    const caminho = m ? decodeURIComponent(m[1].split("/").map(decodeURIComponent).join("/")) : "";
-    const status = opcoes.statusPorCaminho ? opcoes.statusPorCaminho(caminho) : 200;
+    const m = url.match(/\/storage\/v1\/object\/([^/]+)\/(.+)$/);
+    const bucket = m ? m[1] : "";
+    const caminho = m ? decodeURIComponent(m[2].split("/").map(decodeURIComponent).join("/")) : "";
+    const status = opcoes.statusPorCaminho ? opcoes.statusPorCaminho(caminho, bucket) : 200;
     if (status === 200) reg.apagados.push(caminho);
     return Promise.resolve(new Response("{}", { status }));
   };
@@ -69,9 +73,11 @@ function mockDeps(opcoes: {
         if (opcoes.erroAoLerFila) return Promise.reject(new Error("fila ilegivel"));
         return Promise.resolve(opcoes.mensagens ?? []);
       },
-      confirmarExpurgo: (id: string) => {
+      confirmarExpurgo: (id: string, origem?: string) => {
         if (opcoes.erroAoConfirmar) return Promise.reject(new Error("banco fora"));
+        if (opcoes.confirmarRetornaFalse) return Promise.resolve(false);
         reg.confirmados.push(id);
+        reg.confirmadosDetalhes?.push({ id, origem });
         return Promise.resolve(true);
       },
       removerDaFila: (msgId: number) => {
@@ -272,4 +278,96 @@ Deno.test("o lote do corpo é respeitado e limitado a 100", async () => {
 
   await handler(pedido(true, { lote: 7 }), deps);
   assertEquals(pedido_lote, 7);
+});
+
+Deno.test("foto de perfil apagando original e miniatura no bucket midia-perfil e confirmando com origem foto_perfil (CA4)", async () => {
+  const reg: Registro = { apagados: [], confirmados: [], confirmadosDetalhes: [], removidosDaFila: [] };
+  const FOTO_ID = "fd000000-0000-4000-8000-000000000001";
+  const msgPerfil: MensagemExpurgo = {
+    msg_id: 81,
+    read_ct: 1,
+    verificacao_id: FOTO_ID,
+    bucket: "midia-perfil",
+    caminhos: [`perfil/${FOTO_ID}.jpg`, `perfil/${FOTO_ID}_thumb.jpg`],
+    origem: "foto_perfil",
+  };
+
+  const deps = mockDeps({
+    mensagens: [msgPerfil],
+    registro: reg,
+  });
+
+  const resp = await handler(pedido(), deps);
+  assertEquals(resp.status, 200);
+  const corpo = await resp.json();
+  assertEquals(corpo.verificacoes_confirmadas, 1);
+  assertEquals(corpo.arquivos_removidos, 2);
+  assertEquals(reg.apagados, [`perfil/${FOTO_ID}.jpg`, `perfil/${FOTO_ID}_thumb.jpg`]);
+  assertEquals(reg.confirmadosDetalhes, [{ id: FOTO_ID, origem: "foto_perfil" }]);
+  assertEquals(reg.removidosDaFila, [81]);
+});
+
+Deno.test("mensagem antiga sem origem é verificacao e mensagem nova é foto_perfil (critério 4 de B4b)", async () => {
+  const reg: Registro = { apagados: [], confirmados: [], confirmadosDetalhes: [], removidosDaFila: [] };
+  const FOTO_ID = "fd000000-0000-4000-8000-000000000002";
+  const msgLegadaSemOrigem: MensagemExpurgo = {
+    msg_id: 91,
+    read_ct: 1,
+    verificacao_id: VERIF_1,
+    bucket: "documentos-identidade",
+    caminhos: [`${VERIF_1}/frente.jpg`],
+  };
+  const msgFotoPerfil: MensagemExpurgo = {
+    msg_id: 92,
+    read_ct: 1,
+    verificacao_id: FOTO_ID,
+    bucket: "midia-perfil",
+    caminhos: [`perfil/${FOTO_ID}.jpg`],
+    origem: "foto_perfil",
+  };
+
+  const deps = mockDeps({
+    mensagens: [msgLegadaSemOrigem, msgFotoPerfil],
+    registro: reg,
+  });
+
+  const resp = await handler(pedido(), deps);
+  assertEquals(resp.status, 200);
+  const corpo = await resp.json();
+  assertEquals(corpo.verificacoes_confirmadas, 2);
+  assertEquals(reg.confirmadosDetalhes, [
+    { id: VERIF_1, origem: undefined },
+    { id: FOTO_ID, origem: "foto_perfil" },
+  ]);
+  assertEquals(reg.removidosDaFila, [91, 92]);
+});
+
+Deno.test("confirmarExpurgo retornando false mantém mensagem na fila e registra em pendentes (achado 5 do Lince Codex)", async () => {
+  const reg: Registro = { apagados: [], confirmados: [], confirmadosDetalhes: [], removidosDaFila: [] };
+  const FOTO_ID = "fd000000-0000-4000-8000-000000000003";
+  const msgFotoPerfil: MensagemExpurgo = {
+    msg_id: 93,
+    read_ct: 1,
+    verificacao_id: FOTO_ID,
+    bucket: "midia-perfil",
+    caminhos: [`perfil/${FOTO_ID}.jpg`],
+    origem: "foto_perfil",
+  };
+
+  const deps = mockDeps({
+    mensagens: [msgFotoPerfil],
+    confirmarRetornaFalse: true,
+    registro: reg,
+  });
+
+  const resp = await handler(pedido(), deps);
+  assertEquals(resp.status, 200);
+  const corpo = await resp.json();
+  assertEquals(corpo.verificacoes_confirmadas, 0);
+  assertEquals(corpo.pendentes.length, 1);
+  assertEquals(corpo.pendentes[0].verificacao_id, FOTO_ID);
+  assertEquals(corpo.pendentes[0].status, 409);
+  assertEquals(reg.confirmados.length, 0);
+  // Não remove da fila quando a confirmação do banco falha/rejeita
+  assertEquals(reg.removidosDaFila.length, 0);
 });

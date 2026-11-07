@@ -77,18 +77,18 @@ select pg_temp.autenticar(paulo,  'paulo@frila.test')  from ids;
 
 select has_function('public', 'bloquear', array['text', 'uuid'],
   'public.bloquear(alvo_tipo, alvo_id) existe');
-select has_function('public', 'denunciar', array['text', 'uuid', 'text', 'text', 'uuid', 'uuid'],
-  'public.denunciar(alvo_tipo, alvo_id, motivo, relato, chave, turno_id) existe');
+select has_function('public', 'denunciar', array['text', 'uuid', 'text', 'text', 'uuid', 'uuid', 'uuid'],
+  'public.denunciar(alvo_tipo, alvo_id, motivo, relato, chave, turno_id, midia_id) existe');
 
 select is(
   has_function_privilege('anon', 'public.bloquear(text, uuid)', 'execute')
-  or has_function_privilege('anon', 'public.denunciar(text, uuid, text, text, uuid, uuid)', 'execute'),
+  or has_function_privilege('anon', 'public.denunciar(text, uuid, text, text, uuid, uuid, uuid)', 'execute'),
   false,
   'anon não chama bloquear nem denunciar');
 
 select is(
   has_function_privilege('authenticated', 'public.bloquear(text, uuid)', 'execute')
-  and has_function_privilege('authenticated', 'public.denunciar(text, uuid, text, text, uuid, uuid)', 'execute'),
+  and has_function_privilege('authenticated', 'public.denunciar(text, uuid, text, text, uuid, uuid, uuid)', 'execute'),
   true,
   'authenticated chama bloquear e denunciar');
 
