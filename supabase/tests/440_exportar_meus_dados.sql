@@ -241,6 +241,10 @@ insert into cobertas values
   ('usuario',                'conta'),
   ('profissional',           'perfil_profissional'),
   ('profissional_funcao',    'perfil_profissional.funcoes'),
+  -- Destino aprovado para consolidação no contrato 0.2.58; implementação em fatia seguinte.
+  ('profissional_servico',   'perfil_profissional'),
+  ('profissional_servico_especialidade', 'perfil_profissional'),
+  ('profissional_regiao',    'perfil_profissional'),
   ('disponibilidade',        'disponibilidade e perfil_profissional.disponibilidades'),
   ('dispositivo',            'dispositivos, sem o token'),
   ('membro_estabelecimento', 'estabelecimentos'),

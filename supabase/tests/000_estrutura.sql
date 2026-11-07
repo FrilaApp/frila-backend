@@ -87,8 +87,8 @@ select columns_are('public', 'usuario', array[
 -- porque a verificação progressiva nasceu depois dela.
 select columns_are('public', 'profissional', array[
   'id','usuario_id','perfil','ponto_base','taxa_comparecimento','turnos_realizados',
-  'aval_positivas','aval_total','identidade_verificada'
-], 'profissional tem exatamente as colunas da Modelagem, mais o selo da RN14');
+  'aval_positivas','aval_total','identidade_verificada','atende_todo_df'
+], 'profissional tem exatamente as colunas da Modelagem, mais o selo da RN14 e atendimento em todo o DF (F2)');
 
 select columns_are('public', 'candidatura', array[
   'id','posicao_id','profissional_id','criada_em','estado'

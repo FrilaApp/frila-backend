@@ -1,12 +1,12 @@
 -- 786_matriz_autorizacao_papeis_rpc.sql
 --
--- Matriz exaustiva de autorizacao Papel x RPC cobrindo as 50 rotinas publicas do Frila:
+-- Matriz exaustiva de autorizacao Papel x RPC cobrindo as 52 rotinas publicas do Frila:
 --   * Papel anon (nao autenticado / chave publica)
 --   * Papel profissional (autenticado, perfil='profissional')
 --   * Papel outro contratante (autenticado, perfil='contratante', nao proprietario/alheio)
 --   * Papel dono (autenticado, proprietario/membro autorizado do recurso)
 --
--- Total de assercoes: 177 (1 censo de catalogo + 44 RPCs x 4 papeis)
+-- A matriz inclui as duas RPCs F2 nos quatro papéis (216 asserções no total).
 
 begin;
 
@@ -23,7 +23,7 @@ set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(208);
+select plan(216);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -31,8 +31,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  50::bigint,
-  'censo de RPCs: schema public contem exatamente 50 RPCs expostas'
+  52::bigint,
+  'censo de RPCs: schema public contem exatamente 52 RPCs expostas'
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -342,6 +342,16 @@ select is(pg_temp.testar_autorizacao('anon', null, 'select public.resolver_servi
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.resolver_servico(''diarista'')'), 'AUTORIZADO', 'resolver_servico [profissional]: profissional consulta o catalogo');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.resolver_servico(''diarista'')'), 'AUTORIZADO', 'resolver_servico [outro contratante]: contratante consulta o catalogo');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.resolver_servico(''diarista'')'), 'AUTORIZADO', 'resolver_servico [dono]: dono consulta o catalogo');
+
+-- F2: edição do próprio perfil exige profissional; cada tentativa é revertida.
+select is(pg_temp.testar_autorizacao('anon', null, $f2$select public.definir_servicos('[]')$f2$), '42501_SEM_EXECUTE', 'definir_servicos: anon sem sessão');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', $f2$select public.definir_servicos('[]')$f2$), 'AUTORIZADO', 'definir_servicos: authenticated 78600000-0000-4000-8000-000000000003');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', $f2$select public.definir_servicos('[]')$f2$), '422_PERFIL_INCOMPATIVEL', 'definir_servicos: authenticated 78600000-0000-4000-8000-000000000002');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', $f2$select public.definir_servicos('[]')$f2$), '422_PERFIL_INCOMPATIVEL', 'definir_servicos: authenticated 78600000-0000-4000-8000-000000000001');
+select is(pg_temp.testar_autorizacao('anon', null, $f2$select public.definir_regioes_atendidas('{}',false)$f2$), '42501_SEM_EXECUTE', 'definir_regioes_atendidas: anon sem sessão');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', $f2$select public.definir_regioes_atendidas('{}',false)$f2$), 'AUTORIZADO', 'definir_regioes_atendidas: authenticated 78600000-0000-4000-8000-000000000003');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', $f2$select public.definir_regioes_atendidas('{}',false)$f2$), '422_PERFIL_INCOMPATIVEL', 'definir_regioes_atendidas: authenticated 78600000-0000-4000-8000-000000000002');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', $f2$select public.definir_regioes_atendidas('{}',false)$f2$), '422_PERFIL_INCOMPATIVEL', 'definir_regioes_atendidas: authenticated 78600000-0000-4000-8000-000000000001');
 
 -- --- perfil_publico ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.perfil_publico(''78600000-0000-4000-8000-000000000030''::uuid)'), '42501_SEM_EXECUTE', 'perfil_publico [anon]: anon nao possui EXECUTE em perfil_publico');

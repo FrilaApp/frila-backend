@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.52
+  version: 0.2.53
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -80,6 +80,7 @@ info:
     | 409 | `verificacao_indisponivel` | A verificação de identidade não aceita a ação agora; `details`: `em_analise` ou `aprovada` (pedir upload), `aprovada` ou `sem_envio_solicitado` (confirmar envio) (RN14) |
     | 409 | `contestacao_ja_aberta` | Já existe contestação para a suspensão em vigor ou para o despacho, em análise ou já respondida (RF24, RF27) |
     | 422 | `campo_obrigatorio` | Falta campo exigido; `details` diz qual (na vaga, RN02) |
+    | 422 | `funcao_nao_marcada` | `definir_servicos` com função que o profissional não marcou no perfil (0.2.53, RN27) |
     | 422 | `campo_invalido` | O campo veio, e o valor é recusado pela regra; `details` diz qual campo. Distinto de `campo_obrigatorio`, que é ausência — a tela destaca o mesmo campo, com texto diferente |
     | 422 | `intervalo_maximo_excedido` | Intervalo entre `de` e `ate` maior que 30 dias na exportação de turnos (pd7zOS5P) |
     | 422 | `menor_de_idade` | Nascimento com menos de 18 anos (RN20) |
@@ -99,6 +100,30 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.53, de 07/11/2026.** Contratação direta, fatia F2: o perfil que explica
+    (`requisitos/contratacao-direta-v1.1.md`, RN26, RN27, RN38, RN39;
+    `produto/contratacao-direta/02-modelo-de-perfil.md`). Adição compatível: quatro operações novas,
+    campos opcionais em `PerfilPublico`; nenhuma operação existente muda e nenhum cliente publicado
+    é afetado.
+
+    - **`POST /rpc/atualizar_apresentacao_profissional`**: "Sobre mim", onde já trabalhou, tempo de
+      experiência, cursos e idiomas. Tudo opcional; campo omitido fica como está.
+    - **`POST /rpc/definir_servicos`**: substitui o conjunto de serviços do perfil. Cada serviço é
+      uma função que o profissional já marcou, com unidade de preço, valor em centavos e detalhes.
+      Função não marcada é `422 funcao_nao_marcada` (código novo).
+    - **`POST /rpc/definir_regioes_atendidas`**: regiões administrativas (ids do catálogo da 0.2.52)
+      ou "todo o DF".
+    - **`GET /rpc/meu_perfil_detalhado`**: o perfil completo do próprio profissional.
+    - **`PerfilPublico` ganha campos opcionais** (`apresentacao`, `experiencia_faixa`, `cursos`,
+      `idiomas`, `onde_trabalhei`, `servicos`, `regioes`, `atende_todo_df`, `no_frila_desde`). Só
+      vêm para **contratante com vínculo de leitura** com o profissional (candidatura numa vaga da
+      casa, turno entre eles ou equipe de confiança); para qualquer outra conta são omitidos e a
+      resposta é a de hoje. É o que a lista de candidatos (`Candidato.profissional`) passa a mostrar.
+    - **Texto livre** (apresentação, onde trabalhei, cursos, o que está incluso, descrição de
+      pacote) passa pelo filtro de termos de hoje e por um filtro novo de telefone, e-mail, link,
+      @ e chave Pix: recusa com `422 campo_invalido` e o campo em `details` (RN38).
+    - **Nunca saem:** telefone, e-mail, documento, ponto base e data de nascimento (RN26).
 
     **Versão 0.2.52, de 07/11/2026.** Contratação direta, fatia F1: catálogo de serviços de Casa e
     Festa (decisão D9 do Cauê, 06/11/2026; `requisitos/contratacao-direta-v1.1.md`, RN44;
@@ -1707,6 +1732,168 @@ paths:
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
+  /rpc/atualizar_apresentacao_profissional:
+    post:
+      tags: [Cadastro e perfil]
+      operationId: atualizarApresentacaoProfissional
+      summary: Alterar "Sobre mim", experiência, cursos e idiomas
+      description: |
+        0.2.53. Campos opcionais do perfil do profissional (RN26). Os enviados substituem os atuais;
+        os omitidos ficam como estão; `null` limpa o campo. Chamada sem nenhum campo é
+        `422 campo_obrigatorio` com `details: nenhum_campo`.
+
+        Texto passa pelo filtro de termos e pelo filtro de contato (telefone, e-mail, link, @ e chave
+        Pix): recusa com `422 campo_invalido` e o nome do campo em `details` (RN38). Conta de
+        contratante é `422 perfil_incompativel` (RN25).
+      x-requisitos: [RN26, RN38, RN39, RN25]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApresentacaoDoProfissional'
+      responses:
+        '200':
+          description: Perfil atualizado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerfilProfissionalDetalhado'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/definir_servicos:
+    post:
+      tags: [Cadastro e perfil]
+      operationId: definirServicos
+      summary: Definir os serviços oferecidos, com preço
+      description: |
+        0.2.53. **Substitui** o conjunto de serviços do perfil (`servicos: []` limpa). Cada serviço é
+        uma função que o profissional já marcou em `funcoes`; função não marcada é
+        `422 funcao_nao_marcada` com o `funcao_id` em `details` (RN27). Função repetida na lista é
+        `422 campo_invalido` com `details: servicos`.
+
+        O preço é referência pública, em centavos, entre 1.000 e 1.000.000 (R$ 10 a R$ 10.000) por
+        unidade, e é o que o profissional recebe: o Frila não desconta nada (RN01). Campos por unidade:
+
+        | `unidade` | Obrigatório além de `valor_centavos` | Opcional |
+        |---|---|---|
+        | `hora` | — | `valor_max_centavos`, `minimo_horas` |
+        | `diaria` | `horas_incluidas` (4 a 12) | `valor_max_centavos` |
+        | `evento` | — | `duracao_tipica_h`, `ate_pessoas` |
+        | `pacote` | `descricao_pacote` | `valor_max_centavos` |
+        | `por_pessoa` | `minimo_pessoas` | — |
+        | `a_combinar` | nada; `valor_centavos` deve vir nulo ou ausente | — |
+
+        Campo que não pertence à unidade é `422 campo_invalido` com o nome do campo em `details`.
+        `valor_max_centavos` menor que `valor_centavos` é `422 campo_invalido`
+        (`valor_max_centavos`). Até 10 serviços e até 8 especialidades por serviço, da lista da
+        própria função (0.2.52). Texto livre (`inclui`, `descricao_pacote`) passa pelos filtros da
+        RN38.
+
+        Função marcada sem serviço continua valendo para o despacho de vagas, como hoje (RN05).
+      x-requisitos: [RN27, RN01, RN38, RN44]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [servicos]
+              properties:
+                servicos:
+                  type: array
+                  maxItems: 10
+                  items:
+                    $ref: '#/components/schemas/ServicoOferecido'
+      responses:
+        '200':
+          description: Serviços gravados.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerfilProfissionalDetalhado'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/definir_regioes_atendidas:
+    post:
+      tags: [Cadastro e perfil]
+      operationId: definirRegioesAtendidas
+      summary: Definir as regiões administrativas onde atende
+      description: |
+        0.2.53. Substitui as regiões marcadas (ids de `GET /regiao_administrativa`). Com
+        `atende_todo_df: true`, a lista é ignorada e gravada vazia. Id fora do catálogo ou inativo é
+        `422 campo_invalido` com `details: regioes`. Não muda o despacho de vagas, que continua pelo
+        ponto base e 15 km (RN05).
+      x-requisitos: [RN26, RN44]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [regioes, atende_todo_df]
+              properties:
+                regioes:
+                  type: array
+                  uniqueItems: true
+                  items:
+                    type: integer
+                    minimum: 1
+                atende_todo_df:
+                  type: boolean
+      responses:
+        '200':
+          description: Regiões gravadas.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerfilProfissionalDetalhado'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/ContaSuspensa'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/meu_perfil_detalhado:
+    get:
+      tags: [Cadastro e perfil]
+      operationId: meuPerfilDetalhado
+      summary: Ler o próprio perfil completo
+      description: |
+        0.2.53. O perfil de `meu_perfil_profissional` mais apresentação, serviços e regiões. Conta de
+        contratante é `422 perfil_incompativel`; profissional sem perfil, `404`.
+      x-requisitos: [RN26, RN27]
+      responses:
+        '200':
+          description: Perfil do chamador.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerfilProfissionalDetalhado'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
   /rpc/criterios_de_notificacao:
     get:
       tags: [Cadastro e perfil]
@@ -2016,8 +2203,9 @@ paths:
       description: |
         Leitura direta da tabela (PostgREST), aberta a qualquer usuário autenticado. Catálogo fechado,
         mantido por migração, como o de funções: o perfil do profissional marca as regiões onde atende
-        por `id`, nunca por texto (0.2.52, RN44). Hoje são 35 regiões, da RA I (Plano Piloto) à
-        RA XXXV (Água Quente); região nova entra por migração.
+        por `id`, nunca por texto (0.2.52, RN44). Hoje são 37 regiões, da RA I (Plano Piloto) à
+        RA XXXVII (Ponte Alta, Lei Distrital 7.917/2026), com a lei de cada uma em
+        `pesquisa/2026-11-07-regioes-administrativas-df.md`; região nova entra por migração.
 
         Os campos `regiao_administrativa` de `NovoEstabelecimento`, `NovaVaga` e das leituras de vaga
         continuam texto (0.2.20) e não mudam nesta versão.
@@ -4648,6 +4836,180 @@ components:
             $ref: '#/components/schemas/JanelaDeDisponibilidade'
         reputacao:
           $ref: '#/components/schemas/Reputacao'
+    UnidadePreco:
+      type: string
+      description: 0.2.53. Unidade do preço de um serviço (RN27).
+      enum: [hora, diaria, evento, pacote, por_pessoa, a_combinar]
+    LevaMaterial:
+      type: string
+      enum: [sim, nao, depende]
+    ExperienciaFaixa:
+      type: string
+      enum: [menos_de_1_ano, de_1_a_3_anos, de_3_a_5_anos, de_5_a_10_anos, mais_de_10_anos]
+    Idioma:
+      type: string
+      enum: [portugues, ingles, espanhol, libras, outro]
+    ApresentacaoDoProfissional:
+      type: object
+      minProperties: 1
+      description: 0.2.53. Corpo de `atualizar_apresentacao_profissional`. `null` limpa o campo.
+      properties:
+        apresentacao:
+          oneOf:
+            - type: string
+              maxLength: 600
+            - type: 'null'
+        onde_trabalhei:
+          oneOf:
+            - type: string
+              maxLength: 400
+            - type: 'null'
+        experiencia_faixa:
+          oneOf:
+            - $ref: '#/components/schemas/ExperienciaFaixa'
+            - type: 'null'
+        cursos:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+            maxLength: 80
+        idiomas:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/Idioma'
+    ServicoOferecido:
+      type: object
+      required: [funcao_id, unidade]
+      description: |
+        0.2.53. Um serviço do perfil, na entrada de `definir_servicos`. As regras de cada unidade
+        estão na descrição da operação.
+      properties:
+        funcao_id:
+          $ref: '#/components/schemas/Uuid'
+        unidade:
+          $ref: '#/components/schemas/UnidadePreco'
+        valor_centavos:
+          oneOf:
+            - type: integer
+              minimum: 1000
+              maximum: 1000000
+            - type: 'null'
+        valor_max_centavos:
+          oneOf:
+            - type: integer
+              minimum: 1000
+              maximum: 1000000
+            - type: 'null'
+        horas_incluidas:
+          type: integer
+          minimum: 4
+          maximum: 12
+        minimo_horas:
+          type: integer
+          minimum: 1
+          maximum: 12
+        duracao_tipica_h:
+          type: integer
+          minimum: 1
+          maximum: 24
+        ate_pessoas:
+          type: integer
+          minimum: 1
+          maximum: 2000
+        minimo_pessoas:
+          type: integer
+          minimum: 1
+          maximum: 2000
+        descricao_pacote:
+          type: string
+          maxLength: 120
+        inclui:
+          type: string
+          maxLength: 300
+        leva_material:
+          $ref: '#/components/schemas/LevaMaterial'
+        especialidade_ids:
+          type: array
+          maxItems: 8
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/Uuid'
+    ServicoNoPerfil:
+      type: object
+      required: [funcao, unidade]
+      description: 0.2.53. Um serviço como sai nas leituras, com a função e as especialidades por extenso.
+      properties:
+        funcao:
+          $ref: '#/components/schemas/Funcao'
+        unidade:
+          $ref: '#/components/schemas/UnidadePreco'
+        valor_centavos:
+          oneOf:
+            - type: integer
+            - type: 'null'
+        valor_max_centavos:
+          oneOf:
+            - type: integer
+            - type: 'null'
+        horas_incluidas:
+          type: integer
+        minimo_horas:
+          type: integer
+        duracao_tipica_h:
+          type: integer
+        ate_pessoas:
+          type: integer
+        minimo_pessoas:
+          type: integer
+        descricao_pacote:
+          type: string
+        inclui:
+          type: string
+        leva_material:
+          $ref: '#/components/schemas/LevaMaterial'
+        especialidades:
+          type: array
+          items:
+            $ref: '#/components/schemas/Especialidade'
+    PerfilProfissionalDetalhado:
+      description: 0.2.53. `PerfilProfissional` mais os campos opcionais do perfil rico, para o próprio dono.
+      allOf:
+        - $ref: '#/components/schemas/PerfilProfissional'
+        - type: object
+          required: [servicos, regioes, atende_todo_df, cursos, idiomas]
+          properties:
+            apresentacao:
+              oneOf:
+                - type: string
+                - type: 'null'
+            onde_trabalhei:
+              oneOf:
+                - type: string
+                - type: 'null'
+            experiencia_faixa:
+              oneOf:
+                - $ref: '#/components/schemas/ExperienciaFaixa'
+                - type: 'null'
+            cursos:
+              type: array
+              items:
+                type: string
+            idiomas:
+              type: array
+              items:
+                $ref: '#/components/schemas/Idioma'
+            servicos:
+              type: array
+              items:
+                $ref: '#/components/schemas/ServicoNoPerfil'
+            regioes:
+              type: array
+              items:
+                $ref: '#/components/schemas/RegiaoAdministrativa'
+            atende_todo_df:
+              type: boolean
     CriteriosDeNotificacao:
       type: object
       required: [funcoes, disponibilidades, distancia_maxima_km, equipes_de_confianca, notificacoes_no_maximo_a_cada_min]
@@ -4900,6 +5262,48 @@ components:
             type: string
         reputacao:
           $ref: '#/components/schemas/Reputacao'
+        apresentacao:
+          description: |
+            0.2.53. Os campos a partir daqui são opcionais e só vêm para contratante com vínculo de
+            leitura com o profissional (candidatura numa vaga da casa, turno entre eles ou equipe de
+            confiança). Para qualquer outra conta, e para estabelecimento, são omitidos.
+          oneOf:
+            - type: string
+              maxLength: 600
+            - type: 'null'
+        experiencia_faixa:
+          oneOf:
+            - $ref: '#/components/schemas/ExperienciaFaixa'
+            - type: 'null'
+        onde_trabalhei:
+          oneOf:
+            - type: string
+              maxLength: 400
+            - type: 'null'
+        cursos:
+          type: array
+          items:
+            type: string
+            maxLength: 80
+        idiomas:
+          type: array
+          items:
+            $ref: '#/components/schemas/Idioma'
+        servicos:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServicoNoPerfil'
+        regioes:
+          type: array
+          items:
+            $ref: '#/components/schemas/RegiaoAdministrativa'
+        atende_todo_df:
+          type: boolean
+        no_frila_desde:
+          description: 0.2.53. Mês e ano de criação do perfil, `AAAA-MM`.
+          type: string
+          pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'
+          example: 2026-10
 
     # ── Vagas
 
