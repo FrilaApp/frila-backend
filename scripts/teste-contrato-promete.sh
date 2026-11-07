@@ -202,6 +202,8 @@ OUTRAS_VIGIADAS=$(cat <<'EOF'
 {"op":"promete:desbloquear:403","corpo":{"status":403,"code":"sem_permissao"}}
 {"op":"promete:desbloquear:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:desbloquear:422","corpo":{"status":422,"code":"campo_invalido"}}
+{"op":"promete:resolverServico:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:resolverServico:422","corpo":{"status":422,"code":"campo_invalido"}}
 EOF
 )
 
