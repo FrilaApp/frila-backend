@@ -47,11 +47,12 @@ export interface MensagemExpurgo {
   verificacao_id: string;
   bucket: string;
   caminhos: string[];
+  origem?: string;
 }
 
 export interface SqlClient {
   lerLote: (quantidade: number, visibilidade: number) => Promise<MensagemExpurgo[]>;
-  confirmarExpurgo: (verificacaoId: string) => Promise<boolean>;
+  confirmarExpurgo: (verificacaoId: string, origem?: string) => Promise<boolean>;
   removerDaFila: (msgId: number) => Promise<void>;
 }
 
@@ -99,7 +100,8 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
                  read_ct,
                  message->>'verificacao_id' as verificacao_id,
                  coalesce(message->>'bucket', ${BUCKET_PADRAO}) as bucket,
-                 coalesce(message->'caminhos', '[]'::jsonb) as caminhos
+                 coalesce(message->'caminhos', '[]'::jsonb) as caminhos,
+                 coalesce(message->>'origem', 'verificacao') as origem
             from pgmq.read('expurgo_midia', ${visibilidade}::integer, ${quantidade}::integer)
         `;
         return res.map((r) => ({
@@ -108,18 +110,26 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
           verificacao_id: String(r.verificacao_id ?? ""),
           bucket: String(r.bucket ?? BUCKET_PADRAO),
           caminhos: Array.isArray(r.caminhos) ? (r.caminhos as string[]) : [],
+          origem: String(r.origem ?? "verificacao"),
         }));
       } finally {
         await sql.end({ timeout: 2 });
       }
     },
-    async confirmarExpurgo(verificacaoId: string): Promise<boolean> {
+    async confirmarExpurgo(verificacaoId: string, origem?: string): Promise<boolean> {
       const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
       try {
-        const res = await sql`
-          select privado.confirmar_expurgo_midia(${verificacaoId}::uuid) as ok
-        `;
-        return res[0]?.ok === true;
+        if (origem === "foto_perfil") {
+          const res = await sql`
+            select privado.confirmar_expurgo_midia_perfil(${verificacaoId}::uuid) as ok
+          `;
+          return res[0]?.ok === true;
+        } else {
+          const res = await sql`
+            select privado.confirmar_expurgo_midia(${verificacaoId}::uuid) as ok
+          `;
+          return res[0]?.ok === true;
+        }
       } finally {
         await sql.end({ timeout: 2 });
       }
@@ -261,7 +271,7 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
     }
 
     try {
-      await sqlClient.confirmarExpurgo(msg.verificacao_id);
+      await sqlClient.confirmarExpurgo(msg.verificacao_id, msg.origem);
     } catch (_err) {
       // O arquivo já saiu, mas o banco não soube. Deixar na fila é o certo: a próxima
       // rodada reencontra os caminhos ausentes (404 = sucesso) e confirma.
