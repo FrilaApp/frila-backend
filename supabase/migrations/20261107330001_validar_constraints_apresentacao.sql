@@ -1,5 +1,5 @@
 -- Validação das constraints de apresentacao, onde_trabalhei, experiencia_faixa, cursos e idiomas (B3b).
--- Valida as constraints previamente adicionadas com NOT VALID em 20261107110000,
+-- Valida as constraints previamente adicionadas com NOT VALID em 20261107330000,
 -- evitando retenção prolongada de AccessExclusiveLock em tabelas com volume.
 
 set lock_timeout = '2s';

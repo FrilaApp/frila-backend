@@ -22,7 +22,7 @@ alter table public.profissional
  add column if not exists idiomas text[];
 
 -- Adiciona constraints com NOT VALID para evitar segurar AccessExclusiveLock por tempo excessivo.
--- A validação ocorre na migração 20261107110001 subsequente.
+-- A validação ocorre na migração 20261107330001 subsequente.
 alter table public.profissional
  add constraint profissional_apresentacao_check
   check (apresentacao is null or length(apresentacao) <= 600) not valid,
@@ -44,62 +44,71 @@ comment on column public.profissional.experiencia_faixa is 'Faixa de tempo de ex
 comment on column public.profissional.cursos is 'Até 5 cursos ou certificados de até 80 caracteres, declarados pelo próprio profissional.';
 comment on column public.profissional.idiomas is 'Idiomas declarados, de lista fechada (português, inglês, espanhol, Libras, outro).';
 
--- RN38: filtro de contato e Pix normalizado e blindado. Verdadeiro quando o texto está LIMPO.
+-- RN38: filtro de contato e Pix blindado com mapeamento Unicode Nd e TLDs comuns.
 create or replace function privado.texto_sem_contato_ou_pix(texto text) returns boolean
 language plpgsql immutable security definer set search_path = '' as $$
 declare
   v_norm text;
-  v_sem_anos text;
-  v_sem_abrev text;
+  v_de_digitos text;
+  v_para_digitos text;
 begin
   if texto is null or texto = '' then return true; end if;
 
   -- 1. Normalização Unicode NFKC (decompõe e recompõe para forma canônica de compatibilidade)
   v_norm := normalize(texto, NFKC);
 
-  -- 2. Remoção de caracteres invisíveis e de formatação (U+200B-U+200F, U+2060, U+FEFF, U+00AD)
-  v_norm := regexp_replace(v_norm, '[\u200B-\u200F\u2060\uFEFF\u00AD]', '', 'g');
+  -- 2. Remoção de caracteres invisíveis e de formatação (U+200B-U+200F, U+2028-U+202F, U+2060-U+206F, U+FE00-U+FE0F, U+FEFF, U+00AD, U+180E)
+  v_norm := regexp_replace(v_norm, '[\u200B-\u200F\u2028-\u202F\u2060-\u206F\uFE00-\uFE0F\uFEFF\u00AD\u180E]', '', 'g');
 
   -- 3. Minúsculas
   v_norm := lower(v_norm);
 
-  -- 4. Transliteração de homóglifos cirílicos comuns em domínios/e-mails
+  -- 4. Mapear TODO dígito Unicode (blocos Nd comuns) para ASCII 0-9
+  v_de_digitos := '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹०१२३४५६७८९০১২৩৪৫৬৭৮৯੦੧੨੩੪੫੬੭੮੯૦૧૨૩૪૫૬૭૮૯୦୧୨୩୪୫୬୭୮୯௦௧௨௩௪௫௬௭௮௯౦౧౨౩౪౫౬౭౮౯೦೧೨೩೪೫೬೭೮೯൦൧൨൩൪൫൬൭൮൯๐๑๒๓๔๕๖๗๘๙';
+  v_para_digitos := repeat('0123456789', 12);
+  v_norm := translate(v_norm, v_de_digitos, v_para_digitos);
+
+  -- 5. Transliteração de homóglifos cirílicos comuns em domínios/e-mails
   v_norm := translate(v_norm, 'асеорху', 'aceopxy');
 
-  -- 5. Tratamento de variantes de arroba e ponto em texto
-  v_norm := regexp_replace(v_norm, '(\(at\)|\[at\]|\s+arroba\s+|\y(arroba|at)\y|[＠﹫])', '@', 'g');
+  -- 6. Tratamento de variantes de arroba e ponto em texto (sem converter preposição 'at' em inglês)
+  v_norm := regexp_replace(v_norm, '(\(at\)|\[at\]|\s+arroba\s+|[＠﹫])', '@', 'g');
   v_norm := regexp_replace(v_norm, '\s+ponto\s+', '.', 'g');
 
-  -- 6. @ é proibido (handles de redes sociais e e-mails)
+  -- 7. @ é proibido (handles de redes sociais e e-mails)
   if position('@' in v_norm) > 0 then return false; end if;
 
-  -- 7. Chave aleatória Pix (UUID com ou sem hífens ou 32 hexadecimais)
+  -- 8. Chave aleatória Pix (UUID de 32 hexadecimais com ou sem hífens)
   if v_norm ~ '[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}' then return false; end if;
   if v_norm ~ '\y[0-9a-f]{32}\y' then return false; end if;
 
-  -- 8. Domínios e URLs (com e sem esquema), mascarando abreviações legítimas como Sr.Silva
-  v_sem_abrev := regexp_replace(v_norm, '\y(sr|sra|dr|dra|prof|profa|av|rua|eng|vcs?|pág|pag|art|obs|ex)\.([a-z])', '\1 \2', 'g');
-  if v_sem_abrev ~ '(https?://|www\.)[^\s]+'
-     or v_sem_abrev ~ '\y(wa\.me|bit\.ly|t\.me|linktr\.ee)\y'
-     or v_sem_abrev ~ '\y[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,24}\M' then
+  -- 9. URLs e domínios com TLDs comuns (com ou sem esquema)
+  if v_norm ~ '(https?://|www\.)[^\s]+'
+     or v_norm ~ '\y(wa\.me|bit\.ly|t\.me|linktr\.ee)\y'
+     or v_norm ~ '\y[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.(com\.br|com|br|net|org|site|xyz|app|link|me|io|co|tv|ly|gl|bio|shop|online|store|info|dev|cc|page)\M' then
     return false;
   end if;
 
-  -- 9. Telefone e sequências numéricas (dígitos e por extenso)
-  -- Mascara intervalos de anos, horários, valores monetários e datas legítimas
-  v_sem_anos := regexp_replace(v_norm, '(?<![0-9)+])(?<![0-9)+] )\y(19|20)\d{2}\s*(-|–|até|a)\s*(19|20)\d{2}\y', ' ', 'g');
-  v_sem_anos := regexp_replace(v_sem_anos, '\y(0?[1-9]|[12]\d|3[01])/(0?[1-9]|1[0-2])/(19\d{2}|20\d{2}|\d{2})\y', ' ', 'g');
-  v_sem_anos := regexp_replace(v_sem_anos, 'r\$\s*\d+([.,]\d+)*|\y\d+([.,]\d+)*\s*reais\y', ' ', 'g');
-  v_sem_anos := regexp_replace(v_sem_anos, '\y\d{1,2}(:\d{2}|h(\d{2})?)(\s*([–\-\/]|às|a)\s*\d{1,2}(:\d{2}|h(\d{2})?))?\y', ' ', 'g');
+  -- 10. Sequências de 10 ou mais dígitos com separadores (espaço, ponto, hífen, parênteses, barra, +, _):
+  -- REJEITADA SEMPRE, sem exceção por palavra vizinha (reais, R$, etc.)
+  if v_norm ~ '([0-9][[:space:].\-/()+_]*){10,}' then
+    return false;
+  end if;
 
-  if v_sem_anos ~ '((\y(zero|um|uma|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove)\y|[0-9])[^[:alnum:]]*){8,}' then
+  -- 11. De 8 a 9 dígitos com palavra de contato a até 20 caracteres
+  if v_norm ~ '(\y(zap|whats|whatsapp|wpp|tel|cel|celular|fone|telefone|ligue|chama|contato|pix)\y[^0-9]{0,20}([0-9][[:space:].\-/()+_]*){8,9})|(([0-9][[:space:].\-/()+_]*){8,9}[^0-9]{0,20}\y(zap|whats|whatsapp|wpp|tel|cel|celular|fone|telefone|ligue|chama|contato|pix)\y)' then
+    return false;
+  end if;
+
+  -- 12. Números por extenso (zero, um, dois... sequências de 8+)
+  if v_norm ~ '((\y(zero|um|uma|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove)\y)[^[:alnum:]]*){8,}' then
     return false;
   end if;
 
   return true;
 end $$;
 comment on function privado.texto_sem_contato_ou_pix(text) is
- 'Verdadeiro quando o texto não traz telefone, e-mail, link, @ nem chave Pix (RN38). Normaliza em NFKC e remove caracteres invisíveis antes de validar. Nunca grava nem registra o texto recebido (RN15).';
+ 'Verdadeiro quando o texto não traz telefone, e-mail, link, @ nem chave Pix (RN38). Mapeia todo dígito Unicode Nd para ASCII e normaliza em NFKC antes de validar. Nunca grava nem registra o texto recebido (RN15).';
 revoke execute on function privado.texto_sem_contato_ou_pix(text) from public, anon, authenticated;
 grant execute on function privado.texto_sem_contato_ou_pix(text) to service_role;
 
@@ -336,9 +345,10 @@ begin
                                    select 1 from public.posicao po
                                     join public.turno tu on tu.posicao_id = po.id
                                    where po.vaga_id = g.id
-                                     and po.estado <> 'cancelada'
                                      and (
-                                       (tu.checkout_em is null and po.fim_em + interval '7 days' >= privado.agora())
+                                       (po.estado <> 'cancelada'
+                                        and tu.checkout_em is null
+                                        and po.fim_em + interval '7 days' >= privado.agora())
                                        or tu.verificacao = 'verificado'
                                      )
                                  ) then g.local
