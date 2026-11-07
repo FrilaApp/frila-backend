@@ -147,6 +147,39 @@ select pg_temp.guarda('meuPerfilProfissional', pg_temp.como('cc000000-0000-4000-
 select pg_temp.guarda('atualizarPerfilProfissional', pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.atualizar_perfil_profissional(ponto_base => '{"latitude":-15.7901,"longitude":-47.8851}'::jsonb) $$));
 
+select pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.atualizar_apresentacao_profissional(jsonb_build_object(
+       'apresentacao', 'Garçom com experiência',
+       'onde_trabalhei', 'Restaurante A',
+       'experiencia_faixa', 'de_1_a_3_anos',
+       'cursos', array['Atendimento de Excelência'],
+       'idiomas', array['ingles']
+     )) $$);
+
+insert into public.profissional_funcao (profissional_id, funcao_id)
+select p.id, f.id from public.profissional p cross join public.funcao f
+where p.usuario_id = 'cc000000-0000-4000-8000-000000000002' and f.nome = 'bartender'
+on conflict do nothing;
+
+select pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  (select format(
+     $$ select public.definir_servicos(jsonb_build_array(
+          jsonb_build_object(
+            'funcao_id', %L::uuid,
+            'unidade', 'diaria',
+            'valor_centavos', 15000,
+            'horas_incluidas', 8,
+            'leva_material', 'nao',
+            'especialidade_ids', jsonb_build_array(%L::uuid)
+          )
+        )) $$, f.id, e.id)
+     from public.funcao f
+     join public.especialidade e on e.funcao_id = f.id
+    where f.nome = 'bartender' limit 1));
+
+select pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.definir_regioes_atendidas(array[(select id from public.regiao_administrativa where nome = 'Plano Piloto')], false) $$);
+
 create temp table casa as
   select (pg_temp.como('cc000000-0000-4000-8000-000000000001',
     $$ select public.cadastrar_estabelecimento('Casa do Contrato','29979036000140','food_service',
@@ -1615,7 +1648,7 @@ select pg_temp.guarda('promete:atualizarApresentacaoProfissional:422',pg_temp.ob
 select pg_temp.guarda('meuPerfilDetalhado', pg_temp.como('cc000000-0000-4000-8000-000000000002',
  $$select public.meu_perfil_detalhado()$$));
 select pg_temp.guarda('promete:meuPerfilDetalhado:401',pg_temp.observado(null,$$select public.meu_perfil_detalhado()$$));
-select pg_temp.guarda('promete:meuPerfilDetalhado:422',pg_temp.observado('cc000000-0000-4000-8000-000000000004',$$select public.meu_perfil_detalhado()$$));
+select pg_temp.guarda('promete:meuPerfilDetalhado:422',pg_temp.observado('cc000000-0000-4000-8000-000000000001',$$select public.meu_perfil_detalhado()$$));
 
 -- B4a: URLs e projeções de mídia, incluindo cada recusa declarada no contrato.
 create temp table midia_colheita as
