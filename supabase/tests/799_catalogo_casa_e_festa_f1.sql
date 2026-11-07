@@ -24,7 +24,7 @@ on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-05 12:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-799';
 
-select plan(79);
+select plan(82);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -253,6 +253,16 @@ select throws_ok(
   '23505', null,
   'o nome da região é único');
 
+select throws_ok(
+  $$ insert into public.regiao_administrativa (id, numero, nome) values (38, '   ', 'Região Trinta e Oito') $$,
+  '23514', null,
+  'o número da região não pode ser vazio ou só espaços (regiao_administrativa_numero_check)');
+
+select throws_ok(
+  $$ insert into public.regiao_administrativa (id, numero, nome) values (38, 'XXXVIII', '   ') $$,
+  '23514', null,
+  'o nome da região não pode ser vazio ou só espaços (regiao_administrativa_nome_check)');
+
 -- ── 3. As categorias ──────────────────────────────────────────────────────────
 
 select is(
@@ -279,6 +289,11 @@ select is(
     where c.nome is null),
   0,
   'toda categoria usada por uma função existe na tabela de categorias');
+
+select throws_ok(
+  $$ insert into public.categoria (nome) values ('   ') $$,
+  '23514', null,
+  'o nome da categoria não pode ser vazio ou só espaços (categoria_nome_check)');
 
 -- ── 4. As funções novas e o grupo de busca ────────────────────────────────────
 
