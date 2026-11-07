@@ -18,7 +18,7 @@ insert into auth.users (id, aud, role, email) values
  ('c8040000-0000-4000-8000-000000000002','authenticated','authenticated','casa804@t.test'),
  ('c8040000-0000-4000-8000-000000000003','authenticated','authenticated','susp804@t.test'),
  ('c8040000-0000-4000-8000-000000000004','authenticated','authenticated','semperfil804@t.test');
-select pg_temp.como('c8040000-0000-4000-8000-00000000000' || n,
+select pg_temp.como(('c8040000-0000-4000-8000-00000000000' || n)::uuid,
  format($$select public.criar_conta(%L,%L,%L,'1990-01-01','2026-09-22')$$, p, 'Conta ' || n, '+556195555804' || n))
  from (values (1,'profissional'),(2,'contratante'),(3,'profissional'),(4,'profissional')) t(n,p);
 insert into public.profissional (id,usuario_id,ponto_base) values
