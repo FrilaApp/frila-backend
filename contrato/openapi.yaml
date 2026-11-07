@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.57
+  version: 0.2.61
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -110,6 +110,40 @@ info:
 
     ## Estado
 
+    **Versão 0.2.61, de 07/11/2026.** Uma só mídia: a foto de perfil (decisões do Cauê de
+    07/11/2026; `produto/contratacao-direta/05-midia.md`, CD-M02, e D3 = C). `TipoMidia` perde os
+    três valores reservados `foto_trabalho`, `foto_local` e `curriculo`, e fica `[foto_perfil]`. Nenhuma
+    operação, campo ou código de erro muda. É remoção, aceita sem `_v2` pelo mesmo motivo da exceção
+    da 0.2.2: os três valores nunca foram aceitos (`solicitar_upload_midia` sempre respondeu
+    `422 midia_invalida`, `tipo_indisponivel`), nenhuma resposta os devolveu e nenhum app publicado
+    conhece `TipoMidia`. Nenhum cliente fica para trás.
+
+    **Versão 0.2.60, de 07/11/2026.** Interruptor do perfil rico (RN46). `ConfiguracaoDoApp.recursos`
+    ganha `perfil_rico`, no mesmo molde de `foto_de_perfil` e `chamada_direta` (0.2.54): ausente vale
+    `false`. O app só mostra as telas da F2 ("Editar serviços", apresentação, regiões) com
+    `perfil_rico = true`. Assim um app novo, diante de um servidor que ainda não tem as operações da
+    0.2.53, não oferece uma tela que falharia. Desligado, `atualizar_apresentacao_profissional`,
+    `definir_servicos`, `definir_regioes_atendidas` e `meu_perfil_detalhado` respondem
+    `403 sem_permissao` (`recurso_desligado`), e os campos do perfil rico em `PerfilPublico` vêm
+    omitidos. Mudança compatível: um campo opcional numa resposta e um `403` documentado em quatro
+    operações que nenhum app publicado chama. `MeusDados` não muda: a exportação traz o perfil
+    detalhado com o recurso ligado ou não.
+
+    **Versão 0.2.59, de 07/11/2026.** Portabilidade da F3 e da F4 (RF25, LGPD art. 18, V).
+    `MeusDados` ganha duas coleções **opcionais**: `midias`, no objeto de `/rpc/minhas_midias`, e
+    `chamadas`, no objeto `Chamada`. Assim a tabela de mídia e a de chamada entram na exportação sem
+    uma segunda definição. As preferências de chamada já vão dentro de `perfil_profissional` (0.2.58).
+    Mudança compatível: dois campos opcionais numa resposta, e nenhuma operação ou código de erro muda.
+    As duas passam a `required`, como na 0.2.33, na versão em que o backend publicado as devolver.
+
+    **Versão 0.2.58, de 07/11/2026.** Portabilidade do perfil rico (RF25, LGPD art. 18, V).
+    `MeusDados.perfil_profissional` passa de `PerfilProfissional` a `PerfilProfissionalDetalhado`, o
+    mesmo objeto de `/rpc/meu_perfil_detalhado` (0.2.53), que estende o anterior. Assim os serviços,
+    as especialidades de cada serviço e as regiões atendidas entram na exportação dentro do perfil, e
+    não numa coleção nova na raiz. Mudança compatível: só acrescenta campos a um objeto que já existia,
+    e nenhuma operação, campo da raiz ou código de erro muda. O iOS guarda a exportação como bytes
+    (`exportarMeusDados() -> Data`) e não a decodifica.
+
     **Versão 0.2.57, de 07/11/2026.** Correção de citação, sem mudança de operação, schema ou código
     de erro. O texto da 0.2.49 e de `contato_do_turno` dizia que a decisão de 04/11/2026 deixava "a
     RN15 (telemetria de abertura do WhatsApp) sem objeto". As RN citadas neste contrato são as do
@@ -191,7 +225,7 @@ info:
     - **Mídia:** `solicitar_upload_midia` (URL assinada por 2 h, bucket privado),
       `confirmar_upload_midia` (só enfileira a análise; nada é publicado antes da decisão),
       `remover_midia`, `minhas_midias` e `pedir_nova_analise_midia` (uma vez por foto, com modelo
-      mais forte). Nesta versão só `foto_perfil`; os demais tipos são reservados e recusados com
+      mais forte). Só `foto_perfil`; outro `tipo` é recusado com
       `422 midia_invalida` (`tipo_indisponivel`).
     - **Moderação automática, falha fechada:** `aprovada` publica; `recusada` e decisão incerta não;
       erro do provedor mantém `em_analise` com até 3 novas tentativas e depois `nao_publicada`. Duas
@@ -1868,7 +1902,13 @@ paths:
         '401':
           $ref: '#/components/responses/NaoAutenticado'
         '403':
-          $ref: '#/components/responses/ContaSuspensa'
+          description: |
+            `sem_permissao` com `details: recurso_desligado` quando `recursos.perfil_rico` está
+            desligado (0.2.60); `conta_suspensa` quando a conta está suspensa.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
         '422':
@@ -1928,7 +1968,13 @@ paths:
         '401':
           $ref: '#/components/responses/NaoAutenticado'
         '403':
-          $ref: '#/components/responses/ContaSuspensa'
+          description: |
+            `sem_permissao` com `details: recurso_desligado` quando `recursos.perfil_rico` está
+            desligado (0.2.60); `conta_suspensa` quando a conta está suspensa.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
         '422':
@@ -1971,7 +2017,13 @@ paths:
         '401':
           $ref: '#/components/responses/NaoAutenticado'
         '403':
-          $ref: '#/components/responses/ContaSuspensa'
+          description: |
+            `sem_permissao` com `details: recurso_desligado` quando `recursos.perfil_rico` está
+            desligado (0.2.60); `conta_suspensa` quando a conta está suspensa.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
         '422':
@@ -1995,6 +2047,14 @@ paths:
                 $ref: '#/components/schemas/PerfilProfissionalDetalhado'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          description: |
+            `sem_permissao` com `details: recurso_desligado` quando `recursos.perfil_rico` está
+            desligado (0.2.60).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
         '422':
@@ -2012,7 +2072,7 @@ paths:
         do objeto não contém o id do usuário.
 
         Nesta versão só `tipo = foto_perfil`, uma por dono (profissional, ou estabelecimento com
-        `estabelecimento_id` para a foto ou logo da casa, por membro da casa). Os outros tipos são
+        `estabelecimento_id` para a foto ou logo da casa, por membro da casa). Outro `tipo` é
         `422 midia_invalida` (`tipo_indisponivel`). Formato fora de JPEG é `formato`; acima de 5 MB,
         `tamanho`. Trocar a foto é enviar outra: a anterior aprovada continua até a nova ser aprovada.
       x-requisitos: [RN37, RN46]
@@ -5850,12 +5910,22 @@ components:
           type: boolean
         chamada_direta:
           type: boolean
+        perfil_rico:
+          description: |
+            0.2.60. Perfil rico da F2 (0.2.53): "Editar serviços", apresentação e regiões atendidas.
+            Desligado, o app não mostra essas telas, as quatro operações da F2
+            (`atualizar_apresentacao_profissional`, `definir_servicos`, `definir_regioes_atendidas`
+            e `meu_perfil_detalhado`) respondem `403 sem_permissao` (`recurso_desligado`) e os campos
+            opcionais do perfil rico em `PerfilPublico` vêm omitidos. Um servidor que ainda não
+            conhece a chave não a manda, e ausente vale `false`.
+          type: boolean
     TipoMidia:
       type: string
       description: |
-        0.2.54. Só `foto_perfil` está disponível; `foto_trabalho`, `foto_local` e `curriculo` são
-        reservados para a v1.2 e recusados com `422 midia_invalida` (`tipo_indisponivel`).
-      enum: [foto_perfil, foto_trabalho, foto_local, curriculo]
+        0.2.54, revisto na 0.2.61. A única mídia do Frila é a foto de perfil: `foto_perfil`, uma por
+        dono (profissional ou estabelecimento). Outro valor é recusado com `422 midia_invalida`
+        (`tipo_indisponivel`).
+      enum: [foto_perfil]
     EstadoMidia:
       type: string
       description: |
@@ -7266,8 +7336,13 @@ components:
         conta:
           $ref: '#/components/schemas/Usuario'
         perfil_profissional:
+          description: |
+            0.2.58. O perfil do titular no mesmo objeto que `/rpc/meu_perfil_detalhado` devolve, para
+            não existir uma segunda definição de perfil: além de `PerfilProfissional`, traz o perfil
+            rico, com os serviços e as especialidades de cada um (`servicos`) e as regiões atendidas
+            (`regioes`, `atende_todo_df`). `null` quando o titular não tem perfil de profissional.
           oneOf:
-            - $ref: '#/components/schemas/PerfilProfissional'
+            - $ref: '#/components/schemas/PerfilProfissionalDetalhado'
             - type: 'null'
         estabelecimentos:
           type: array
@@ -7467,6 +7542,29 @@ components:
                     - $ref: '#/components/schemas/Instante'
                     - type: 'null'
             - type: 'null'
+        midias:
+          description: |
+            0.2.59. As fotos do titular, em qualquer estado, no mesmo objeto que `/rpc/minhas_midias`
+            devolve, e com as mesmas exclusões: nunca o caminho no Storage, o código fino da análise,
+            o classificador usado nem o hash. `url`, quando vem, vale 1 h, como lá. Mídia já expurgada
+            (RN14) aparece só com o que sobrou do registro dela, sem `url`.
+
+            Opcional nesta versão, como as sete coleções da 0.2.33 antes de o servidor devolvê-las
+            sempre: passa a `required` na versão em que a exportação do backend publicado a montar.
+          type: array
+          items:
+            $ref: '#/components/schemas/Midia'
+        chamadas:
+          description: |
+            0.2.59. As chamadas diretas em que o titular é o profissional chamado, ou o membro do
+            estabelecimento que chamou, no objeto `Chamada` (0.2.55). Entram todas, em qualquer estado,
+            como as candidaturas. Não traz telefone, endereço nem perfil da outra parte. O `recado` é o
+            que o profissional já lê em `detalhe_chamada`, e `motivo_recusa` é só uma categoria (RN33).
+
+            Opcional nesta versão, pelo mesmo motivo de `midias`.
+          type: array
+          items:
+            $ref: '#/components/schemas/Chamada'
         eventos_app:
           description: |
             Eventos de telemetria emitidos pelo aplicativo e vinculados à conta do titular (LGPD art. 18,
