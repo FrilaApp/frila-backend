@@ -272,6 +272,11 @@ VIGIADAS = {
     ("definirRegioesAtendidas", "403"): "sem_permissao",
     ("definirRegioesAtendidas", "404"): "nao_encontrado",
     ("definirRegioesAtendidas", "422"): "campo_invalido",
+    # Apresentação e filtro de contato (F2, contrato 0.2.53, RN26/RN38).
+    ("atualizarApresentacaoProfissional", "401"): "nao_autenticado",
+    ("atualizarApresentacaoProfissional", "403"): "sem_permissao",
+    ("atualizarApresentacaoProfissional", "404"): "nao_encontrado",
+    ("atualizarApresentacaoProfissional", "422"): "campo_invalido",
     # Resolver serviço (fatia F1, contrato 0.2.52, RN44)
     ("resolverServico", "401"): "nao_autenticado",
     ("resolverServico", "422"): "campo_invalido",
@@ -281,10 +286,6 @@ VIGIADAS = {
 # vigiados" porque são coisas diferentes: estes nunca vão entrar pela colheita no banco.
 ISENTAS = {
     # Isenções transitórias aprovadas para as próximas fatias; remover em B3b/B3c.
-    ("atualizarApresentacaoProfissional", "401"): "implementado em B3b/B3c",
-    ("atualizarApresentacaoProfissional", "403"): "implementado em B3b/B3c",
-    ("atualizarApresentacaoProfissional", "404"): "implementado em B3b/B3c",
-    ("atualizarApresentacaoProfissional", "422"): "implementado em B3b/B3c",
     ("meuPerfilDetalhado", "401"): "implementado em B3b/B3c",
     ("meuPerfilDetalhado", "404"): "implementado em B3b/B3c",
     ("meuPerfilDetalhado", "422"): "implementado em B3b/B3c",

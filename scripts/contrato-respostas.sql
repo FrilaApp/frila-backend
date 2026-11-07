@@ -855,6 +855,7 @@ select pg_temp.guarda('promete:atualizarPerfilProfissional:404',
 -- F2: perfil ainda não cadastrado.
 select pg_temp.guarda('promete:definirServicos:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.definir_servicos('[]')$$));
 select pg_temp.guarda('promete:definirRegioesAtendidas:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.definir_regioes_atendidas('{}',false)$$));
+select pg_temp.guarda('promete:atualizarApresentacaoProfissional:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$$));
 delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000096';
 delete from auth.users where id = 'ee000000-0000-4000-8000-000000000096';
 
@@ -1578,6 +1579,11 @@ select pg_temp.guarda('promete:definirServicos:422',pg_temp.observado('cc000000-
 select pg_temp.guarda('promete:definirRegioesAtendidas:401',pg_temp.observado(null,$$select public.definir_regioes_atendidas('{}',false)$$));
 select pg_temp.guarda('promete:definirRegioesAtendidas:403',pg_temp.observado('cc000000-0000-4000-8000-000000000004',$$select public.definir_regioes_atendidas('{}',false)$$));
 select pg_temp.guarda('promete:definirRegioesAtendidas:422',pg_temp.observado('cc000000-0000-4000-8000-000000000002',$$select public.definir_regioes_atendidas(array[999],false)$$));
+select pg_temp.guarda('atualizarApresentacaoProfissional', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+ $$select public.atualizar_apresentacao_profissional('{"apresentacao":"Faxineira há oito anos","onde_trabalhei":"Condomínio Sol 2019-2023","experiencia_faixa":"de_5_a_10_anos","cursos":["Limpeza pós-obra"],"idiomas":["ingles"]}')$$));
+select pg_temp.guarda('promete:atualizarApresentacaoProfissional:401',pg_temp.observado(null,$$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$$));
+select pg_temp.guarda('promete:atualizarApresentacaoProfissional:403',pg_temp.observado('cc000000-0000-4000-8000-000000000004',$$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$$));
+select pg_temp.guarda('promete:atualizarApresentacaoProfissional:422',pg_temp.observado('cc000000-0000-4000-8000-000000000002',$$select public.atualizar_apresentacao_profissional('{"apresentacao":"ligue 61 98888-7777"}')$$));
 
 -- Por último, e depois de tudo: ela anonimiza a conta e cancela os turnos futuros dela.
 -- Qualquer colheita posterior veria um cenário diferente do que as outras viram. A conta

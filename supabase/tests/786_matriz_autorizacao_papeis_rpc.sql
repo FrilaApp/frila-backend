@@ -352,6 +352,10 @@ select is(pg_temp.testar_autorizacao('anon', null, $f2$select public.definir_reg
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', $f2$select public.definir_regioes_atendidas('{}',false)$f2$), 'AUTORIZADO', 'definir_regioes_atendidas: authenticated 78600000-0000-4000-8000-000000000003');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', $f2$select public.definir_regioes_atendidas('{}',false)$f2$), '422_PERFIL_INCOMPATIVEL', 'definir_regioes_atendidas: authenticated 78600000-0000-4000-8000-000000000002');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', $f2$select public.definir_regioes_atendidas('{}',false)$f2$), '422_PERFIL_INCOMPATIVEL', 'definir_regioes_atendidas: authenticated 78600000-0000-4000-8000-000000000001');
+select is(pg_temp.testar_autorizacao('anon', null, $f2$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$f2$), '42501_SEM_EXECUTE', 'atualizar_apresentacao_profissional: anon sem sessão');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', $f2$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$f2$), 'AUTORIZADO', 'atualizar_apresentacao_profissional: profissional');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', $f2$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$f2$), '422_PERFIL_INCOMPATIVEL', 'atualizar_apresentacao_profissional: contratante');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', $f2$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$f2$), '422_PERFIL_INCOMPATIVEL', 'atualizar_apresentacao_profissional: dono');
 
 -- --- perfil_publico ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.perfil_publico(''78600000-0000-4000-8000-000000000030''::uuid)'), '42501_SEM_EXECUTE', 'perfil_publico [anon]: anon nao possui EXECUTE em perfil_publico');
