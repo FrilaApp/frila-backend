@@ -446,6 +446,33 @@ select pg_temp.guarda('erro:contestacao_ja_aberta',
   pg_temp.recusa('cc000000-0000-4000-8000-000000000004',
     $$ select public.contestar_suspensao('Segunda tentativa de contestacao enquanto a primeira esta aberta.') $$));
 
+-- ── Chamada direta, F4 parte A (0.2.55) ───────────────────────────────────────
+-- O Pê Três está na equipe de confiança (vínculo na v1.1, RN28). O Pê do Contrato, com início
+-- em 1 h, cai em 422 profissional_indisponivel. O interruptor nasce desligado: mede o 403.
+create function pg_temp.chamar(prof text, daqui interval default '1 day') returns text
+language sql as $$ select format($c$ select public.chamar_profissional(chave => gen_random_uuid(),
+  profissional_id => %L,
+  estabelecimento_id => %L, funcao_id => %L, inicio_em => %L, fim_em => %L, local => 'CLN 108',
+  regiao_administrativa => 'Plano Piloto', ponto => '{"latitude":-15.7905,"longitude":-47.8855}',
+  valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false,
+  exige_material_proprio => false, responsavel_local => 'Gerente', recado => 'Precisamos de você no sábado') $c$,
+  coalesce((select p.id from public.profissional p where p.usuario_id = prof::uuid), prof::uuid), (select casa_id from ids), (select id from f), privado.agora() + daqui, privado.agora() + daqui + interval '5 hours') $$;
+insert into public.equipe_confianca (estabelecimento_id, profissional_id)
+select (select casa_id from ids), p.id from public.profissional p where p.usuario_id = 'cc000000-0000-4000-8000-000000000005';
+select pg_temp.guarda('promete:chamarProfissional:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
+update privado.recurso set ligado = true where chave = 'chamada_direta';
+select pg_temp.guarda('chamarProfissional', pg_temp.como('cc000000-0000-4000-8000-000000000001',
+  pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
+select pg_temp.guarda('promete:chamarProfissional:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
+select pg_temp.guarda('promete:chamarProfissional:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', pg_temp.chamar('cc000000-0000-4000-8000-000000000002', interval '1 hour')));
+select pg_temp.guarda('promete:chamarProfissional:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', pg_temp.chamar('cc000000-0000-4000-8000-0000000000fe')));
+select pg_temp.guarda('promete:chamarProfissional:401',
+  pg_temp.observado(null, pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
+
 -- ── A direção contrato-à-frente: a recusa que o contrato promete ─────────────
 --
 -- Cartão `EFveOeIb`. Os outros portões medem o contrato ATRÁS do código — espelho
