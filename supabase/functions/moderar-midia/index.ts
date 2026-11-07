@@ -57,11 +57,13 @@ const AZURE_SEVERIDADE_REPROVACAO = 4;
 const AZURE_LIMITE_IMAGEM_BYTES = 4 * 1024 * 1024;
 
 export type MotivoCodigo = "formato_invalido" | "dimensoes_invalidas" | "conteudo_improprio";
+export type MotivoRecusaPublico = "foto_inadequada" | "texto_ou_dado_pessoal" | "nao_e_pessoa_ou_servico" | "nao_analisada";
 
-export const MOTIVOS_RECUSA: Record<MotivoCodigo, string> = {
-  formato_invalido: "Apenas imagens JPEG são permitidas.",
-  dimensoes_invalidas: "Dimensões ou proporção fora do permitido.",
-  conteudo_improprio: "Conteúdo inadequado detectado.",
+/** Motivo genérico público aderente ao enum MotivoRecusaMidia do contrato 0.2.57. */
+export const MOTIVOS_RECUSA: Record<MotivoCodigo, MotivoRecusaPublico> = {
+  formato_invalido: "foto_inadequada",
+  dimensoes_invalidas: "foto_inadequada",
+  conteudo_improprio: "foto_inadequada",
 };
 
 // ---------------------------------------------------------------------------------------
@@ -234,6 +236,82 @@ export function gerarMiniaturaJpeg(entrada: Uint8Array): Uint8Array {
   return new Uint8Array(codificada.data);
 }
 
+export const QUALIDADE_ORIGINAL_RECODIFICADO = 90;
+
+/**
+ * Decodifica o JPEG e o recodifica puramente a partir de seus pixels RGB/RGBA,
+ * eliminando qualquer segmento APP/EXIF/metadado residual antes do envio externo
+ * ou gravação no Storage (achado 2 do Lince Codex).
+ */
+export function recodificarOriginalJpeg(entrada: Uint8Array): {
+  largura: number;
+  altura: number;
+  recodificado: Uint8Array;
+  miniatura: Uint8Array;
+} {
+  let img: { width: number; height: number; data: Uint8Array };
+  try {
+    img = jpeg.decode(entrada, {
+      useTArray: true,
+      formatAsRGBA: true,
+      maxMemoryUsageInMB: MEMORIA_MAXIMA_DECODIFICACAO_MB,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("maxMemoryUsageInMB")) {
+      throw new ErroMiniaturaExcedeMemoria();
+    }
+    throw err;
+  }
+
+  const codificada = jpeg.encode(
+    { data: img.data, width: img.width, height: img.height },
+    QUALIDADE_ORIGINAL_RECODIFICADO,
+  );
+  const recodificado = new Uint8Array(codificada.data);
+
+  const escala = Math.min(1, LADO_MINIATURA_PX / Math.max(img.width, img.height));
+  const larguraThumb = Math.max(1, Math.round(img.width * escala));
+  const alturaThumb = Math.max(1, Math.round(img.height * escala));
+  const saidaThumb = new Uint8Array(larguraThumb * alturaThumb * 4);
+  const origem = img.data as Uint8Array;
+
+  for (let y = 0; y < alturaThumb; y++) {
+    const y0 = Math.floor((y * img.height) / alturaThumb);
+    const y1 = Math.max(y0 + 1, Math.floor(((y + 1) * img.height) / alturaThumb));
+    for (let x = 0; x < larguraThumb; x++) {
+      const x0 = Math.floor((x * img.width) / larguraThumb);
+      const x1 = Math.max(x0 + 1, Math.floor(((x + 1) * img.width) / larguraThumb));
+      let r = 0, g = 0, bl = 0, c = 0;
+      for (let yy = y0; yy < y1; yy++) {
+        for (let xx = x0; xx < x1; xx++) {
+          const p = (yy * img.width + xx) * 4;
+          r += origem[p];
+          g += origem[p + 1];
+          bl += origem[p + 2];
+          c++;
+        }
+      }
+      const q = (y * larguraThumb + x) * 4;
+      saidaThumb[q] = Math.round(r / c);
+      saidaThumb[q + 1] = Math.round(g / c);
+      saidaThumb[q + 2] = Math.round(bl / c);
+      saidaThumb[q + 3] = 255;
+    }
+  }
+  const codificadaThumb = jpeg.encode(
+    { data: saidaThumb, width: larguraThumb, height: alturaThumb },
+    QUALIDADE_MINIATURA,
+  );
+  const miniatura = new Uint8Array(codificadaThumb.data);
+
+  return {
+    largura: img.width,
+    altura: img.height,
+    recodificado,
+    miniatura,
+  };
+}
+
 // ---------------------------------------------------------------------------------------
 // Adaptador de análise de imagem
 // ---------------------------------------------------------------------------------------
@@ -354,13 +432,30 @@ export function provedorAzure(chave: string, endpoint: string, fetchFn: typeof f
         },
       ) as { categoriesAnalysis?: Array<{ severity?: unknown }> };
       const analises = dados?.categoriesAnalysis;
-      if (!Array.isArray(analises) || analises.length === 0) {
+      if (!Array.isArray(analises)) {
         throw new ErroProvedor("resposta_inesperada", 200);
       }
+      const esperadas = new Set(["Sexual", "Violence"]);
+      const vistas = new Set<string>();
+      const severidadesValidas = new Set([0, 2, 4, 6]);
       let reprovada = false;
+
       for (const a of analises) {
-        if (typeof a.severity !== "number") throw new ErroProvedor("resposta_inesperada", 200);
-        if (a.severity >= AZURE_SEVERIDADE_REPROVACAO) reprovada = true;
+        if (!a || typeof a !== "object") throw new ErroProvedor("resposta_inesperada", 200);
+        const cat = (a as { category?: unknown }).category;
+        const sev = (a as { severity?: unknown }).severity;
+        if (typeof cat !== "string" || !esperadas.has(cat) || vistas.has(cat)) {
+          throw new ErroProvedor("resposta_inesperada", 200);
+        }
+        if (typeof sev !== "number" || !Number.isInteger(sev) || !severidadesValidas.has(sev)) {
+          throw new ErroProvedor("resposta_inesperada", 200);
+        }
+        vistas.add(cat);
+        if (sev >= AZURE_SEVERIDADE_REPROVACAO) reprovada = true;
+      }
+
+      if (vistas.size !== esperadas.size) {
+        throw new ErroProvedor("resposta_inesperada", 200);
       }
       return { aprovada: !reprovada };
     },
@@ -499,17 +594,62 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
       };
     },
     async marcarAprovada(id) {
-      const res = await sql`
-        update privado.midia
-           set estado = 'aprovada',
-               motivo_codigo = null,
-               motivo_recusa = null,
-               atualizado_em = privado.agora()
-         where id = ${id}::uuid
-           and estado = 'em_analise'
-        returning id
-      `;
-      return res.length > 0;
+      return await sql.begin(async (tx) => {
+        const [alvo] = await tx`
+          select id, dono_tipo, dono_usuario_id, estabelecimento_id
+            from privado.midia
+           where id = ${id}::uuid
+             and estado = 'em_analise'
+           for update
+        `;
+        if (!alvo) return false;
+
+        const antigas = await tx`
+          select id, storage_path
+            from privado.midia
+           where dono_tipo = ${alvo.dono_tipo}
+             and coalesce(estabelecimento_id, dono_usuario_id) = coalesce(${alvo.estabelecimento_id}::uuid, ${alvo.dono_usuario_id}::uuid)
+             and tipo = 'foto_perfil'
+             and estado = 'aprovada'
+             and id <> ${id}::uuid
+           for update
+        `;
+
+        for (const antiga of antigas) {
+          await tx`
+            update privado.midia
+               set estado = 'removida',
+                   atualizado_em = privado.agora()
+             where id = ${antiga.id}::uuid
+          `;
+          await tx`
+            select pgmq.send(
+              'expurgo_midia',
+              jsonb_build_object(
+                'verificacao_id', ${antiga.id}::text,
+                'bucket', 'midia-perfil',
+                'caminhos', jsonb_build_array(
+                  ${antiga.storage_path}::text,
+                  replace(${antiga.storage_path}::text, '.jpg', '_thumb.jpg')
+                ),
+                'origem', 'foto_perfil'
+              )
+            )
+          `;
+        }
+
+        const res = await tx`
+          update privado.midia
+             set estado = 'aprovada',
+                 motivo_codigo = null,
+                 motivo_recusa = null,
+                 atualizado_em = privado.agora()
+           where id = ${id}::uuid
+             and estado = 'em_analise'
+          returning id
+        `;
+        return res.length > 0;
+      });
     },
     async marcarRecusada(id, codigo, motivo) {
       const res = await sql`
@@ -754,8 +894,11 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
     ): Promise<Desfecho> => {
       const mudou = await sqlClient.marcarRecusada(msg.midia_id, codigo, MOTIVOS_RECUSA[codigo]);
       if (!mudou) {
-        // O titular removeu a foto no meio da análise: o que foi gravado aqui não pode ficar.
-        for (const caminho of objetosParaLimpar) await removerObjetoMelhorEsforco(ctx, caminho);
+        // Se a foto foi removida pelo titular ou expurgada, limpa o que foi gravado
+        const atual = await sqlClient.obterMidia(msg.midia_id);
+        if (!atual || atual.estado === "removida" || atual.estado === "expurgada") {
+          for (const caminho of objetosParaLimpar) await removerObjetoMelhorEsforco(ctx, caminho);
+        }
         await sairDaFila(msg.msg_id);
         return "ignorada";
       }
@@ -784,9 +927,12 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
         return await recusar(msg, "dimensoes_invalidas", []);
       }
 
+      let originalRecodificado: Uint8Array;
       let miniatura: Uint8Array;
       try {
-        miniatura = await gerarMiniatura(analise.sanitizado);
+        const proc = recodificarOriginalJpeg(analise.sanitizado);
+        originalRecodificado = proc.recodificado;
+        miniatura = deps?.gerarMiniatura ? await deps.gerarMiniatura(analise.sanitizado) : proc.miniatura;
       } catch (err) {
         // Grande demais para a memória: falha fechada, sem culpar a foto.
         if (err instanceof ErroMiniaturaExcedeMemoria) {
@@ -798,7 +944,7 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
       }
 
       const caminhoThumb = caminhoMiniatura(midia.id);
-      await gravarObjeto(ctx, midia.storage_path, analise.sanitizado);
+      await gravarObjeto(ctx, midia.storage_path, originalRecodificado);
       await gravarObjeto(ctx, caminhoThumb, miniatura);
       const gravados = [midia.storage_path, caminhoThumb];
 
@@ -821,21 +967,24 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
           throw new FalhaTransitoria("limite_por_foto", 0);
         }
         try {
-          aprovada = (await provedor.analisar({ original: analise.sanitizado, miniatura })).aprovada;
+          aprovada = (await provedor.analisar({ original: originalRecodificado, miniatura })).aprovada;
         } catch (err) {
-          // Sem veredito, a chamada não conta contra a foto: a próxima rodada pode tentar.
-          await sqlClient.liberarChamada(midia.id, provedor.nome, mes).catch(() => {});
+          // O envio ao provedor foi iniciado e consome a saída/teto de forma irreversível (achado 1 do Lince Codex).
           throw new FalhaTransitoria("provedor_indisponivel", err instanceof ErroProvedor ? err.status : 0);
         }
       } else {
-        aprovada = (await provedor.analisar({ original: analise.sanitizado, miniatura })).aprovada;
+        aprovada = (await provedor.analisar({ original: originalRecodificado, miniatura })).aprovada;
       }
 
       if (!aprovada) return await recusar(msg, "conteudo_improprio", gravados);
 
       const mudou = await sqlClient.marcarAprovada(midia.id);
       if (!mudou) {
-        for (const caminho of gravados) await removerObjetoMelhorEsforco(ctx, caminho);
+        // Se a foto já estiver aprovada por worker concorrente, não apaga os objetos válidos (achado 4 do Lince Codex)
+        const atual = await sqlClient.obterMidia(midia.id);
+        if (!atual || atual.estado === "removida" || atual.estado === "expurgada") {
+          for (const caminho of gravados) await removerObjetoMelhorEsforco(ctx, caminho);
+        }
         await sairDaFila(msg.msg_id);
         return "ignorada";
       }

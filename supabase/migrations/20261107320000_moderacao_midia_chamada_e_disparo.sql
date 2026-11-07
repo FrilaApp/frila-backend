@@ -18,6 +18,7 @@ comment on table privado.moderacao_chamada is
 
 revoke all on table privado.moderacao_chamada from public, anon, authenticated;
 grant select, insert, delete on table privado.moderacao_chamada to service_role;
+grant usage, select on sequence privado.moderacao_chamada_id_seq to service_role;
 alter table privado.moderacao_chamada enable row level security;
 
 -- 2. Disparador da Edge Function moderar-midia via pg_net

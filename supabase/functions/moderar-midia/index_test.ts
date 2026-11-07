@@ -412,7 +412,7 @@ Deno.test("provedor azure: endpoint, chave, categorias e limiar de severidade", 
 });
 
 Deno.test("provedor azure: acima de 4 MB manda a miniatura em vez do original", async () => {
-  const { fetchFn, chamadas } = fetchGravando(() => json({ categoriesAnalysis: [{ category: "Sexual", severity: 0 }] }));
+  const { fetchFn, chamadas } = fetchGravando(() => json({ categoriesAnalysis: [{ category: "Sexual", severity: 0 }, { category: "Violence", severity: 0 }] }));
   const grande = new Uint8Array(4 * 1024 * 1024 + 1);
   grande.set([0xff, 0xd8, 0xff]);
   const miniatura = fazerJpeg(200, 200);
@@ -808,7 +808,7 @@ Deno.test("handler: o que não é JPEG é recusado com formato_invalido e sai da
   assertEquals(corpo.recusadas, 1);
   assertEquals(m.estado, "recusada");
   assertEquals(m.motivo_codigo, "formato_invalido");
-  assertEquals(m.motivo_recusa, "Apenas imagens JPEG são permitidas.");
+  assertEquals(m.motivo_recusa, "foto_inadequada");
   assertEquals(mundo.removidosDaFila, [msg.msg_id]);
   assertEquals(mundo.chamadasProvedor, 0);
   assertEquals(mundo.reservas.length, 0);
@@ -850,7 +850,7 @@ Deno.test("handler: dimensões ou proporção fora do permitido viram dimensoes_
     assertEquals(corpo.recusadas, 1, nome);
     assertEquals(m.estado, "recusada", nome);
     assertEquals(m.motivo_codigo, "dimensoes_invalidas", nome);
-    assertEquals(m.motivo_recusa, "Dimensões ou proporção fora do permitido.", nome);
+    assertEquals(m.motivo_recusa, "foto_inadequada", nome);
     assertEquals(mundo.removidosDaFila, [msg.msg_id], nome);
     assertEquals(mundo.chamadasProvedor, 0, nome);
   }
@@ -875,7 +875,7 @@ Deno.test("handler: provedor que reprova marca conteudo_improprio e sai da fila"
   assertEquals(m.estado, "recusada");
   assertEquals(m.motivo_codigo, "conteudo_improprio");
   assertEquals(m.motivo_recusa, MOTIVOS_RECUSA.conteudo_improprio);
-  assertEquals(m.motivo_recusa, "Conteúdo inadequado detectado.");
+  assertEquals(m.motivo_recusa, "foto_inadequada");
   assertEquals(mundo.removidosDaFila, [msg.msg_id]);
 });
 
@@ -1071,15 +1071,15 @@ Deno.test("falha fechada: foto válida mas grande demais para a memória fica em
   assertFalse(mundo.objetos.has(`perfil/${MIDIA_1}_thumb.jpg`));
 });
 
-Deno.test("falha fechada: provedor fora do ar mantém em_analise, não publica e devolve a reserva", async () => {
+Deno.test("falha fechada: provedor fora do ar mantém em_analise, não publica e consome a tentativa", async () => {
   const mundo = novoMundo();
   const msg = semear(mundo, MIDIA_1, IMAGEM_BOA);
   const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo, "falha") }));
   assertFalhouFechado(mundo, corpo, msg, "provedor_indisponivel");
-  assertEquals(mundo.reservas.length, 0, "sem veredito a chamada não conta contra a foto");
+  assertEquals(mundo.reservas.length, 1, "tentativa iniciada consome de forma irreversível");
 });
 
-Deno.test("falha fechada: provedor fora do ar na primeira rodada e no ar na segunda aprova com 1 reserva", async () => {
+Deno.test("falha fechada: provedor fora do ar na primeira rodada e reanálise na segunda aprova consumindo as 2 tentativas", async () => {
   const mundo = novoMundo();
   semear(mundo, MIDIA_1, IMAGEM_BOA);
   let falhar = true;
@@ -1096,9 +1096,11 @@ Deno.test("falha fechada: provedor fora do ar na primeira rodada e no ar na segu
   await rodar(deps);
   assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise");
   falhar = false;
+  mundo.removidosDaFila = [];
+  mundo.fila[0].reanalise = true;
   const { corpo } = await rodar(deps);
   assertEquals(corpo.aprovadas, 1);
-  assertEquals(mundo.reservas.length, 1);
+  assertEquals(mundo.reservas.length, 2);
 });
 
 Deno.test("falha fechada: tabela de consumo indisponível mantém em_analise (não chama o provedor às cegas)", async () => {
@@ -1300,7 +1302,7 @@ Deno.test("MODERACAO_PROVEDOR=openai: HTTP 500 do provedor mantém em_analise", 
   const { corpo } = await rodar(criarDeps(mundo, { env: { MODERACAO_PROVEDOR: "openai", OPENAI_API_KEY: "k-openai" } }));
   assertFalhouFechado(mundo, corpo, msg, "provedor_indisponivel");
   assertEquals((corpo.pendentes as Array<{ status: number }>)[0].status, 500);
-  assertEquals(mundo.reservas.length, 0);
+  assertEquals(mundo.reservas.length, 1);
 });
 
 Deno.test("MODERACAO_PROVEDOR=azure: severidade alta reprova, baixa aprova", async () => {
