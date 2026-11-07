@@ -1,7 +1,7 @@
 -- B4b: Estreitamento da foto de perfil, remoção de colunas mortas,
 -- ocultação por 2 denúncias distintas e expurgo em 24 h (RN37, CA4).
 
-set local lock_timeout = '2s';
+set lock_timeout = '2s';
 
 -- 1. Preflights de segurança antes das alterações estruturais DDL (achado 3 do Lince Codex).
 -- Aborta a migração de forma segura caso existam dados em produção fora do esperado.
@@ -83,7 +83,9 @@ comment on function privado.confirmar_expurgo_midia_perfil(uuid) is
 revoke execute on function privado.confirmar_expurgo_midia_perfil(uuid) from public, anon, authenticated;
 grant  execute on function privado.confirmar_expurgo_midia_perfil(uuid) to service_role;
 
--- 4. Expurgo em 24 h de mídias recusadas ou não publicadas.
+-- 4. Expurgo em 24 h de mídias recusadas ou não publicadas (RN37, CA4).
+-- Elegibilidade: recusada ou não publicada há 24 h ou mais (<= agora - 24 hours).
+-- A agenda periódica horária no pg_cron garante que nenhuma foto espere mais que 24h + 1h.
 create or replace function privado.expurgar_midias_recusadas()
 returns integer
 language plpgsql
@@ -99,7 +101,7 @@ begin
     select id, storage_path
       from privado.midia
      where estado in ('recusada', 'nao_publicada')
-       and atualizado_em < privado.agora() - interval '24 hours'
+       and atualizado_em <= privado.agora() - interval '24 hours'
      for update skip locked
   loop
     v_caminhos := jsonb_build_array(r.storage_path, replace(r.storage_path, '.jpg', '_thumb.jpg'));
@@ -130,6 +132,54 @@ comment on function privado.expurgar_midias_recusadas() is
 
 revoke execute on function privado.expurgar_midias_recusadas() from public, anon, authenticated;
 grant  execute on function privado.expurgar_midias_recusadas() to service_role;
+
+-- 4b. Validação prévia de elegibilidade de expurgo de foto de perfil (achado 4 do Lince Codex).
+create or replace function privado.validar_expurgo_midia_perfil(
+  p_id uuid,
+  p_bucket text,
+  p_caminhos jsonb default null
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_m record;
+  v_elem text;
+begin
+  if p_bucket is not null and p_bucket <> 'midia-perfil' then
+    return false;
+  end if;
+
+  select id, estado, storage_path into v_m
+    from privado.midia
+   where id = p_id;
+
+  if not found then
+    return false;
+  end if;
+
+  if v_m.estado not in ('recusada', 'nao_publicada', 'removida', 'expurgada') then
+    return false;
+  end if;
+
+  if p_caminhos is not null and jsonb_typeof(p_caminhos) = 'array' and jsonb_array_length(p_caminhos) > 0 then
+    for v_elem in select jsonb_array_elements_text(p_caminhos) loop
+      if v_elem <> v_m.storage_path and v_elem <> replace(v_m.storage_path, '.jpg', '_thumb.jpg') then
+        return false;
+      end if;
+    end loop;
+  end if;
+
+  return true;
+end $$;
+
+comment on function privado.validar_expurgo_midia_perfil(uuid, text, jsonb) is
+  'Valida antes da exclusão física que a mídia existe, está em estado elegível e pertence ao bucket/caminhos corretos (achado 4 Lince Codex).';
+
+revoke execute on function privado.validar_expurgo_midia_perfil(uuid, text, jsonb) from public, anon, authenticated;
+grant  execute on function privado.validar_expurgo_midia_perfil(uuid, text, jsonb) to service_role;
 
 -- 5. Atualiza remover_midia para enfileirar expurgo imediatamente.
 -- contrato: corpo-sem-mudanca-de-superficie public.remover_midia 0.2.57
@@ -345,6 +395,9 @@ begin
   if new.tipo <> 'denuncia' or new.midia_id is null then
     return new;
   end if;
+
+  -- Serializa a contagem por foto para evitar corrida em denúncias simultâneas (achado 2 Lince Codex R2)
+  perform 1 from privado.midia where id = new.midia_id for no key update;
 
   -- Conta denunciantes distintos elegíveis desta foto:
   -- 1) Autor com conta ativa (u.estado = 'ativa')
@@ -636,4 +689,70 @@ $$;
 
 revoke execute on function privado.meus_dados(uuid) from public, anon, authenticated;
 grant  execute on function privado.meus_dados(uuid) to service_role;
+
+-- 10. Disparo de expurgo de mídias e agendamento horário no pg_cron (RN37, CA4 / achado 1 do Lince Codex).
+create or replace function privado.disparar_expurgo_midias()
+returns bigint
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_url text := coalesce(
+    (select decrypted_secret from vault.decrypted_secrets where name = 'expurgar_midias_function_url' limit 1),
+    nullif(current_setting('frila.expurgar_midias_function_url', true), ''),
+    (select replace(decrypted_secret, '/despachar', '/expurgar-midias')
+       from vault.decrypted_secrets where name = 'edge_function_url' limit 1),
+    'http://127.0.0.1:54321/functions/v1/expurgar-midias'
+  );
+  v_secret text := coalesce(
+    (select decrypted_secret from vault.decrypted_secrets where name = 'agendador_secret' limit 1),
+    nullif(current_setting('frila.agendador_secret', true), '')
+  );
+  v_req_id bigint;
+begin
+  -- Enfileira mídias elegíveis antes de disparar o expurgo físico no Storage (achados 1 e 3 do Lince Codex)
+  perform privado.expurgar_midias_recusadas();
+
+  if v_secret is null or v_secret = '' then
+    raise warning 'frila.agendador_secret ausente: o expurgo de mídias não foi disparado';
+    return null;
+  end if;
+
+  begin
+    v_req_id := net.http_post(
+      url     => v_url,
+      headers => jsonb_build_object(
+        'Content-Type',       'application/json',
+        'Authorization',      'Bearer ' || v_secret,
+        'x-agendador-secret', v_secret
+      ),
+      body    => jsonb_build_object('origem', 'cron'),
+      timeout_milliseconds => 5000
+    );
+  exception when others then
+    v_req_id := null;
+  end;
+
+  return v_req_id;
+end $$;
+
+comment on function privado.disparar_expurgo_midias() is
+  'Enfileira mídias elegíveis (expurgar_midias_recusadas) e dispara a Edge Function expurgar-midias via pg_net. Lê expurgar_midias_function_url (ou deriva de edge_function_url) e agendador_secret do Vault, com fallback ao GUC. Nunca aborta quem chamou (bebr4VIE).';
+
+revoke execute on function privado.disparar_expurgo_midias() from public, anon, authenticated;
+grant  execute on function privado.disparar_expurgo_midias() to service_role;
+
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.unschedule('expurgar_midias_horario')
+      where exists (select 1 from cron.job where jobname = 'expurgar_midias_horario');
+    perform cron.schedule(
+      'expurgar_midias_horario',
+      '0 * * * *',
+      'select privado.disparar_expurgo_midias()'
+    );
+  end if;
+end $$;
 

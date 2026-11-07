@@ -52,6 +52,7 @@ export interface MensagemExpurgo {
 
 export interface SqlClient {
   lerLote: (quantidade: number, visibilidade: number) => Promise<MensagemExpurgo[]>;
+  validarExpurgo?: (verificacaoId: string, origem?: string, bucket?: string, caminhos?: string[]) => Promise<boolean>;
   confirmarExpurgo: (verificacaoId: string, origem?: string) => Promise<boolean>;
   removerDaFila: (msgId: number) => Promise<void>;
 }
@@ -112,6 +113,36 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
           caminhos: Array.isArray(r.caminhos) ? (r.caminhos as string[]) : [],
           origem: String(r.origem ?? "verificacao"),
         }));
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+    async validarExpurgo(
+      verificacaoId: string,
+      origem?: string,
+      bucket?: string,
+      caminhos?: string[],
+    ): Promise<boolean> {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        if (origem === "foto_perfil") {
+          const res = await sql`
+            select privado.validar_expurgo_midia_perfil(
+              ${verificacaoId}::uuid,
+              ${bucket ?? "midia-perfil"},
+              ${JSON.stringify(caminhos ?? [])}::jsonb
+            ) as ok
+          `;
+          return res[0]?.ok === true;
+        } else {
+          if (bucket && bucket !== "documentos-identidade") return false;
+          const res = await sql`
+            select 1 from privado.verificacao_identidade
+             where id = ${verificacaoId}::uuid
+               and expurgo_pedido_em is not null
+          `;
+          return Boolean(res[0]);
+        }
       } finally {
         await sql.end({ timeout: 2 });
       }
@@ -250,6 +281,26 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
       await sqlClient.removerDaFila(msg.msg_id).catch(() => {});
       pendentes.push({ verificacao_id: "", msg_id: msg.msg_id, status: 422, read_ct: msg.read_ct });
       continue;
+    }
+
+    // Validação prévia de elegibilidade e posse do expurgo (Achado 4 Lince Codex)
+    // Confere mídia, estado elegível, bucket e caminhos antes de qualquer exclusão no Storage.
+    if (sqlClient.validarExpurgo) {
+      let elegivel = false;
+      try {
+        elegivel = await sqlClient.validarExpurgo(msg.verificacao_id, msg.origem, msg.bucket, msg.caminhos);
+      } catch {
+        elegivel = false;
+      }
+      if (!elegivel) {
+        pendentes.push({
+          verificacao_id: msg.verificacao_id,
+          msg_id: msg.msg_id,
+          status: 409,
+          read_ct: msg.read_ct,
+        });
+        continue;
+      }
     }
 
     let todosAusentes = true;
