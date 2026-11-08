@@ -11,8 +11,8 @@
 --   · auth.sessions guarda o último IP e o user_agent de cada sessão enquanto ela existir, e o Auth só apaga
 --     sessão com not_after ou com timebox/inactivity_timeout, que o Frila não configura.
 --
--- A rotina diária própria (agendamento novo; executar_retencao_diaria não muda) apaga, em lotes com SKIP LOCKED
--- e teto por execução, com piso de 6 meses que nenhum parâmetro encurta:
+-- A rotina diária própria (agendamento novo; executar_retencao_diaria não muda) apaga, em lotes com teto por
+-- execução, com piso de 6 meses que nenhum parâmetro encurta:
 --   (a) a trilha com mais de 6 meses;
 --   (b) a trilha de conta excluída, de qualquer idade: actor_id de conta que não existe mais, ou traits.user_id
 --       de conta que não existe mais (a linha user_deleted, que guarda o e-mail apagado);
@@ -41,8 +41,9 @@ declare
   v_trilha_conta_excluida integer := 0;
   v_sessoes_paradas       integer := 0;
   v_falhas                jsonb := '[]'::jsonb;
-  -- Teto por etapa e por execução: 100 lotes (100 mil linhas com o lote padrão). O resto sai na rodada seguinte.
+  -- Teto por etapa e por execução: 100 lotes. O resto sai na rodada seguinte.
   c_teto_lotes constant integer := 100;
+  c_teto_lote  constant integer := 10000;
   c_conta_nula constant text := '00000000-0000-0000-0000-000000000000';
   c_uuid       constant text := '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 begin
@@ -53,65 +54,67 @@ begin
   if p_limite is null or p_limite < 1 then
     p_limite := 1000;
   end if;
+  p_limite := least(p_limite, c_teto_lote);
   v_limite_data := privado.agora() - make_interval(months => p_meses);
 
-  -- (a) Trilha do Auth com mais de 6 meses
-  begin
-    v_lotes := 0;
-    loop
-      with alvo as (
-        select x.id
-          from auth.audit_log_entries x
-         where x.created_at <= v_limite_data
-         limit p_limite
-         for update skip locked
-      )
-      delete from auth.audit_log_entries a using alvo where a.id = alvo.id;
-      get diagnostics v_lote = row_count;
-      v_trilha_antiga := v_trilha_antiga + v_lote;
-      v_lotes := v_lotes + 1;
-      exit when v_lote < p_limite or v_lotes >= c_teto_lotes;
-    end loop;
-  exception when others then
-    v_trilha_antiga := 0;
-    v_falhas := v_falhas || jsonb_build_object('etapa', 'trilha_antiga', 'sqlstate', sqlstate);
-  end;
+  -- Cada lote roda num bloco próprio: o erro (privilégio no esquema auth do hospedado, trava, statement_timeout)
+  -- desfaz só aquele lote, fica registrado e encerra a etapa; os lotes anteriores e as outras etapas ficam.
+  -- Todos rodam na transação da chamada (o pg_cron confirma no fim), como no #430.
 
-  -- (b) Trilha de conta excluída, de qualquer idade. O CASE garante que só um uuid válido vira uuid.
-  begin
-    v_lotes := 0;
-    loop
-      with alvo as (
-        select x.id
-          from auth.audit_log_entries x
-         where (x.payload->>'actor_id' ~* c_uuid
-                and x.payload->>'actor_id' <> c_conta_nula
-                and not exists (select 1 from auth.users u
-                                 where u.id = case when x.payload->>'actor_id' ~* c_uuid
-                                                   then (x.payload->>'actor_id')::uuid end))
-            or (x.payload->'traits'->>'user_id' ~* c_uuid
-                and not exists (select 1 from auth.users u
-                                 where u.id = case when x.payload->'traits'->>'user_id' ~* c_uuid
-                                                   then (x.payload->'traits'->>'user_id')::uuid end))
-         limit p_limite
-         for update skip locked
-      )
-      delete from auth.audit_log_entries a using alvo where a.id = alvo.id;
+  -- (a) Trilha do Auth com mais de 6 meses. Sem FOR UPDATE: o Auth só insere na trilha, ninguém trava linha
+  --     dela, e assim a etapa pede só SELECT e DELETE (Lince no #442, R-1).
+  v_lotes := 0;
+  loop
+    begin
+      delete from auth.audit_log_entries a
+       where a.id in (select x.id from auth.audit_log_entries x
+                       where x.created_at <= v_limite_data
+                       limit p_limite);
       get diagnostics v_lote = row_count;
-      v_trilha_conta_excluida := v_trilha_conta_excluida + v_lote;
-      v_lotes := v_lotes + 1;
-      exit when v_lote < p_limite or v_lotes >= c_teto_lotes;
-    end loop;
-  exception when others then
-    v_trilha_conta_excluida := 0;
-    v_falhas := v_falhas || jsonb_build_object('etapa', 'trilha_conta_excluida', 'sqlstate', sqlstate);
-  end;
+    exception when others or query_canceled then
+      v_falhas := v_falhas || jsonb_build_object('etapa', 'trilha_antiga', 'sqlstate', sqlstate);
+      exit;
+    end;
+    v_trilha_antiga := v_trilha_antiga + v_lote;
+    v_lotes := v_lotes + 1;
+    exit when v_lote < p_limite or v_lotes >= c_teto_lotes;
+  end loop;
+
+  -- (b) Trilha de conta excluída, de qualquer idade: actor_id OU traits.user_id de conta que não existe mais.
+  --     O CASE garante que só um uuid válido vira uuid. Sem FOR UPDATE, pelo mesmo motivo de (a).
+  v_lotes := 0;
+  loop
+    begin
+      delete from auth.audit_log_entries a
+       where a.id in (
+         select x.id
+           from auth.audit_log_entries x
+          where (x.payload->>'actor_id' ~* c_uuid
+                 and x.payload->>'actor_id' <> c_conta_nula
+                 and not exists (select 1 from auth.users u
+                                  where u.id = case when x.payload->>'actor_id' ~* c_uuid
+                                                    then (x.payload->>'actor_id')::uuid end))
+             or (x.payload->'traits'->>'user_id' ~* c_uuid
+                 and not exists (select 1 from auth.users u
+                                  where u.id = case when x.payload->'traits'->>'user_id' ~* c_uuid
+                                                    then (x.payload->'traits'->>'user_id')::uuid end))
+          limit p_limite);
+      get diagnostics v_lote = row_count;
+    exception when others or query_canceled then
+      v_falhas := v_falhas || jsonb_build_object('etapa', 'trilha_conta_excluida', 'sqlstate', sqlstate);
+      exit;
+    end;
+    v_trilha_conta_excluida := v_trilha_conta_excluida + v_lote;
+    v_lotes := v_lotes + 1;
+    exit when v_lote < p_limite or v_lotes >= c_teto_lotes;
+  end loop;
 
   -- (c) Só as sessões sem atividade há mais de 6 meses. refreshed_at é timestamp sem fuso, em UTC.
-  --     Sessão sem nenhuma das três datas fica (greatest de nulos é nulo).
-  begin
-    v_lotes := 0;
-    loop
+  --     Sessão sem nenhuma das três datas fica (greatest de nulos é nulo). Aqui o FOR UPDATE SKIP LOCKED fica:
+  --     o Auth atualiza a sessão na renovação, e a rotina não espera por ela. Pede UPDATE em auth.sessions.
+  v_lotes := 0;
+  loop
+    begin
       with alvo as (
         select s.id
           from auth.sessions s
@@ -121,21 +124,21 @@ begin
       )
       delete from auth.sessions s using alvo where s.id = alvo.id;
       get diagnostics v_lote = row_count;
-      v_sessoes_paradas := v_sessoes_paradas + v_lote;
-      v_lotes := v_lotes + 1;
-      exit when v_lote < p_limite or v_lotes >= c_teto_lotes;
-    end loop;
-  exception when others then
-    v_sessoes_paradas := 0;
-    v_falhas := v_falhas || jsonb_build_object('etapa', 'sessoes_paradas', 'sqlstate', sqlstate);
-  end;
+    exception when others or query_canceled then
+      v_falhas := v_falhas || jsonb_build_object('etapa', 'sessoes_paradas', 'sqlstate', sqlstate);
+      exit;
+    end;
+    v_sessoes_paradas := v_sessoes_paradas + v_lote;
+    v_lotes := v_lotes + 1;
+    exit when v_lote < p_limite or v_lotes >= c_teto_lotes;
+  end loop;
 
   -- Falha registrada sem dado pessoal; o registro também não derruba a rotina.
   if jsonb_array_length(v_falhas) > 0 then
     begin
       perform privado.registrar_falha_execucao('limpar_trilha_e_sessoes_auth', 'limpeza_auth_falhou',
                                                jsonb_build_object('falhas', v_falhas));
-    exception when others then
+    exception when others or query_canceled then
       null;
     end;
   end if;
@@ -150,7 +153,7 @@ begin
 end $$;
 
 comment on function privado.limpar_trilha_e_sessoes_auth(integer, integer) is
-  'Rotina diária própria (pg_cron limpar_trilha_e_sessoes_auth): apaga a trilha do Auth com mais de 6 meses, a trilha de conta excluída (actor_id ou traits.user_id de conta que não existe mais) de qualquer idade, e só as sessões sem atividade há mais de 6 meses (com refresh_tokens e mfa_amr_claims em cascata). Piso de 6 meses que nenhum parâmetro encurta; lotes com SKIP LOCKED e teto de 100 por etapa. Erro de uma etapa (privilégio no esquema auth do hospedado, trava) não derruba as outras: vira registro em privado.falha_execucao, só com etapa e SQLSTATE. Base: LGPD art. 16 e ROPA linha 2 (e-mail apagado na exclusão), jurídico em frila-docs #182.';
+  'Rotina diária própria (pg_cron limpar_trilha_e_sessoes_auth): apaga a trilha do Auth com mais de 6 meses, a trilha de conta excluída (actor_id ou traits.user_id de conta que não existe mais) de qualquer idade, e só as sessões sem atividade há mais de 6 meses (com refresh_tokens e mfa_amr_claims em cascata). Piso de 6 meses que nenhum parâmetro encurta; lote de até 10 mil e teto de 100 lotes por etapa; FOR UPDATE SKIP LOCKED só nas sessões. Erro de um lote (privilégio no esquema auth do hospedado, trava, statement_timeout) encerra só aquela etapa e vira registro em privado.falha_execucao, só com etapa e SQLSTATE. Privilégios do dono: SELECT e DELETE em auth.audit_log_entries, SELECT, UPDATE e DELETE em auth.sessions, SELECT em auth.users. Base: LGPD art. 16 e ROPA linha 2 (e-mail apagado na exclusão), jurídico em frila-docs #182.';
 
 revoke all on function privado.limpar_trilha_e_sessoes_auth(integer, integer) from public, anon, authenticated;
 grant execute on function privado.limpar_trilha_e_sessoes_auth(integer, integer) to service_role;
