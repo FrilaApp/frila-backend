@@ -17,7 +17,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 set local frila.agora = '2026-10-01 12:00:00-03';
-select plan(26);
+select plan(31);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb
 language plpgsql as $$
@@ -208,6 +208,11 @@ select is(
   'c7000000-0000-4000-8000-000000000010',
   'equipes_de_confianca traz o ID do estabelecimento');
 
+select is(
+  ((select c from res_crit)->>'contestacao'),
+  null,
+  'contestacao é null quando o profissional ainda não contestou (0.2.62, RF27)');
+
 -- ── 4. Caminho feliz: pedir_revisao_despacho ───────────────────────────────────
 
 create temp table res_rev as select
@@ -255,6 +260,31 @@ select is(
     'ocorrencia_id', ((select p from res_rev)->>'ocorrencia_id')
   ),
   'o payload da fila email contém exatamente tipo e ocorrencia_id (sem relato nem dados pessoais, RN15)');
+
+-- ── 5. criterios_de_notificacao após contestação (0.2.62, RF27) ─────────────────
+
+create temp table res_crit_apos as select
+  pg_temp.como('c7000000-0000-4000-8000-000000000001',
+               'select public.criterios_de_notificacao()') as c;
+
+select is(
+  ((select c from res_crit_apos)->'contestacao'->>'tipo'),
+  'revisao_despacho',
+  'criterios_de_notificacao devolve protocolo com tipo revisao_despacho após contestação');
+
+select is(
+  ((select c from res_crit_apos)->'contestacao'->>'ocorrencia_id'),
+  ((select p from res_rev)->>'ocorrencia_id'),
+  'protocolo em contestacao aponta para a mesma ocorrencia_id');
+
+select ok(
+  ((select c from res_crit_apos)->'contestacao'->>'criada_em') is not null,
+  'protocolo em contestacao traz criada_em');
+
+select is(
+  ((select c from res_crit_apos)->'contestacao'->>'prazo_resposta_ate'),
+  to_char(privado.prazo_de_resposta(privado.agora()), 'YYYY-MM-DD'),
+  'protocolo em contestacao traz prazo_resposta_ate em 5 dias úteis');
 
 select * from finish();
 rollback;
