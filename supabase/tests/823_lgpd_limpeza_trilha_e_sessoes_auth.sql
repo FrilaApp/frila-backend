@@ -6,7 +6,7 @@
 begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-08 12:00:00+00', true);
-select plan(25);
+select plan(28);
 
 -- Base limpa dentro da transação (desfeita no fim): só as linhas deste teste contam.
 delete from auth.audit_log_entries;
@@ -53,6 +53,13 @@ select pg_temp.trilha('c8230000-0000-4000-8000-0000000000a8', interval '6 months
   '{"action":"login","actor_id":"c8230000-0000-4000-8000-000000000001"}');
 select pg_temp.trilha('c8230000-0000-4000-8000-0000000000a9', interval '6 months' + interval '1 day',
   '{"action":"login","actor_id":"c8230000-0000-4000-8000-000000000001"}');
+-- Casos cruzados do OU: basta um dos dois lados ser conta excluída.
+select pg_temp.trilha('c8230000-0000-4000-8000-0000000000aa', interval '1 day',
+  '{"action":"user_modified","actor_id":"c8230000-0000-4000-8000-000000000002",
+    "traits":{"user_id":"c8230000-0000-4000-8000-000000000001"}}');
+select pg_temp.trilha('c8230000-0000-4000-8000-0000000000ab', interval '1 day',
+  '{"action":"user_modified","actor_id":"c8230000-0000-4000-8000-000000000001",
+    "traits":{"user_id":"c8230000-0000-4000-8000-000000000002"}}');
 
 -- Sessões (criada, renovada, atualizada)
 select pg_temp.sessao('c8230000-0000-4000-8000-0000000000b1', '1 year', '7 months', '7 months');
@@ -74,7 +81,7 @@ values ('00000000-0000-0000-0000-000000000000', 'zz823-b1', 'c8230000-0000-4000-
 create temp table r as select privado.limpar_trilha_e_sessoes_auth(1, 1000) as j;
 select results_eq($$ select (j->>'trilha_antiga')::int, (j->>'trilha_conta_excluida')::int,
                             (j->>'sessoes_paradas')::int, j->'falhas' from r $$,
-  $$ values (2, 2, 2, '[]'::jsonb) $$, 'devolve as três contagens, sem falha');
+  $$ values (2, 4, 2, '[]'::jsonb) $$, 'devolve as três contagens, sem falha');
 select ok(not pg_temp.existe('c8230000-0000-4000-8000-0000000000a1'), '(a) trilha de 7 meses sai');
 select ok(not pg_temp.existe('c8230000-0000-4000-8000-0000000000a9'), '(a) trilha de 6 meses e 1 dia sai');
 select ok(pg_temp.existe('c8230000-0000-4000-8000-0000000000a8'), '(a) trilha de 6 meses menos 1 dia fica');
@@ -83,6 +90,8 @@ select ok(not pg_temp.existe('c8230000-0000-4000-8000-0000000000a3'), '(b) trilh
 select ok(not pg_temp.existe('c8230000-0000-4000-8000-0000000000a4'),
   '(b) user_deleted com o e-mail da conta excluída em traits sai');
 select ok(pg_temp.existe('c8230000-0000-4000-8000-0000000000a5'), 'ação de admin sobre conta que existe fica');
+select ok(not pg_temp.existe('c8230000-0000-4000-8000-0000000000aa'), '(b) ator excluído com traits de conta viva sai');
+select ok(not pg_temp.existe('c8230000-0000-4000-8000-0000000000ab'), '(b) ator vivo com traits de conta excluída sai');
 select ok(pg_temp.existe('c8230000-0000-4000-8000-0000000000a6') and pg_temp.existe('c8230000-0000-4000-8000-0000000000a7'),
   'actor_id que não é uuid, ou ausente, fica até os 6 meses');
 select ok(not pg_temp.tem_sessao('c8230000-0000-4000-8000-0000000000b1'), '(c) sessão renovada há 7 meses sai');
@@ -121,6 +130,11 @@ select results_eq($$ select codigo, detalhes::text !~ '@' from privado.falha_exe
 drop trigger zz_823_nega on auth.audit_log_entries;
 
 -- ── Agendamento e permissão ──────────────────────────────────────────────────
+-- FOR UPDATE pede UPDATE na tabela: só a etapa das sessões trava linha, e a trilha pede só SELECT e DELETE
+-- (Lince no #442, R-1). A prova com um papel que tem só esses privilégios é feita fora daqui, como superusuário.
+select is((select (length(c.codigo) - length(replace(c.codigo, 'for update skip locked', ''))) / length('for update skip locked')
+             from pg_proc p, lateral (select lower(regexp_replace(p.prosrc, '--[^\n]*', '', 'g')) as codigo) c where p.oid = 'privado.limpar_trilha_e_sessoes_auth(integer, integer)'::regprocedure),
+  1, 'só a etapa das sessões usa FOR UPDATE SKIP LOCKED');
 select results_eq($$ select schedule, command from cron.job where jobname = 'limpar_trilha_e_sessoes_auth' $$,
   $$ values ('23 4 * * *'::text, 'select privado.limpar_trilha_e_sessoes_auth()'::text) $$,
   'agendamento próprio às 04:23 UTC');
