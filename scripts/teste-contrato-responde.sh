@@ -129,6 +129,11 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:fazerCheckin:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:fazerCheckout:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:confirmarCheckinManual:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:gerarCodigoCheckin:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:gerarCodigoCheckin:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:gerarCodigoCheckin:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:gerarCodigoCheckin:409","corpo":{"status":409,"code":"checkin_ja_confirmado"}}
+{"op":"promete:gerarCodigoCheckin:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
 {"op":"promete:reabrirPorAtraso:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:avaliar:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:bloquear:401","corpo":{"status":401,"code":"nao_autenticado"}}
