@@ -33,6 +33,10 @@ comment on column public.dispositivo.versao_app is
 alter table public.vaga
   add column if not exists vaga_origem_id uuid references public.vaga(id) on delete set null;
 
+create unique index if not exists vaga_vaga_origem_id_unica
+  on public.vaga (vaga_origem_id)
+  where vaga_origem_id is not null;
+
 comment on column public.vaga.vaga_origem_id is
   'Vaga direta original a partir da qual esta vaga pública foi convertida (0.2.56, RN35).';
 
@@ -40,6 +44,7 @@ comment on column public.vaga.vaga_origem_id is
 drop function if exists public.registrar_dispositivo(text, text);
 drop function if exists public.registrar_dispositivo(text, text, text);
 
+-- contrato: corpo-sem-mudanca-de-superficie public.registrar_dispositivo 0.2.61
 create or replace function public.registrar_dispositivo(
   token_fcm text default null,
   plataforma text default null,
@@ -205,6 +210,7 @@ revoke execute on function public.definir_preferencia_chamadas(boolean, date, in
 grant  execute on function public.definir_preferencia_chamadas(boolean, date, int, text, boolean) to authenticated;
 
 -- ── 2. Função chamar_profissional ampliada com B5c, B5d e B5e ─────────────────
+-- contrato: corpo-sem-mudanca-de-superficie public.chamar_profissional 0.2.61
 create or replace function public.chamar_profissional(
   chave uuid default null, profissional_id uuid default null, estabelecimento_id uuid default null,
   vaga_id uuid default null, funcao_id uuid default null, inicio_em timestamptz default null,
@@ -906,7 +912,8 @@ begin
     perform public.erro(422, 'campo_obrigatorio', 'chave');
   end if;
 
-  select * into v_orig from public.vaga where id = publicar_a_partir_da_chamada.vaga_id;
+  -- Trava exclusiva na vaga de origem para serializar tentativas concorrentes de conversão
+  select * into v_orig from public.vaga where id = publicar_a_partir_da_chamada.vaga_id for update;
   if not found then perform public.erro(404, 'nao_encontrado'); end if;
   if not privado.eh_membro(v_orig.estabelecimento_id) then perform public.erro(403, 'sem_permissao'); end if;
 
@@ -945,18 +952,28 @@ begin
   end if;
 
   -- Cria vaga normal pública apontando para a vaga direta original
-  insert into public.vaga (
-    estabelecimento_id, funcao_id, inicio_em, fim_em, local, regiao_administrativa, ponto,
-    valor_centavos, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio,
-    responsavel_local, modo, publicado_por, publicado_em, chave_cliente, origem, vaga_origem_id
-  )
-  values (
-    v_orig.estabelecimento_id, v_orig.funcao_id, v_orig.inicio_em, v_orig.fim_em, v_orig.local,
-    v_orig.regiao_administrativa, v_orig.ponto, v_orig.valor_centavos, 1, v_orig.inclui_refeicao,
-    v_orig.inclui_transporte, v_orig.exige_material_proprio, v_orig.responsavel_local,
-    v_modo, v_uid, v_agora, publicar_a_partir_da_chamada.chave, 'publicacao', v_orig.id
-  )
-  returning * into v_nova;
+  begin
+    insert into public.vaga (
+      estabelecimento_id, funcao_id, inicio_em, fim_em, local, regiao_administrativa, ponto,
+      valor_centavos, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio,
+      responsavel_local, modo, publicado_por, publicado_em, chave_cliente, origem, vaga_origem_id
+    )
+    values (
+      v_orig.estabelecimento_id, v_orig.funcao_id, v_orig.inicio_em, v_orig.fim_em, v_orig.local,
+      v_orig.regiao_administrativa, v_orig.ponto, v_orig.valor_centavos, 1, v_orig.inclui_refeicao,
+      v_orig.inclui_transporte, v_orig.exige_material_proprio, v_orig.responsavel_local,
+      v_modo, v_uid, v_agora, publicar_a_partir_da_chamada.chave, 'publicacao', v_orig.id
+    )
+    returning * into v_nova;
+  exception when unique_violation then
+    -- Em caso de colisão concorrente por vaga_origem_id ou chave_cliente, recupera a vaga convertida
+    select * into v_nova from public.vaga where vaga_origem_id = v_orig.id;
+    if found then
+      select array_agg(p.id order by p.id) into v_posicoes from public.posicao p where p.vaga_id = v_nova.id;
+      return jsonb_build_object('vaga_id', v_nova.id, 'posicoes', to_jsonb(coalesce(v_posicoes, '{}'::uuid[])));
+    end if;
+    raise;
+  end;
 
   insert into public.posicao (vaga_id, inicio_em, fim_em)
   values (v_nova.id, v_nova.inicio_em, v_nova.fim_em)
@@ -998,6 +1015,33 @@ revoke execute on function public.publicar_a_partir_da_chamada(uuid, uuid, text)
 grant  execute on function public.publicar_a_partir_da_chamada(uuid, uuid, text) to authenticated;
 
 -- ── 6. Consolidação de privado.meus_dados (0.2.58 e 0.2.59) ────────────────────
+create or replace function privado.perfil_com_servicos(prof public.profissional) returns jsonb
+language sql stable set search_path = '' as $$
+ select public.perfil_profissional_em_json(prof) || jsonb_build_object(
+  'apresentacao', prof.apresentacao, 'onde_trabalhei', prof.onde_trabalhei, 'experiencia_faixa', prof.experiencia_faixa,
+  'cursos', to_jsonb(coalesce(prof.cursos, '{}'::text[])), 'idiomas', to_jsonb(coalesce(prof.idiomas, '{}'::text[])),
+  'atende_todo_df', prof.atende_todo_df,
+  'regioes', coalesce((select jsonb_agg(to_jsonb(r) order by r.id) from public.profissional_regiao pr
+    join public.regiao_administrativa r on r.id = pr.regiao_id where pr.profissional_id = prof.id), '[]'::jsonb),
+  'servicos', coalesce((select jsonb_agg(jsonb_strip_nulls(to_jsonb(s) - array['profissional_id','funcao_id','extras','atualizado_em']) ||
+    jsonb_build_object('funcao', to_jsonb(f) - 'ativo', 'especialidades', coalesce((select jsonb_agg(to_jsonb(e) order by e.nome)
+      from public.profissional_servico_especialidade se join public.especialidade e on e.id = se.especialidade_id
+      where se.profissional_id = s.profissional_id and se.funcao_id = s.funcao_id), '[]'::jsonb)) order by f.nome)
+    from public.profissional_servico s join public.funcao f on f.id = s.funcao_id
+    where s.profissional_id = prof.id), '[]'::jsonb))
+  || coalesce(
+    (select jsonb_build_object('preferencia_chamadas', jsonb_build_object(
+      'aceita_de_quem_ja_trabalhou', pref.aceita_de_quem_ja_trabalhou,
+      'pausado_ate', pref.pausado_ate,
+      'antecedencia_minima_h', pref.antecedencia_minima_h,
+      'aceita_de', pref.aceita_de
+    ))
+    from public.profissional_preferencia_chamada pref
+    where pref.profissional_id = prof.id),
+    '{}'::jsonb
+  )
+$$;
+
 create or replace function privado.meus_dados(p_usuario uuid)
 returns jsonb
 language sql

@@ -20,7 +20,7 @@ on conflict (chave) do update set ligado = true;
 select set_config('frila.agora', '2026-11-20 14:00:00-03', true);
 set local frila.agendador_secret = 'segredo-de-teste';
 
-select plan(42);
+select plan(48);
 
 -- Helpers
 create function pg_temp.executar(conta uuid, sql text) returns void language plpgsql as $$
@@ -684,6 +684,119 @@ select is(
   true,
   'Exportacao 0.2.59: meus_dados contem colecao midias'
 );
+
+-- 5.4 Preferência configurada na exportação (0.2.56 / 0.2.58)
+select is(
+  ((select d from exp_prof) -> 'perfil_profissional' ? 'preferencia_chamadas'),
+  true,
+  'Exportacao 0.2.58: perfil_profissional contem preferencia_chamadas'
+);
+select is(
+  ((select d from exp_prof) -> 'perfil_profissional' -> 'preferencia_chamadas' ->> 'antecedencia_minima_h')::int,
+  6,
+  'Exportacao 0.2.58: preferencia_chamadas traz antecedencia_minima_h correta'
+);
+select is(
+  ((select d from exp_prof) -> 'perfil_profissional' -> 'preferencia_chamadas' ->> 'aceita_de'),
+  'todos',
+  'Exportacao 0.2.58: preferencia_chamadas traz aceita_de'
+);
+
+-- 6. Garantias de Atomicidade e Retenção (Bloqueios e Observações R1)
+-- 6.1 Índice único para impedir conversão concorrente duplicada
+select has_index(
+  'public',
+  'vaga',
+  'vaga_vaga_origem_id_unica',
+  'vaga_origem_id',
+  'vaga possui indice unico em vaga_origem_id impedindo duplicidade'
+);
+
+-- 6.2 Lembrete não gera notificação para chamada já vencida
+do $$
+declare
+  v_vaga_id uuid;
+  v_chamada_vencida uuid;
+begin
+  insert into public.vaga (
+    estabelecimento_id, funcao_id, inicio_em, fim_em, local, regiao_administrativa, ponto,
+    valor_centavos, posicoes, publicado_por, modo, origem, chave_cliente,
+    inclui_refeicao, inclui_transporte, exige_material_proprio, responsavel_local
+  )
+  select
+    '80900000-0000-4000-8000-000000000021'::uuid, id, '2026-11-20 18:00:00-03', '2026-11-20 23:00:00-03',
+    'Local', 'Lago Sul', 'POINT(-47.8825 -15.7942)'::extensions.geography, 15000, 1,
+    '80900000-0000-4000-8000-000000000003'::uuid, 'urgencia', 'chamada_direta', gen_random_uuid(),
+    false, false, false, 'Responsavel Local'
+  from public.funcao limit 1
+  returning id into v_vaga_id;
+
+  -- Insere chamada com lembrete e expiração no passado
+  insert into public.chamada (vaga_id, profissional_id, estabelecimento_id, criada_por,
+                              expira_em, lembrete_em, criada_em, chave)
+  values (
+    v_vaga_id,
+    '80900000-0000-4000-8000-000000000012'::uuid,
+    '80900000-0000-4000-8000-000000000021'::uuid,
+    '80900000-0000-4000-8000-000000000003'::uuid,
+    '2026-11-20 12:00:00-03'::timestamptz,
+    '2026-11-20 11:00:00-03'::timestamptz,
+    '2026-11-20 10:00:00-03'::timestamptz,
+    gen_random_uuid()
+  )
+  returning id into v_chamada_vencida;
+
+  -- Executa lembretes: agora é 14h, chamada expirou às 12h
+  perform privado.lembrar_chamadas();
+
+  -- Verifica que NÃO gerou notificação de lembrete
+  assert not exists (
+    select 1 from public.notificacao
+     where tipo = 'chamada_lembrete' and referencia_id = v_chamada_vencida
+  ), 'chamada vencida nao deve gerar notificacao de lembrete';
+end $$;
+select pass('Lembretes: chamada vencida nao gera notificacao de lembrete');
+
+-- 6.3 Retenção LGPD F2 em limpar_contas_anonimizadas
+do $$
+declare
+  v_uid_anon uuid := '80900000-0000-4000-8000-000000000005'::uuid;
+  v_prof_id  uuid;
+begin
+  -- Cria profissional para a conta v_uid_anon
+  insert into public.profissional (usuario_id, ponto_base, apresentacao, onde_trabalhei, experiencia_faixa, cursos, idiomas)
+  values (
+    v_uid_anon,
+    'POINT(-47.8825 -15.7942)'::extensions.geography,
+    'Texto teste',
+    'Lugar teste',
+    'de_3_a_5_anos',
+    array['Curso teste'],
+    array['espanhol']
+  )
+  returning id into v_prof_id;
+
+  -- Simula conta anonimizada há mais de 16 dias
+  update public.usuario
+     set estado = 'anonimizada',
+         anonimizado_em = '2026-11-01 10:00:00-03'::timestamptz
+   where id = v_uid_anon;
+
+  -- Roda limpeza com retenção de 15 dias
+  perform privado.limpar_contas_anonimizadas(15);
+
+  -- Confere que todos os 5 campos F2 foram limpos (NULL)
+  assert exists (
+    select 1 from public.profissional
+     where id = v_prof_id
+       and apresentacao is null
+       and onde_trabalhei is null
+       and experiencia_faixa is null
+       and cursos is null
+       and idiomas is null
+  ), 'limpar_contas_anonimizadas deve zerar todos os campos F2 do profissional';
+end $$;
+select pass('Retencao F2: limpar_contas_anonimizadas zera apresentacao, cursos e idiomas');
 
 select * from finish();
 rollback;
