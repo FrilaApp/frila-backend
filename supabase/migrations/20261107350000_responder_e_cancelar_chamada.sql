@@ -580,6 +580,11 @@ begin
        and (
          u.nascimento is not null
          or p.ponto_base is not null
+         or p.apresentacao is not null
+         or p.onde_trabalhei is not null
+         or p.experiencia_faixa is not null
+         or p.cursos is not null
+         or p.idiomas is not null
          or exists (select 1 from public.disponibilidade d where d.profissional_id = p.id)
          or exists (select 1 from public.profissional_funcao pf where pf.profissional_id = p.id)
          or exists (select 1 from public.dispositivo disp where disp.usuario_id = u.id)
@@ -641,7 +646,12 @@ begin
       delete from public.disponibilidade where profissional_id = v_candidato.profissional_id;
       delete from public.profissional_funcao where profissional_id = v_candidato.profissional_id;
       update public.profissional
-         set ponto_base = null
+         set ponto_base = null,
+             apresentacao = null,
+             onde_trabalhei = null,
+             experiencia_faixa = null,
+             cursos = null,
+             idiomas = null
        where id = v_candidato.profissional_id;
     end if;
 
