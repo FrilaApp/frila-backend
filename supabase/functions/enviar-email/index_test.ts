@@ -1261,3 +1261,28 @@ Deno.test("enviar-email: corpo com JSON quebrado assume parametros padrao sem fa
 
 
 
+
+// B-DEMO: frila.app não é do Frila (não tem MX e aponta para IPs de terceiro). Nenhum modelo
+// pode mandar quem lê o e-mail para lá.
+Deno.test("B-DEMO: a assinatura de todo modelo aponta para frilabr.com, nunca para frila.app", () => {
+  const d: DadosDaOcorrencia = {
+    ocorrencia_id: "00000000-0000-4000-8000-0000000000aa",
+    tipo: "denuncia",
+    motivo: "outro",
+    criada_em: "2026-11-08T12:00:00Z",
+    prazo_resposta_ate: "2026-11-15",
+  };
+  const mensagens = [
+    denunciaParaEquipe(d),
+    denunciaParaAutor(d),
+    contestacaoParaEquipe(d),
+    contestacaoParaAutor(d),
+    revisaoDespachoParaEquipe(d),
+    revisaoDespachoParaAutor(d),
+    alertaParaEquipe("teste_assinatura", 1),
+  ];
+  for (const m of mensagens) {
+    assert(m.texto.endsWith("Equipe Frila\nfrilabr.com"), m.assunto);
+    assertEquals(/frila\.app/i.test(`${m.assunto}\n${m.texto}`), false, m.assunto);
+  }
+});
