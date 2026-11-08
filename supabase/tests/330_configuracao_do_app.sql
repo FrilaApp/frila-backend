@@ -85,14 +85,15 @@ select is(
     'versao_minima',      '0.1.0',
     'versao_recomendada', '0.1.0',
     'url_da_loja',        'https://apps.apple.com/app/id6815311991',
-    'mensagem',           null),
+    'mensagem',           null,
+    'recursos',           jsonb_build_object('foto_de_perfil', false, 'chamada_direta', false, 'perfil_rico', false)),
   'anon lê a configuração do iOS: a mínima inicial é a versão do build de hoje, e não bloqueia ninguém');
 
 select is(
   (select array_agg(k order by k)
      from jsonb_object_keys(pg_temp.anonimo($$ select public.configuracao_do_app('ios') $$)) k),
-  array['mensagem','plataforma','url_da_loja','versao_minima','versao_recomendada'],
-  'ConfiguracaoDoApp: os cinco campos do contrato, e mensagem presente mesmo nula');
+  array['mensagem','plataforma','recursos','url_da_loja','versao_minima','versao_recomendada'],
+  'ConfiguracaoDoApp: os cinco campos do contrato, mensagem presente mesmo nula, e os recursos (0.2.54)');
 
 select is(
   pg_temp.anonimo($$ select public.configuracao_do_app('ios') $$) -> 'mensagem',
@@ -117,7 +118,8 @@ select is(
     'versao_minima',      '1.2.10',
     'versao_recomendada', '1.3.0',
     'url_da_loja',        'https://apps.apple.com/app/id6815311991',
-    'mensagem',           'Corrigimos um defeito grave. Atualize para continuar.'),
+    'mensagem',           'Corrigimos um defeito grave. Atualize para continuar.',
+    'recursos',           jsonb_build_object('foto_de_perfil', false, 'chamada_direta', false, 'perfil_rico', false)),
   'subir a versão mínima na tabela muda a resposta na hora, sem deploy de app');
 
 select is(

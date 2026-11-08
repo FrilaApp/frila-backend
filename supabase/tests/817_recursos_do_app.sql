@@ -31,6 +31,9 @@ select is(pg_temp.recursos()->>'chamada_direta', 'true', 'chamada_direta ligada 
 select is(pg_temp.recursos()->>'perfil_rico', 'false', 'com chamada_direta ligada, perfil_rico continua false');
 update privado.recurso set ligado = false where chave = 'chamada_direta';
 
+insert into privado.configuracao_app (plataforma, versao_minima, versao_recomendada, url_da_loja)
+values ('android', '0.1.0', '0.1.0', 'https://play.google.com/store/apps/details?id=br.com.frila')
+on conflict (plataforma) do nothing;
 update privado.configuracao_app set foto_de_perfil = true where plataforma = 'ios';
 select is(pg_temp.recursos()->>'foto_de_perfil', 'true', 'foto_de_perfil ligada no iOS chega ao app iOS');
 select is(public.configuracao_do_app('android')#>>'{recursos,foto_de_perfil}', 'false',
