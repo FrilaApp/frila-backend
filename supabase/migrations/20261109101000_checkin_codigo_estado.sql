@@ -15,9 +15,10 @@ select set_config('lock_timeout', '2s', true);
 -- ── 1. A chave, global e por estabelecimento (RN46; leitura 6 do desenho) ─────
 -- O piloto liga o código só nas casas de teste, e privado.recurso é global. O recurso vale
 -- para um turno quando a chave global está ligada E a casa do turno está na lista. Fechado
--- por padrão: sem a linha, desligado. Ligar uma casa nunca é pelo painel, e nunca põe o UUID real
--- de uma casa em migração: casa de pessoa física ou MEI é dado pessoal. Usa as casas de teste ou
--- uma lista fora do repositório (Bússola, 08/11).
+-- por padrão: sem a linha, desligado. Casa de pessoa jurídica (não MEI) ou casa de teste da equipe
+-- entra por migração. Casa de pessoa física ou MEI, não: o insert em recurso_estabelecimento é feito
+-- no Prod por quem opera (service_role), e o registro de quem ligou, quando e qual casa fica fora do
+-- repositório (LGPD, art. 6º, III; AGENTS.md: "Nunca: commitar ... dado pessoal real"; Bússola, 08/11).
 
 insert into privado.recurso (chave, ligado) values ('checkin_por_codigo', false)
   on conflict (chave) do nothing;
@@ -31,6 +32,10 @@ alter table privado.recurso_estabelecimento enable row level security;
 revoke all on table privado.recurso_estabelecimento from public, anon, authenticated;
 comment on table privado.recurso_estabelecimento is
   'Estabelecimentos em que uma chave de privado.recurso vale (RN46). Hoje só o check-in por código lê esta lista; as outras chaves seguem globais. Guarda só a chave e o estabelecimento. Para casa de pessoa física ou MEI, é dado do contratante, com a finalidade de ligar o piloto.';
+comment on column privado.recurso_estabelecimento.chave is
+  'A chave de privado.recurso que vale para a casa.';
+comment on column privado.recurso_estabelecimento.estabelecimento_id is
+  'A casa em que a chave vale. Sai com o estabelecimento, em cascata.';
 
 create function privado.recurso_ligado_para(p_chave text, p_estabelecimento uuid) returns boolean
 language sql stable security definer set search_path = '' as $$
@@ -100,8 +105,11 @@ create table privado.checkin_codigo (
   bloqueado_ate   timestamptz,
   encerrado_em    timestamptz,
   constraint codigo_seis_digitos check (codigo ~ '^[0-9]{6}$'),
+  -- A validade nunca é nula e nunca passa do teto da regra (5 min); sem o `is not null`, o CHECK
+  -- daria nulo e passaria (B1 do Lince no #458).
   constraint codigo_com_validade check (
-    codigo is null or (gerado_em is not null and expira_em > gerado_em)),
+    codigo is null or (gerado_em is not null and expira_em is not null
+                       and expira_em > gerado_em and expira_em <= gerado_em + interval '300 seconds')),
   constraint erros_no_teto check (erros between 0 and 6),
   -- De mão dupla: a 6ª errada encerra, e só ela. Quem escreve grava as duas colunas no mesmo update.
   constraint encerrado_no_teto check ((erros = 6) = (encerrado_em is not null))
@@ -109,9 +117,11 @@ create table privado.checkin_codigo (
 alter table privado.checkin_codigo enable row level security;
 revoke all on table privado.checkin_codigo from public, anon, authenticated;
 comment on table privado.checkin_codigo is
-  'O check-in por código num turno (0.2.68): o código em vigor, o contador de tentativas erradas, o bloqueio, e duas marcas para a medição do piloto. Nasce no primeiro uso do caminho e sai 90 dias depois do fim do turno ou do fim da contestação, o que vier depois (LGPD, PR3). Não guarda quem gerou o código.';
+  'O check-in por código num turno (0.2.68): o código em vigor, o contador de tentativas erradas, o bloqueio, e duas marcas para a medição do piloto. Nasce no primeiro uso do caminho e sai 90 dias depois do mais tarde entre o fim do turno e o fim da contestação (LGPD, PR3). Não guarda quem gerou o código.';
 comment on column privado.checkin_codigo.codigo is
-  'Os 6 dígitos que a casa mostra. Vale só durante a validade (a validação confere expira_em) e sai do banco ao validar, ao gerar outro ou em até 1 minuto depois de vencer. Nunca sai em erro, log, aviso, resposta de terceiros, telemetria nem exportação.';
+  'Os 6 dígitos que a casa mostra. Vale só durante a validade (a validação confere expira_em) e sai do banco ao validar, ao gerar outro ou em até 1 minuto depois de vencer. Nunca sai em erro, log, aviso, resposta de terceiros, telemetria nem exportação. Essa garantia é das RPCs, e não do banco: o detalhe de um CHECK que falha nesta linha (Failing row contains) traz o código, e por isso gerar_codigo_checkin e validar_codigo_checkin capturam o check_violation e respondem sem o detalhe.';
+comment on column privado.checkin_codigo.turno_id is
+  'O turno do caminho do código. Apagar o turno apaga o estado e as tentativas, em cascata.';
 comment on column privado.checkin_codigo.gerado_em is
   'Quando a casa gerou o código em vigor. Vai para a tentativa como codigo_gerado_em, para medir o tempo entre gerar e ler.';
 comment on column privado.checkin_codigo.expira_em is
@@ -203,8 +213,9 @@ begin
   update privado.checkin_codigo c
      set erros         = c.erros + 1,
          bloqueado_ate = case when c.erros + 1 = c_erros_por_bloqueio
-                              then v_agora + make_interval(secs => (select r.bloqueio_s
-                                                                      from privado.regra_checkin_codigo r))
+                              -- Sem a linha da regra, vale o padrão de 5 min: o bloqueio nunca some.
+                              then v_agora + make_interval(secs => coalesce((select r.bloqueio_s
+                                                                               from privado.regra_checkin_codigo r), 300))
                               else c.bloqueado_ate end,
          encerrado_em  = case when c.erros + 1 = v_teto then v_agora end
    where c.turno_id = p_turno
