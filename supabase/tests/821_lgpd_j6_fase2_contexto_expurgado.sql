@@ -16,8 +16,12 @@
 --   R8     marca_notificacao órfã ou com mais de 5 anos sai; as outras ficam.
 --   R9     contadores do profissional iguais antes e depois do expurgo. O resíduo da
 --          reconciliação diária fica num todo() (cartão 8KFuT8UP).
---   Q3     posição sem turno da vaga expirada sai, com candidaturas e trilha.
+--   Q3     posição sem turno da vaga expirada sai, com candidaturas e trilha. A com falta fica
+--          (entra na leitura de reputação).
 --   FK     posição reaberta por atraso apontando para a original expurgada não derruba a rotina.
+--   Exclusão de conta: com a conta anonimizada há mais de 15 dias, esta rotina e
+--          limpar_contas_anonimizadas agem na mesma vaga e ocorrência sem desfazer uma à outra
+--          (a terceira rodada não reescreve a linha: ctid igual).
 --   Vaga com uma posição recente: nada muda. Piso de 5 anos não encurtável. Lote limitado e
 --   idempotente (a concorrência com SKIP LOCKED não cabe numa sessão pgTAP; ver o PR).
 
@@ -28,7 +32,7 @@ insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2026-11-08 12:00:00+00', true);
 set local timezone = 'UTC';
 
-select plan(62);
+select plan(70);
 
 -- ── 1. Catálogo ───────────────────────────────────────────────────────────────
 
@@ -73,6 +77,7 @@ declare
   a        timestamptz := privado.agora();
   v_c1     uuid := gen_random_uuid();   -- contratante ativo
   v_c2     uuid := gen_random_uuid();   -- contratante anonimizado ontem
+  v_c3     uuid := gen_random_uuid();   -- contratante anonimizado há 20 dias (limpar_contas age)
   v_p1u    uuid := gen_random_uuid();
   v_p2u    uuid := gen_random_uuid();
   v_p1     uuid;
@@ -97,7 +102,8 @@ begin
          (v_p1u, 'profissional', 'Profissional Um 821', '+5561999982102', 'p1_821@teste.com', '1990-01-01', '0.2.62', a),
          (v_p2u, 'profissional', 'Profissional Dois 821', '+5561999982103', 'p2_821@teste.com', '1991-01-01', '0.2.62', a);
   insert into public.usuario (id, perfil, nome, nascimento, termos_versao, termos_aceite_em, estado, anonimizado_em)
-  values (v_c2, 'contratante', 'Conta encerrada', '1980-01-01', '0.2.62', a, 'anonimizada', a - interval '1 day');
+  values (v_c2, 'contratante', 'Conta encerrada', '1980-01-01', '0.2.62', a, 'anonimizada', a - interval '1 day'),
+         (v_c3, 'contratante', 'Conta encerrada', '1980-01-01', '0.2.62', a, 'anonimizada', a - interval '20 days');
 
   insert into public.profissional (usuario_id, perfil, ponto_base)
   values (v_p1u, 'profissional', 'POINT(-47.88 -15.77)'::extensions.geography) returning id into v_p1;
@@ -111,7 +117,7 @@ begin
   insert into public.membro_estabelecimento (estabelecimento_id, usuario_id, papel)
   values (v_e1, v_c1, 'administrador');
 
-  insert into ids values ('c1', v_c1), ('c2', v_c2), ('p1', v_p1), ('p2', v_p2),
+  insert into ids values ('c1', v_c1), ('c2', v_c2), ('c3', v_c3), ('p1', v_p1), ('p2', v_p2),
                          ('p1u', v_p1u), ('p2u', v_p2u), ('e1', v_e1);
 
   -- VA: conta ativa, todas as posições terminaram há 5 anos e 1 dia.
@@ -162,6 +168,13 @@ begin
           (select id from ids where chave = 'pa3'))
   returning id into v_id;
   insert into ids values ('pa4', v_id);
+
+  -- PA5: falta sem turno (o fluxo não produz; a regra a preserva porque a reputação a lê).
+  insert into public.posicao (vaga_id, profissional_id, inicio_em, fim_em, estado, confirmado_em, falta)
+  values ((select id from ids where chave = 'va'), v_p2, v_fim - interval '6 hours', v_fim,
+          'cancelada', v_fim - interval '2 days', true)
+  returning id into v_id;
+  insert into ids values ('pa5_falta', v_id);
 
   -- Chamada aceita, despachos, ocultações e a denúncia que as motivou.
   insert into public.chamada (vaga_id, profissional_id, estabelecimento_id, criada_por, estado, recado,
@@ -241,6 +254,24 @@ begin
   insert into public.posicao (vaga_id, inicio_em, fim_em, estado)
   values (v_id, v_fim - interval '6 hours', v_fim, 'aberta');
 
+  -- VC3: conta anonimizada há 20 dias, vaga antiga com turno verificado de P1. As duas rotinas
+  -- agem nela: limpar_contas_anonimizadas no texto livre e esta no resto.
+  v_fim := a - interval '5 years' - interval '6 days';
+  execute v_vaga_sql into v_id
+    using v_e1, v_funcao, v_fim, 'Rua da Conta Encerrada, 7', 'Elisa', 'Bege', 'Casa da Elisa', v_c3;
+  insert into ids values ('vc3', v_id);
+  insert into public.posicao (vaga_id, profissional_id, inicio_em, fim_em, estado, confirmado_em)
+  values (v_id, v_p1, v_fim - interval '6 hours', v_fim, 'cumprida', v_fim - interval '2 days')
+  returning id into v_id;
+  insert into public.turno (posicao_id, valor_acordado_centavos, checkin_em, checkin_tipo, checkin_distancia_m, verificacao)
+  values (v_id, 15000, v_fim - interval '6 hours', 'geolocalizado', 40, 'verificado');
+  insert into public.despacho (vaga_id, profissional_id, criado_em)
+  values ((select id from ids where chave = 'vc3'), v_p2, v_fim - interval '4 days');
+  insert into public.ocorrencia (tipo, autor_id, estabelecimento_id, motivo, relato, criada_em)
+  values ('denuncia', v_c3, v_e1, 'outro', 'Relato da conta encerrada', a - interval '5 years' - interval '1 day')
+  returning id into v_id;
+  insert into ids values ('oc_c3', v_id);
+
   -- Ocorrências de R6.
   insert into public.ocorrencia (tipo, autor_id, usuario_id, motivo, relato, criada_em)
   values ('denuncia', v_p2u, v_c1, 'assedio', 'Relato com nome e telefone', a - interval '5 years' - interval '1 day')
@@ -273,7 +304,10 @@ begin
   values ('lembrete_24h', (select id from ids where chave = 'ta1'), v_p1u, 1, a - interval '5 years' - interval '2 days'),
          ('vaga', (select id from ids where chave = 'vf'), v_p1u, 1, a - interval '2 years' - interval '3 days'),
          ('lembrete_3h', '82100000-0000-4000-8000-000000000003', v_p1u, 1, a - interval '1 day'),
-         ('vaga_vazia', (select id from ids where chave = 'pb2'), v_c1, 1, a - interval '10 days');
+         ('vaga_vazia', (select id from ids where chave = 'pb2'), v_c1, 1, a - interval '10 days'),
+         -- A vaga não é apagada, então a marca dela nunca fica órfã: só o prazo a tira.
+         ('vaga', (select id from ids where chave = 'va'), v_p1u, 1, a - interval '5 years' - interval '1 day'),
+         ('vaga', (select id from ids where chave = 'vb'), v_p1u, 1, a - interval '5 years' + interval '1 day');
 end $$;
 
 -- Contadores de reputação antes do expurgo (R9).
@@ -324,8 +358,13 @@ select is((select count(*)::int from privado.auditoria_ciclo
             where (entidade = 'candidatura' and entidade_id in (select id from ids where chave in ('cand_pa1_p1', 'cand_pa1_p2')))
                or (entidade = 'avaliacao' and entidade_id = (select id from ids where chave = 'aval_ta1'))),
   0, 'R7: a trilha da candidatura e da avaliação do turno expurgado sai junto');
-select is((select count(*)::int from public.posicao where vaga_id = (select id from ids where chave = 'va')),
+select is((select count(*)::int from public.posicao
+            where id in (select id from ids where chave in ('pa1', 'pa2', 'pa3', 'pa4'))),
   0, 'Q3: a posição sem turno e a posição reaberta da vaga expirada saem');
+select results_eq(
+  $$ select vaga_id, profissional_id, falta from public.posicao where id = (select id from ids where chave = 'pa5_falta') $$,
+  $$ select (select id from ids where chave = 'va'), (select id from ids where chave = 'p2'), true $$,
+  'Q3: a posição com falta e sem turno fica (a reputação lê a falta em posicao)');
 select is((select count(*)::int from public.candidatura where id = (select id from ids where chave = 'cand_pa2_p2')),
   0, 'Q3: a candidatura da posição sem turno sai em cascata');
 select is((select count(*)::int from privado.auditoria_ciclo
@@ -419,6 +458,25 @@ select is((select count(*)::int from privado.marca_notificacao
 select is((select count(*)::int from privado.marca_notificacao
             where referencia_id in (select id from ids where chave in ('vf', 'pb2'))),
   2, 'R8: marca recente de vaga e de posição que existem fica');
+select is((select count(*)::int from privado.marca_notificacao
+            where tipo = 'vaga' and referencia_id = (select id from ids where chave = 'va')),
+  0, 'R8: marca com 5 anos e 1 dia sai pelo prazo, mesmo com a vaga existindo (não é órfã)');
+select is((select count(*)::int from privado.marca_notificacao
+            where tipo = 'vaga' and referencia_id = (select id from ids where chave = 'vb')),
+  1, 'R8: marca com 4 anos e 364 dias de vaga que existe fica');
+
+-- Conta anonimizada há 20 dias: limpar_contas_anonimizadas (que roda antes, na mesma rotina)
+-- apaga o texto livre com o marcador dela e deixa o local, que o turno verificado ainda
+-- segurava; o expurgo do turno tira o turno e anonimiza o resto com o marcador do expurgo.
+select results_eq(
+  $$ select local, responsavel_local, observacoes, traje, extensions.st_astext(ponto)
+       from public.vaga where id = (select id from ids where chave = 'vc3') $$,
+  $$ values ('Expurgado (LGPD)'::text, '[removido por exclusão de conta]'::text, null::text, null::text,
+             'POINT(-47.8825 -15.7942)'::text) $$,
+  'conta anonimizada há 20 dias: cada rotina deixa o seu marcador na vaga expirada, na mesma rodada');
+select is((select count(*)::int from public.despacho where vaga_id = (select id from ids where chave = 'vc3'))
+        + (select count(*)::int from public.posicao where vaga_id = (select id from ids where chave = 'vc3')),
+  0, 'conta anonimizada há 20 dias: despacho e posição da vaga expirada saem');
 
 -- R9: contadores de reputação
 select results_eq(
@@ -488,7 +546,43 @@ select results_eq(
 select is(privado.expurgar_vagas_antigas(5, 1), 1, 'lote: a rodada seguinte pega a vaga que faltava');
 select is(privado.expurgar_vagas_antigas(5, 1), 0, 'lote: depois disso não sobra nada');
 
--- ── 5. Resíduo registrado: a reconciliação diária recalcula do histórico ──────
+-- ── 5. Dias seguintes: a exclusão de conta e o expurgo não se desfazem ────────
+--
+-- O estado final de cada rodada seria o mesmo mesmo se as duas rotinas brigassem (uma
+-- reescreve, a outra desfaz, na mesma rodada). Por isso a prova é o ctid: qualquer UPDATE
+-- gera uma versão nova da linha, e nenhuma outra rotina da retenção diária escreve em vaga
+-- ou ocorrência.
+
+do $$ begin perform set_config('frila.agora', '2026-11-09 12:00:00+00', true); end $$;
+do $$ begin perform privado.executar_retencao_diaria(); end $$;
+
+select results_eq(
+  $$ select local, responsavel_local, observacoes, traje, extensions.st_astext(ponto)
+       from public.vaga where id = (select id from ids where chave = 'vc3') $$,
+  $$ values ('[removido por exclusão de conta]'::text, '[removido por exclusão de conta]'::text, null::text, null::text,
+             'POINT(-47.8825 -15.7942)'::text) $$,
+  'dia seguinte: limpar_contas_anonimizadas põe o marcador dela no local (o turno verificado saiu) e o expurgo não desfaz');
+
+create temp table linhas_dia_2 as
+select (select ctid::text from public.vaga where id = (select id from ids where chave = 'vc3')) as vaga_ctid,
+       (select ctid::text from public.ocorrencia where id = (select id from ids where chave = 'oc_c3')) as ocorrencia_ctid;
+
+do $$ begin perform set_config('frila.agora', '2026-11-10 12:00:00+00', true); end $$;
+do $$ begin perform privado.executar_retencao_diaria(); end $$;
+
+select results_eq(
+  $$ select (select ctid::text from public.vaga where id = (select id from ids where chave = 'vc3')),
+            (select ctid::text from public.ocorrencia where id = (select id from ids where chave = 'oc_c3')) $$,
+  $$ select vaga_ctid, ocorrencia_ctid from linhas_dia_2 $$,
+  'terceiro dia: nenhuma das duas rotinas reescreve a vaga nem a ocorrência (ctid igual)');
+select results_eq(
+  $$ select o.motivo, o.relato,
+            (select count(*)::int from privado.auditoria_ciclo a where a.entidade = 'ocorrencia' and a.entidade_id = o.id)
+       from public.ocorrencia o where o.id = (select id from ids where chave = 'oc_c3') $$,
+  $$ values ('[removido por exclusão de conta]'::text, null::text, 0) $$,
+  'conta anonimizada: a denúncia antiga fica com o marcador da exclusão, sem relato e sem trilha');
+
+-- ── 6. Resíduo registrado: a reconciliação diária recalcula do histórico ──────
 
 -- Em comando separado: no mesmo comando, a leitura usaria o retrato de antes da reconciliação.
 do $$ begin perform privado.reconciliar_comparecimento(); end $$;
