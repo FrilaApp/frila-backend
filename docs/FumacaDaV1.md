@@ -135,7 +135,7 @@ Segredos e credenciais nunca são gravados no repositório. O código da demonst
 3. Configuração dos segredos em `supabase/functions/.env.local` (ignorado pelo git):
    ```bash
    DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres
-   DEMONSTRACAO_EMAILS=revisao-contratante@frila.app,revisao-profissional@frila.app
+   DEMONSTRACAO_EMAILS=revisao-contratante@frilabr.com,revisao-profissional@frilabr.com
    DEMONSTRACAO_CODIGO=123456
    DEMONSTRACAO_ATIVA_ATE=2030-01-01T00:00:00Z
    ```
@@ -186,7 +186,7 @@ Status: PASSOU (respostas contratuais; não é prova do fluxo feliz)
 A qualificação de "PASSOU" nas funções abaixo atesta a conformidade das respostas retornadas com as especificações contratuais (`contrato/openapi.yaml`) e de segurança do Frila:
 
 1. **`saude` (HTTP 200)**: Conexão direta com o banco PostgreSQL via `DATABASE_URL` (`select 1 as ping`) validada com sucesso, retornando `{"ok":true,"status":"saudavel"}`.
-2. **`entrar-demonstracao` (HTTP 200)**: As contas `revisao-contratante@frila.app` e `revisao-profissional@frila.app` autenticaram através do endpoint real da Edge Function, gerando tokens Bearer válidos emitidos pelo Supabase Auth.
+2. **`entrar-demonstracao` (HTTP 200)**: As contas `revisao-contratante@frilabr.com` e `revisao-profissional@frilabr.com` autenticaram através do endpoint real da Edge Function, gerando tokens Bearer válidos emitidos pelo Supabase Auth.
 3. **Descoberta Dinâmica de Turno**: O script consultou `meus_turnos` autenticado como o profissional da demonstração e descobriu dinamicamente o `turno_id` ativo (`8108b625-143e-44f7-bc19-9347025a0141`), sem recorrer a IDs literais estáticos (falhando explicitamente se nenhum turno for encontrado e nenhum `TURNO_ID` fornecido).
 4. **`escolher_candidato` (HTTP 403 `sem_permissao` ou 409 `candidatura_indisponivel` / `posicao_ja_preenchida` / `vaga_encerrada`)**: Chamada autenticada com a conta contratante. O script valida estritamente os códigos contratuais permitidos pelo OpenAPI: 200 em caso de sucesso; 409 exclusivamente para os conflitos previstos (`candidatura_indisponivel`, `posicao_ja_preenchida` ou `vaga_encerrada`); e 403 `sem_permissao` para candidatura inexistente ou de outra casa (regra de privacidade RF26/RN10 que proíbe enumeração de existência de candidaturas por terceiros). Qualquer outro 409 não catalogado resulta em FALHOU.
 5. **`incluir_na_equipe` (HTTP 404 `nao_encontrado` ou 403 `sem_turno_cumprido`)**: O contratante administra o estabelecimento da demonstração. O script valida que o retorno cumpre a regra de negócio do contrato (404 se profissional inexistente ou 403 com details `sem_turno_cumprido` per UC11 se o profissional não concluiu turno verificado no local).
@@ -210,7 +210,7 @@ Garantindo que `entrar-demonstracao` nunca seja marcada falsamente como executad
 ## 4. Descrição dos Dados Semeados da Demonstração
 
 Para execução contra ambientes reais ou locais, os seguintes dados são garantidos pelo catálogo de funções (`privado.renovar_dados_demonstracao()`):
-- **Contratante:** `revisao-contratante@frila.app` (UUID canônico `de000000-0000-4000-8000-000000000001`), cadastrado como administrador do estabelecimento "Bar da Revisão" (`de000000-0000-4000-8000-000000000010`).
-- **Profissional:** `revisao-profissional@frila.app` (UUID canônico `de000000-0000-4000-8000-000000000002`), com funções ativas de garçom e bartender e ponto base em Brasília.
+- **Contratante:** `revisao-contratante@frilabr.com` (UUID canônico `de000000-0000-4000-8000-000000000001`), cadastrado como administrador do estabelecimento "Bar da Revisão" (`de000000-0000-4000-8000-000000000010`).
+- **Profissional:** `revisao-profissional@frilabr.com` (UUID canônico `de000000-0000-4000-8000-000000000002`), com funções ativas de garçom e bartender e ponto base em Brasília.
 - **Turno Confirmado:** Turno associado à posição confirmada `de000000-0000-4000-8000-000000000031` da vaga preenchida `de000000-0000-4000-8000-000000000021`, no estado `pendente`, com início agendado para `agora + 2 dias`.
 - **Vaga Aberta:** Vaga `de000000-0000-4000-8000-000000000020`, modo urgência, com posição aberta `de000000-0000-4000-8000-000000000030`.

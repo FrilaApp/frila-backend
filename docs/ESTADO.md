@@ -24,24 +24,24 @@ Os números abaixo foram consolidados e remedidos em 01/11/2026 (commit de refer
 | Edge Functions | **10** (inclui `limpar-contas-orfas` e `_compartilhado`) | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
 | Testes unitários em `exportar-turnos` | **44**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
 | Scripts em `scripts/` | **56** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
-| Contrato espelhado | **0.2.62** (igual ao canônico do frila-docs#176; a 0.2.63 do frila-docs#180 chega com o #435) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
+| Contrato espelhado | **0.2.63** (igual ao canônico do frila-docs#180; a 0.2.65 chega com o #450 e a 0.2.66 com o #451) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
 Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **197** arquivos de teste de regras,
 e alcança **198** com `supabase/tests/carga/gerar_df.sql`, que é gerador de carga e não teste de regra.
 
-> ## 🟡 O espelho do contrato está em 0.2.62, um passo atrás do canônico (0.2.63)
+> ## 🟡 O espelho do contrato está em 0.2.63, três versões atrás do canônico (0.2.66)
 >
-> O contrato espelhado em `contrato/openapi.yaml` na `develop` está na versão **0.2.62**, byte a byte
-> igual ao canônico do frila-docs#176 (commit `fadb915`). O canônico já está em **0.2.63**
-> (frila-docs#180, commit `1ef4533`: o `upload_url` da foto passa a ser da Edge Function
-> `enviar-midia`), e a 0.2.63 chega ao backend com o PR #435, que implementa essa função.
-> Conferido em 08/11/2026.
+> O contrato espelhado em `contrato/openapi.yaml` na `develop` está na versão **0.2.63**, byte a byte
+> igual ao canônico do frila-docs#180 (commit `1ef4533`), que entrou com o #435. O canônico já está
+> em **0.2.66** (frila-docs#193, commit `1cf0ff4f`). A 0.2.64 (frila-docs#185) é só descrição; a
+> 0.2.65 (recursos por versão do app) chega ao backend com o #450, e a 0.2.66 (a chamada e o push
+> pelo mínimo de versão) com o #451. Conferido em 08/11/2026.
 >
 > | | Versão | Origem | SHA-256 |
 > |---|---|---|---|
-> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.62** | `frila-backend` | `161f7dba4f395bd0020d429fc2b39ebe9565e408ed22544c8287aded76b11621` |
-> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` em `fadb915` | **0.2.62** | `frila-docs#176` | `161f7dba4f395bd0020d429fc2b39ebe9565e408ed22544c8287aded76b11621` |
-> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` na `main` (`1ef4533`) | **0.2.63** | `frila-docs#180` | `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4` |
+> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.63** | `frila-backend` | `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4` |
+> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` em `1ef4533` | **0.2.63** | `frila-docs#180` | `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4` |
+> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` na `main` (`1cf0ff4f`) | **0.2.66** | `frila-docs#193` | `6cb4854e71c5c473d905fd7189d138d062139d639f6c6d2508fec5b4b2defeed` |
 
 > ## 🟢 Instabilidades de concorrência em `Corridas do ciclo` sanadas na raiz
 >
@@ -218,7 +218,7 @@ O que custou caro descobrir na aplicação:
 
 ## O contrato em detalhes
 
-Versão espelhada: **0.2.62** em `contrato/openapi.yaml` (igual ao canônico em `FrilaApp/frila-docs · api/openapi.yaml` no frila-docs#176 / commit `fadb915`, SHA-256 `161f7dba4f395bd0020d429fc2b39ebe9565e408ed22544c8287aded76b11621`). O canônico já está em 0.2.63 (frila-docs#180), que chega com o #435.
+Versão espelhada: **0.2.63** em `contrato/openapi.yaml` (igual ao canônico em `FrilaApp/frila-docs · api/openapi.yaml` no frila-docs#180 / commit `1ef4533`, SHA-256 `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4`). O canônico já está em 0.2.66 (frila-docs#193); a 0.2.65 chega com o #450 e a 0.2.66 com o #451.
 
 Histórico das versões recentes integradas no backend:
 

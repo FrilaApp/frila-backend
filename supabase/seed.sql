@@ -238,8 +238,8 @@ select '00000000-0000-0000-0000-000000000000', c.id, 'authenticated', 'authentic
        '{}'::jsonb, privado.agora(), privado.agora(), false, false,
        '', '', '', '', '', '', '', ''
   from (values
-    ('de000000-0000-4000-8000-000000000001'::uuid, 'revisao-contratante@frila.app'),
-    ('de000000-0000-4000-8000-000000000002'::uuid, 'revisao-profissional@frila.app')
+    ('de000000-0000-4000-8000-000000000001'::uuid, 'revisao-contratante@frilabr.com'),
+    ('de000000-0000-4000-8000-000000000002'::uuid, 'revisao-profissional@frilabr.com')
   ) as c(id, email)
 on conflict (id) do nothing;
 
@@ -247,9 +247,9 @@ insert into public.usuario (id, perfil, nome, telefone, email, nascimento,
                             termos_versao, termos_aceite_em, demonstracao)
 values
   ('de000000-0000-4000-8000-000000000001','contratante','Casa de Demonstração',
-   '+5561999990901','revisao-contratante@frila.app','1985-01-01','2026-09-22', privado.agora(), true),
+   '+5561999990901','revisao-contratante@frilabr.com','1985-01-01','2026-09-22', privado.agora(), true),
   ('de000000-0000-4000-8000-000000000002','profissional','Perfil de Demonstração',
-   '+5561999990902','revisao-profissional@frila.app','1995-01-01','2026-09-22', privado.agora(), true)
+   '+5561999990902','revisao-profissional@frilabr.com','1995-01-01','2026-09-22', privado.agora(), true)
 on conflict (id) do nothing;
 
 insert into public.profissional (usuario_id, ponto_base)
