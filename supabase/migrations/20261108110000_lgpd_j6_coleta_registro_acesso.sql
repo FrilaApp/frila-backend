@@ -28,6 +28,11 @@
 -- privado.executar_retencao_diaria NÃO muda aqui (o #436 a reescreve): o laço de lotes fica dentro de
 -- privado.limpar_registros_acesso, com a mesma assinatura e a mesma chamada.
 
+-- A migração trava auth.sessions (create trigger) e public.usuario (drop da FK). Sem teto, uma transação longa
+-- nessas tabelas deixaria o login e toda RPC que lê usuario na fila atrás dela: com 2 s, a migração desiste e a
+-- entrega se repete (Lince no #441, B2, medido em PG17).
+select set_config('lock_timeout', '2s', true);
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. A tabela: sem FK, sem user_agent, com a base legal no comentário
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -56,6 +61,11 @@ begin
   end if;
 
   -- p_user_agent é ignorado: o registro não guarda user_agent (frila-docs #182, ROPA linha 24).
+  -- Quem ainda o manda é avisado, sem o valor no aviso (RN15).
+  if p_user_agent is not null then
+    raise notice 'privado.registrar_acesso: p_user_agent ignorado, o registro não guarda user_agent';
+  end if;
+
   insert into privado.registro_acesso (usuario_id, ip, acessado_em, recurso)
   values (p_usuario_id, p_ip, privado.agora(), p_recurso)
   returning id into v_id;
@@ -172,12 +182,16 @@ begin
 end $$;
 
 comment on function privado.registrar_acesso_da_sessao() is
-  'Gatilho de auth.sessions: grava IP, data e hora do login (insert) e de cada renovação (refreshed_at ou ip mudou) em privado.registro_acesso, sem user_agent, só com privado.registro_acesso_coleta ligada. Nunca bloqueia o Auth: qualquer erro, inclusive o da contagem, é engolido e contado em privado.registro_acesso_falha. lock_timeout de 200 ms para não segurar o login atrás de uma trava.';
+  'Gatilho de auth.sessions (after insert or update, sem lista de colunas, para não prender o esquema do Auth): grava IP, data e hora do login (insert) e de cada renovação (refreshed_at ou ip mudou, comparando OLD e NEW) em privado.registro_acesso, sem user_agent, só com privado.registro_acesso_coleta ligada. Nunca bloqueia o Auth: qualquer erro, inclusive o da contagem, é engolido e contado em privado.registro_acesso_falha. lock_timeout de 200 ms para não segurar o login atrás de uma trava.';
 revoke all on function privado.registrar_acesso_da_sessao() from public, anon, authenticated;
 
+-- Sem lista de colunas, de propósito: "update of refreshed_at, ip" criaria dependência dessas colunas, e uma
+-- migração futura do Auth que mude o tipo de refreshed_at ou remova ip falharia por causa deste gatilho (Lince
+-- no #441, B1). A função já filtra pela comparação de OLD e NEW; se a coluna sumir, a leitura de NEW falha
+-- dentro do bloco protegido e é contada.
 drop trigger if exists registrar_acesso on auth.sessions;
 create trigger registrar_acesso
-  after insert or update of refreshed_at, ip on auth.sessions
+  after insert or update on auth.sessions
   for each row execute function privado.registrar_acesso_da_sessao();
 
 -- ─────────────────────────────────────────────────────────────────────────────
