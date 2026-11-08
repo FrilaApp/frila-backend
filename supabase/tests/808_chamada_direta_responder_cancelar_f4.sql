@@ -84,6 +84,17 @@ select 'c8080000-0000-4000-8000-0000000000e1', p from prof_ids, unnest(array[a, 
 insert into public.equipe_confianca (estabelecimento_id, profissional_id)
 select 'c8080000-0000-4000-8000-0000000000e2', p from prof_ids, unnest(array[a, b, c]) p;
 
+-- Histórico prévio de turno cumprido e verificado para Casa 1 (CD-C14 / B5d)
+insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto, valor_centavos, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio, responsavel_local, traje, estado, modo, publicado_em, chave_cliente, publicado_por)
+values ('c8080000-0000-4000-8000-000000000010', 'c8080000-0000-4000-8000-0000000000e1', (select id from public.funcao where nome = 'garçom'),
+        '2026-10-01 18:00+00', '2026-10-01 23:00+00', 'CLN 201', 'POINT(-47.8822 -15.7942)'::extensions.geography, 15000, 1, true, false, false, 'Carlos', 'social', 'encerrada', 'urgencia', '2026-09-30 10:00+00', gen_random_uuid(), 'c8080000-0000-4000-8000-000000000001');
+
+insert into public.posicao (id, vaga_id, estado, profissional_id, confirmado_em, inicio_em, fim_em)
+values ('c8080000-0000-4000-8000-000000000020', 'c8080000-0000-4000-8000-000000000010', 'cumprida', (select a from prof_ids), '2026-10-01 17:00+00', '2026-10-01 18:00+00', '2026-10-01 23:00+00');
+
+insert into public.turno (id, posicao_id, checkin_em, checkin_tipo, checkin_distancia_m, checkout_em, verificacao, valor_acordado_centavos)
+values ('c8080000-0000-4000-8000-000000000030', 'c8080000-0000-4000-8000-000000000020', '2026-10-01 18:00+00', 'geolocalizado', 50, '2026-10-01 23:00+00', 'verificado', 15000);
+
 -- ── 1. Teste de Interruptor de Recurso (RN46) ───────────────────────────────────
 select is(
   pg_temp.r('c8080000-0000-4000-8000-000000000003',
@@ -369,6 +380,8 @@ select is(
 );
 
 -- ── 8. Critério 6 (RN42 / CA12): Elegibilidade Dinâmica, Suspensão e Exclusão ──
+-- Avança relógio mais de 24h para encerrar janela de pausa por recusa anterior (CD-C13)
+select set_config('frila.agora', '2026-11-08 17:00:00+00', true);
 
 -- A. Bloqueio mútuo: profissional bloqueado com estabelecimento
 create temp table vaga_bloqueio as select pg_temp.como('c8080000-0000-4000-8000-000000000001', format(

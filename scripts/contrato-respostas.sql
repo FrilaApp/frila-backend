@@ -1451,6 +1451,10 @@ values (
   '2027-01-20 10:05:00+00'::timestamptz
 );
 
+-- Semeia mídia para exercitar a coleção midias em MeusDados (0.2.59)
+insert into privado.midia (dono_usuario_id, dono_tipo, tipo, storage_path, mime, bytes, estado)
+values ('cc000000-0000-4000-8000-000000000002', 'profissional', 'foto_perfil', 'perfil/cc02.jpg', 'image/jpeg', 1024, 'aprovada');
+
 -- `eventos_app` (LGPD nUpPFCpM) já consta em MeusDados desde o contrato 0.2.45 (frila-docs#96).
 select pg_temp.guarda('exportarMeusDados',
   privado.meus_dados('cc000000-0000-4000-8000-000000000002'));
