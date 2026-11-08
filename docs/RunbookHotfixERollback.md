@@ -5,6 +5,11 @@ roda, sem cair na janela proibida da RNF12 (quinta a domingo, das 16h às 2h, ho
 Paulo). Escrito em 28/10/2026 a partir do que existe em `.github/workflows/entrega.yml` e em
 `scripts/`; o que mede o estado real do repositório no GitHub vem marcado com a data.
 
+**A RNF12 vale a partir de 10 mil usuários ativos (suspensa por decisão do Cauê em 08/11/2026).** Até lá, `scripts/janela-de-manutencao.sh` não confere a janela: sai 0 com o
+aviso "RNF12 suspensa". Os comandos de medir a janela deste runbook só medem com `RNF12_ATIVA=1`
+na frente (por exemplo, `RNF12_ATIVA=1 ./scripts/janela-de-manutencao.sh`), e qualquer valor
+além de vazio, `0` e `1` sai 2.
+
 Convenção: tudo que não tem `arquivo:linha` nem medição é **"proposta, a confirmar"**.
 O que o repositório não prova está na seção 7.
 
@@ -54,7 +59,7 @@ de Prod (`AGENTS.md`, "Limites").
 ### Como a janela é aplicada
 
 O passo `Fora da janela proibida (RNF12)` (`entrega.yml:139-140`) roda
-`./scripts/janela-de-manutencao.sh`. A conta está em `scripts/janela-de-manutencao.sh:34-35`:
+`./scripts/janela-de-manutencao.sh`. A conta está em `scripts/janela-de-manutencao.sh:71-72`:
 
 - bloqueado: quinta a domingo a partir das 16h, e sexta a segunda antes das 2h (a madrugada
   ainda é a noite anterior);
@@ -70,7 +75,7 @@ horas depois da tag, então a janela é medida quando o job **começa**, e não 
 criada. Os casos de borda estão em `scripts/teste-entrega.sh:36-46` (por exemplo, quinta
 15h59 passa, quinta 16h não, sexta 1h59 não, sexta 2h passa).
 
-Para saber agora: `./scripts/janela-de-manutencao.sh` (a variável `FRILA_AGORA`, linha 11, é
+Para saber agora: `./scripts/janela-de-manutencao.sh` (a variável `FRILA_AGORA`, linha 18, é
 só de autoteste; o workflow não a define, e defini-la seria uma mudança em `entrega.yml`
 visível em PR).
 
@@ -164,7 +169,7 @@ janela, reprova antes de qualquer migração ou deploy.
    `Fora da janela proibida (RNF12)` vermelho e os passos `Migrações e semente` e
    `Edge Functions` sem execução.
 3. **Espere abrir.** Fora da janela: de sexta 2h às 16h; sábado e domingo das 2h às 16h;
-   segunda das 2h até quinta às 16h (derivado de `janela-de-manutencao.sh:34-35`).
+   segunda das 2h até quinta às 16h (derivado de `janela-de-manutencao.sh:71-72`).
 4. **Reexecute o job** na aba Actions depois das 2h. Ele usa o mesmo commit da tag. Se o
    hotfix mudou, é tag nova, em commit da `develop`. Não mova nem apague tag.
 5. **Se o dano de esperar for maior que o de publicar** (proposta, a confirmar): o `[DONO]`
