@@ -814,8 +814,15 @@ export async function processarEnvioPush(
     if (n.tipo.startsWith("chamada_")) {
       aparelhos = aparelhos.filter((a) => {
         if (!a.versao_app) return false;
-        // Aparelho sem versão ou versão legada não recebe push de chamada direta
-        return a.versao_app >= "0.2.0" || a.versao_app.includes(".");
+        const m = a.versao_app.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+        if (!m) return false;
+        const major = parseInt(m[1], 10);
+        const minor = parseInt(m[2], 10);
+        const patch = parseInt(m[3], 10);
+        if (major > 0) return true;
+        if (major === 0 && minor > 2) return true;
+        if (major === 0 && minor === 2 && patch >= 0) return true;
+        return false;
       });
     }
 

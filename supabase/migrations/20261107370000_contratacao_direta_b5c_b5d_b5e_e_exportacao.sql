@@ -266,6 +266,8 @@ begin
 
   -- Serializa as chamadas da casa: os limites somam os membros (RN34).
   perform 1 from public.estabelecimento e where e.id = v_estab for update;
+  -- Serializa também pelo profissional para atomicidade da cota de abertas entre casas distintas (CD-C14)
+  perform 1 from public.profissional p where p.id = v_prof for update;
   if exists (select 1 from public.chamada c where c.estabelecimento_id = v_estab
                 and c.profissional_id = v_prof and c.estado = 'aberta') then
     perform public.erro(409, 'chamada_ja_aberta');
@@ -455,11 +457,20 @@ begin
   v_janela_efetiva := v_expira_em - v_inicio_prazo;
   if v_janela_efetiva > interval '2 hours' then
     v_lembrete_em := v_inicio_prazo + (v_janela_efetiva / 2);
-    -- Se cair no silêncio (22h às 7h), ajusta
+    -- Se cair no silêncio (22h às 7h), ajusta para fora do silêncio
     if extract(hour from (v_lembrete_em at time zone 'America/Sao_Paulo'))::int >= 22 then
-      v_lembrete_em := ((v_lembrete_em at time zone 'America/Sao_Paulo')::date + interval '22 hours') at time zone 'America/Sao_Paulo';
+      v_lembrete_em := least(
+        ((v_lembrete_em at time zone 'America/Sao_Paulo')::date + interval '21 hours 30 minutes') at time zone 'America/Sao_Paulo',
+        v_expira_em - interval '30 minutes'
+      );
+      if v_lembrete_em <= v_inicio_prazo then
+        v_lembrete_em := ((v_lembrete_em at time zone 'America/Sao_Paulo')::date + interval '1 day 7 hours') at time zone 'America/Sao_Paulo';
+      end if;
     elsif extract(hour from (v_lembrete_em at time zone 'America/Sao_Paulo'))::int < 7 then
       v_lembrete_em := ((v_lembrete_em at time zone 'America/Sao_Paulo')::date + interval '7 hours') at time zone 'America/Sao_Paulo';
+    end if;
+    if v_lembrete_em >= v_expira_em then
+      v_lembrete_em := null;
     end if;
   else
     v_lembrete_em := null;
@@ -562,12 +573,18 @@ language plpgsql
 security definer set search_path = ''
 as $$
 declare
-  v_agora timestamptz := privado.agora();
-  v_count int := 0;
-  r       record;
+  v_agora   timestamptz := privado.agora();
+  v_hora_sp int         := extract(hour from (v_agora at time zone 'America/Sao_Paulo'))::int;
+  v_count   int         := 0;
+  r         record;
 begin
+  -- Não dispara lembretes durante o horário de silêncio (22h às 7h horário de Brasília)
+  if v_hora_sp >= 22 or v_hora_sp < 7 then
+    return 0;
+  end if;
+
   for r in
-    select c.id, c.vaga_id, p.usuario_id as prof_usuario_id
+    select c.id, c.vaga_id, c.expira_em, p.usuario_id as prof_usuario_id
       from public.chamada c
       join public.profissional p on p.id = c.profissional_id
      where c.estado = 'aberta'
@@ -580,11 +597,14 @@ begin
        set lembrete_em = null
      where id = r.id;
 
-    insert into public.notificacao (usuario_id, tipo, referencia_id, payload)
-    values (r.prof_usuario_id, 'chamada_lembrete', r.id, jsonb_build_object('chamada_id', r.id, 'vaga_id', r.vaga_id))
-    on conflict do nothing;
+    -- Só notifica se a chamada ainda não tiver expirado
+    if r.expira_em > v_agora then
+      insert into public.notificacao (usuario_id, tipo, referencia_id, payload)
+      values (r.prof_usuario_id, 'chamada_lembrete', r.id, jsonb_build_object('chamada_id', r.id, 'vaga_id', r.vaga_id))
+      on conflict do nothing;
 
-    v_count := v_count + 1;
+      v_count := v_count + 1;
+    end if;
   end loop;
 
   return v_count;

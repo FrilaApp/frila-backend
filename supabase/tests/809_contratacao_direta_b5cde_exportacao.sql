@@ -18,7 +18,7 @@ insert into privado.recurso (chave, ligado) values ('chamada_direta', true)
 on conflict (chave) do update set ligado = true;
 
 select set_config('frila.agora', '2026-11-20 14:00:00-03', true);
-set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
+set local frila.agendador_secret = 'segredo-de-teste';
 
 select plan(42);
 
