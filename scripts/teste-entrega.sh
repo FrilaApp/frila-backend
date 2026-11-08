@@ -29,7 +29,7 @@ conferir() {  # conferir <descrição> <saída esperada> <frase esperada> <coman
   fi
 }
 
-# A RNF12 está suspensa por padrão (decisão do Cauê, 08/11/2026): os casos da regra rodam com
+# A janela de pico da RNF12 está suspensa por padrão (decisão do Cauê, 08/11/2026): os casos da regra rodam com
 # RNF12_ATIVA=1, que a religa igual à de antes. O padrão tem o bloco próprio no fim da janela.
 janela() { RNF12_ATIVA=1 FRILA_AGORA="$1" ./scripts/janela-de-manutencao.sh; }
 
@@ -59,18 +59,19 @@ conferir "segunda 02h00 com margem 30 passa"                 0 "fora da janela" 
 conferir "margem não numérica não mede"                      2 "não medi"                janela_m "2026-10-01 12:00" "abc"
 conferir "margem negativa não mede"                          2 "não medi"                janela_m "2026-10-01 12:00" "-15"
 
-echo "▸ RNF12 suspensa (padrão): a janela não é conferida"
+echo "▸ Janela de pico da RNF12 suspensa (padrão): a janela não é conferida"
 suspensa() { env -u RNF12_ATIVA FRILA_AGORA="$1" ./scripts/janela-de-manutencao.sh; }
 rnf12() { env RNF12_ATIVA="$1" FRILA_AGORA="$2" ./scripts/janela-de-manutencao.sh; }
 uma_linha() {  # o padrão sai com uma linha só
   local s c; s=$(suspensa "$1" 2>&1); c=$?
   printf '%s\nlinhas=%s\n' "$s" "$(printf '%s\n' "$s" | wc -l | tr -d ' ')"; return "$c"
 }
-conferir "padrão na sexta às 20h passa, com o aviso"      0 "RNF12 suspensa"   suspensa "2026-10-02 20:00"
+conferir "padrão na sexta às 20h passa, com o aviso"      0 "Janela de pico da RNF12 suspensa até 10 mil usuários ativos" suspensa "2026-10-02 20:00"
+conferir "o aviso diz que a meta de 99,5% segue"          0 "a meta de 99,5% segue" suspensa "2026-10-02 20:00"
 conferir "padrão sai com uma linha só"                    0 "linhas=1"         uma_linha "2026-10-02 20:00"
-conferir "padrão não lê a hora (hora ilegível passa)"     0 "RNF12 suspensa"   suspensa "sexta 20h"
-conferir "RNF12_ATIVA vazia vale suspensa"                0 "RNF12 suspensa"   rnf12 "" "2026-10-02 20:00"
-conferir "RNF12_ATIVA=0 vale suspensa"                    0 "RNF12 suspensa"   rnf12 "0" "2026-10-02 20:00"
+conferir "padrão não lê a hora (hora ilegível passa)"     0 "Janela de pico da RNF12 suspensa" suspensa "sexta 20h"
+conferir "RNF12_ATIVA vazia vale suspensa"                0 "Janela de pico da RNF12 suspensa" rnf12 "" "2026-10-02 20:00"
+conferir "RNF12_ATIVA=0 vale suspensa"                    0 "Janela de pico da RNF12 suspensa" rnf12 "0" "2026-10-02 20:00"
 conferir "RNF12_ATIVA=true não é aceita: sai 2"           2 "RNF12_ATIVA=true não é um valor aceito" rnf12 "true" "2026-10-02 20:00"
 conferir "RNF12_ATIVA=sim não é aceita: sai 2"            2 "RNF12_ATIVA=sim não é um valor aceito"  rnf12 "sim" "2026-10-02 20:00"
 conferir "RNF12_ATIVA=2 não é aceita: sai 2"              2 "não medi"         rnf12 "2" "2026-10-05 20:00"

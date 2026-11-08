@@ -5,8 +5,8 @@ roda, sem cair na janela proibida da RNF12 (quinta a domingo, das 16h às 2h, ho
 Paulo). Escrito em 28/10/2026 a partir do que existe em `.github/workflows/entrega.yml` e em
 `scripts/`; o que mede o estado real do repositório no GitHub vem marcado com a data.
 
-**A RNF12 vale a partir de 10 mil usuários ativos (suspensa por decisão do Cauê em 08/11/2026).** Até lá, `scripts/janela-de-manutencao.sh` não confere a janela: sai 0 com o
-aviso "RNF12 suspensa". Os comandos de medir a janela deste runbook só medem com `RNF12_ATIVA=1`
+**A janela de pico da RNF12 (quinta a domingo, das 16h às 2h) vale a partir de 10 mil usuários ativos (decisão do Cauê, 08/11/2026); a meta de 99,5% segue.** Até lá, `scripts/janela-de-manutencao.sh` não confere a janela: sai 0 com o
+aviso "Janela de pico da RNF12 suspensa". Os comandos de medir a janela deste runbook só medem com `RNF12_ATIVA=1`
 na frente (por exemplo, `RNF12_ATIVA=1 ./scripts/janela-de-manutencao.sh`), e qualquer valor
 além de vazio, `0` e `1` sai 2.
 
