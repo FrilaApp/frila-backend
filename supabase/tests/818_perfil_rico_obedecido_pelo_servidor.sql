@@ -14,13 +14,10 @@ select plan(26);
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
 begin
-  if conta is null then
-    execute 'set local role anon';
-    perform set_config('request.jwt.claims', '{}', true);
-  else
-    execute 'set local role authenticated';
-    perform set_config('request.jwt.claims', jsonb_build_object('sub', conta, 'role', 'authenticated')::text, true);
-  end if;
+  execute 'set local role authenticated';
+  -- conta null: sessão sem sub, como a colheita do 401 em scripts/contrato-respostas.sql.
+  perform set_config('request.jwt.claims', case when conta is null then '{}'
+    else jsonb_build_object('sub', conta, 'role', 'authenticated')::text end, true);
   execute sql into r;
   reset role;
   perform set_config('request.jwt.claims', '{}', true);
