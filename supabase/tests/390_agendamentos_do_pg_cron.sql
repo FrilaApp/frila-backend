@@ -127,9 +127,12 @@ select set_eq(
     -- Processa a fila de moderação de mídia periódica (B4c / RN37).
     'processar_fila_moderacao_midia',
     -- Expurgo horário de mídias recusadas ou não publicadas (B4b / RN37).
-    'expurgar_midias_horario'
+    'expurgar_midias_horario',
+    -- Jobs de expiração e lembrete de chamadas diretas (B5c / RN31).
+    'expirar_chamadas_diretas',
+    'lembrar_chamadas_diretas'
   ],
-  'Os jobs agendados são exatamente os dezenove conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os vinte e um conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;

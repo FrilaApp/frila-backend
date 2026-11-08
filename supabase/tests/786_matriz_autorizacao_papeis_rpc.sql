@@ -17,17 +17,13 @@ set local search_path = extensions, public, pg_temp;
 insert into privado.ambiente(id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-20 21:00:00+00', true);
-set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
+set local frila.agendador_secret = 'segredo-de-teste';
 
 -- A verificacao de identidade assina a URL de upload com o segredo do Vault; sem ele a
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-<<<<<<< HEAD
-select plan(264);
-=======
-select plan(244);
->>>>>>> origin/develop
+select plan(268);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -35,13 +31,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-<<<<<<< HEAD
-  64::bigint,
-  'censo de RPCs: schema public contem exatamente 64 RPCs expostas'
-=======
-  59::bigint,
-  'censo de RPCs: schema public contem exatamente 59 RPCs expostas'
->>>>>>> origin/develop
+  65::bigint,
+  'censo de RPCs: schema public contem exatamente 65 RPCs expostas'
 );
 
 -- 3. Fixtures e contas representativas da matriz
