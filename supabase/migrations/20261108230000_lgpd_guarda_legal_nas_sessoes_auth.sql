@@ -1,22 +1,29 @@
 -- Migração: 20261108230000_lgpd_guarda_legal_nas_sessoes_auth.sql
 -- Escopo: LGPD-J6, brief B-GUARDA (nasce do B-T2, aceito pela Central em 08/11/2026). Empilhada no #442.
 --
--- A guarda legal (Marco Civil, Lei 12.965/2014, art. 15, § 2º) passa a valer também para a etapa (c) de
--- privado.limpar_trilha_e_sessoes_auth (20261108120000): a sessão parada há mais de 6 meses de uma conta em guarda
--- vigente em privado.registro_acesso_guarda FICA, com os refresh_tokens e os mfa_amr_claims dela. A sessão guarda o
--- último IP e o user_agent da conta; sem a exceção, a limpeza apagaria o que a ordem cautelar manda guardar.
+-- A guarda legal (Marco Civil, Lei 12.965/2014, art. 15, § 2º) passa a valer nas três etapas de
+-- privado.limpar_trilha_e_sessoes_auth (20261108120000): nada da conta em guarda vigente em
+-- privado.registro_acesso_guarda sai enquanto a guarda vale.
+--   · (c) a sessão parada há mais de 6 meses FICA, com os refresh_tokens e os mfa_amr_claims dela: guarda o último IP
+--     e o user_agent da conta;
+--   · (a) e (b) a trilha do Auth da conta FICA, pelo actor_id ou pelo traits.user_id, inclusive a de conta excluída
+--     (a guarda não tem FK). A trilha guarda a hora e o IP de cada login: é registro de acesso a aplicação (MCI,
+--     art. 5º, VIII), e a ordem do art. 15, § 2º alcança todo registro da conta (Bússola, 08/11/2026,
+--     orquestracao/retornos/J-pr460-lgpd-bussola.md). Vencida a guarda, a trilha volta a sair.
 --
 -- O predicado é o mesmo de privado.limpar_registros_acesso (20261108110000_lgpd_registro_acessos_borda.sql:490-493):
--- a guarda vale de desde (inclusive) até ate (exclusive), lidos no privado.agora() da execução.
+-- a guarda vale de desde (inclusive) até ate (exclusive), lidos no privado.agora() da execução. Na trilha, a conta sai
+-- do payload pelo mesmo CASE da etapa (b): só um uuid válido vira uuid.
 --
 -- A guarda entra na autoconferência de RLS (Forja, 08/11/2026): a tabela tem RLS ligado e nenhuma política, e um dono
 -- sem BYPASSRLS que não é o dono dela não enxerga linha nenhuma. Aí o not exists da guarda não acharia nada, e a etapa
--- (c) apagaria, sem erro, as sessões que a ordem manda guardar. Com a guarda invisível, a etapa (c) não roda e vira
--- falha_execucao (rls_sem_bypass, etapa sessoes_paradas), como as outras. Só na etapa (c), a falha passa a dizer quais
--- tabelas o dono não enxerga (tabelas).
+-- apagaria, sem erro, o que a ordem manda guardar. Com a guarda invisível, nenhuma das três etapas roda; cada uma vira
+-- falha_execucao (rls_sem_bypass), como já acontecia com as tabelas do Auth, e a falha passa a dizer quais tabelas o
+-- dono não enxerga (tabelas). A regra de visibilidade das quatro tabelas deixa de ser feita à mão e passa a ser a do
+-- Postgres, row_security_active(oid) no contexto do dono: a feita à mão barrava o membro do papel dono, que o
+-- Postgres deixa passar (Lince no #460; errava para o lado seguro).
 --
--- O resto do corpo é igual ao de 20261108120000: as etapas (a) e (b), da trilha do Auth, não mudam. Se a trilha
--- também for registro de acesso do art. 15, a pergunta está no PR; aqui não se implementa.
+-- O resto do corpo é igual ao de 20261108120000.
 -- O agendamento (pg_cron limpar_trilha_e_sessoes_auth, 04:23 UTC), o dono e os privilégios da função não mudam:
 -- create or replace os preserva.
 
@@ -43,6 +50,8 @@ declare
   v_rls_usuarios          boolean;
   v_rls_sessoes           boolean;
   v_rls_guarda            boolean;
+  v_bloqueio_trilha       text[];
+  v_bloqueio_excluida     text[];
   v_bloqueio_sessoes      text[];
   -- Teto por etapa e por execução: 100 lotes. O resto sai na rodada seguinte.
   c_teto_lotes constant integer := 100;
@@ -64,26 +73,29 @@ begin
   -- security definer) sem BYPASSRLS, que não é o dono da tabela, não enxerga linha nenhuma. Sem esta conferência a
   -- limpeza não apagaria nada, calada. Pior: com auth.users invisível, a etapa (b) veria toda conta como excluída e
   -- apagaria a trilha inteira. Etapa bloqueada não roda e vira falha_execucao (codigo rls_sem_bypass). Só catálogo.
-  select coalesce(bool_or(c.relname = 'audit_log_entries' and b.bloqueada), true),
-         coalesce(bool_or(c.relname = 'users' and b.bloqueada), true),
-         coalesce(bool_or(c.relname = 'sessions' and b.bloqueada), true)
+  --     A regra é a do próprio Postgres: row_security_active, que dentro do security definer responde pelo dono
+  --     (dono da tabela ou membro do papel dono, sem FORCE; BYPASSRLS; superusuário). Lince no #460, FYI.
+  select coalesce(bool_or(c.relname = 'audit_log_entries' and row_security_active(c.oid)), true),
+         coalesce(bool_or(c.relname = 'users' and row_security_active(c.oid)), true),
+         coalesce(bool_or(c.relname = 'sessions' and row_security_active(c.oid)), true)
     into v_rls_trilha, v_rls_usuarios, v_rls_sessoes
     from pg_class c
     join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'auth'
-    join pg_roles r on r.rolname = current_user
-    cross join lateral (select c.relrowsecurity and not (r.rolsuper or r.rolbypassrls)
-                               and (c.relforcerowsecurity or c.relowner <> r.oid) as bloqueada) b
    where c.relname in ('audit_log_entries', 'users', 'sessions');
 
-  -- A etapa (c) também depende de enxergar a guarda legal: invisível, o not exists da guarda não acharia linha e a
-  -- etapa apagaria, sem erro, as sessões em guarda. Mesma conta, no catálogo. Sem a tabela (to_regclass nulo), bloqueia.
-  select coalesce(bool_or(b.bloqueada), true)
+  -- As três etapas também dependem de enxergar a guarda legal: invisível, o not exists da guarda não acharia linha e a
+  -- etapa apagaria, sem erro, o que a ordem manda guardar. Mesma regra, pelo catálogo (sem a tabela, bloqueia). Cada
+  -- etapa guarda a lista do que o dono não enxerga: só a lista vazia deixa a etapa rodar.
+  select coalesce(bool_or(row_security_active(c.oid)), true)
     into v_rls_guarda
     from pg_class c
-    join pg_roles r on r.rolname = current_user
-    cross join lateral (select c.relrowsecurity and not (r.rolsuper or r.rolbypassrls)
-                               and (c.relforcerowsecurity or c.relowner <> r.oid) as bloqueada) b
-   where c.oid = to_regclass('privado.registro_acesso_guarda');
+    join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'privado'
+   where c.relname = 'registro_acesso_guarda';
+  v_bloqueio_trilha := array_remove(array[case when v_rls_trilha then 'auth.audit_log_entries' end,
+                                          case when v_rls_guarda then 'privado.registro_acesso_guarda' end], null);
+  v_bloqueio_excluida := array_remove(array[case when v_rls_trilha then 'auth.audit_log_entries' end,
+                                            case when v_rls_usuarios then 'auth.users' end,
+                                            case when v_rls_guarda then 'privado.registro_acesso_guarda' end], null);
   v_bloqueio_sessoes := array_remove(array[case when v_rls_sessoes then 'auth.sessions' end,
                                            case when v_rls_guarda then 'privado.registro_acesso_guarda' end], null);
 
@@ -93,16 +105,26 @@ begin
 
   -- (a) Trilha do Auth com mais de 6 meses. Sem FOR UPDATE: o Auth só insere na trilha, ninguém trava linha
   --     dela, e assim a etapa pede só SELECT e DELETE (Lince no #442, R-1).
+  --     Fica a trilha da conta em guarda vigente, pelo actor_id ou pelo traits.user_id.
   v_lotes := 0;
-  if v_rls_trilha then
-    v_falhas := v_falhas || jsonb_build_object('etapa', 'trilha_antiga', 'codigo', 'rls_sem_bypass');
+  if cardinality(v_bloqueio_trilha) > 0 then
+    v_falhas := v_falhas || jsonb_build_object('etapa', 'trilha_antiga', 'codigo', 'rls_sem_bypass',
+                                               'tabelas', to_jsonb(v_bloqueio_trilha));
   end if;
   loop
-    exit when v_rls_trilha;
+    exit when cardinality(v_bloqueio_trilha) > 0;
     begin
       delete from auth.audit_log_entries a
        where a.id in (select x.id from auth.audit_log_entries x
                        where x.created_at <= v_limite_data
+                         -- Guarda legal (MCI art. 15, § 2º): a trilha da conta em guarda vigente fica. Mesmo predicado
+                         -- de privado.limpar_registros_acesso (20261108110000_lgpd_registro_acessos_borda.sql:490-493).
+                         and not exists (select 1 from privado.registro_acesso_guarda g
+                                          where g.usuario_id in (case when x.payload->>'actor_id' ~* c_uuid
+                                                                      then (x.payload->>'actor_id')::uuid end,
+                                                                 case when x.payload->'traits'->>'user_id' ~* c_uuid
+                                                                      then (x.payload->'traits'->>'user_id')::uuid end)
+                                            and g.desde <= v_agora and v_agora < g.ate)
                        limit p_limite);
       get diagnostics v_lote = row_count;
     exception when others or query_canceled then
@@ -116,26 +138,35 @@ begin
 
   -- (b) Trilha de conta excluída, de qualquer idade: actor_id OU traits.user_id de conta que não existe mais.
   --     O CASE garante que só um uuid válido vira uuid. Sem FOR UPDATE, pelo mesmo motivo de (a).
+  --     Fica a trilha da conta em guarda vigente, mesmo excluída (a guarda não tem FK), pelo mesmo predicado de (a).
   v_lotes := 0;
-  if v_rls_trilha or v_rls_usuarios then
-    v_falhas := v_falhas || jsonb_build_object('etapa', 'trilha_conta_excluida', 'codigo', 'rls_sem_bypass');
+  if cardinality(v_bloqueio_excluida) > 0 then
+    v_falhas := v_falhas || jsonb_build_object('etapa', 'trilha_conta_excluida', 'codigo', 'rls_sem_bypass',
+                                               'tabelas', to_jsonb(v_bloqueio_excluida));
   end if;
   loop
-    exit when v_rls_trilha or v_rls_usuarios;
+    exit when cardinality(v_bloqueio_excluida) > 0;
     begin
       delete from auth.audit_log_entries a
        where a.id in (
          select x.id
            from auth.audit_log_entries x
-          where (x.payload->>'actor_id' ~* c_uuid
-                 and x.payload->>'actor_id' <> c_conta_nula
-                 and not exists (select 1 from auth.users u
-                                  where u.id = case when x.payload->>'actor_id' ~* c_uuid
-                                                    then (x.payload->>'actor_id')::uuid end))
-             or (x.payload->'traits'->>'user_id' ~* c_uuid
-                 and not exists (select 1 from auth.users u
-                                  where u.id = case when x.payload->'traits'->>'user_id' ~* c_uuid
-                                                    then (x.payload->'traits'->>'user_id')::uuid end))
+          where ((x.payload->>'actor_id' ~* c_uuid
+                  and x.payload->>'actor_id' <> c_conta_nula
+                  and not exists (select 1 from auth.users u
+                                   where u.id = case when x.payload->>'actor_id' ~* c_uuid
+                                                     then (x.payload->>'actor_id')::uuid end))
+              or (x.payload->'traits'->>'user_id' ~* c_uuid
+                  and not exists (select 1 from auth.users u
+                                   where u.id = case when x.payload->'traits'->>'user_id' ~* c_uuid
+                                                     then (x.payload->'traits'->>'user_id')::uuid end)))
+            -- Guarda legal (MCI art. 15, § 2º): a trilha da conta em guarda vigente fica, mesmo excluída.
+            and not exists (select 1 from privado.registro_acesso_guarda g
+                             where g.usuario_id in (case when x.payload->>'actor_id' ~* c_uuid
+                                                         then (x.payload->>'actor_id')::uuid end,
+                                                    case when x.payload->'traits'->>'user_id' ~* c_uuid
+                                                         then (x.payload->'traits'->>'user_id')::uuid end)
+                               and g.desde <= v_agora and v_agora < g.ate)
           limit p_limite);
       get diagnostics v_lote = row_count;
     exception when others or query_canceled then
@@ -202,7 +233,7 @@ begin
 end $$;
 
 comment on function privado.limpar_trilha_e_sessoes_auth(integer, integer) is
-  'Rotina diária própria (pg_cron limpar_trilha_e_sessoes_auth): apaga a trilha do Auth com mais de 6 meses, a trilha de conta excluída (actor_id ou traits.user_id de conta que não existe mais) de qualquer idade, e só as sessões sem atividade há mais de 6 meses (com refresh_tokens e mfa_amr_claims em cascata). Guarda legal: a sessão de conta em guarda vigente em privado.registro_acesso_guarda (de desde, inclusive, até ate, exclusive) fica, porque guarda o último IP e o user_agent da conta e a autoridade pode requerer, cautelarmente, que os registros fiquem além dos 6 meses (Marco Civil, Lei 12.965/2014, art. 15, § 2º; conservação por obrigação legal, LGPD art. 16, I); vencida a guarda, a sessão volta a sair. A guarda não alcança a trilha do Auth. Piso de 6 meses que nenhum parâmetro encurta; lote de até 10 mil e teto de 100 lotes por etapa; FOR UPDATE SKIP LOCKED só nas sessões. Erro de um lote (privilégio no esquema auth do hospedado, trava, statement_timeout) encerra só aquela etapa e vira registro em privado.falha_execucao, só com etapa e SQLSTATE. Privilégios do dono: SELECT e DELETE em auth.audit_log_entries, SELECT, UPDATE e DELETE em auth.sessions, SELECT em auth.users e em privado.registro_acesso_guarda, e BYPASSRLS (ou ser dono das tabelas): sem isso, a etapa que depende da tabela não roda e registra rls_sem_bypass; a das sessões depende também da guarda legal, e a falha dela diz quais tabelas o dono não enxerga. Base: LGPD art. 16 e ROPA linha 2 (e-mail apagado na exclusão), jurídico em frila-docs #182.';
+  'Rotina diária própria (pg_cron limpar_trilha_e_sessoes_auth): apaga a trilha do Auth com mais de 6 meses, a trilha de conta excluída (actor_id ou traits.user_id de conta que não existe mais) de qualquer idade, e só as sessões sem atividade há mais de 6 meses (com refresh_tokens e mfa_amr_claims em cascata). Guarda legal: a sessão de conta em guarda vigente em privado.registro_acesso_guarda (de desde, inclusive, até ate, exclusive) fica, porque guarda o último IP e o user_agent da conta e a autoridade pode requerer, cautelarmente, que os registros fiquem além dos 6 meses (Marco Civil, Lei 12.965/2014, art. 15, § 2º; conservação por obrigação legal, LGPD art. 16, I); vencida a guarda, a sessão volta a sair. A guarda também segura a trilha do Auth da conta (etapas a e b), pelo actor_id ou pelo traits.user_id, inclusive a de conta excluída; vencida a guarda, a trilha também volta a sair. Piso de 6 meses que nenhum parâmetro encurta; lote de até 10 mil e teto de 100 lotes por etapa; FOR UPDATE SKIP LOCKED só nas sessões. Erro de um lote (privilégio no esquema auth do hospedado, trava, statement_timeout) encerra só aquela etapa e vira registro em privado.falha_execucao, só com etapa e SQLSTATE. Privilégios do dono: SELECT e DELETE em auth.audit_log_entries, SELECT, UPDATE e DELETE em auth.sessions, SELECT em auth.users e em privado.registro_acesso_guarda, e BYPASSRLS (ou ser dono das tabelas): sem isso, a etapa que depende da tabela não roda e registra rls_sem_bypass, com a lista das tabelas que o dono não enxerga (tabelas); as três etapas dependem também da guarda legal. Base: LGPD art. 16 e ROPA linha 2 (e-mail apagado na exclusão), jurídico em frila-docs #182.';
 
 comment on table privado.registro_acesso_guarda is
-  'Guarda legal de registros de acesso (Marco Civil, Lei 12.965/2014, art. 15, § 2º): a autoridade policial, administrativa ou o Ministério Público pode requerer, cautelarmente, que os registros de uma conta sejam guardados além dos 6 meses. Entre desde e ate, privado.limpar_registros_acesso não apaga os registros da conta, e privado.limpar_trilha_e_sessoes_auth não apaga as sessões dela (auth.sessions, com os refresh_tokens). Só o service_role escreve. NENHUM dado da ordem fica aqui: só a conta, o período e uma referência.';
+  'Guarda legal de registros de acesso (Marco Civil, Lei 12.965/2014, art. 15, § 2º): a autoridade policial, administrativa ou o Ministério Público pode requerer, cautelarmente, que os registros de uma conta sejam guardados além dos 6 meses. Entre desde e ate, privado.limpar_registros_acesso não apaga os registros da conta, e privado.limpar_trilha_e_sessoes_auth não apaga as sessões dela (auth.sessions, com os refresh_tokens), nem a trilha do Auth dela. A ordem cautelar perde a eficácia se a autoridade não pedir ao juiz a autorização de acesso em 60 dias, contados do requerimento, ou se o juiz a negar (Marco Civil, art. 15, § 2º, com o art. 13, §§ 3º e 4º): o ate acompanha isso. Só o service_role escreve. NENHUM dado da ordem fica aqui: só a conta, o período e uma referência.';
