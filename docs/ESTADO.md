@@ -24,22 +24,24 @@ Os números abaixo foram consolidados e remedidos em 01/11/2026 (commit de refer
 | Edge Functions | **10** (inclui `limpar-contas-orfas` e `_compartilhado`) | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
 | Testes unitários em `exportar-turnos` | **44**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
 | Scripts em `scripts/` | **56** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
-| Contrato espelhado | **0.2.48** (sincronizado com o canônico no docs depois do frila-docs#110) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
+| Contrato espelhado | **0.2.62** (igual ao canônico do frila-docs#176; a 0.2.63 do frila-docs#180 chega com o #435) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
 Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **197** arquivos de teste de regras,
 e alcança **198** com `supabase/tests/carga/gerar_df.sql`, que é gerador de carga e não teste de regra.
 
-> ## 🟢 O espelho do contrato está em 0.2.48 (alinhado com o canônico em frila-docs)
+> ## 🟡 O espelho do contrato está em 0.2.62, um passo atrás do canônico (0.2.63)
 >
-> O contrato espelhado em `contrato/openapi.yaml` está na versão **0.2.48** (frila-docs#110, commit `bd1fe92`).
-> A 0.2.48 é só texto: `cancelar_posicao` recusa pelo estado da posição, não pelo relógio, e `Protocolo`
-> não diz se a contestação já foi respondida. Nenhum comportamento de servidor muda; o
-> `cancelar_posicao` da develop já decide pelo estado (`20261005090000_cancelamento_idempotente.sql`).
+> O contrato espelhado em `contrato/openapi.yaml` na `develop` está na versão **0.2.62**, byte a byte
+> igual ao canônico do frila-docs#176 (commit `fadb915`). O canônico já está em **0.2.63**
+> (frila-docs#180, commit `1ef4533`: o `upload_url` da foto passa a ser da Edge Function
+> `enviar-midia`), e a 0.2.63 chega ao backend com o PR #435, que implementa essa função.
+> Conferido em 08/11/2026.
 >
 > | | Versão | Origem | SHA-256 |
 > |---|---|---|---|
-> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.48** | `frila-backend` | `b3f936fe0730cbff16ef9e797c8252a34e5aee90cf07c018f6a6f2d3d57800ee` |
-> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.48** | `frila-docs` (commit `bd1fe92`) | `b3f936fe0730cbff16ef9e797c8252a34e5aee90cf07c018f6a6f2d3d57800ee` |
+> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.62** | `frila-backend` | `161f7dba4f395bd0020d429fc2b39ebe9565e408ed22544c8287aded76b11621` |
+> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` em `fadb915` | **0.2.62** | `frila-docs#176` | `161f7dba4f395bd0020d429fc2b39ebe9565e408ed22544c8287aded76b11621` |
+> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` na `main` (`1ef4533`) | **0.2.63** | `frila-docs#180` | `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4` |
 
 > ## 🟢 Instabilidades de concorrência em `Corridas do ciclo` sanadas na raiz
 >
@@ -168,7 +170,31 @@ Medida com `gh pr list --state open` em 16/10:
 |---|---|
 | local | `supabase start` · Postgres 17 · **123** migrações na `develop` (veja `scripts/migracoes-sem-colisao.sh`), **119** no `main` (em 31/10/2026) |
 | `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · SMTP próprio ativo (`smtp.gmail.com:465`, código de 6 dígitos) · **Entrega bloqueada** por `frila.agendador_secret` (vide abaixo) |
-| `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **em uso** (app 0.5.5 no TestFlight e 9 Edge Functions ativas desde 27/10; fonte: issue #352) · aguarda esteira automatizada de deploy por tag |
+| `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **em uso** · pacote v1.1 aplicado em **08/11/2026** (topo `20261107370000`, 11 Edge Functions; detalhe abaixo) · deploy ainda manual, pelo roteiro de lançamento |
+
+### O `frila-prod` em 08/11/2026 (medido logo após o pacote v1.1)
+
+Pacote v1.1 = `develop` em `e8516b51` (#425), **14 migrações** de `20261105150000` a
+`20261107370000`, aplicadas entre 09:15 e 09:20 (horário de São Paulo) pelo roteiro aprovado
+(uma transação por arquivo, conexão direta, `lock_timeout` 2 s e `statement_timeout` 10 s
+conferidos em cada uma). Backup lógico cifrado gerado imediatamente antes, e a recuperação
+foi ensaiada em contêiner isolado.
+
+| O quê | Estado |
+|---|---|
+| Histórico de migrações | **151** versões, topo `20261107370000`. As 4 de 08/11 da `develop` (`20261108010000` a `20261108040000`, #426 a #430) **não** estão no Prod: são o pacote 2 |
+| Chaves de recurso | `foto_de_perfil` = false, `chamada_direta` = false, `perfil_rico` = false (`configuracao_do_app('ios')`) |
+| Moderação de mídia | `MODERACAO_PROVEDOR=local`, `MODERACAO_TETO_MENSAL=5000`; nenhum segredo da Azure. `local` autoaprova e só serve com `foto_de_perfil` desligada |
+| Edge Functions | `despachar` v7, `entrar-demonstracao` v7, `enviar-email` v7, `enviar-push` v9, `excluir-conta` v7, `exportar-meus-dados` v8, `exportar-turnos` v7, `expurgar-midias` v1, `limpar-contas-orfas` v7, `moderar-midia` v1, `saude` v8 |
+| Publicadas do SHA `e8516b51` | `moderar-midia`, `expurgar-midias`, `exportar-meus-dados`, `saude` (antes do DDL) e `enviar-push` (depois da `20261107370000`, que cria `dispositivo.versao_app`). As demais são de 04/11 a 05/11 |
+| Jobs novos no `pg_cron` | `limpar_contas_orfas_diaria`, `expurgar_midias_diaria`, `expurgar_midias_horario`, `processar_fila_moderacao_midia`, `expirar_chamadas_diretas`, `lembrar_chamadas_diretas`: ativos, usuário `postgres`, sem falha nos primeiros 10 min |
+| Vault | Presentes: `agendador_secret`, `edge_function_url`, `email_function_url`, `push_function_url`, `limpar_contas_function_url`, `expurgar_midias_function_url`, `moderar_midia_function_url` (as 4 últimas criadas em 08/11) |
+| Vault, **ausentes** | `documento_pepper`, `storage_url`, `storage_jwt_secret`. Nenhuma GUC `frila.*`. Sem efeito hoje: 0 verificações de identidade em toda a história e o app não chama as RPCs da RN14. Ligar `foto_de_perfil` ou adotar a RN14 no app exige os três antes |
+
+O que custou caro descobrir na aplicação:
+- A URL de conexão guardada para o Prod é a do **pooler de sessão**, que ignora `PGOPTIONS`. Limite por sessão só vale na conexão direta (`db.<ref>.supabase.co:5432`).
+- `supabase functions deploy` a partir de worktree em `/private/tmp` falha no empacotador Docker; use `--use-api`.
+- `supabase secrets set` sobe a versão de todas as funções sem mudar o código (`updated_at` intacto).
 
 **Desde 29/09 o `frila-dev` manda e-mail por SMTP próprio** (PR #81):
 - Envio: `smtp.gmail.com:465`, conta `frilaverificacao@gmail.com`, remetente "Frila".
@@ -192,7 +218,7 @@ Medida com `gh pr list --state open` em 16/10:
 
 ## O contrato em detalhes
 
-Versão espelhada: **0.2.46** em `contrato/openapi.yaml` (sincronizada com o canônico em `FrilaApp/frila-docs · api/openapi.yaml` no PR #342 / commit `4ddc9e5`, SHA-256 `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10`).
+Versão espelhada: **0.2.62** em `contrato/openapi.yaml` (igual ao canônico em `FrilaApp/frila-docs · api/openapi.yaml` no frila-docs#176 / commit `fadb915`, SHA-256 `161f7dba4f395bd0020d429fc2b39ebe9565e408ed22544c8287aded76b11621`). O canônico já está em 0.2.63 (frila-docs#180), que chega com o #435.
 
 Histórico das versões recentes integradas no backend:
 
@@ -355,6 +381,7 @@ E alinhamentos consolidados de negócio:
 2. **Push com mutable-content no iOS (`h6RoObK6`):** O backend foi entregue e mergeado no PR #178 (`mutable-content: 1`). A conclusão depende da esteira de iOS (criação do target Notification Service Extension, App Group e aprovação de design para o texto neutro sem dados pessoais).
 3. **Credenciais para Deploy Remoto:** Execução no ambiente remoto `frila-dev` e `frila-prod` depende de `SUPABASE_ACCESS_TOKEN` válido configurado no ambiente.
 4. **Revisão da Júlia:** Revisão da lista de termos bloqueados do filtro de texto ofensivo (`ggEzge6h`).
+5. **Segredos do Vault no `frila-prod` (08/11):** criar `documento_pepper` (uma vez, com cópia no cofre: girar invalida a deduplicação da RN14) e `storage_url`; antes de `storage_jwt_secret`, medir no Prod o `alg` do token que o Storage emite (o formato foi medido só no local). Pré-requisito de ligar `foto_de_perfil` e de adotar a RN14 no app.
 
 ---
 
