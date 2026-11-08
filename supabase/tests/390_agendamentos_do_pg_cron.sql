@@ -130,9 +130,11 @@ select set_eq(
     'expurgar_midias_horario',
     -- Jobs de expiração e lembrete de chamadas diretas (B5c / RN31).
     'expirar_chamadas_diretas',
-    'lembrar_chamadas_diretas'
+    'lembrar_chamadas_diretas',
+    -- Limpa a trilha do Auth e as sessões paradas há mais de 6 meses (LGPD-J6 T2b, 20261108120000).
+    'limpar_trilha_e_sessoes_auth'
   ],
-  'Os jobs agendados são exatamente os vinte e um conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os vinte e dois conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;
