@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.62
+  version: 0.2.63
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -109,6 +109,15 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.63, de 08/11/2026.** Só descrição; nenhum campo, operação, status ou código muda, e o
+    app 1.1 não precisa de alteração. A `upload_url` de `solicitar_upload_midia` deixa de ser uma URL
+    assinada pelo Storage e passa a apontar para a Edge Function `enviar-midia`, que recebe o JPEG e o
+    grava no caminho que a RPC reservou. O motivo é de segurança: a assinatura manual dependia de
+    guardar no banco o segredo JWT legado, que também assina tokens de `service_role` (parecer do
+    Lince Codex, 08/11/2026). O envio continua igual para o app: `PUT` na `upload_url`, corpo JPEG,
+    `Content-Type: image/jpeg`, sem o token da sessão, 2xx = gravado, válida por 2 h. A URL de envio
+    de documento da RN14 (`solicitar_upload_documentos`) não muda nesta versão.
 
     **Versão 0.2.62, de 07/11/2026.** Peças finais da v1.1 (RF27, RN15, RN22):
     - **Acompanhamento da contestação do despacho no perfil (RF27):** `CriteriosDeNotificacao` ganha
@@ -239,7 +248,7 @@ info:
       `false`. É o interruptor do servidor: no Prod, os dois nascem desligados até o jurídico e o
       ROPA liberarem. Recurso desligado: as operações dele respondem `403 sem_permissao` com
       `details: recurso_desligado`, e o app esconde a entrada.
-    - **Mídia:** `solicitar_upload_midia` (URL assinada por 2 h, bucket privado),
+    - **Mídia:** `solicitar_upload_midia` (URL de envio de uso único por 2 h, bucket privado; 0.2.63),
       `confirmar_upload_midia` (só enfileira a análise; nada é publicado antes da decisão),
       `remover_midia`, `minhas_midias` e `pedir_nova_analise_midia` (uma vez por foto, com modelo
       mais forte). Só `foto_perfil`; outro `tipo` é recusado com
@@ -2083,10 +2092,19 @@ paths:
       operationId: solicitarUploadMidia
       summary: Pedir a URL para enviar uma foto
       description: |
-        0.2.54. Cria a mídia em `enviando` e devolve uma URL assinada de upload para o bucket privado
-        `midia-perfil`, válida por 2 h (mesmo desenho da RN14). O app envia JPEG já sem EXIF, lado
-        maior até 1600 px, até 5 MB. A miniatura de 320 px é **gerada pelo servidor** a partir do original verificado; o app não a envia (0.2.57). O caminho
-        do objeto não contém o id do usuário.
+        0.2.54. Cria a mídia em `enviando` e devolve a `upload_url` para enviar o arquivo ao bucket
+        privado `midia-perfil`, válida por 2 h. O app envia JPEG já sem EXIF, lado maior até 1600 px,
+        até 5 MB. A miniatura de 320 px é **gerada pelo servidor** a partir do original verificado; o
+        app não a envia (0.2.57). O caminho do objeto não contém o id do usuário e é escolhido pelo
+        servidor, nunca pelo app.
+
+        **Envio (0.2.63).** A `upload_url` aponta para a Edge Function `enviar-midia`
+        (`…/functions/v1/enviar-midia?midia_id=…&token=…`), não para o Storage. O token é opaco, de
+        **uso único**, e o servidor guarda só o seu hash. O app faz `PUT` na `upload_url` com o JPEG no
+        corpo e `Content-Type: image/jpeg`, **sem** o token da sessão, como antes; 2xx quer dizer
+        gravado. Qualquer outra resposta é falha e não grava nada: token inválido, vencido ou já usado,
+        mídia fora de `enviando`, corpo acima de 5 MB ou fora de JPEG. Para tentar de novo, o app pede
+        outra URL. Depois do 2xx, `confirmar_upload_midia` segue igual.
 
         Nesta versão só `tipo = foto_perfil`, uma por dono (profissional, ou estabelecimento com
         `estabelecimento_id` para a foto ou logo da casa, por membro da casa). Outro `tipo` é
@@ -2124,6 +2142,7 @@ paths:
                   midia_id:
                     $ref: '#/components/schemas/Uuid'
                   upload_url:
+                    description: URL de envio de uso único, válida por 2 h, da Edge Function `enviar-midia` (0.2.63). `PUT` com o JPEG, sem o token da sessão.
                     type: string
                     format: uri
                   upload_url_miniatura:
