@@ -279,6 +279,7 @@ VIGIADAS = {
     ("atualizarApresentacaoProfissional", "422"): "campo_invalido",
     # Leitura do próprio perfil completo (F2, contrato 0.2.53, RN26).
     ("meuPerfilDetalhado", "401"): "nao_autenticado",
+    ("meuPerfilDetalhado", "403"): "sem_permissao",   # RN46: perfil_rico desligado (contrato 0.2.60)
     ("meuPerfilDetalhado", "404"): "nao_encontrado",
     ("meuPerfilDetalhado", "422"): "perfil_incompativel",
     # Resolver serviço (fatia F1, contrato 0.2.52, RN44)
@@ -310,7 +311,6 @@ VIGIADAS = {
 ISENTAS = {
     # O espelho inclui F1/F2/F4 e B4c, entregues em PRs próprios. Lista fechada:
     # ao implementar uma dessas operações, trocar a isenção por cenário e VIGIADAS.
-    ("meuPerfilDetalhado", "403"): "recursos.perfil_rico desligado no contrato 0.2.60; trava ainda não ativa no backend",
     **{
         (op, status): "contrato 0.2.57 antecipado; implementação em outra fatia"
         for op, statuses in {
