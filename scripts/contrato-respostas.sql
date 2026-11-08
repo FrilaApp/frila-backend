@@ -1644,16 +1644,28 @@ select pg_temp.guarda('confirmarUploadMidia', pg_temp.como(conta,
 select pg_temp.guarda('minhasMidias', pg_temp.como(conta, $$select public.minhas_midias()$$)) from midia_colheita;
 select pg_temp.guarda('removerMidia', pg_temp.como(conta,
   format('select public.remover_midia(%L)', resposta->>'midia_id'))) from midia_colheita cross join midia_upload;
+-- Nova análise de foto recusada: 200 sobre recusada sintética; 409 sobre a removida acima.
+insert into privado.midia(id,dono_usuario_id,dono_tipo,tipo,storage_path,mime,bytes,estado,motivo_recusa,atualizado_em)
+select 'ee000000-0000-4000-8000-0000000000a9', conta, 'profissional', 'foto_perfil',
+       'perfil/ee000000-0000-4000-8000-0000000000a9.jpg', 'image/jpeg', 1024, 'recusada',
+       'texto_ou_dado_pessoal', privado.agora() from midia_colheita;
+select pg_temp.guarda('pedirNovaAnaliseMidia', pg_temp.como(conta,
+  $$select public.pedir_nova_analise_midia('ee000000-0000-4000-8000-0000000000a9')$$)) from midia_colheita;
+select pg_temp.guarda('promete:pedirNovaAnaliseMidia:409', pg_temp.observado(conta,
+  format('select public.pedir_nova_analise_midia(%L)', resposta->>'midia_id'))) from midia_colheita cross join midia_upload;
 select pg_temp.guarda('promete:' || op || ':401', pg_temp.observado(null, sql)) from (values
   ('solicitarUploadMidia', $$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1)$$),
   ('confirmarUploadMidia', $$select public.confirmar_upload_midia('80200000-0000-4000-8000-000000000099')$$),
   ('removerMidia', $$select public.remover_midia('80200000-0000-4000-8000-000000000099')$$),
+  ('pedirNovaAnaliseMidia', $$select public.pedir_nova_analise_midia('80200000-0000-4000-8000-000000000099')$$),
   ('minhasMidias', $$select public.minhas_midias()$$)) t(op,sql);
 select pg_temp.guarda('promete:' || op || ':404', pg_temp.observado(conta, sql)) from midia_colheita cross join (values
   ('confirmarUploadMidia', $$select public.confirmar_upload_midia('80200000-0000-4000-8000-000000000099')$$),
-  ('removerMidia', $$select public.remover_midia('80200000-0000-4000-8000-000000000099')$$)) t(op,sql);
+  ('removerMidia', $$select public.remover_midia('80200000-0000-4000-8000-000000000099')$$),
+  ('pedirNovaAnaliseMidia', $$select public.pedir_nova_analise_midia('80200000-0000-4000-8000-000000000099')$$)) t(op,sql);
 select pg_temp.guarda('promete:' || op || ':403', pg_temp.observado('cc000000-0000-4000-8000-000000000004',sql)) from (values
   ('removerMidia', $$select public.remover_midia('80200000-0000-4000-8000-000000000099')$$),
+  ('pedirNovaAnaliseMidia', $$select public.pedir_nova_analise_midia('80200000-0000-4000-8000-000000000099')$$),
   ('minhasMidias', $$select public.minhas_midias()$$)) t(op,sql);
 
 -- Por último, e depois de tudo: ela anonimiza a conta e cancela os turnos futuros dela.
