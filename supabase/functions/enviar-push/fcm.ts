@@ -150,6 +150,22 @@ export async function sendFcmMessage(
     }
   }
 
+  const apnsPayload: Record<string, unknown> = {
+    aps: {
+      alert: {
+        title: payload.title,
+        body: payload.body,
+      },
+      sound: "default",
+      badge: 1,
+      "mutable-content": 1,
+    },
+  };
+
+  if (data.vinculo_id) {
+    apnsPayload.vinculo_id = data.vinculo_id;
+  }
+
   const message: Record<string, unknown> = {
     token: payload.token,
     data,
@@ -164,17 +180,7 @@ export async function sendFcmMessage(
         "apns-priority": "10",
         "apns-push-type": "alert",
       },
-      payload: {
-        aps: {
-          alert: {
-            title: payload.title,
-            body: payload.body,
-          },
-          sound: "default",
-          badge: 1,
-          "mutable-content": 1,
-        },
-      },
+      payload: apnsPayload,
     },
   };
 
