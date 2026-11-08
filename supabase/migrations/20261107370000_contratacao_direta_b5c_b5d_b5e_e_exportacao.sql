@@ -41,62 +41,75 @@ drop function if exists public.registrar_dispositivo(text, text);
 drop function if exists public.registrar_dispositivo(text, text, text);
 
 create or replace function public.registrar_dispositivo(
-  token_fcm text,
-  plataforma text,
+  token_fcm text default null,
+  plataforma text default null,
   versao_app text default null
 )
-returns void
+returns jsonb
 language plpgsql
 security definer set search_path = ''
 as $$
 #variable_conflict use_column
 declare
   v_uid         uuid := (select auth.uid());
-  v_token       text := btrim(registrar_dispositivo.token_fcm);
+  v_agora       timestamptz := privado.agora();
+  v_token       text := pg_catalog.btrim(registrar_dispositivo.token_fcm);
   v_plataforma  public.plataforma;
-  v_versao      text := nullif(btrim(registrar_dispositivo.versao_app), '');
+  v_versao      text := nullif(pg_catalog.btrim(registrar_dispositivo.versao_app), '');
+  v_disp        public.dispositivo%rowtype;
 begin
   if v_uid is null then
     perform public.erro(401, 'nao_autenticado');
   end if;
 
-  if not exists (select 1 from public.usuario where id = v_uid and estado = 'ativa') then
-    perform public.erro(403, 'sem_permissao', 'conta_inativa');
-  end if;
+  perform privado.exigir_conta_ativa();
 
   if v_token is null or v_token = '' then
     perform public.erro(422, 'campo_obrigatorio', 'token_fcm');
   end if;
 
-  if length(v_token) > 256 then
+  if pg_catalog.length(v_token) < 20 or pg_catalog.length(v_token) > 4096 then
     perform public.erro(422, 'campo_invalido', 'token_fcm');
   end if;
 
-  if registrar_dispositivo.plataforma is null then
+  if registrar_dispositivo.plataforma is null
+     or pg_catalog.btrim(registrar_dispositivo.plataforma) = '' then
     perform public.erro(422, 'campo_obrigatorio', 'plataforma');
   end if;
 
-  begin
-    v_plataforma := registrar_dispositivo.plataforma::public.plataforma;
-  exception when invalid_text_representation then
+  if not registrar_dispositivo.plataforma
+         = any (pg_catalog.enum_range(null::public.plataforma)::text[]) then
     perform public.erro(422, 'campo_invalido', 'plataforma');
-  end;
+  end if;
 
-  if v_versao is not null and length(v_versao) > 32 then
+  v_plataforma := registrar_dispositivo.plataforma::public.plataforma;
+
+  if v_versao is not null and pg_catalog.length(v_versao) > 32 then
     perform public.erro(422, 'campo_invalido', 'versao_app');
   end if;
 
-  insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app, atualizado_em)
-  values (v_uid, v_token, v_plataforma, v_versao, now())
+  insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app, atualizado_em, vinculo_id)
+  values (v_uid, v_token, v_plataforma, v_versao, v_agora, gen_random_uuid())
   on conflict (token_fcm) do update
     set usuario_id    = excluded.usuario_id,
         plataforma    = excluded.plataforma,
         versao_app    = coalesce(excluded.versao_app, public.dispositivo.versao_app),
-        atualizado_em = excluded.atualizado_em;
+        atualizado_em = excluded.atualizado_em,
+        vinculo_id    = case
+          when public.dispositivo.usuario_id = excluded.usuario_id then public.dispositivo.vinculo_id
+          else gen_random_uuid()
+        end
+  returning * into v_disp;
+
+  return pg_catalog.jsonb_build_object(
+    'plataforma',    v_disp.plataforma,
+    'atualizado_em', v_disp.atualizado_em,
+    'vinculo_id',    v_disp.vinculo_id
+  );
 end $$;
 
 comment on function public.registrar_dispositivo(text, text, text) is
-  'Registra ou atualiza o token de push do aparelho vinculado à conta com versão do app opcional (0.2.56, RN15).';
+  'Registra ou atualiza o token de push do aparelho vinculado à conta com versão do app opcional (0.2.30, 0.2.56, RN15).';
 revoke execute on function public.registrar_dispositivo(text, text, text) from public, anon;
 grant  execute on function public.registrar_dispositivo(text, text, text) to authenticated;
 
@@ -1029,7 +1042,6 @@ as $$
 
     'avaliacoes_dadas', coalesce((
       select jsonb_agg(jsonb_build_object(
-               'id',        a.id,
                'turno_id',  a.turno_id,
                'resposta',  a.resposta,
                'criada_em', a.criada_em)
@@ -1059,11 +1071,7 @@ as $$
        where dp.usuario_id = p_usuario), '[]'::jsonb),
 
     'candidaturas', coalesce((
-      select jsonb_agg(jsonb_build_object(
-               'id',         cd.id,
-               'posicao_id', cd.posicao_id,
-               'estado',     cd.estado,
-               'criada_em',  cd.criada_em)
+      select jsonb_agg(privado.candidatura_em_json(cd.id)
              order by cd.criada_em desc)
         from public.candidatura cd
        where cd.profissional_id in (select p.id from prof p)), '[]'::jsonb),
