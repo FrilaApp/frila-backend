@@ -110,6 +110,8 @@ const CHAVES_UUID_PERMITIDAS = [
   "posicao_id",
   "turno_id",
   "estabelecimento_id",
+  "chamada_id",
+  "midia_id",
 ] as const;
 
 export function filtrarDataPayloadFcm(
@@ -430,6 +432,46 @@ export function titulosECorposPorTipo(
       return {
         title: "Conta reativada",
         body: "Sua conta foi reativada e está pronta para uso.",
+      };
+    case "chamada_recebida":
+      return {
+        title: "Nova chamada",
+        body: "Um contratante quer você para um trabalho. Toque para ver os detalhes e responder.",
+      };
+    case "chamada_lembrete":
+      return {
+        title: "Chamada esperando resposta",
+        body: "Você tem uma chamada esperando resposta. Toque para responder antes do prazo.",
+      };
+    case "chamada_aceita":
+      return {
+        title: "Chamada aceita",
+        body: "A sua chamada foi aceita. Toque para ver o turno confirmado.",
+      };
+    case "chamada_recusada":
+      return {
+        title: "Chamada recusada",
+        body: "A chamada foi recusada. Você pode chamar outra pessoa ou publicar para todos.",
+      };
+    case "chamada_expirada":
+      return {
+        title: "Chamada vencida",
+        body: "A chamada venceu sem resposta.",
+      };
+    case "chamada_cancelada":
+      return {
+        title: "Chamada cancelada",
+        body: "O contratante cancelou a chamada. Nada muda para você.",
+      };
+    case "chamada_encerrada":
+      return {
+        title: "Trabalho preenchido",
+        body: "O contratante fechou com outro profissional. Nada muda para você.",
+      };
+    case "midia_recusada":
+      return {
+        title: "Foto não publicada",
+        body: "Use uma foto sua, com rosto visível, sem texto nem dados pessoais.",
       };
     default:
       return {
@@ -761,24 +803,40 @@ export async function processarEnvioPush(
 
     // 2. Busca todos os aparelhos registrados da conta destinatária
     const dispRes = await fetchFn(
-      `${supabaseUrl}/rest/v1/dispositivo?usuario_id=eq.${n.usuario_id}&select=id,token_fcm,plataforma,vinculo_id`,
+      `${supabaseUrl}/rest/v1/dispositivo?usuario_id=eq.${n.usuario_id}&select=id,token_fcm,plataforma,vinculo_id,versao_app`,
       { headers: dbHeaders },
     );
 
-    const aparelhos: Array<{ id: string; token_fcm: string; plataforma: string; vinculo_id?: string }> =
+    let aparelhos: Array<{ id: string; token_fcm: string; plataforma: string; vinculo_id?: string; versao_app?: string | null }> =
       dispRes.ok ? await dispRes.json() : [];
 
+    // B5e / CD-RF13: push de chamada direta só sai para aparelho com versão suportada
+    if (n.tipo.startsWith("chamada_")) {
+      aparelhos = aparelhos.filter((a) => {
+        if (!a.versao_app) return false;
+        const m = a.versao_app.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+        if (!m) return false;
+        const major = parseInt(m[1], 10);
+        const minor = parseInt(m[2], 10);
+        const patch = parseInt(m[3], 10);
+        if (major > 0) return true;
+        if (major === 0 && minor > 2) return true;
+        if (major === 0 && minor === 2 && patch >= 0) return true;
+        return false;
+      });
+    }
+
     if (aparelhos.length === 0) {
-      // Usuário sem nenhum aparelho registrado
+      // Usuário sem nenhum aparelho registrado ou suportado
       await sqlClient.gravarFalhaPush({
         notificacaoId: n.id,
-        motivo: "sem_dispositivo",
+        motivo: n.tipo.startsWith("chamada_") ? "versao_nao_suportada" : "sem_dispositivo",
         permanente: true,
       });
       relatorio.push({
         notificacao_id: n.id,
         status: "falhou",
-        detalhe: "sem_dispositivo",
+        detalhe: n.tipo.startsWith("chamada_") ? "versao_nao_suportada" : "sem_dispositivo",
       });
       continue;
     }

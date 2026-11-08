@@ -107,8 +107,8 @@ create temp table d as select privado.meus_dados((select ana from ids)) as j;
 
 select is(
   (select string_agg(k, ',' order by k) from jsonb_object_keys((select j from d)) k),
-  'avaliacoes_dadas,avaliacoes_recebidas,bloqueios,candidaturas,conta,despachos,disponibilidade,dispositivos,equipe_confianca,estabelecimentos,eventos_app,gerado_em,notificacoes,ocorrencias,pedido_de_exclusao,perfil_profissional,turnos',
-  'o corpo tem exatamente as dezessete chaves de MeusDados, e nenhuma a mais');
+  'avaliacoes_dadas,avaliacoes_recebidas,bloqueios,candidaturas,chamadas,conta,despachos,disponibilidade,dispositivos,equipe_confianca,estabelecimentos,eventos_app,gerado_em,midias,notificacoes,ocorrencias,pedido_de_exclusao,perfil_profissional,turnos',
+  'o corpo tem exatamente as dezenove chaves de MeusDados, e nenhuma a mais');
 
 select is(
   (select jsonb_typeof(j->'eventos_app') from d), 'array',
@@ -260,18 +260,18 @@ insert into cobertas values
   ('despacho',               'despachos'),
   ('equipe_confianca',       'equipe_confianca'),
   ('pedido_de_exclusao',     'pedido_de_exclusao'),
-  ('evento_app',             'eventos_app');
+  ('evento_app',             'eventos_app'),
+  ('chamada',                'chamadas'),
+  ('profissional_preferencia_chamada', 'perfil_profissional.preferencia_chamadas');
 
 create temp table fora (t text, motivo text);
 insert into fora values
   ('evento',               'agenda da casa, e não do titular'),
   ('entrada_demonstracao', 'conta de revisão da App Store: não há titular de dado pessoal aqui');
 
--- Dado do titular que a exportação ainda não traz porque o contrato não o declara: espera o
--- aditivo de MeusDados no frila-docs (chamada, F4). Não é `fora`: lá só fica o que não é do titular.
+-- Dado do titular que a exportação ainda não traz porque o contrato não o declara:
+-- Agora todas as tabelas estão cobertas (chamadas e preferências consolidadas no 0.2.58/0.2.59).
 create temp table pendente_de_contrato (t text, motivo text);
-insert into pendente_de_contrato values
-  ('chamada', 'aditivo de MeusDados em aberto no frila-docs; recurso chamada_direta desligado até lá');
 
 create temp table nao_pessoais (t text, motivo text);
 insert into nao_pessoais values
@@ -311,9 +311,9 @@ select is(
   'entrada_demonstracao,evento',
   'só duas tabelas ficam de fora, e nenhuma delas guarda dado do titular');
 
--- A pendência tem nome e não cresce em silêncio: sai daqui no PR que exporta a chamada.
-select is((select string_agg(t, ',' order by t) from pendente_de_contrato), 'chamada',
-  'só a chamada espera o aditivo de MeusDados');
+-- A pendência de chamadas foi resolvida neste PR (0.2.58 e 0.2.59 cobrem chamadas e preferências).
+select is((select string_agg(t, ',' order by t) from pendente_de_contrato), null,
+  'nenhuma tabela espera o aditivo de MeusDados');
 
 -- ── 5b. As sete coleções do contrato 0.2.27 ──────────────────────────────────
 -- Uma asserção por campo, e cada uma também cobra o que o campo NÃO leva. Sem a segunda
