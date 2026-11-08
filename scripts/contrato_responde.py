@@ -297,6 +297,11 @@ VIGIADAS = {
     ("removerMidia", "404"): "nao_encontrado",
     ("minhasMidias", "401"): "nao_autenticado",
     ("minhasMidias", "403"): "sem_permissao",
+    # Nova análise de foto recusada (contrato 0.2.54; LGPD art. 20): vigiada desde o nascimento.
+    ("pedirNovaAnaliseMidia", "401"): "nao_autenticado",
+    ("pedirNovaAnaliseMidia", "403"): "sem_permissao",
+    ("pedirNovaAnaliseMidia", "404"): "nao_encontrado",
+    ("pedirNovaAnaliseMidia", "409"): "midia_indisponivel",
     # Chamada direta, F4 parte A (contrato 0.2.55): vigiada desde o nascimento.
     ("chamarProfissional", "401"): "nao_autenticado",
     ("chamarProfissional", "403"): "sem_permissao",
@@ -314,7 +319,6 @@ ISENTAS = {
     **{
         (op, status): "contrato 0.2.57 antecipado; implementação em outra fatia"
         for op, statuses in {
-            "pedirNovaAnaliseMidia": ("401", "403", "404", "409"),
             "listarRegioesAdministrativas": ("401",),
             "listarEspecialidades": ("401",),
             "responderChamada": ("401", "403", "404", "409", "422"),
@@ -357,7 +361,7 @@ PENDENTES = {op: "contratação direta, ainda sem implementação" for op in (
     "cancelarChamada",
     "definirPreferenciaChamadas", "detalheChamada",
     "listarEspecialidades", "listarRegioesAdministrativas", "minhasChamadas",
-    "pedirNovaAnaliseMidia", "publicarAPartirDaChamada",
+    "publicarAPartirDaChamada",
     "responderChamada")}
 
 def recusas_declaradas(doc):
