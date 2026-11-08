@@ -17,7 +17,7 @@
 -- Ids próprios, começando em `b6000000`.
 
 begin;
-select plan(40);
+select plan(45);
 
 insert into privado.ambiente (eh_teste) values (true);
 
@@ -84,6 +84,11 @@ select has_function('privado', 'fechar_turnos_passados', array[]::text[],
 
 select has_function('privado', 'reconciliar_comparecimento', array[]::text[],
   'função privado.reconciliar_comparecimento existe');
+
+select ok(
+  'turno_nao_verificado' = any (enum_range(null::public.tipo_notificacao)::text[]),
+  'tipo_notificacao inclui turno_nao_verificado'
+);
 
 -- ACLs: authenticated não tem acesso a jobs ou tabela de divergência
 select is(
