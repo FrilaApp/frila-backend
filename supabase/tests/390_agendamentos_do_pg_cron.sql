@@ -132,9 +132,11 @@ select set_eq(
     'expirar_chamadas_diretas',
     'lembrar_chamadas_diretas',
     -- Consumidor do registro de acessos, a cada minuto (LGPD-J6 R11, Marco Civil art. 15).
-    'consumir_registro_acesso'
+    'consumir_registro_acesso',
+    -- Apaga o valor do código de check-in vencido, a cada minuto (check-in por código, LGPD).
+    'apagar_codigos_checkin_vencidos'
   ],
-  'Os jobs agendados são exatamente os vinte e dois conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os vinte e três conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;
