@@ -153,7 +153,7 @@ values ('de000000-0000-4000-8000-000000000030',
 
 -- Tentativa gasta na porta
 insert into public.entrada_demonstracao (email, aceita)
-values ('revisao-profissional@frila.app', false);
+values ('revisao-profissional@frilabr.com', false);
 
 -- Vaga aberta alterada
 update public.vaga set estado = 'cancelada' where id = 'de000000-0000-4000-8000-000000000020';
@@ -196,7 +196,7 @@ select is(
 );
 
 select is(
-  (select count(*)::int from public.entrada_demonstracao where email = 'revisao-profissional@frila.app'),
+  (select count(*)::int from public.entrada_demonstracao where email = 'revisao-profissional@frilabr.com'),
   0,
   'tentativas gastas em entrada_demonstracao foram zeradas'
 );
