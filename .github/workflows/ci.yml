@@ -99,6 +99,11 @@ jobs:
       - name: Corrida entre notificar e purga de 60 dias (N1)
         run: ./scripts/corrida-notificar-purga.sh
 
+      # Dois PUT simultâneos com o mesmo token de upload (contrato 0.2.63): duas conexões
+      # chamam privado.consumir_token_upload juntas e só uma recebe o caminho.
+      - name: Corrida no token de uso único do upload
+        run: ./scripts/corrida-token-upload.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
