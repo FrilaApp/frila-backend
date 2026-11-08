@@ -1,19 +1,67 @@
--- Migração: 20261108130000_contas_demonstracao_frilabr.sql
+-- Migração: 20261108085500_contas_demonstracao_frilabr.sql
 -- Escopo: B-DEMO. As contas de demonstração (as da revisão da Apple) saem de frila.app, que
 -- não é do Frila: o domínio não tem MX e aponta para IPs de terceiro, e quem o controlar
 -- recebe os códigos de login dessas contas. Os endereços passam a ser
 -- revisao-contratante@frilabr.com e revisao-profissional@frilabr.com.
 --
 -- privado.renovar_dados_demonstracao e privado.semear_vagas_demonstracao (20261020150000,
--- imutável) procuravam as contas por e-mail @frila.app e, sem achar, gravavam a conta com esse
--- e-mail. Aqui as duas são recriadas trocando só o endereço. A busca usa só o endereço novo:
--- sem achar, cai no UUID canônico (de000000-0000-4000-8000-000000000001 e ...0002), que é o id
--- das duas contas no Prod (medido em 08/11/2026). Por isso a transição não pede a busca pelo
--- endereço antigo, e não buscá-lo impede que uma conta criada por terceiro em @frila.app, depois
--- da troca, seja adotada como conta de demonstração.
+-- imutável) procuravam as contas por e-mail @frila.app e adotavam QUALQUER conta com esse
+-- endereço: depois da troca no Prod, quem controla frila.app criaria conta nele e viraria
+-- administradora do Bar da Revisão (Lince Codex, B1). Aqui as duas são recriadas e passam a
+-- resolver a conta por privado.resolver_conta_demonstracao, que:
+--   1. devolve o UUID canônico (de000000-0000-4000-8000-000000000001 e ...0002) sempre que ele
+--      existe em auth.users, que é o caso das duas contas no Prod (medido em 08/11/2026);
+--   2. sem o canônico, aceita a conta com o endereço novo só se ela já for de demonstração
+--      (public.usuario.demonstracao = true);
+--   3. sem conta nenhuma, devolve o canônico, que a função cria;
+--   4. fora disso, falha fechado (409 conta_de_demonstracao_nao_canonica) e não adota nada.
+-- Os endereços novos são públicos neste repositório, e antes da troca qualquer um pode criar
+-- conta com eles (um /otp anônimo, um generate_link): por isso o e-mail sozinho nunca basta
+-- (Lince Codex B2, Lince AG 2). O endereço antigo não é procurado em caminho nenhum.
 --
--- Esta migração não troca o e-mail de conta nenhuma: no Prod, a troca das duas contas e do
--- segredo DEMONSTRACAO_EMAILS vem depois do app 1.1 reconhecer os endereços novos (ver o PR).
+-- Esta migração não troca o e-mail de conta nenhuma. No Prod ela entra ANTES da troca das duas
+-- contas, e o segredo DEMONSTRACAO_EMAILS vem depois da troca (ordem e pré-teste no PR #443).
+
+-- ── 0. Qual é a conta de demonstração ─────────────────────────────────────────
+
+create or replace function privado.resolver_conta_demonstracao(p_canonico uuid, p_email text)
+returns uuid
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_id uuid;
+begin
+  -- O canônico vence sempre: nenhuma outra conta com o mesmo endereço é adotada.
+  if exists (select 1 from auth.users u where u.id = p_canonico) then
+    return p_canonico;
+  end if;
+
+  select u.id into v_id
+    from auth.users u
+   where lower(u.email) = lower(p_email)
+   order by u.created_at asc
+   limit 1;
+
+  if v_id is null then
+    return p_canonico;
+  end if;
+
+  if exists (select 1 from public.usuario pu where pu.id = v_id and pu.demonstracao) then
+    return v_id;
+  end if;
+
+  -- Uma conta que não é a canônica nem de demonstração tem o endereço: não adota.
+  perform public.erro(409, 'conta_de_demonstracao_nao_canonica', p_email);
+  return null;
+end $$;
+
+comment on function privado.resolver_conta_demonstracao(uuid, text) is
+  'Conta de demonstração (B-DEMO): o UUID canônico quando existe; sem ele, a conta com o endereço só se já for de demonstração; sem conta nenhuma, o canônico. Uma conta avulsa com o endereço faz a função falhar fechado (409 conta_de_demonstracao_nao_canonica) em vez de adotá-la.';
+
+revoke all on function privado.resolver_conta_demonstracao(uuid, text) from public, anon, authenticated;
 
 -- ── 1. Renovação dos dados de demonstração ───────────────────────────────────
 
@@ -43,25 +91,11 @@ declare
   v_funcao_bartender   uuid;
 begin
   -- 1. Resolve UIDs existentes em auth.users ou adota os canônicos de000000-...
-  select id into v_contratante_uid
-    from auth.users
-   where lower(email) = 'revisao-contratante@frilabr.com'
-   order by created_at asc
-   limit 1;
+  v_contratante_uid := privado.resolver_conta_demonstracao(
+    'de000000-0000-4000-8000-000000000001'::uuid, 'revisao-contratante@frilabr.com');
 
-  if v_contratante_uid is null then
-    v_contratante_uid := 'de000000-0000-4000-8000-000000000001'::uuid;
-  end if;
-
-  select id into v_profissional_uid
-    from auth.users
-   where lower(email) = 'revisao-profissional@frilabr.com'
-   order by created_at asc
-   limit 1;
-
-  if v_profissional_uid is null then
-    v_profissional_uid := 'de000000-0000-4000-8000-000000000002'::uuid;
-  end if;
+  v_profissional_uid := privado.resolver_conta_demonstracao(
+    'de000000-0000-4000-8000-000000000002'::uuid, 'revisao-profissional@frilabr.com');
 
   insert into auth.users (instance_id, id, aud, role, email, email_confirmed_at,
                           raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
@@ -251,7 +285,7 @@ begin
 end $$;
 
 comment on function privado.renovar_dados_demonstracao(timestamptz) is
-  'Renovação idempotente dos dados de demonstração (cartão RzllRo3o, 5boVdM0t): resolução de UID por e-mail (revisao-*@frilabr.com; sem achar, o UUID canônico de000000-...), vagas e turno preservados à frente do relógio. Nunca procura nem grava @frila.app, domínio que não é do Frila.';
+  'Renovação idempotente dos dados de demonstração (cartão RzllRo3o, 5boVdM0t): conta resolvida por privado.resolver_conta_demonstracao (o UUID canônico primeiro; nunca adota conta avulsa com o endereço), vagas e turno preservados à frente do relógio. Nunca procura nem grava @frila.app, domínio que não é do Frila.';
 
 revoke all on function privado.renovar_dados_demonstracao(timestamptz) from public, anon, authenticated;
 grant execute on function privado.renovar_dados_demonstracao(timestamptz) to service_role;
@@ -291,15 +325,8 @@ begin
   v_inicio := coalesce(p_inicio_base, greatest(v_agora + interval '30 days', '2026-11-20 18:00:00+00'::timestamptz));
 
   -- 1. Descobre usuário contratante de demonstração
-  select id into v_contratante_uid
-    from auth.users
-   where lower(email) = 'revisao-contratante@frilabr.com'
-   order by created_at asc
-   limit 1;
-
-  if v_contratante_uid is null then
-    v_contratante_uid := 'de000000-0000-4000-8000-000000000001'::uuid;
-  end if;
+  v_contratante_uid := privado.resolver_conta_demonstracao(
+    'de000000-0000-4000-8000-000000000001'::uuid, 'revisao-contratante@frilabr.com');
 
   -- Garante perfil contratante e membro
   insert into public.usuario (id, perfil, nome, telefone, email, nascimento,
@@ -444,7 +471,7 @@ begin
 end $$;
 
 comment on function privado.semear_vagas_demonstracao(int, timestamptz, int) is
-  'Semeadura idempotente de vagas futuras abertas de demonstração pós-06/11 com N posições, destravando medições de desempenho do app iOS (Lista cheia e Detalhe 20x). A conta contratante é revisao-contratante@frilabr.com ou, sem ela, o UUID canônico.';
+  'Semeadura idempotente de vagas futuras abertas de demonstração pós-06/11 com N posições, destravando medições de desempenho do app iOS (Lista cheia e Detalhe 20x). A conta contratante é resolvida por privado.resolver_conta_demonstracao (o UUID canônico primeiro).';
 
 revoke all on function privado.semear_vagas_demonstracao(int, timestamptz, int) from public, anon, authenticated;
 grant execute on function privado.semear_vagas_demonstracao(int, timestamptz, int) to service_role;

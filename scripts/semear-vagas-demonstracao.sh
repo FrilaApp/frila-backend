@@ -26,7 +26,7 @@ POSICOES="20"
 SECO=""
 
 # Valores padrão canônicos de demonstração (migrações 20261004160000_renovacao_dados_demonstracao.sql
-# linhas 42 e 64, 20261020150000_publicar_vaga_demonstracao_resiliencia.sql, 20261108130000_contas_demonstracao_frilabr.sql e supabase/seed.sql)
+# linhas 42 e 64, 20261020150000_publicar_vaga_demonstracao_resiliencia.sql, 20261108085500_contas_demonstracao_frilabr.sql e supabase/seed.sql)
 EMAIL_CONTRATANTE="${EMAIL_CONTRATANTE:-revisao-contratante@frilabr.com}"
 ESTABELECIMENTO_BAR_DA_REVISAO="${ESTABELECIMENTO_BAR_DA_REVISAO:-de000000-0000-4000-8000-000000000010}"
 
