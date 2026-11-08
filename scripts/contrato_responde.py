@@ -334,6 +334,12 @@ VIGIADAS = {
     ("publicarAPartirDaChamada", "404"): "nao_encontrado",
     ("publicarAPartirDaChamada", "409"): "vaga_encerrada",
     ("publicarAPartirDaChamada", "422"): "campo_obrigatorio",
+    # Check-in por código (0.2.68, PR5 do B-CHECKIN-BACK): a casa gera ou revê o código.
+    ("gerarCodigoCheckin", "401"): "nao_autenticado",
+    ("gerarCodigoCheckin", "403"): "sem_permissao",
+    ("gerarCodigoCheckin", "404"): "nao_encontrado",
+    ("gerarCodigoCheckin", "409"): "checkin_ja_confirmado",
+    ("gerarCodigoCheckin", "422"): "campo_obrigatorio",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
@@ -379,11 +385,10 @@ ISENTAS = {
 PENDENTES = {
     **{op: "contratação direta, ainda sem implementação" for op in (
         "listarEspecialidades", "listarRegioesAdministrativas")},
-    # Check-in por código (0.2.68): o espelho entra antes das RPCs (PR4 do B-CHECKIN-BACK). Cada
-    # uma sai daqui no PR que a implementa, com os pares em VIGIADAS: gerar no PR5; validar no
-    # PR7, porque a recusa dele responde por response.status e o harness precisa aprender a lê-lo.
-    **{op: "check-in por código, ainda sem implementação" for op in (
-        "gerarCodigoCheckin", "validarCodigoCheckin")},
+    # Check-in por código (0.2.68): o espelho entrou antes das RPCs (PR4 do B-CHECKIN-BACK). O gerar
+    # saiu no PR5, com os pares em VIGIADAS; o validar sai no PR7, porque a recusa dele responde por
+    # response.status e o harness precisa aprender a lê-lo.
+    "validarCodigoCheckin": "check-in por código, ainda sem implementação",
 }
 
 def recusas_declaradas(doc):

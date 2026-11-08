@@ -20,7 +20,7 @@ on conflict (id) do update set eh_teste = true;
 set local "frila.agora" = '2026-11-20 12:00:00+00';
 set local frila.agendador_secret = 'segredo-de-teste';
 
-select plan(29);
+select plan(30);
 
 -- 2. Helpers de autenticação e contexto
 create or replace function pg_temp.autenticar(p_id uuid, p_role text default 'authenticated')
@@ -41,15 +41,15 @@ $$;
 -- Total de rotinas existentes em public (66 RPCs + 1 event trigger + 3 helpers)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace),
-  70::bigint,
-  'censo de catalogo: schema public contem exatamente 70 rotinas catalogadas'
+  71::bigint,
+  'censo de catalogo: schema public contem exatamente 71 rotinas catalogadas'
 );
 
 -- Total de rotinas declaradas como SECURITY DEFINER (66 RPCs + 1 event trigger rls_auto_enable)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prosecdef = true),
-  67::bigint,
-  'seguranca de privilegios: exatamente 67 rotinas sao SECURITY DEFINER (66 RPCs + rls_auto_enable)'
+  68::bigint,
+  'seguranca de privilegios: exatamente 68 rotinas sao SECURITY DEFINER (67 RPCs + rls_auto_enable)'
 );
 
 -- 100% das rotinas de public possuem search_path="" estrito configurado em proconfig
@@ -57,8 +57,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and p.proconfig @> array['search_path=""']),
-  70::bigint,
-  'mitigacao de sequestro de schema: 100% das rotinas (70 de 70) possuem search_path="" estrito'
+  71::bigint,
+  'mitigacao de sequestro de schema: 100% das rotinas (71 de 71) possuem search_path="" estrito'
 );
 
 -- Apenas 1 única função possui privilégio de execução concedido ao papel anon
@@ -85,8 +85,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and not has_function_privilege('anon', p.oid, 'execute')),
-  69::bigint,
-  'superficie anonima blindada: 69 de 70 rotinas negam execucao para o papel anon'
+  70::bigint,
+  'superficie anonima blindada: 70 de 71 rotinas negam execucao para o papel anon'
 );
 
 -- Papel authenticated possui EXECUTE concedido em exatamente 66 RPCs
@@ -94,8 +94,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and has_function_privilege('authenticated', p.oid, 'execute')),
-  66::bigint,
-  'superficie autenticada: exatamente 66 RPCs publicas concedem execucao a authenticated'
+  67::bigint,
+  'superficie autenticada: exatamente 67 RPCs publicas concedem execucao a authenticated'
 );
 
 -- Papel authenticated NÃO possui privilégio em rotinas internas (erro, conta_em_json, perfil_profissional_em_json, rls_auto_enable)
@@ -142,6 +142,8 @@ select ok(not has_function_privilege('anon', 'public.fazer_checkout(uuid, intege
 
 select ok(not has_function_privilege('anon', 'public.confirmar_checkin_manual(uuid)', 'execute'),
   'RPC critica blindada: anon nao executa confirmar_checkin_manual');
+select ok(not has_function_privilege('anon', 'public.gerar_codigo_checkin(uuid)', 'execute'),
+  'RPC critica blindada: anon nao executa gerar_codigo_checkin (0.2.68)');
 
 select ok(not has_function_privilege('anon', 'public.reabrir_por_atraso(uuid)', 'execute'),
   'RPC critica blindada: anon nao executa reabrir_por_atraso');
