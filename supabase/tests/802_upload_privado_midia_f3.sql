@@ -28,7 +28,9 @@ set local request.jwt.claims = '{"sub":"80200000-0000-4000-8000-000000000001","r
 select is(pg_temp.erro($$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1)$$)->>'details',
  'recurso_desligado', 'RN46: nasce desligado');
 update privado.configuracao_app set foto_de_perfil = true;
-select is(public.configuracao_do_app('ios')#>>'{recursos,foto_de_perfil}', 'true', 'interruptor exposto ao app');
+-- Desde 0.2.65 o recurso só chega ao app com a versão e um mínimo para a plataforma (819).
+insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima) values ('foto_de_perfil', 'ios', '1.2.0');
+select is(public.configuracao_do_app('ios', '1.2.0')#>>'{recursos,foto_de_perfil}', 'true', 'interruptor exposto ao app');
 select is(pg_temp.erro($$select public.solicitar_upload_midia('foto_local','image/jpeg',1)$$)->>'details',
  'tipo_indisponivel', 'v1.1 só aceita foto de perfil');
 select is(pg_temp.erro(format('select public.solicitar_upload_midia(''foto_perfil'',%L,1)', formato)),

@@ -104,6 +104,11 @@ jobs:
       - name: Corrida no token de uso único do upload
         run: ./scripts/corrida-token-upload.sh
 
+      # Chamada direta (T1): aceites simultâneos da mesma vaga, aceite x cancelamento da casa,
+      # duas chamadas ao mesmo par e exclusão de conta x aceite. Duas conexões de verdade.
+      - name: Corridas da chamada direta
+        run: ./scripts/corrida-chamada.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
