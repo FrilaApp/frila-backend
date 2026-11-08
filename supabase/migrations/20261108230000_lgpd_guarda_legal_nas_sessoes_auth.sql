@@ -9,6 +9,12 @@
 -- O predicado é o mesmo de privado.limpar_registros_acesso (20261108110000_lgpd_registro_acessos_borda.sql:490-493):
 -- a guarda vale de desde (inclusive) até ate (exclusive), lidos no privado.agora() da execução.
 --
+-- A guarda entra na autoconferência de RLS (Forja, 08/11/2026): a tabela tem RLS ligado e nenhuma política, e um dono
+-- sem BYPASSRLS que não é o dono dela não enxerga linha nenhuma. Aí o not exists da guarda não acharia nada, e a etapa
+-- (c) apagaria, sem erro, as sessões que a ordem manda guardar. Com a guarda invisível, a etapa (c) não roda e vira
+-- falha_execucao (rls_sem_bypass, etapa sessoes_paradas), como as outras. Só na etapa (c), a falha passa a dizer quais
+-- tabelas o dono não enxerga (tabelas).
+--
 -- O resto do corpo é igual ao de 20261108120000: as etapas (a) e (b), da trilha do Auth, não mudam. Se a trilha
 -- também for registro de acesso do art. 15, a pergunta está no PR; aqui não se implementa.
 -- O agendamento (pg_cron limpar_trilha_e_sessoes_auth, 04:23 UTC), o dono e os privilégios da função não mudam:
@@ -36,6 +42,8 @@ declare
   v_rls_trilha            boolean;
   v_rls_usuarios          boolean;
   v_rls_sessoes           boolean;
+  v_rls_guarda            boolean;
+  v_bloqueio_sessoes      text[];
   -- Teto por etapa e por execução: 100 lotes. O resto sai na rodada seguinte.
   c_teto_lotes constant integer := 100;
   c_teto_lote  constant integer := 10000;
@@ -66,6 +74,18 @@ begin
     cross join lateral (select c.relrowsecurity and not (r.rolsuper or r.rolbypassrls)
                                and (c.relforcerowsecurity or c.relowner <> r.oid) as bloqueada) b
    where c.relname in ('audit_log_entries', 'users', 'sessions');
+
+  -- A etapa (c) também depende de enxergar a guarda legal: invisível, o not exists da guarda não acharia linha e a
+  -- etapa apagaria, sem erro, as sessões em guarda. Mesma conta, no catálogo. Sem a tabela (to_regclass nulo), bloqueia.
+  select coalesce(bool_or(b.bloqueada), true)
+    into v_rls_guarda
+    from pg_class c
+    join pg_roles r on r.rolname = current_user
+    cross join lateral (select c.relrowsecurity and not (r.rolsuper or r.rolbypassrls)
+                               and (c.relforcerowsecurity or c.relowner <> r.oid) as bloqueada) b
+   where c.oid = to_regclass('privado.registro_acesso_guarda');
+  v_bloqueio_sessoes := array_remove(array[case when v_rls_sessoes then 'auth.sessions' end,
+                                           case when v_rls_guarda then 'privado.registro_acesso_guarda' end], null);
 
   -- Cada lote roda num bloco próprio: o erro (privilégio no esquema auth do hospedado, trava, statement_timeout)
   -- desfaz só aquele lote, fica registrado e encerra a etapa; os lotes anteriores e as outras etapas ficam.
@@ -130,12 +150,14 @@ begin
   -- (c) Só as sessões sem atividade há mais de 6 meses. refreshed_at é timestamp sem fuso, em UTC.
   --     Sessão sem nenhuma das três datas fica (greatest de nulos é nulo). Aqui o FOR UPDATE SKIP LOCKED fica:
   --     o Auth atualiza a sessão na renovação, e a rotina não espera por ela. Pede UPDATE em auth.sessions.
+  --     Bloqueada se o dono não enxerga as sessões ou a guarda legal; tabelas diz qual.
   v_lotes := 0;
-  if v_rls_sessoes then
-    v_falhas := v_falhas || jsonb_build_object('etapa', 'sessoes_paradas', 'codigo', 'rls_sem_bypass');
+  if cardinality(v_bloqueio_sessoes) > 0 then
+    v_falhas := v_falhas || jsonb_build_object('etapa', 'sessoes_paradas', 'codigo', 'rls_sem_bypass',
+                                               'tabelas', to_jsonb(v_bloqueio_sessoes));
   end if;
   loop
-    exit when v_rls_sessoes;
+    exit when cardinality(v_bloqueio_sessoes) > 0;
     begin
       with alvo as (
         select s.id
@@ -180,7 +202,7 @@ begin
 end $$;
 
 comment on function privado.limpar_trilha_e_sessoes_auth(integer, integer) is
-  'Rotina diária própria (pg_cron limpar_trilha_e_sessoes_auth): apaga a trilha do Auth com mais de 6 meses, a trilha de conta excluída (actor_id ou traits.user_id de conta que não existe mais) de qualquer idade, e só as sessões sem atividade há mais de 6 meses (com refresh_tokens e mfa_amr_claims em cascata). Guarda legal: a sessão de conta em guarda vigente em privado.registro_acesso_guarda (de desde, inclusive, até ate, exclusive) fica, porque guarda o último IP e o user_agent da conta e a autoridade pode requerer, cautelarmente, que os registros fiquem além dos 6 meses (Marco Civil, Lei 12.965/2014, art. 15, § 2º; conservação por obrigação legal, LGPD art. 16, I); vencida a guarda, a sessão volta a sair. A guarda não alcança a trilha do Auth. Piso de 6 meses que nenhum parâmetro encurta; lote de até 10 mil e teto de 100 lotes por etapa; FOR UPDATE SKIP LOCKED só nas sessões. Erro de um lote (privilégio no esquema auth do hospedado, trava, statement_timeout) encerra só aquela etapa e vira registro em privado.falha_execucao, só com etapa e SQLSTATE. Privilégios do dono: SELECT e DELETE em auth.audit_log_entries, SELECT, UPDATE e DELETE em auth.sessions, SELECT em auth.users e em privado.registro_acesso_guarda, e BYPASSRLS (ou ser dono das tabelas): sem isso nas tabelas do Auth a etapa não roda e registra rls_sem_bypass. Base: LGPD art. 16 e ROPA linha 2 (e-mail apagado na exclusão), jurídico em frila-docs #182.';
+  'Rotina diária própria (pg_cron limpar_trilha_e_sessoes_auth): apaga a trilha do Auth com mais de 6 meses, a trilha de conta excluída (actor_id ou traits.user_id de conta que não existe mais) de qualquer idade, e só as sessões sem atividade há mais de 6 meses (com refresh_tokens e mfa_amr_claims em cascata). Guarda legal: a sessão de conta em guarda vigente em privado.registro_acesso_guarda (de desde, inclusive, até ate, exclusive) fica, porque guarda o último IP e o user_agent da conta e a autoridade pode requerer, cautelarmente, que os registros fiquem além dos 6 meses (Marco Civil, Lei 12.965/2014, art. 15, § 2º; conservação por obrigação legal, LGPD art. 16, I); vencida a guarda, a sessão volta a sair. A guarda não alcança a trilha do Auth. Piso de 6 meses que nenhum parâmetro encurta; lote de até 10 mil e teto de 100 lotes por etapa; FOR UPDATE SKIP LOCKED só nas sessões. Erro de um lote (privilégio no esquema auth do hospedado, trava, statement_timeout) encerra só aquela etapa e vira registro em privado.falha_execucao, só com etapa e SQLSTATE. Privilégios do dono: SELECT e DELETE em auth.audit_log_entries, SELECT, UPDATE e DELETE em auth.sessions, SELECT em auth.users e em privado.registro_acesso_guarda, e BYPASSRLS (ou ser dono das tabelas): sem isso, a etapa que depende da tabela não roda e registra rls_sem_bypass; a das sessões depende também da guarda legal, e a falha dela diz quais tabelas o dono não enxerga. Base: LGPD art. 16 e ROPA linha 2 (e-mail apagado na exclusão), jurídico em frila-docs #182.';
 
 comment on table privado.registro_acesso_guarda is
   'Guarda legal de registros de acesso (Marco Civil, Lei 12.965/2014, art. 15, § 2º): a autoridade policial, administrativa ou o Ministério Público pode requerer, cautelarmente, que os registros de uma conta sejam guardados além dos 6 meses. Entre desde e ate, privado.limpar_registros_acesso não apaga os registros da conta, e privado.limpar_trilha_e_sessoes_auth não apaga as sessões dela (auth.sessions, com os refresh_tokens). Só o service_role escreve. NENHUM dado da ordem fica aqui: só a conta, o período e uma referência.';

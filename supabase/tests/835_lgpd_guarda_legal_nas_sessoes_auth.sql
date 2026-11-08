@@ -2,11 +2,12 @@
 -- A etapa (c) de privado.limpar_trilha_e_sessoes_auth (#442) pula as sessões das contas em guarda legal vigente
 -- (privado.registro_acesso_guarda, Marco Civil art. 15, § 2º), pelo mesmo predicado de privado.limpar_registros_acesso
 -- (#449): a guarda vale de desde, inclusive, até ate, exclusive. Sem guarda, com a guarda vencida ou ainda por
--- começar, a sessão parada há mais de 6 meses sai, como no #442.
+-- começar, a sessão parada há mais de 6 meses sai, como no #442. Com a guarda invisível ao dono da função, a etapa
+-- não roda e a falha é registrada (autoconferência de RLS).
 begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-08 12:00:00+00', true);
-select plan(13);
+select plan(17);
 
 -- Base limpa dentro da transação (desfeita no fim): só as linhas deste teste contam.
 delete from auth.sessions;
@@ -86,6 +87,34 @@ update privado.registro_acesso_guarda set ate = privado.agora() - interval '1 se
  where usuario_id = 'c8350000-0000-4000-8000-000000000001';
 select is((privado.limpar_trilha_e_sessoes_auth() ->> 'sessoes_paradas')::int, 1,
   'vencida a guarda da conta 01, a sessão parada dela sai na rodada seguinte');
+
+-- ── A guarda invisível ao dono: a etapa (c) não roda e registra, em vez de apagar a sessão em guarda calada ──
+-- Dono sem BYPASSRLS, com SELECT na guarda: o RLS (ligado, sem política) esconde as linhas, e o not exists da guarda
+-- não acharia nenhuma. No local, nenhum papel ao alcance do postgres enxerga auth.sessions sem BYPASSRLS, e as sessões
+-- também ficam bloqueadas aqui; o campo tabelas é o que separa a guarda. A prova com SÓ a guarda invisível (dono de
+-- auth.sessions sem BYPASSRLS) exige supabase_admin, e está no PR.
+create role zz_835_sem_bypass nologin;
+grant zz_835_sem_bypass to postgres;
+-- CREATE no esquema: exigido para o papel virar dono de função em privado.
+grant usage, create on schema privado to zz_835_sem_bypass;
+grant execute on function privado.agora() to zz_835_sem_bypass;
+grant execute on function privado.registrar_falha_execucao(text, text, jsonb) to zz_835_sem_bypass;
+grant select on table privado.registro_acesso_guarda to zz_835_sem_bypass;
+alter function privado.limpar_trilha_e_sessoes_auth(integer, integer) owner to zz_835_sem_bypass;
+select pg_temp.sessao(2, 'c8350000-0000-4000-8000-0000000000b8', interval '7 months');
+delete from privado.falha_execucao where origem = 'limpar_trilha_e_sessoes_auth';
+create temp table r2 as select privado.limpar_trilha_e_sessoes_auth() as j;
+select ok((select j->'falhas' @> '[{"etapa":"sessoes_paradas","codigo":"rls_sem_bypass","tabelas":["privado.registro_acesso_guarda"]}]'
+             from r2),
+  'guarda invisível ao dono: a etapa das sessões registra rls_sem_bypass e nomeia a guarda');
+select ok(pg_temp.tem_sessao('c8350000-0000-4000-8000-0000000000b7'),
+  'guarda invisível ao dono: a sessão parada da conta em guarda fica');
+select ok(pg_temp.tem_sessao('c8350000-0000-4000-8000-0000000000b8') and (select (j->>'sessoes_paradas')::int from r2) = 0,
+  'guarda invisível ao dono: a etapa não roda, e nem a sessão sem guarda sai');
+select is((select count(*)::int from privado.falha_execucao
+            where origem = 'limpar_trilha_e_sessoes_auth' and codigo = 'limpeza_auth_falhou'), 1,
+  'a falha vai para falha_execucao, que o verificar_saude transforma em alerta');
+alter function privado.limpar_trilha_e_sessoes_auth(integer, integer) owner to postgres;
 
 select * from finish();
 rollback;
