@@ -4,7 +4,8 @@
 -- recusada, ou não publicada por falha da análise, pede que a análise automática seja
 -- refeita. O contrato fixa o comportamento:
 --   · uma vez por foto, só para `recusada` ou `nao_publicada`: volta a `em_analise` e a
---     análise é refeita uma vez;
+--     análise é refeita uma vez (mensagem com `reanalise: true`: uma consulta extra ao
+--     provedor, nunca mais que isso);
 --   · repetir o pedido da mesma foto não gera outra análise e devolve o estado atual;
 --   · outro estado é `409 midia_indisponivel` (`estado_invalido`);
 --   · depois do expurgo da recusada (até 24 h) é `409 midia_indisponivel` (`expurgada`);
@@ -114,7 +115,11 @@ begin
     perform public.erro(409, 'midia_indisponivel', 'estado_invalido');
   end;
 
-  perform pgmq.send('moderacao_midia', jsonb_build_object('midia_id', v_m.id));
+  -- `reanalise: true` autoriza no moderar-midia exatamente UMA consulta extra ao provedor
+  -- (limite de 2 chamadas no total por foto, `index.ts`, reservarChamada), com o teto mensal
+  -- e a falha fechada de sempre. Sem o marcador, a chamada da recusa original já esgotou o
+  -- limite e a nova análise nunca chegaria ao provedor (bloqueio do Lince Codex no #433).
+  perform pgmq.send('moderacao_midia', jsonb_build_object('midia_id', v_m.id, 'reanalise', true));
   return privado.midia_em_json(v_m);
 end $$;
 

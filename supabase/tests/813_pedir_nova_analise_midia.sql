@@ -14,7 +14,7 @@
 --      decisão, e a nova análise parada também é expurgada nesse prazo.
 
 begin;
-select plan(27);
+select plan(28);
 
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 set local "frila.agora" = '2026-11-20 12:00:00+00';
@@ -100,6 +100,9 @@ select is((select resposta->>'estado' from r1), 'em_analise', 'recusada volta a 
 select is((select resposta->>'pode_pedir_nova_analise' from r1), 'false', 'depois do pedido: pode_pedir_nova_analise = false');
 select ok((select resposta->'motivo_recusa' = 'null'::jsonb from r1), 'em análise não carrega o motivo da recusa anterior');
 select is(pg_temp.na_fila('81300000-0000-4000-8000-0000000000a1'), 1::bigint, 'a análise automática é refeita: uma mensagem na fila');
+select is((select message->>'reanalise' from pgmq.q_moderacao_midia
+            where message->>'midia_id' = '81300000-0000-4000-8000-0000000000a1'),
+  'true', 'a mensagem autoriza a consulta extra ao provedor (reanalise = true)');
 select is((select expurgo_ate from privado.midia where id = '81300000-0000-4000-8000-0000000000a1'),
   '2026-11-21 11:00:00+00'::timestamptz, 'prazo de expurgo congelado em decisão original + 24 h');
 
