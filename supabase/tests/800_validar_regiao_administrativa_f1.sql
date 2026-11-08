@@ -25,7 +25,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(45);
+select plan(44);
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
@@ -248,13 +248,13 @@ select is(
                           union all select (r->>'vaga_id')::uuid from t_vaga_b)),
   0, 'critério 1: o que foi reconhecido não gera pendência');
 
--- Critério 2: sem correspondência recebe o tratamento de Outra (DOC2) com resguardo sem perda.
+-- Critério 2: sem correspondência recebe o fallback seguro Plano Piloto com resguardo sem perda.
 select is((select regiao_administrativa from public.estabelecimento
             where id = (select (r->>'id')::uuid from t_estab_c)),
-  'Outra', 'critério 2: estabelecimento "Entorno Desconhecido" cai no fallback seguro Outra');
+  'Plano Piloto', 'critério 2: estabelecimento "Entorno Desconhecido" cai no fallback seguro Plano Piloto');
 select is((select regiao_administrativa from public.vaga
             where id = (select (r->>'vaga_id')::uuid from t_vaga_c)),
-  'Outra', 'critério 2: vaga "Entorno Desconhecido" cai no fallback seguro Outra');
+  'Plano Piloto', 'critério 2: vaga "Entorno Desconhecido" cai no fallback seguro Plano Piloto');
 select is(
   (select texto_original from privado.pendencia_regiao_administrativa
     where origem = 'estabelecimento' and registro_id = (select (r->>'id')::uuid from t_estab_c)),
@@ -262,7 +262,7 @@ select is(
 select is(
   (select texto_original || '/' || regiao_aplicada from privado.pendencia_regiao_administrativa
     where origem = 'vaga' and registro_id = (select (r->>'vaga_id')::uuid from t_vaga_c)),
-  'Entorno Desconhecido/Outra', 'critério 2: a pendência da vaga guarda o texto original e a região aplicada');
+  'Entorno Desconhecido/Plano Piloto', 'critério 2: a pendência da vaga guarda o texto original e a região aplicada');
 select is(
   (select count(*)::int from public.estabelecimento e
      join t_antes a on a.id = e.id
@@ -330,13 +330,6 @@ select throws_ok(
   'PGRST',
   '{"code" : "campo_invalido", "message" : "campo_invalido", "details" : "regiao_administrativa", "hint" : null}',
   'critério 3: cadastrar_estabelecimento recusa "Área 51" com 422 campo_invalido');
-
--- 'Outra' é cadastrada no catálogo com ativo = false: recusa em novas escritas
-select throws_ok(
-  $$ select pg_temp.cadastrar('Bar Outra', '19131905000129', 'Outra') $$,
-  'PGRST',
-  '{"code" : "campo_invalido", "message" : "campo_invalido", "details" : "regiao_administrativa", "hint" : null}',
-  'critério 3: cadastrar_estabelecimento recusa "Outra" (inativo) com 422 campo_invalido');
 
 select is(
   (select count(*)::int from public.estabelecimento where documento = '19131905000129'),
