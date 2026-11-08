@@ -143,12 +143,15 @@ ok "e-mail em português"
 # Link mágico abre o navegador, sai do aplicativo e quebra o fluxo em Android de
 # entrada, que é onde está a maior parte da oferta.
 #
-# O padrão é `<a href` e não `verify|confirm`: um deep link ou um encurtador passariam
-# pelo segundo e quebrariam o fluxo igual. O modelo deste e-mail não tem link nenhum, e
-# é assim que ele deve continuar.
-printf '%s' "$texto" | grep -qiE '<a[^>]+href' \
-  && falhou "o e-mail traz link; o contrato pede código, e link nenhum"
-ok "sem link no corpo"
+# O código continua o caminho principal. O único link permitido é o botão de conveniência
+# para cópia por fragmento (https://frilabr.com/codigo#); qualquer link mágico ou rota
+# de verificação do Supabase Auth (verify, confirm, etc.) quebra o fluxo e é recusado.
+printf '%s' "$texto" | grep -qiE '<a[^>]+href="[^"]*(verify|confirm)' \
+  && falhou "o e-mail traz link mágico de confirmação; o fluxo é por código"
+
+links=$(printf '%s' "$texto" | grep -oE 'href="[^"]+"' | sed 's/href="//;s/"//' | grep -v 'frilabr.com/codigo#' || true)
+[ -z "$links" ] || falhou "o e-mail traz link inesperado: $links"
+ok "sem link mágico de login"
 
 sessao=$(curl -s -X POST "$URL/auth/v1/verify" \
   -H "apikey: $ANON" -H 'Content-Type: application/json' \
