@@ -2024,6 +2024,18 @@ Deno.test("BsXIZHOw: textos de suspensao e reativacao cabem no iPhone SE e nao t
   assert(!reat.body.includes("Contestação"), "o motivo da reativação não vai no corpo do push");
 });
 
+// Contrato 0.2.62 / RN15, RN22: Aviso de turno não verificado aos dois lados
+Deno.test("0.2.62: turno_nao_verificado tem titulo e corpo conforme contrato e cabe na tela bloqueada", () => {
+  const notif = titulosECorposPorTipo("turno_nao_verificado", {});
+  assertEquals(notif, {
+    title: "Turno não verificado",
+    body: "A presença no turno não foi confirmada dentro do prazo. O turno foi encerrado como não verificado.",
+  });
+  assert(notif.title.length <= 32, "título de turno_nao_verificado cabe na tela bloqueada do iPhone SE");
+  assert(!notif.body.includes("@"), "não contém e-mail");
+  assert(!notif.body.includes("+55"), "não contém telefone");
+});
+
 // Hardening de Produção (cartão kT7NhMGV): B7, B5, B4, B3
 Deno.test("kT7NhMGV / B7: processarEnvioPush recusa notificacao_id invalido com 422 campo_invalido", async () => {
   const req = new Request("http://localhost/functions/v1/enviar-push", {
@@ -2422,6 +2434,7 @@ Deno.test("RN15 / LGPD: nenhum título ou corpo vaza dados pessoais mesmo com va
     "avaliacao_disponivel",
     "suspensao",
     "reativacao",
+    "turno_nao_verificado",
     "tipo_desconhecido_fallback",
   ];
 
