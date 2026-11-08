@@ -132,9 +132,11 @@ select set_eq(
     'expirar_chamadas_diretas',
     'lembrar_chamadas_diretas',
     -- Consumidor do registro de acessos, a cada minuto (LGPD-J6 R11, Marco Civil art. 15).
-    'consumir_registro_acesso'
+    'consumir_registro_acesso',
+    -- Limpa a trilha do Auth e as sessões paradas há mais de 6 meses (LGPD-J6 T2b, 20261108120000).
+    'limpar_trilha_e_sessoes_auth'
   ],
-  'Os jobs agendados são exatamente os vinte e dois conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os vinte e três conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;
