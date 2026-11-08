@@ -11,8 +11,9 @@
 --     PostgREST abre em transação SÓ LEITURA. Ali, INSERT não passa; pg_logical_emit_message(false, …) passa, porque
 --     vai ao WAL fora da transação (medido). Por isso a 1ª requisição de cada (conta, IP, hora) emite uma mensagem
 --     lógica, e um job do pg_cron a consome a cada minuto e grava. A mensagem sobrevive até a requisição que falha;
---   · o pre-request só lê: confere a chave da coleta e a tabela pequena registro_acesso_recente. Medido: +10 a 15 µs
---     por requisição, sem espera de trava. Erro no registro nunca derruba a requisição;
+--   · o pre-request só lê: confere a chave da coleta e a tabela pequena registro_acesso_recente. Medido: +5 µs com a
+--     coleta desligada; +20 a +33 µs ligada, com a hora já registrada (autor e Lince AG 2; 20 mil chamadas por
+--     rodada, mediana), sem espera de trava. Erro no registro nunca derruba a requisição;
 --   · a mensagem vai ao disco com o WAL, sem fsync próprio: o consumidor a vê depois do flush, em até ~1 s, e o
 --     atraso de até 1 min do agendamento é aceito (Forja, 08/11).
 --
@@ -72,7 +73,7 @@ create table privado.registro_acesso_coleta (
   ligada       boolean not null default false,
   alterada_em  timestamptz not null default privado.agora(),
   consumido_em timestamptz,
-  teto_wal_mb  integer not null default 128 check (teto_wal_mb between 16 and 1024)
+  teto_wal_mb  integer not null default 128 check (teto_wal_mb between 16 and 192)
 );
 insert into privado.registro_acesso_coleta (unica, ligada) values (true, false);
 
@@ -81,7 +82,7 @@ revoke all on table privado.registro_acesso_coleta from public, anon, authentica
 grant select, update (teto_wal_mb) on table privado.registro_acesso_coleta to service_role;
 
 comment on table privado.registro_acesso_coleta is
-  'Chave da coleta de registros de acesso (uma linha só). Nasce desligada; liga e desliga só por privado.definir_coleta_registro_acesso, que cria ou derruba o slot lógico. consumido_em é o último consumo bem-sucedido (o alerta registro_acesso_parado e o início de um buraco). teto_wal_mb é o atraso máximo do slot antes de a autoproteção o derrubar (128 MB; o service_role ajusta). Não guarda dado pessoal.';
+  'Chave da coleta de registros de acesso (uma linha só). Nasce desligada; liga e desliga só por privado.definir_coleta_registro_acesso, que cria ou derruba o slot lógico. consumido_em é o último consumo bem-sucedido (o alerta registro_acesso_parado e o início de um buraco). teto_wal_mb é o atraso máximo do slot antes de a autoproteção o derrubar (128 MB; o service_role ajusta entre 16 e 192). O máximo de 192 MB é 75% do max_slot_wal_keep_size de 256 MB do Prod: com o teto acima dele, o servidor invalidaria o slot primeiro, e a autoproteção ainda mediria "ok" pelo confirmed_flush_lsn. Subir o teto exige migração e, antes, subir o max_slot_wal_keep_size. Não guarda dado pessoal.';
 
 -- O nome do slot e o balde moram em funções, para que a granularidade mude num lugar só.
 create or replace function privado.slot_registro_acesso() returns text
@@ -233,23 +234,29 @@ declare
   v_motivo    text;
   v_recriado  boolean := false;
   v_sqlstate  text;
+  v_invalido  boolean := false;
+  v_lt        text;
 begin
   select c.* into v_coleta from privado.registro_acesso_coleta c where c.unica;
   if not coalesce(v_coleta.ligada, false) then
     return jsonb_build_object('coleta', false);
   end if;
 
-  select true, round(pg_wal_lsn_diff(pg_current_wal_lsn(), coalesce(s.confirmed_flush_lsn, s.restart_lsn)) / 1048576.0, 1)
-    into v_existe, v_atraso_mb
+  -- O WAL retido é o que vem depois do restart_lsn, e não do confirmed_flush_lsn: com uma transação longa aberta, o
+  -- confirmed_flush_lsn avança e o restart_lsn fica parado (Lince AG 2, E7b: 0,0 MB medidos contra 41,7 MB retidos).
+  -- Slot invalidado pelo servidor (wal_status lost, restart_lsn nulo) não serve mais: derruba e recria.
+  select true, s.wal_status = 'lost' or s.restart_lsn is null,
+         round(pg_wal_lsn_diff(pg_current_wal_lsn(), s.restart_lsn) / 1048576.0, 1)
+    into v_existe, v_invalido, v_atraso_mb
     from pg_catalog.pg_replication_slots s
    where s.slot_name = v_slot;
 
-  if coalesce(v_existe, false) and coalesce(v_atraso_mb, 0) <= v_coleta.teto_wal_mb then
+  if coalesce(v_existe, false) and not coalesce(v_invalido, false) and v_atraso_mb <= v_coleta.teto_wal_mb then
     return jsonb_build_object('coleta', true, 'slot', 'ok', 'atraso_mb', v_atraso_mb);
   end if;
 
   if coalesce(v_existe, false) then
-    v_motivo := 'slot_acima_do_teto';
+    v_motivo := case when coalesce(v_invalido, false) then 'slot_invalidado' else 'slot_acima_do_teto' end;
     begin
       perform pg_drop_replication_slot(v_slot);
     exception when others then
@@ -264,8 +271,13 @@ begin
   -- DEPOIS de reservar o slot, e o bloco de exceção deixaria um slot efêmero preso à sessão (medido): por isso nem
   -- tenta, e a rodada seguinte do pg_cron, que começa sem escrita, recria.
   if pg_current_xact_id_if_assigned() is null then
+    -- A criação espera as transações abertas terminarem (Lince AG 2, E8). Com 5 s, desiste, o buraco fica registrado
+    -- e a rodada seguinte tenta de novo; o job não cai. No erro, o Postgres desfaz o set_config junto com o bloco.
+    v_lt := current_setting('lock_timeout');
     begin
+      perform set_config('lock_timeout', '5s', true);
       perform pg_create_logical_replication_slot(v_slot, 'test_decoding');
+      perform set_config('lock_timeout', v_lt, true);
       v_recriado := true;
     exception when others then
       v_sqlstate := sqlstate;
@@ -319,14 +331,22 @@ begin
   -- Coleta desligada: sem slot, para não reter WAL.
   if not coalesce(v_ligada, false) then
     if exists (select 1 from pg_catalog.pg_replication_slots s where s.slot_name = v_slot) then
-      perform pg_drop_replication_slot(v_slot);
+      begin
+        perform pg_drop_replication_slot(v_slot);
+      exception when others then
+        -- Em uso agora: a rodada seguinte derruba. O job não cai.
+        return jsonb_build_object('coleta', false, 'slot_removido', false, 'sqlstate', sqlstate);
+      end;
       return jsonb_build_object('coleta', false, 'slot_removido', true);
     end if;
     return jsonb_build_object('coleta', false);
   end if;
 
   v_protecao := privado.proteger_slot_registro_acesso('consumir_registro_acesso');
-  if not exists (select 1 from pg_catalog.pg_replication_slots s where s.slot_name = v_slot) then
+  -- Depois de um buraco (slot derrubado, recriado ou com a criação recusada) ou com o slot em uso, esta rodada não
+  -- decodifica: a próxima começa do slot novo. Também não lê um slot efêmero de uma criação que estourou o prazo.
+  if v_protecao ->> 'slot' is distinct from 'ok'
+     or not exists (select 1 from pg_catalog.pg_replication_slots s where s.slot_name = v_slot) then
     return jsonb_build_object('coleta', true, 'protecao', v_protecao, 'consumidas', 0);
   end if;
 
@@ -730,7 +750,8 @@ begin
           v_alertas := v_alertas + 1;
         end if;
       end if;
-      select round(pg_wal_lsn_diff(pg_current_wal_lsn(), coalesce(s.confirmed_flush_lsn, s.restart_lsn)) / 1048576.0, 1)
+      -- Pelo restart_lsn, que é o que retém o WAL (Lince AG 2, E7b).
+      select round(pg_wal_lsn_diff(pg_current_wal_lsn(), s.restart_lsn) / 1048576.0, 1)
         into v_atraso_mb
         from pg_catalog.pg_replication_slots s
        where s.slot_name = privado.slot_registro_acesso();
