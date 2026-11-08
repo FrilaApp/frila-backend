@@ -121,14 +121,16 @@ select pg_temp.requisicao('c8220000-0000-4000-8000-00000000000b', '{"cf-connecti
 select pg_temp.agora('2026-11-08 13:05:00+00');
 select pg_temp.requisicao('c8220000-0000-4000-8000-00000000000a', '{"cf-connecting-ip":"198.51.100.20"}');
 select pg_temp.flush();
-create temp table c1 as select privado.consumir_registro_acesso() as j;
+-- O consumidor é chamado direto, como o pg_cron faz (uma chamada por sessão). Chamado dentro de um CREATE TABLE AS,
+-- o plpgsql_check pré-carregado deixa a pilha do pldbgapi2 inconsistente e a próxima função plpgsql da sessão cai
+-- ("cannot find parent statement on pldbgapi2 call stack", medido em 08/11/2026).
+select is((privado.consumir_registro_acesso() ->> 'consumidas')::int, 5, 'o consumidor leu as 5 mensagens');
 select results_eq($$ select usuario_id::text, host(ip), acessado_em from privado.registro_acesso order by 1, 3 $$,
   $$ values ('c8220000-0000-4000-8000-00000000000a', '198.51.100.20', '2026-11-08 12:10:00+00'::timestamptz),
             ('c8220000-0000-4000-8000-00000000000a', '198.51.100.21', '2026-11-08 12:20:00+00'::timestamptz),
             ('c8220000-0000-4000-8000-00000000000a', '198.51.100.20', '2026-11-08 13:05:00+00'::timestamptz),
             ('c8220000-0000-4000-8000-00000000000b', '198.51.100.20', '2026-11-08 12:15:00+00'::timestamptz) $$,
   'uma linha por (conta, IP, hora), com o PRIMEIRO uso do balde; troca de IP na mesma hora gera linha nova');
-select is((select (j ->> 'consumidas')::int from c1), 5, 'o consumidor leu as 5 mensagens');
 select is((select consumido_em from privado.registro_acesso_coleta), '2026-11-08 13:05:00+00'::timestamptz,
   'e carimbou o último consumo');
 
@@ -136,8 +138,7 @@ select is((select consumido_em from privado.registro_acesso_coleta), '2026-11-08
 select pg_temp.agora('2026-11-08 13:40:00+00');
 select pg_temp.requisicao('c8220000-0000-4000-8000-00000000000a', '{"cf-connecting-ip":"198.51.100.20"}');
 select pg_temp.flush();
-create temp table c2 as select privado.consumir_registro_acesso() as j;
-select is((select (j ->> 'consumidas')::int from c2), 0, 'mesma conta, IP e hora já gravados: nenhuma mensagem nova');
+select is((privado.consumir_registro_acesso() ->> 'consumidas')::int, 0, 'mesma conta, IP e hora já gravados: nenhuma mensagem nova');
 select is((select count(*)::int from privado.registro_acesso), 4, 'e nenhuma linha nova');
 
 -- A falha do pre-request (acima) virou registro em falha_execucao, sem dado pessoal.
@@ -205,7 +206,7 @@ select ok(exists (select 1 from pg_replication_slots where slot_name = 'frila_re
 -- ── Autoproteção: acima do teto, o consumidor derruba o slot e registra o buraco ─
 update privado.registro_acesso_coleta set teto_wal_mb = 16;
 delete from privado.falha_execucao where codigo = 'registro_acesso_buraco';
-create temp table c3 as select privado.consumir_registro_acesso() as j;
+select privado.consumir_registro_acesso() ->> 'protecao' is not null as consumiu;
 select ok(not exists (select 1 from pg_replication_slots where slot_name = 'frila_registro_acesso'),
   'atraso acima do teto: o slot cai e o WAL fica livre');
 select results_eq($$ select detalhes ->> 'motivo', (detalhes ->> 'teto_mb')::int, detalhes ? 'desde', detalhes ? 'ate',
