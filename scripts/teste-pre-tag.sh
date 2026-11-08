@@ -60,7 +60,7 @@ COMMIT_VALIDO_DEV=$(git rev-parse origin/develop 2>/dev/null || git rev-parse de
 # ── 3. Janela de manutenção (RNF12) ───────────────────────────
 conferir "tentativa dentro da janela proibida (sexta 20h) é bloqueada com exit 1" \
   1 "dentro da janela proibida" \
-  env FRILA_AGORA="2026-10-30 20:00" "$PORTAO" --commit "$COMMIT_VALIDO_DEV" backend-v1.0.0
+  env RNF12_ATIVA=1 FRILA_AGORA="2026-10-30 20:00" "$PORTAO" --commit "$COMMIT_VALIDO_DEV" backend-v1.0.0
 
 # ── 4. CHANGELOG no commit alvo ────────────────────────────────
 # Testa override onde a versão não existe

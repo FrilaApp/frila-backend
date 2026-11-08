@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# RNF12 SUSPENSA (decisão do Cauê, 08/11/2026): a janela proibida só vale a partir de 10 mil
+# usuários ativos. Até lá, por padrão, este script não confere a janela e sai 0 com uma linha
+# que diz isso. RNF12_ATIVA=1 religa a regra abaixo, igual à de antes; o código dela fica.
+#
 # Recusa publicar no frila-prod dentro da janela proibida da RNF12: de quinta a domingo, das
 # 16h às 2h do dia seguinte, no horário de São Paulo. É quando os turnos acontecem, e uma
 # migração que trava tabela ou uma Edge Function que sobe quebrada derruba o check-in de
@@ -8,6 +12,7 @@
 # 1h30 ainda é a noite de domingo.
 #
 # Parâmetros opcionais por variáveis de ambiente:
+#   RNF12_ATIVA="1"                 (religa a regra; vazia ou outro valor: suspensa, sai 0)
 #   FRILA_AGORA="AAAA-MM-DD HH:MM"  (simula o instante atual em São Paulo para autoteste)
 #   FRILA_MARGEM_MIN="30"           (margem de término em minutos; padrão 0). Quando definida,
 #                                   também recusa se agora + margem cair dentro da janela.
@@ -17,7 +22,13 @@
 #       FRILA_AGORA="2026-10-01 15:40" FRILA_MARGEM_MIN="30" ./scripts/janela-de-manutencao.sh
 #
 # Saída: 0 fora da janela, 1 dentro dela, 2 quando não conseguiu ler a hora ou a margem.
+# Com a RNF12 suspensa (o padrão), sai 0 sem ler a hora.
 set -uo pipefail
+
+if [ "${RNF12_ATIVA:-}" != "1" ]; then
+  echo "RNF12 suspensa (decisão do Cauê, 08/11/2026, até 10 mil usuários ativos): janela não conferida; RNF12_ATIVA=1 religa"
+  exit 0
+fi
 
 python3 - <<'PY'
 import os, sys
