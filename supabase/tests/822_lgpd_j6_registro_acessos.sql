@@ -8,7 +8,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-08 12:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-822';
-select plan(37);
+select plan(41);
 
 insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
 values ('00000000-0000-0000-0000-000000000000', 'c8220000-0000-4000-8000-000000000001', 'authenticated',
@@ -33,13 +33,18 @@ $$;
 select is((select count(*)::int from pg_constraint where conrelid = 'privado.registro_acesso'::regclass and contype = 'f'),
   0, 'registro_acesso.usuario_id sem FK: o primeiro login vem antes de criar_conta');
 select has_trigger('auth', 'sessions', 'registrar_acesso', 'gatilho registrar_acesso em auth.sessions');
--- Gatilho com lista de colunas prende o esquema do Auth: "alter column ... type" e "drop column" dele falhariam.
+-- Gatilho com lista de colunas prende o esquema do Auth: "alter column ... type" e "drop column" dele falhariam
+-- (Lince Codex e Lince AG 2 no #441, B1).
+select is((select count(*)::int from pg_depend d join pg_trigger t on d.classid = 'pg_trigger'::regclass and d.objid = t.oid
+            where t.tgname = 'registrar_acesso' and t.tgrelid = 'auth.sessions'::regclass
+              and d.refobjid = 'auth.sessions'::regclass and d.refobjsubid > 0),
+  0, 'o gatilho não depende de coluna de auth.sessions (pg_depend refobjsubid > 0)');
 select ok((select cardinality(t.tgattr::int2[]) = 0 from pg_trigger t
-            where t.tgname = 'registrar_acesso' and t.tgrelid = 'auth.sessions'::regclass)
-      and not exists (select 1 from pg_depend d join pg_trigger t on d.classid = 'pg_trigger'::regclass and d.objid = t.oid
-                       where t.tgname = 'registrar_acesso' and t.tgrelid = 'auth.sessions'::regclass
-                         and d.refobjid = 'auth.sessions'::regclass and d.refobjsubid > 0),
-  'gatilho sem lista de colunas: não depende de refreshed_at nem de ip do Auth');
+            where t.tgname = 'registrar_acesso' and t.tgrelid = 'auth.sessions'::regclass),
+  'o gatilho não tem lista de colunas (tgattr vazio)');
+select ok((select p.proconfig from pg_proc p where p.oid = 'privado.registrar_acesso_da_sessao()'::regprocedure)
+            @> array['lock_timeout=200ms'],
+  'a função do gatilho fixa lock_timeout de 200 ms: não segura o login atrás de trava');
 select ok((select obj_description('privado.registro_acesso'::regclass, 'pg_class')) ~ 'art\. 15'
       and (select obj_description('privado.registro_acesso'::regclass, 'pg_class')) ~ 'art\. 7º II'
       and (select obj_description('privado.registro_acesso'::regclass, 'pg_class')) ~ 'art\. 7º IX',
@@ -109,6 +114,17 @@ select lives_ok($$ select pg_temp.renovar('c8220000-0000-4000-8000-0000000000a4'
   'até a contagem falhando: a renovação segue');
 alter table privado.registro_acesso_falha drop constraint zz_822_falha_contagem;
 alter table privado.registro_acesso drop constraint zz_822_falha;
+-- Se o Auth remover ip, a migração dele passa (o gatilho não depende de coluna) e a leitura de NEW falha dentro do
+-- bloco protegido. A tabela-espelho sem ip faz esse papel: o insert segue e a falha é contada como 42703.
+create temp table zz_822_sessao_sem_ip (id uuid, user_id uuid, created_at timestamptz, updated_at timestamptz,
+                                        refreshed_at timestamp);
+create trigger zz_822_espelho after insert or update on zz_822_sessao_sem_ip
+  for each row execute function privado.registrar_acesso_da_sessao();
+select lives_ok($$ insert into zz_822_sessao_sem_ip values (gen_random_uuid(), 'c8220000-0000-4000-8000-000000000001',
+                                                           privado.agora(), privado.agora(), null) $$,
+  'sessão sem a coluna ip: o insert segue');
+select results_eq($$ select falhas, ultimo_sqlstate from privado.registro_acesso_falha $$,
+  $$ values (3, '42703'::text) $$, 'e a falha é contada como 42703 (coluna ausente)');
 
 -- ── Alertas do verificar_saude ───────────────────────────────────────────────
 delete from privado.alerta_emitido;
