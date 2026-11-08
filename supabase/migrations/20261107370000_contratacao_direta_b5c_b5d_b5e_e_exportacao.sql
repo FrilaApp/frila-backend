@@ -132,7 +132,8 @@ as $$
 declare
   v_uid       uuid := (select auth.uid());
   v_prof_id   uuid;
-  v_agora_sp  date := (privado.agora() at time zone 'America/Sao_Paulo')::date;
+  v_agora     timestamptz := privado.agora();
+  v_agora_sp  date := (v_agora at time zone 'America/Sao_Paulo')::date;
   v_pref      public.profissional_preferencia_chamada%rowtype;
 begin
   if v_uid is null then
@@ -183,7 +184,7 @@ begin
     case when remover_pausa then null else pausado_ate end,
     coalesce(antecedencia_minima_h, 6),
     coalesce(aceita_de, 'todos'),
-    now()
+    v_agora
   )
   on conflict (profissional_id) do update
     set aceita_de_quem_ja_trabalhou = coalesce(definir_preferencia_chamadas.aceita_de_quem_ja_trabalhou, public.profissional_preferencia_chamada.aceita_de_quem_ja_trabalhou),
@@ -192,7 +193,7 @@ begin
                                            else public.profissional_preferencia_chamada.pausado_ate end,
         antecedencia_minima_h       = coalesce(definir_preferencia_chamadas.antecedencia_minima_h, public.profissional_preferencia_chamada.antecedencia_minima_h),
         aceita_de                   = coalesce(definir_preferencia_chamadas.aceita_de, public.profissional_preferencia_chamada.aceita_de),
-        atualizado_em               = now()
+        atualizado_em               = v_agora
   returning * into v_pref;
 
   return jsonb_build_object(
