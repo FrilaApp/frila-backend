@@ -9,7 +9,7 @@ select 1 from pg_create_logical_replication_slot('frila_registro_acesso', 'test_
 select 1 from pg_create_logical_replication_slot('zz_822_extra', 'test_decoding', true);
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-08 12:10:00+00', true);
-select plan(34);
+select plan(38);
 
 delete from privado.registro_acesso;
 delete from privado.falha_execucao where origem in ('consumir_registro_acesso', 'verificar_saude');
@@ -73,6 +73,19 @@ select ok(not has_function_privilege('authenticated', 'privado.consumir_registro
   'só o service_role e o agendador mexem na coleta; o pre-request segue chamável pelo PostgREST');
 select is((select ligada from privado.registro_acesso_coleta), false, 'a coleta nasce desligada');
 select is((select teto_wal_mb from privado.registro_acesso_coleta), 128, 'teto de WAL padrão: 128 MB');
+-- A chave tem uma linha só: a PK aceitaria unica = false; só o CHECK barra.
+select throws_ok($$ insert into privado.registro_acesso_coleta (unica) values (false) $$, '23514', null,
+  'a chave da coleta tem uma linha só (CHECK unica)');
+-- A referência da guarda: de 1 a 80 caracteres depois do btrim. Período válido, para só esse CHECK barrar.
+select throws_ok($$ insert into privado.registro_acesso_guarda (usuario_id, desde, ate, referencia)
+                    values ('c8220000-0000-4000-8000-0000000000d1', '2026-11-01', '2026-12-01', '   ') $$, '23514', null,
+  'guarda: referência vazia depois do btrim é recusada');
+select throws_ok($$ insert into privado.registro_acesso_guarda (usuario_id, desde, ate, referencia)
+                    values ('c8220000-0000-4000-8000-0000000000d1', '2026-11-01', '2026-12-01', repeat('x', 81)) $$, '23514', null,
+  'guarda: referência com 81 caracteres é recusada');
+select lives_ok($$ insert into privado.registro_acesso_guarda (usuario_id, desde, ate, referencia)
+                   values ('c8220000-0000-4000-8000-0000000000d1', '2026-11-01', '2026-12-01', repeat('x', 80)) $$,
+  'guarda: referência com 80 caracteres é aceita');
 
 -- ── Pre-request com a coleta desligada: nada sai ────────────────────────────
 select pg_temp.requisicao('c8220000-0000-4000-8000-00000000000a', '{"cf-connecting-ip":"198.51.100.10"}');
