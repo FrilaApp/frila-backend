@@ -10,10 +10,12 @@
 --   3. Não entrega com token errado, token de outra mídia, vencido, mídia fora de `enviando`,
 --      conta suspensa, quem pediu fora da casa ou recurso desligado; formato inválido é NULL.
 --   4. Só service_role executa o consumo; o hash é único.
+--   5. As duas unicidades da mídia que só a escrita direta alcança: um storage_path por
+--      mídia, e uma foto de perfil por dono em `em_analise` e em `aprovada`.
 -- A disputa de duas conexões pelo mesmo token está em scripts/corrida-token-upload.sh.
 
 begin;
-select plan(20);
+select plan(25);
 
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 set local "frila.agora" = '2026-11-20 12:00:00+00';
@@ -118,6 +120,54 @@ select throws_ok(
          (select upload_token_hash from privado.midia where id = (select (r->>'midia_id')::uuid from s3)),
          (select r->>'midia_id' from s4)),
   '23505', null, 'índice único: dois envios nunca compartilham o mesmo hash');
+
+-- ── 5. As duas unicidades da mídia (F3) ──────────────────────────────────────
+--
+-- As RPCs geram o caminho e trocam a foto anterior antes de gravar, então nenhum teste de
+-- RPC encosta nestas duas regras: o mutante que derruba cada uma sobrevivia (CI do #435).
+-- Pela escrita direta, cada asserção monta dados que só a regra em teste pode recusar.
+
+create function pg_temp.midia(id uuid, dono uuid, casa uuid, estado text, caminho text) returns void
+language sql as $$
+  insert into privado.midia (id, dono_usuario_id, estabelecimento_id, dono_tipo, tipo, storage_path, mime, bytes, estado)
+  values (id, dono, casa, case when casa is null then 'profissional' else 'estabelecimento' end,
+          'foto_perfil', caminho, 'image/jpeg', 1024, estado) $$;
+
+-- `enviando` fica fora do índice parcial: aqui só a unique de storage_path pode recusar.
+select pg_temp.midia('81600000-0000-4000-8000-0000000000a1', '81600000-0000-4000-8000-000000000001', null,
+  'enviando', 'perfil/816/repetido.jpg');
+select throws_ok(
+  $$ select pg_temp.midia('81600000-0000-4000-8000-0000000000a2', '81600000-0000-4000-8000-000000000002',
+       '81600000-0000-4000-8000-0000000000e1', 'enviando', 'perfil/816/repetido.jpg') $$,
+  '23505', null, 'midia_storage_path_key: duas mídias nunca apontam para o mesmo original');
+
+-- Caminhos distintos: aqui só o índice midia_foto_unica_por_estado pode recusar.
+select pg_temp.midia('81600000-0000-4000-8000-0000000000b1', '81600000-0000-4000-8000-000000000001', null,
+  'em_analise', 'perfil/816/analise-1.jpg');
+select throws_ok(
+  $$ select pg_temp.midia('81600000-0000-4000-8000-0000000000b2', '81600000-0000-4000-8000-000000000001', null,
+       'em_analise', 'perfil/816/analise-2.jpg') $$,
+  '23505', null, 'midia_foto_unica_por_estado: o profissional não tem duas fotos de perfil em análise');
+select pg_temp.midia('81600000-0000-4000-8000-0000000000b3', '81600000-0000-4000-8000-000000000001', null,
+  'aprovada', 'perfil/816/aprovada-1.jpg');
+select throws_ok(
+  $$ select pg_temp.midia('81600000-0000-4000-8000-0000000000b4', '81600000-0000-4000-8000-000000000001', null,
+       'aprovada', 'perfil/816/aprovada-2.jpg') $$,
+  '23505', null, 'midia_foto_unica_por_estado: o profissional não tem duas fotos de perfil aprovadas');
+-- A casa é dona pela casa (coalesce no índice), e não por quem enviou.
+select pg_temp.midia('81600000-0000-4000-8000-0000000000c1', '81600000-0000-4000-8000-000000000002',
+  '81600000-0000-4000-8000-0000000000e1', 'em_analise', 'perfil/816/casa-1.jpg');
+select throws_ok(
+  $$ select pg_temp.midia('81600000-0000-4000-8000-0000000000c2', '81600000-0000-4000-8000-000000000002',
+       '81600000-0000-4000-8000-0000000000e1', 'em_analise', 'perfil/816/casa-2.jpg') $$,
+  '23505', null, 'midia_foto_unica_por_estado: a casa não tem duas fotos de perfil em análise');
+-- O índice é parcial: a aprovada convive com a que está em análise, e recusadas se acumulam.
+select lives_ok(
+  $$ select pg_temp.midia('81600000-0000-4000-8000-0000000000d1', '81600000-0000-4000-8000-000000000001', null,
+       'recusada', 'perfil/816/recusada-1.jpg'),
+            pg_temp.midia('81600000-0000-4000-8000-0000000000d2', '81600000-0000-4000-8000-000000000001', null,
+       'recusada', 'perfil/816/recusada-2.jpg') $$,
+  'midia_foto_unica_por_estado: com uma aprovada e uma em análise, recusadas não colidem');
 
 select * from finish();
 rollback;
