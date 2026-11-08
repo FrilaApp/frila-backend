@@ -112,6 +112,14 @@ select is(
 
 -- Liga o interruptor para os demais testes
 update privado.recurso set ligado = true where chave = 'chamada_direta';
+-- 0.2.66 (20261108160000): só se chama quem tem aparelho na versão mínima de chamada_direta.
+-- Este arquivo mede a chamada com o portão satisfeito; o portão em si é o 830.
+insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima) values ('chamada_direta', 'ios', '1.2.0')
+on conflict (recurso, plataforma) do nothing;
+insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app)
+select p.usuario_id, 'tok-teste-' || p.usuario_id, 'ios', '1.2.0'
+  from public.profissional p where p.usuario_id::text like 'c8080000-%'
+on conflict (token_fcm) do nothing;
 
 -- ── 2. Autenticação e Perfis ──────────────────────────────────────────────────
 select is(

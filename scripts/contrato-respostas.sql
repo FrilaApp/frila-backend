@@ -462,6 +462,13 @@ select (select casa_id from ids), p.id from public.profissional p where p.usuari
 select pg_temp.guarda('promete:chamarProfissional:403',
   pg_temp.observado('cc000000-0000-4000-8000-000000000001', pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
 update privado.recurso set ligado = true where chave = 'chamada_direta';
+-- 0.2.66: só se chama quem tem aparelho na versão mínima de chamada_direta (20261108160000).
+insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima) values ('chamada_direta', 'ios', '1.2.0')
+on conflict (recurso, plataforma) do nothing;
+insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app)
+select p.usuario_id, 'tok-colheita-' || p.usuario_id, 'ios', '1.2.0'
+  from public.profissional p where p.usuario_id::text like 'cc000000-%'
+on conflict (token_fcm) do nothing;
 select pg_temp.guarda('chamarProfissional', pg_temp.como('cc000000-0000-4000-8000-000000000001',
   pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
 select pg_temp.guarda('promete:chamarProfissional:409',
