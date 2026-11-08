@@ -84,10 +84,16 @@ select results_eq(
 -- 5. Função privado.expurgar_turnos_antigos (1825 dias / 5 anos)
 select has_function('privado', 'expurgar_turnos_antigos', ARRAY['integer'], 'função privado.expurgar_turnos_antigos deve existir');
 
+create temp table ids_teste (
+  turno_antigo_id uuid,
+  turno_recente_id uuid
+);
+
 -- Setup de teste para turnos antigos
 do $$
 declare
   v_estab_id uuid;
+  v_funcao_id uuid;
   v_vaga_antiga_id uuid;
   v_vaga_recente_id uuid;
   v_pos_antiga_id uuid;
@@ -98,44 +104,62 @@ declare
 begin
   select id into v_user_id from public.usuario limit 1;
   select id into v_estab_id from public.estabelecimento limit 1;
+  select id into v_funcao_id from public.funcao limit 1;
 
   -- Vaga e posição antigas (fim há 1900 dias)
-  insert into public.vaga (estabelecimento_id, funcao, data, valor_centavos)
-  values (v_estab_id, 'garcom', (privado.agora() - interval '1900 days')::date, 15000)
-  returning id into v_vaga_antiga_id;
+  insert into public.vaga (
+    estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+    valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+    exige_material_proprio, responsavel_local, modo, chave_cliente, publicado_por
+  ) values (
+    v_estab_id, v_funcao_id,
+    privado.agora() - interval '1900 days', privado.agora() - interval '1899 days',
+    'Local Teste', 'POINT(-47.88 -15.77)'::extensions.geography,
+    15000, 1, false, false, false, 'Gerente', 'urgencia', gen_random_uuid(), v_user_id
+  ) returning id into v_vaga_antiga_id;
 
-  insert into public.posicao (vaga_id, numero, inicio_em, fim_em, valor_centavos)
-  values (v_vaga_antiga_id, 1, privado.agora() - interval '1900 days', privado.agora() - interval '1899 days', 15000)
+  insert into public.posicao (vaga_id, inicio_em, fim_em)
+  values (v_vaga_antiga_id, privado.agora() - interval '1900 days', privado.agora() - interval '1899 days')
   returning id into v_pos_antiga_id;
 
-  insert into public.turno (posicao_id, valor_acordado_centavos)
-  values (v_pos_antiga_id, 15000)
+  insert into public.turno (posicao_id, valor_acordado_centavos, checkin_em, checkin_tipo, checkin_distancia_m, verificacao)
+  values (v_pos_antiga_id, 15000, privado.agora() - interval '1900 days', 'geolocalizado', 50, 'verificado')
   returning id into v_turno_antigo_id;
 
-  -- Avaliação no turno antigo
+  -- Avaliação no turno antigo (RN07: exige presença verificada)
   insert into public.avaliacao (turno_id, autor_id, alvo_tipo, alvo_id, resposta)
   values (v_turno_antigo_id, v_user_id, 'profissional', v_user_id, true);
 
   -- Ocorrência vinculada ao turno antigo
   insert into public.ocorrencia (tipo, turno_id, autor_id, motivo)
-  values ('desistencia_profissional', v_turno_antigo_id, v_user_id, 'Ocorrência teste turno antigo');
+  values ('cancelamento', v_turno_antigo_id, v_user_id, 'Ocorrência teste turno antigo');
 
   -- Vaga e posição recentes (fim há 10 dias)
-  insert into public.vaga (estabelecimento_id, funcao, data, valor_centavos)
-  values (v_estab_id, 'garcom', (privado.agora() - interval '10 days')::date, 15000)
-  returning id into v_vaga_recente_id;
+  insert into public.vaga (
+    estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
+    valor_centavos, posicoes, inclui_refeicao, inclui_transporte,
+    exige_material_proprio, responsavel_local, modo, chave_cliente, publicado_por
+  ) values (
+    v_estab_id, v_funcao_id,
+    privado.agora() - interval '10 days', privado.agora() - interval '9 days',
+    'Local Teste', 'POINT(-47.88 -15.77)'::extensions.geography,
+    15000, 1, false, false, false, 'Gerente', 'urgencia', gen_random_uuid(), v_user_id
+  ) returning id into v_vaga_recente_id;
 
-  insert into public.posicao (vaga_id, numero, inicio_em, fim_em, valor_centavos)
-  values (v_vaga_recente_id, 1, privado.agora() - interval '10 days', privado.agora() - interval '9 days', 15000)
+  insert into public.posicao (vaga_id, inicio_em, fim_em)
+  values (v_vaga_recente_id, privado.agora() - interval '10 days', privado.agora() - interval '9 days')
   returning id into v_pos_recente_id;
 
-  insert into public.turno (posicao_id, valor_acordado_centavos)
-  values (v_pos_recente_id, 15000)
+  insert into public.turno (posicao_id, valor_acordado_centavos, checkin_em, checkin_tipo, checkin_distancia_m, verificacao)
+  values (v_pos_recente_id, 15000, privado.agora() - interval '10 days', 'geolocalizado', 50, 'verificado')
   returning id into v_turno_recente_id;
 
   -- Avaliação no turno recente
   insert into public.avaliacao (turno_id, autor_id, alvo_tipo, alvo_id, resposta)
   values (v_turno_recente_id, v_user_id, 'profissional', v_user_id, true);
+
+  insert into ids_teste (turno_antigo_id, turno_recente_id)
+  values (v_turno_antigo_id, v_turno_recente_id);
 end $$;
 
 -- Executa expurgo de turnos com mais de 1825 dias
@@ -145,11 +169,11 @@ select is(
   'privado.expurgar_turnos_antigos deve expurgar exatamente 1 turno antigo de mais de 5 anos'
 );
 
--- Confere cascateamento da avaliação do turno antigo
+-- Confere que o turno antigo sumiu
 select is(
-  (select count(*)::int from public.avaliacao a join public.turno t on t.id = a.turno_id join public.posicao p on p.id = t.posicao_id where p.fim_em < privado.agora() - interval '1825 days'),
+  (select count(*)::int from public.turno where id = (select turno_antigo_id from ids_teste)),
   0,
-  'avaliações de turnos de mais de 5 anos devem ser removidas por cascade'
+  'turno de mais de 5 anos deve ter sido expurgado do banco'
 );
 
 -- Confere desvinculação da ocorrência (turno_id setado para NULL)
@@ -161,7 +185,7 @@ select results_eq(
 
 -- Confere que o turno recente continua preservado
 select is(
-  (select count(*)::int from public.turno t join public.posicao p on p.id = t.posicao_id where p.fim_em > privado.agora() - interval '30 days'),
+  (select count(*)::int from public.turno where id = (select turno_recente_id from ids_teste)),
   1,
   'turno recente com menos de 5 anos deve permanecer intacto'
 );

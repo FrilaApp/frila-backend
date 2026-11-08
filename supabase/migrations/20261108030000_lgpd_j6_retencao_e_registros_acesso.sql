@@ -13,12 +13,11 @@ create table if not exists privado.registro_acesso (
   ip inet not null,
   acessado_em timestamptz not null default privado.agora(),
   recurso text,
-  user_agent text,
-  constraint ip_obrigatorio check (ip is not null)
+  user_agent text
 );
 
 comment on table privado.registro_acesso is
-  'Registros de acesso a aplicações de internet (IP, data e hora) mantidos sob sigilo por 6 meses (180 dias) conforme art. 15 da Lei nº 12.965/2014 (Marco Civil da Internet).';
+  'Registros de acesso a aplicações de internet (IP, data e hora) mantidos sob sigilo por 6 meses conforme art. 15 da Lei nº 12.965/2014 (Marco Civil da Internet).';
 
 create index if not exists registro_acesso_acessado_em_idx
   on privado.registro_acesso (acessado_em);
@@ -77,38 +76,62 @@ revoke all on function privado.registrar_acesso(uuid, inet, text, text) from pub
 grant execute on function privado.registrar_acesso(uuid, inet, text, text) to service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 3. Função privado.limpar_registros_acesso (6 meses / 180 dias)
+-- 3. Função privado.limpar_registros_acesso (6 meses, MCI art. 15)
 -- ─────────────────────────────────────────────────────────────────────────────
-create or replace function privado.limpar_registros_acesso(p_dias integer default 180)
+create or replace function privado.limpar_registros_acesso(
+  p_meses integer default 6,
+  p_limite integer default 1000
+)
 returns integer
 language plpgsql
 security definer
 set search_path = ''
 as $$
 declare
+  v_limite_data timestamptz;
   v_total integer := 0;
 begin
-  if p_dias is null or p_dias < 1 then
-    p_dias := 180;
+  -- Salvaguarda: teto mínimo de 6 meses para impedir encurtamento indevido
+  if p_meses is null or p_meses < 6 then
+    p_meses := 6;
+  end if;
+  if p_limite is null or p_limite < 1 then
+    p_limite := 1000;
   end if;
 
-  delete from privado.registro_acesso
-   where acessado_em < privado.agora() - (p_dias || ' days')::interval;
+  -- B1: Calendário real com base em meses (Marco Civil, art. 15)
+  v_limite_data := privado.agora() - (p_meses || ' months')::interval;
+
+  -- B2: Remoção em lote determinístico com trava FOR UPDATE SKIP LOCKED
+  with registros_a_remover as (
+    select r.id
+      from privado.registro_acesso r
+     where r.acessado_em <= v_limite_data
+     order by r.acessado_em asc
+     limit p_limite
+     for update skip locked
+  )
+  delete from privado.registro_acesso r
+   using registros_a_remover rar
+   where r.id = rar.id;
 
   get diagnostics v_total = row_count;
   return v_total;
 end $$;
 
-comment on function privado.limpar_registros_acesso(integer) is
-  'Expurga registros de acesso a aplicações de internet com mais de 6 meses (180 dias por padrão) conforme art. 15 do Marco Civil da Internet.';
+comment on function privado.limpar_registros_acesso(integer, integer) is
+  'Expurga registros de acesso com mais de 6 meses (Marco Civil art. 15) em lotes limitados com trava determinística SKIP LOCKED.';
 
-revoke all on function privado.limpar_registros_acesso(integer) from public, anon, authenticated;
-grant execute on function privado.limpar_registros_acesso(integer) to service_role;
+revoke all on function privado.limpar_registros_acesso(integer, integer) from public, anon, authenticated;
+grant execute on function privado.limpar_registros_acesso(integer, integer) to service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 4. Função privado.expurgar_turnos_antigos (5 anos / 1825 dias)
+-- 4. Função privado.expurgar_turnos_antigos (5 anos, CF art. 7º XXIX, CC art. 206 § 3º V)
 -- ─────────────────────────────────────────────────────────────────────────────
-create or replace function privado.expurgar_turnos_antigos(p_dias integer default 1825)
+create or replace function privado.expurgar_turnos_antigos(
+  p_anos integer default 5,
+  p_limite integer default 500
+)
 returns integer
 language plpgsql
 security definer
@@ -117,43 +140,97 @@ as $$
 declare
   v_limite_data timestamptz;
   v_turnos_ids uuid[];
+  v_posicoes_ids uuid[];
+  v_vagas_candidatas uuid[];
+  v_vagas_expiradas uuid[];
   v_total integer := 0;
 begin
-  if p_dias is null or p_dias < 1 then
-    p_dias := 1825;
+  -- Salvaguarda: teto mínimo de 5 anos para impedir encurtamento indevido
+  if p_anos is null or p_anos < 5 then
+    p_anos := 5;
+  end if;
+  if p_limite is null or p_limite < 1 then
+    p_limite := 500;
   end if;
 
-  v_limite_data := privado.agora() - (p_dias || ' days')::interval;
+  -- B1: Calendário real com base em anos civis (incluindo anos bissextos)
+  v_limite_data := privado.agora() - (p_anos || ' years')::interval;
 
-  -- Seleciona turnos cuja posição terminou há mais de p_dias
-  select coalesce(array_agg(t.id), '{}')
-    into v_turnos_ids
-    from public.turno t
-    join public.posicao pos on pos.id = t.posicao_id
-   where pos.fim_em <= v_limite_data;
+  -- B2: Seleciona turnos em lote limitado travando linhas com FOR UPDATE SKIP LOCKED
+  select coalesce(array_agg(sub.id), '{}'),
+         coalesce(array_agg(sub.posicao_id), '{}'),
+         coalesce(array_agg(distinct sub.vaga_id), '{}')
+    into v_turnos_ids, v_posicoes_ids, v_vagas_candidatas
+    from (
+      select t.id, t.posicao_id, pos.vaga_id
+        from public.turno t
+        join public.posicao pos on pos.id = t.posicao_id
+       where pos.fim_em <= v_limite_data
+       order by pos.fim_em asc
+       limit p_limite
+       for update of t skip locked
+    ) sub;
 
   if array_length(v_turnos_ids, 1) is null or array_length(v_turnos_ids, 1) = 0 then
     return 0;
   end if;
 
-  -- Desvincula ocorrências antes de apagar o turno (FK sem cascade)
+  -- Habilita o modo de retenção controlado (RF25, RNF13) para desvinculação e expurgo
+  perform set_config('privado.retencao', 'on', true);
+
+  -- B3: Limpa trilha de auditoria dos turnos e posições expurgados
+  delete from privado.auditoria_ciclo
+   where turno_id = any(v_turnos_ids)
+      or posicao_id = any(v_posicoes_ids);
+
+  -- Desvincula ocorrências antes de apagar o turno e a posição (FKs)
   update public.ocorrencia
      set turno_id = null
    where turno_id = any(v_turnos_ids);
 
-  -- Apaga os turnos (avaliacao é removida via cascade; evento_app via set null)
+  update public.ocorrencia
+     set posicao_id = null
+   where posicao_id = any(v_posicoes_ids);
+
+  -- Apaga os turnos (avaliacao é removida via ON DELETE CASCADE; evento_app via SET NULL)
   delete from public.turno
    where id = any(v_turnos_ids);
 
   get diagnostics v_total = row_count;
+
+  -- B3: Apaga posições expiradas dos turnos expurgados (candidaturas removidas via ON DELETE CASCADE)
+  delete from public.posicao
+   where id = any(v_posicoes_ids);
+
+  -- B3: Para as vagas onde TODAS as posições terminaram há mais de 5 anos e não há
+  -- posições recentes ativas, anonimiza o contexto pessoal restante da vaga
+  select coalesce(array_agg(v.id), '{}')
+    into v_vagas_expiradas
+    from public.vaga v
+   where v.id = any(v_vagas_candidatas)
+     and v.fim_em <= v_limite_data
+     and not exists (
+       select 1 from public.posicao p
+        where p.vaga_id = v.id
+          and p.fim_em > v_limite_data
+     );
+
+  if array_length(v_vagas_expiradas, 1) > 0 then
+    update public.vaga
+       set responsavel_local = 'Expurgado (LGPD)'
+     where id = any(v_vagas_expiradas)
+       and responsavel_local <> 'Expurgado (LGPD)';
+  end if;
+
+  perform set_config('privado.retencao', 'off', true);
   return v_total;
 end $$;
 
-comment on function privado.expurgar_turnos_antigos(integer) is
-  'Expurga turnos concluídos há mais de 5 anos (1825 dias por padrão), removendo avaliações e desvinculando ocorrências conforme CF art. 7º XXIX, CC art. 206 § 3º V e LGPD art. 16.';
+comment on function privado.expurgar_turnos_antigos(integer, integer) is
+  'Expurga turnos concluídos há mais de 5 anos em lotes determinísticos com SKIP LOCKED, removendo avaliações, posições expiradas, trilha de auditoria e anonimizando contexto da vaga (CF art. 7º XXIX, CC art. 206 § 3º V, LGPD art. 16).';
 
-revoke all on function privado.expurgar_turnos_antigos(integer) from public, anon, authenticated;
-grant execute on function privado.expurgar_turnos_antigos(integer) to service_role;
+revoke all on function privado.expurgar_turnos_antigos(integer, integer) from public, anon, authenticated;
+grant execute on function privado.expurgar_turnos_antigos(integer, integer) to service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 5. Plug na rotina diária consolidada de retenção e limpeza
@@ -180,8 +257,8 @@ begin
   v_expurgo_ident   := privado.expurgar_midias_verificacao_identidade();
   v_expurgo_perfil  := privado.expurgar_midias_recusadas();
   v_expurgo_chamada := privado.limpar_chamadas_expurgadas(90);
-  v_expurgo_turnos  := privado.expurgar_turnos_antigos(1825);
-  v_expurgo_acessos := privado.limpar_registros_acesso(180);
+  v_expurgo_turnos  := privado.expurgar_turnos_antigos(5, 500);
+  v_expurgo_acessos := privado.limpar_registros_acesso(6, 1000);
 
   return jsonb_build_object(
     'executado_em',                 privado.agora(),
@@ -197,7 +274,7 @@ begin
 end $$;
 
 comment on function privado.executar_retencao_diaria() is
-  'Rotina diária consolidada de retenção e limpeza: contas anonimizadas (15 dias), higiene de tabelas, eventos do app (90 dias), expurgo de mídias de identidade e fotos recusadas (24 h), expurgo de chamadas não aceitas (90 dias), expurgo de turnos com mais de 5 anos (1825 dias) e registros de acesso à aplicação com mais de 6 meses (180 dias, Marco Civil art. 15).';
+  'Rotina diária consolidada de retenção e limpeza: contas anonimizadas (15 dias), higiene de tabelas, eventos do app (90 dias), expurgo de mídias de identidade e fotos recusadas (24 h), expurgo de chamadas não aceitas (90 dias), expurgo de turnos com mais de 5 anos (calendário real) e registros de acesso à aplicação com mais de 6 meses (Marco Civil art. 15).';
 
 revoke execute on function privado.executar_retencao_diaria() from public, anon, authenticated;
 grant  execute on function privado.executar_retencao_diaria() to service_role;
