@@ -28,7 +28,9 @@ set local request.jwt.claims = '{"sub":"80200000-0000-4000-8000-000000000001","r
 select is(pg_temp.erro($$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1)$$)->>'details',
  'recurso_desligado', 'RN46: nasce desligado');
 update privado.configuracao_app set foto_de_perfil = true;
-select is(public.configuracao_do_app('ios')#>>'{recursos,foto_de_perfil}', 'true', 'interruptor exposto ao app');
+-- Desde 0.2.65 o recurso só chega ao app com a versão e um mínimo para a plataforma (819).
+insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima) values ('foto_de_perfil', 'ios', '1.2.0');
+select is(public.configuracao_do_app('ios', '1.2.0')#>>'{recursos,foto_de_perfil}', 'true', 'interruptor exposto ao app');
 select is(pg_temp.erro($$select public.solicitar_upload_midia('foto_local','image/jpeg',1)$$)->>'details',
  'tipo_indisponivel', 'v1.1 só aceita foto de perfil');
 select is(pg_temp.erro(format('select public.solicitar_upload_midia(''foto_perfil'',%L,1)', formato)),
@@ -37,7 +39,7 @@ select is(pg_temp.erro(format('select public.solicitar_upload_midia(''foto_perfi
 select is(pg_temp.erro(format('select public.solicitar_upload_midia(''foto_perfil'',''image/jpeg'',%L)', tamanho))->>'details',
  'tamanho', 'CD-M01 recusa bytes ' || coalesce(tamanho::text,'NULL')) from unnest(array[-1,0,5242881,null]::bigint[]) tamanho;
 create temp table upload as select public.solicitar_upload_midia('foto_perfil','image/jpeg',5242880) resposta;
-select ok((resposta->>'upload_url') like '%/object/upload/sign/midia-perfil/perfil/%.jpg?token=%', 'URL de upload assinada') from upload;
+select ok((resposta->>'upload_url') ~ '/functions/v1/enviar-midia\?midia_id=[0-9a-f-]{36}&token=[0-9a-f]{64}$', 'URL de envio da enviar-midia com token opaco (0.2.63)') from upload;
 select ok(position('80200000-0000-4000-8000-000000000001' in resposta->>'upload_url') = 0, 'URL sem id do dono') from upload;
 select is((resposta->>'expira_em')::timestamptz, privado.agora() + interval '2 hours', 'URL válida por 2 horas') from upload;
 select ok(not (resposta ? 'upload_url_miniatura'), 'cliente não envia miniatura') from upload;

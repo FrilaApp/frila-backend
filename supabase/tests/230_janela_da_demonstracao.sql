@@ -6,7 +6,7 @@
 -- seed e nunca mais volta: em produção o seed entra uma vez, e quando o revisor chega —
 -- Beta App Review a partir de 20/10, revisão da loja em 06/11 — qualquer tentativa de
 -- bater o ponto responde `422 fora_da_janela`. Medido em 25/09 contra o banco local, com
--- a sessão de `revisao-profissional@frila.app`, antes de existir a isenção que este
+-- a sessão de `revisao-profissional@frilabr.com`, antes de existir a isenção que este
 -- arquivo cobre.
 --
 -- A diretriz 2.1 é exatamente sobre isso: o revisor precisa percorrer o produto, e o

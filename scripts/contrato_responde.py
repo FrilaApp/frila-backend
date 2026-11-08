@@ -279,6 +279,7 @@ VIGIADAS = {
     ("atualizarApresentacaoProfissional", "422"): "campo_invalido",
     # Leitura do próprio perfil completo (F2, contrato 0.2.53, RN26).
     ("meuPerfilDetalhado", "401"): "nao_autenticado",
+    ("meuPerfilDetalhado", "403"): "sem_permissao",   # RN46: perfil_rico desligado (contrato 0.2.60)
     ("meuPerfilDetalhado", "404"): "nao_encontrado",
     ("meuPerfilDetalhado", "422"): "perfil_incompativel",
     # Resolver serviço (fatia F1, contrato 0.2.52, RN44)
@@ -297,6 +298,11 @@ VIGIADAS = {
     ("removerMidia", "404"): "nao_encontrado",
     ("minhasMidias", "401"): "nao_autenticado",
     ("minhasMidias", "403"): "sem_permissao",
+    # Nova análise de foto recusada (contrato 0.2.54; LGPD art. 20): vigiada desde o nascimento.
+    ("pedirNovaAnaliseMidia", "401"): "nao_autenticado",
+    ("pedirNovaAnaliseMidia", "403"): "sem_permissao",
+    ("pedirNovaAnaliseMidia", "404"): "nao_encontrado",
+    ("pedirNovaAnaliseMidia", "409"): "midia_indisponivel",
     # Chamada direta, F4 parte A (contrato 0.2.55): vigiada desde o nascimento.
     ("chamarProfissional", "401"): "nao_autenticado",
     ("chamarProfissional", "403"): "sem_permissao",
@@ -310,11 +316,9 @@ VIGIADAS = {
 ISENTAS = {
     # O espelho inclui F1/F2/F4 e B4c, entregues em PRs próprios. Lista fechada:
     # ao implementar uma dessas operações, trocar a isenção por cenário e VIGIADAS.
-    ("meuPerfilDetalhado", "403"): "recursos.perfil_rico desligado no contrato 0.2.60; trava ainda não ativa no backend",
     **{
         (op, status): "contrato 0.2.57 antecipado; implementação em outra fatia"
         for op, statuses in {
-            "pedirNovaAnaliseMidia": ("401", "403", "404", "409"),
             "listarRegioesAdministrativas": ("401",),
             "listarEspecialidades": ("401",),
             "responderChamada": ("401", "403", "404", "409", "422"),
@@ -357,7 +361,7 @@ PENDENTES = {op: "contratação direta, ainda sem implementação" for op in (
     "cancelarChamada",
     "definirPreferenciaChamadas", "detalheChamada",
     "listarEspecialidades", "listarRegioesAdministrativas", "minhasChamadas",
-    "pedirNovaAnaliseMidia", "publicarAPartirDaChamada",
+    "publicarAPartirDaChamada",
     "responderChamada")}
 
 def recusas_declaradas(doc):

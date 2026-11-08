@@ -99,6 +99,16 @@ jobs:
       - name: Corrida entre notificar e purga de 60 dias (N1)
         run: ./scripts/corrida-notificar-purga.sh
 
+      # Dois PUT simultâneos com o mesmo token de upload (contrato 0.2.63): duas conexões
+      # chamam privado.consumir_token_upload juntas e só uma recebe o caminho.
+      - name: Corrida no token de uso único do upload
+        run: ./scripts/corrida-token-upload.sh
+
+      # Chamada direta (T1): aceites simultâneos da mesma vaga, aceite x cancelamento da casa,
+      # duas chamadas ao mesmo par e exclusão de conta x aceite. Duas conexões de verdade.
+      - name: Corridas da chamada direta
+        run: ./scripts/corrida-chamada.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
@@ -118,7 +128,7 @@ jobs:
       - name: Servir a Edge Function da demonstração
         run: |
           cat > supabase/functions/.env.local <<'EOF'
-          DEMONSTRACAO_EMAILS=revisao-contratante@frila.app,revisao-profissional@frila.app
+          DEMONSTRACAO_EMAILS=revisao-contratante@frilabr.com,revisao-profissional@frilabr.com
           DEMONSTRACAO_CODIGO=123456
           DEMONSTRACAO_ATIVA_ATE=2099-12-31T23:59:00-03:00
           EOF
@@ -342,8 +352,10 @@ jobs:
       # `--no-check` de propósito: as funções importam do `esm.sh` e de `deno.land/std` sem
       # mapa de importação, e a checagem de tipos puxaria a rede inteira para dizer o que o
       # teste já diz. O que este portão mede é comportamento, não tipo.
+      # `supabase/templates/` entra junto: os testes dos modelos de e-mail e da página do código
+      # (`templates_test.ts`) também são Deno e até aqui não rodavam em lugar nenhum.
       - name: deno test
-        run: deno test --allow-all --no-check --lock=deno.lock --frozen supabase/functions/
+        run: deno test --allow-all --no-check --lock=deno.lock --frozen supabase/functions/ supabase/templates/
 
   contrato:
     name: Contrato em dia com o Frila
@@ -362,6 +374,7 @@ jobs:
   # CI: o workflow `Entrega` publica a função no frila-dev a cada merge, e função quebrada
   # só aparecia no aparelho. Job próprio porque não precisa de Postgres nem de Docker: banco
   # e provedores entram injetados nos testes (#207).
+  # Os modelos de e-mail e a página do código (`supabase/templates/`) rodam no mesmo passo.
   funcoes:
     name: Testes das Edge Functions
     runs-on: ubuntu-latest
@@ -373,7 +386,7 @@ jobs:
           deno-version: v2.9.7
 
       - name: deno test
-        run: deno test --allow-all --lock=deno.lock --frozen supabase/functions/
+        run: deno test --allow-all --lock=deno.lock --frozen supabase/functions/ supabase/templates/
 
   # Valida que o empacotamento do pacote de backup v2 opera de forma portável e idêntica
   # tanto no GNU tar (Linux do runner) quanto no bsdtar (macOS), garantindo ausência de flags
