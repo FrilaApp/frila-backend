@@ -274,6 +274,24 @@ select is(
   'Critério 1: turnos_realizados continua 1 (nao_verificado fica fora)'
 );
 
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno2 from turnos_teste)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000e1'),
+  1::bigint,
+  'Critério 1: profissional recebe turno_nao_verificado após check-in manual expirado'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno2 from turnos_teste)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000d1'),
+  1::bigint,
+  'Critério 1: contratante recebe turno_nao_verificado após check-in manual expirado'
+);
+
 -- ── 4. Critério (2): Turno confirmado sem check-in até o fim → cancelamento por no-show ──
 --
 -- Decisão 8zLfn0mt Opção 2 aprovada pela PO e liderança.
@@ -357,6 +375,24 @@ select is(
   (select p.taxa_comparecimento from public.profissional p where p.id = (select prof from ids)),
   0.500::numeric,
   'Critério 2: taxa de comparecimento cai para 0.500 com a falta por no-show (1 verificado / 2 denominador)'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno_id from noshow_ids)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000e1'),
+  1::bigint,
+  'Critério 2: profissional recebe turno_nao_verificado após cancelamento por no-show'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno_id from noshow_ids)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000d1'),
+  1::bigint,
+  'Critério 2: contratante recebe turno_nao_verificado após cancelamento por no-show'
 );
 
 -- ── 5. Critério (3): Reconciliação corrige divergência forçada e a registra ───────
