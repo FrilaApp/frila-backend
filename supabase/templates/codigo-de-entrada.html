@@ -1,29 +1,18 @@
-<!-- Modelo do código de entrada. Provisório: o cartão de modelos de e-mail, no
-     Sprint 1, refaz os quatro com a voz do produto.
+<!-- Modelo do código de entrada. Só o código, em texto simples: nenhum link e nenhum
+     botão (decisão do Cauê, 08/11/2026, cartão GZ6PYIMn).
 
-     O código visível e selecionável continua o caminho principal para entrar no app.
-     A página de cópia é uma conveniência: recebe os seis dígitos no fragmento,
-     sem enviá-los ao servidor. Não é link mágico nem confirma a entrada. -->
+     Os seis dígitos ficam juntos no HTML; o respiro entre eles é só `letter-spacing`.
+     Assim o próprio cliente de e-mail reconhece o código e oferece a cópia, e quem
+     seleciona à mão não leva espaço junto. Link mágico não entra, nem como texto.
+     A validade do texto acompanha `otp_expiry` em `supabase/config.toml` (600 s).
+     O comentário também vai no e-mail: nada de marcação de modelo aqui dentro. -->
 <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; background-color: #ffffff; color: #1a1a1a;">
 
-  <p style="font-size: 15px; line-height: 1.5; margin: 0 0 24px;">
+  <p style="font-size: 15px; line-height: 1.5; margin: 0 0 16px;">
     Seu código de entrada no Frila:
   </p>
 
-  <p style="font-size: 34px; font-weight: 600; letter-spacing: 6px; margin: 0 0 24px; font-variant-numeric: tabular-nums;">
-    {{ .Token }}
-  </p>
-
-  <table role="presentation" border="0" cellspacing="0" cellpadding="0" style="margin: 0 0 12px;">
-    <tr>
-      <td bgcolor="#EA5A36" style="background-color: #EA5A36; border-radius: 8px; text-align: center;">
-        <a href="https://frilabr.com/codigo#{{ .Token }}" style="display: inline-block; background-color: #EA5A36; color: #ffffff; font-size: 20px; font-weight: 700; line-height: 28px; padding: 16px 24px; border-radius: 8px; text-decoration: none;">Copiar código</a>
-      </td>
-    </tr>
-  </table>
-  <p style="font-size: 13px; line-height: 1.5; color: #666; margin: 0 0 24px;">
-    ou toque e segure o código acima para copiar
-  </p>
+  <p style="font-size: 40px; font-weight: 700; line-height: 1.2; letter-spacing: 8px; margin: 0 0 24px; font-variant-numeric: tabular-nums;">{{ .Token }}</p>
 
   <p style="font-size: 15px; line-height: 1.5; margin: 0 0 8px;">
     Ele vale por 10 minutos e serve uma vez só.
