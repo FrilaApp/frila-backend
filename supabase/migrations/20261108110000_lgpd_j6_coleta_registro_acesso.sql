@@ -17,22 +17,59 @@
 --      X-Forwarded-For forjado no Prod provar que auth.sessions.ip é o IP da borda, e não o 1º XFF que o
 --      cliente controla (no local, o Auth grava o 1º XFF, medido). Se o Prod gravar o forjado, a fonte do IP
 --      muda de desenho e esta chave fica desligada.
---   3. user_agent NÃO é gravado até a Bússola decidir (minimização, LGPD art. 6º III). A coluna fica nula.
+--   3. user_agent NÃO é guardado (jurídico, frila-docs #182, ROPA linha 24: o registro leva só conta, IP,
+--      data e hora; Marco Civil art. 5º VIII; LGPD art. 6º III). A coluna fica, vazia e travada por CHECK, e
+--      privado.registrar_acesso passa a ignorar p_user_agent (assinatura mantida: nenhum chamador muda).
 --
 -- A FK usuario_id → public.usuario sai: quem acabou de entrar ainda não tem public.usuario (criar_conta vem
--- depois do /verify), e o registro tem de durar 6 meses mesmo depois da exclusão da conta (LGPD art. 16, I,
--- a confirmar pela Bússola). Precedente: privado.escrita_por_conta (20260929220000).
+-- depois do /verify), e o registro tem de durar 6 meses mesmo depois da exclusão da conta (LGPD art. 16, I;
+-- jurídico, frila-docs #182). Precedente: privado.escrita_por_conta (20260929220000).
 --
 -- privado.executar_retencao_diaria NÃO muda aqui (o #436 a reescreve): o laço de lotes fica dentro de
 -- privado.limpar_registros_acesso, com a mesma assinatura e a mesma chamada.
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 1. A tabela: sem FK, com a base legal no comentário
+-- 1. A tabela: sem FK, sem user_agent, com a base legal no comentário
 -- ─────────────────────────────────────────────────────────────────────────────
 alter table privado.registro_acesso drop constraint if exists registro_acesso_usuario_id_fkey;
 
+update privado.registro_acesso set user_agent = null where user_agent is not null;
+alter table privado.registro_acesso
+  add constraint registro_acesso_sem_user_agent check (user_agent is null);
+
+create or replace function privado.registrar_acesso(
+  p_usuario_id uuid,
+  p_ip inet,
+  p_recurso text default null,
+  p_user_agent text default null
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_id bigint;
+begin
+  if p_ip is null then
+    return null;
+  end if;
+
+  -- p_user_agent é ignorado: o registro não guarda user_agent (frila-docs #182, ROPA linha 24).
+  insert into privado.registro_acesso (usuario_id, ip, acessado_em, recurso)
+  values (p_usuario_id, p_ip, privado.agora(), p_recurso)
+  returning id into v_id;
+
+  return v_id;
+end $$;
+
+comment on function privado.registrar_acesso(uuid, inet, text, text) is
+  'Registra acesso a aplicação de internet com IP e data e hora (Marco Civil art. 15), para gravação manual pelo service_role. p_user_agent é ignorado: o registro não guarda user_agent (frila-docs #182). A coleta automática é o gatilho registrar_acesso em auth.sessions.';
+revoke all on function privado.registrar_acesso(uuid, inet, text, text) from public, anon, authenticated;
+grant execute on function privado.registrar_acesso(uuid, inet, text, text) to service_role;
+
 comment on table privado.registro_acesso is
-  'Registros de acesso a aplicação de internet (IP, data e hora; Marco Civil, Lei 12.965/2014, art. 5º VIII e art. 15), sob sigilo, por 6 meses contados do acesso (privado.limpar_registros_acesso). Base legal: LGPD art. 7º II (cumprimento do art. 15 do Marco Civil) e, enquanto o controlador constar como pessoa física no ROPA, também art. 7º IX (legítimo interesse: segurança da conta e apuração de fraude). Gravado pelo gatilho registrar_acesso em auth.sessions (login e renovação), só com privado.registro_acesso_coleta ligada. Acesso só do service_role; entrega a terceiro só por ordem judicial.';
+  'Registros de acesso a aplicação de internet (conta, IP, data e hora; sem user_agent; Marco Civil, Lei 12.965/2014, art. 5º VIII e art. 15), sob sigilo, por 6 meses contados do acesso, inclusive depois da exclusão da conta (privado.limpar_registros_acesso; LGPD art. 16, I). Base legal: LGPD art. 7º II (cumprimento do art. 15 do Marco Civil) e, enquanto o controlador constar como pessoa física no ROPA, também art. 7º IX (legítimo interesse: segurança da conta e apuração de fraude). Gravado pelo gatilho registrar_acesso em auth.sessions (login e renovação), só com privado.registro_acesso_coleta ligada. Acesso só do service_role; entrega a terceiro só por ordem judicial.';
 comment on column privado.registro_acesso.usuario_id is
   'Conta (auth.users.id) dona da sessão. Sem chave estrangeira: o primeiro login vem antes de criar_conta, e o registro dura 6 meses mesmo depois da exclusão da conta (LGPD art. 16, I).';
 comment on column privado.registro_acesso.ip is
@@ -40,7 +77,7 @@ comment on column privado.registro_acesso.ip is
 comment on column privado.registro_acesso.recurso is
   'login (sessão criada) ou renovacao (refreshed_at ou ip mudou). Gravações manuais por privado.registrar_acesso podem usar outro rótulo.';
 comment on column privado.registro_acesso.user_agent is
-  'Não gravado pela coleta (minimização, LGPD art. 6º III) até decisão da Bússola.';
+  'Sempre nulo (CHECK registro_acesso_sem_user_agent): o registro não guarda user_agent (jurídico, frila-docs #182; Marco Civil art. 5º VIII; LGPD art. 6º III).';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2. A chave da coleta (nasce desligada)

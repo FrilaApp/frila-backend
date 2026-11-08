@@ -7,7 +7,8 @@
 begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-08 12:00:00+00', true);
-select plan(32);
+set local frila.agendador_secret = 'segredo-de-teste-822';
+select plan(36);
 
 insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
 values ('00000000-0000-0000-0000-000000000000', 'c8220000-0000-4000-8000-000000000001', 'authenticated',
@@ -36,6 +37,14 @@ select ok((select obj_description('privado.registro_acesso'::regclass, 'pg_class
       and (select obj_description('privado.registro_acesso'::regclass, 'pg_class')) ~ 'art\. 7º II'
       and (select obj_description('privado.registro_acesso'::regclass, 'pg_class')) ~ 'art\. 7º IX',
   'base legal no comentário da tabela: Marco Civil art. 15, LGPD art. 7º II e IX');
+select throws_ok($$ insert into privado.registro_acesso (ip, recurso, user_agent) values ('198.51.100.9', 'zz_822', 'Frila/1.1 iOS') $$,
+  '23514', null, 'user_agent não é guardado: a coluna recusa valor (frila-docs #182)');
+-- Grava primeiro e confere a linha gravada: uma linha só, com user_agent nulo (vazio reprova).
+create temp table zz_822_manual as
+  select privado.registrar_acesso(null, '198.51.100.9', 'zz_822_manual', 'Frila/1.1 iOS') as id;
+select results_eq($$ select r.user_agent is null from privado.registro_acesso r join zz_822_manual z on z.id = r.id $$,
+  $$ values (true) $$, 'registrar_acesso grava e ignora p_user_agent');
+delete from privado.registro_acesso where recurso = 'zz_822_manual';
 select is((select ligada from privado.registro_acesso_coleta), false, 'a coleta nasce desligada');
 select throws_ok($$ insert into privado.registro_acesso_coleta (unica, ligada) values (false, true) $$,
   '23514', null, 'a chave tem uma linha só: unica = false é recusado');
