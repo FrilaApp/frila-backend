@@ -16,7 +16,95 @@ alter type public.tipo_notificacao add value if not exists 'turno_nao_verificado
 comment on type public.tipo_notificacao is
   'Tipos de notificações do sistema (0.2.62). Inclui aviso de turno não verificado (turno_nao_verificado) aos dois lados (RN15, RN22).';
 
--- ── 2. Atualiza privado.fechar_turnos_passados() para emitir turno_nao_verificado ──
+-- ── 2. Atualiza privado.notificar() para incluir turno_nao_verificado na marca atômica ──
+
+create or replace function privado.notificar(
+  p_usuario     uuid,
+  p_tipo        public.tipo_notificacao,
+  p_referencia  uuid,
+  p_payload     jsonb default '{}'::jsonb
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_id            uuid;
+  v_prof          uuid;
+  v_par           record;
+  v_rodada        integer := 1;
+  v_marca_criada  integer;
+begin
+  -- RN15: o payload é estrutura, não texto livre.
+  for v_par in select key, value from jsonb_each(coalesce(p_payload, '{}'::jsonb)) loop
+    if not (
+      (v_par.key = 'reaberta' and jsonb_typeof(v_par.value) = 'boolean')
+      or (v_par.key in ('vaga_id', 'posicao_id', 'turno_id', 'estabelecimento_id', 'chamada_id', 'midia_id')
+          and jsonb_typeof(v_par.value) = 'string'
+          and (v_par.value #>> '{}') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+    ) then
+      raise exception 'payload_invalido' using errcode = '22023', detail = v_par.key;
+    end if;
+  end loop;
+
+  if p_tipo in ('vaga', 'vagas_agrupadas') then
+    select p.id into v_prof from public.profissional p where p.usuario_id = p_usuario;
+  end if;
+
+  if p_tipo = 'vaga' then
+    select g.rodada_despacho into v_rodada from public.vaga g where g.id = p_referencia;
+    v_rodada := coalesce(v_rodada, 1);
+  end if;
+
+  if p_tipo in ('lembrete_24h', 'lembrete_3h', 'inicio_sem_checkin', 'atraso_15min',
+                'fim_sem_checkout', 'vaga_vazia', 'avaliacao_disponivel', 'vaga_sem_elegiveis',
+                'vaga', 'turno_nao_verificado') then
+    insert into privado.marca_notificacao (tipo, referencia_id, usuario_id, rodada, criada_em)
+    values (p_tipo, p_referencia, p_usuario, v_rodada, privado.agora())
+    on conflict (tipo, referencia_id, usuario_id, rodada) do nothing
+    returning 1 into v_marca_criada;
+
+    if v_marca_criada is null then
+      select n.id into v_id
+        from public.notificacao n
+       where n.tipo = p_tipo
+         and n.referencia_id = p_referencia
+         and n.usuario_id = p_usuario
+         and n.rodada = v_rodada;
+
+      return v_id;
+    end if;
+  end if;
+
+  insert into public.notificacao (usuario_id, profissional_id, tipo, referencia_id, payload,
+                                  enviada_em, rodada)
+  values (p_usuario, v_prof, p_tipo, p_referencia,
+          coalesce(p_payload, '{}'::jsonb) || jsonb_build_object('tipo', p_tipo),
+          privado.agora(), v_rodada)
+  on conflict (tipo, referencia_id, usuario_id, rodada)
+    where tipo in ('lembrete_24h', 'lembrete_3h', 'inicio_sem_checkin', 'atraso_15min',
+                   'fim_sem_checkout', 'vaga_vazia', 'avaliacao_disponivel', 'vaga_sem_elegiveis',
+                   'vaga')
+    do nothing
+  returning id into v_id;
+
+  if v_id is null then
+    select n.id into v_id from public.notificacao n
+     where n.tipo = p_tipo and n.referencia_id = p_referencia and n.usuario_id = p_usuario
+       and n.rodada = v_rodada;
+  end if;
+
+  return v_id;
+end $$;
+
+comment on function privado.notificar(uuid, public.tipo_notificacao, uuid, jsonb) is
+  'Envia ou atualiza uma notificação ao usuário com payload estruturado (RN15). Inclui marca atômica para turno_nao_verificado (0.2.62).';
+
+revoke execute on function privado.notificar(uuid, public.tipo_notificacao, uuid, jsonb) from public, anon, authenticated;
+grant  execute on function privado.notificar(uuid, public.tipo_notificacao, uuid, jsonb) to service_role;
+
+-- ── 3. Atualiza privado.fechar_turnos_passados() para emitir turno_nao_verificado ──
 
 create or replace function privado.fechar_turnos_passados()
 returns integer
@@ -61,6 +149,7 @@ begin
   v_afetados := v_afetados + cardinality(v_novos);
 
   -- Dispara notificação turno_nao_verificado aos dois lados para check-in manual expirado (0.2.62, RN15, RN22)
+  -- Trava atômica com FOR UPDATE OF t SKIP LOCKED garante que execuções concorrentes não processem o mesmo turno
   for v_rec in
     select t.id as turno_id, p.profissional_id, v.estabelecimento_id
       from public.turno t
@@ -75,6 +164,7 @@ begin
           where n.tipo = 'turno_nao_verificado'
             and n.referencia_id = t.id
        )
+     for update of t skip locked
   loop
     if v_rec.profissional_id is not null then
       perform privado.notificar(
@@ -165,6 +255,7 @@ begin
   v_afetados := v_afetados + cardinality(v_novos);
 
   -- Dispara notificação turno_nao_verificado aos dois lados para no-show sem check-in (0.2.62, RN15, RN22)
+  -- Trava atômica com FOR UPDATE OF p SKIP LOCKED garante que execuções concorrentes não processem a mesma posição
   for v_rec in
     select coalesce(t.id, p.id) as ref_id,
            t.id as turno_id,
@@ -189,6 +280,7 @@ begin
           where n.tipo = 'turno_nao_verificado'
             and (n.referencia_id = t.id or n.referencia_id = p.id)
        )
+     for update of p skip locked
   loop
     declare
       v_payload jsonb := case
@@ -227,7 +319,7 @@ begin
 end $$;
 
 comment on function privado.fechar_turnos_passados() is
-  'Job pós-fim de turno: fecha check-ins manuais não confirmados como nao_verificado, cumpre turnos com presença e cancela turnos confirmados sem check-in por no-show (falta = true). Dispara turno_nao_verificado aos dois lados (0.2.62, RN15, RN22) e recalcula comparecimento.';
+  'Job pós-fim de turno: fecha check-ins manuais não confirmados como nao_verificado, cumpre turnos com presença e cancela turnos confirmados sem check-in por no-show (falta = true). Dispara turno_nao_verificado aos dois lados com trava atômica (0.2.62, RN15, RN22) e recalcula comparecimento.';
 
 revoke execute on function privado.fechar_turnos_passados() from public, anon, authenticated;
 grant execute on function privado.fechar_turnos_passados() to service_role;
