@@ -154,11 +154,14 @@ select throws_ok(
   $$ select pg_temp.midia('81600000-0000-4000-8000-0000000000b4', '81600000-0000-4000-8000-000000000001', null,
        'aprovada', 'perfil/816/aprovada-2.jpg') $$,
   '23505', null, 'midia_foto_unica_por_estado: o profissional não tem duas fotos de perfil aprovadas');
--- A casa é dona pela casa (coalesce no índice), e não por quem enviou.
+-- A casa é dona pela casa (coalesce no índice), e não por quem enviou: a 2ª foto vem de
+-- OUTRO dono da mesma casa. Com o mesmo dono nas duas, um índice pelo dono também colidiria
+-- (mutante sem o coalesce, apontado pelo Lince AG 2 no #435). A escrita direta não confere
+-- a filiação, então o …0001 basta como segundo dono da …e1.
 select pg_temp.midia('81600000-0000-4000-8000-0000000000c1', '81600000-0000-4000-8000-000000000002',
   '81600000-0000-4000-8000-0000000000e1', 'em_analise', 'perfil/816/casa-1.jpg');
 select throws_ok(
-  $$ select pg_temp.midia('81600000-0000-4000-8000-0000000000c2', '81600000-0000-4000-8000-000000000002',
+  $$ select pg_temp.midia('81600000-0000-4000-8000-0000000000c2', '81600000-0000-4000-8000-000000000001',
        '81600000-0000-4000-8000-0000000000e1', 'em_analise', 'perfil/816/casa-2.jpg') $$,
   '23505', null, 'midia_foto_unica_por_estado: a casa não tem duas fotos de perfil em análise');
 -- O índice é parcial: a aprovada convive com a que está em análise, e recusadas se acumulam.
