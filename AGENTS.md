@@ -121,7 +121,7 @@ Nove regras vivem **no banco**, não na aplicação. Três clientes nativos (iOS
 | RN25: uma conta, um perfil, para sempre | trigger + chave estrangeira composta `(id, perfil)` |
 | RN02: vaga incompleta não existe | `NOT NULL` nas colunas obrigatórias |
 | RN24: modo seleção só com mais de 24 h | `CHECK` em `vaga` |
-| RN22: geolocalizado vale até 200 m; manual só conta confirmado | `CHECK verificacao_coerente` |
+| RN22: geolocalizado vale até 200 m; manual só conta confirmado; código só conta validado (0.2.68) | `CHECK verificacao_coerente` |
 | RN07: avaliação binária, após o fim, com presença verificada | `UNIQUE (turno_id, alvo_tipo)` (**um voto por lado**, não por pessoa), mais o `UNIQUE (turno_id, autor_id)` que já existia, e o trigger |
 
 ### Como se escreve uma RPC
