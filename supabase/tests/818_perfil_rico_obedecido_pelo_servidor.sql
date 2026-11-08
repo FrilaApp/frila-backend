@@ -9,7 +9,7 @@
 begin;
 insert into privado.ambiente values (true, true) on conflict (id) do update set eh_teste = true;
 set local frila.agora = '2027-01-11 09:00:00+00';
-select plan(26);
+select plan(28);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -114,6 +114,14 @@ select is(pg_temp.perfil() ->> 'nome', 'Prof 818', 'chave desligada: PerfilPubli
 select ok(pg_temp.perfil() ? 'reputacao', 'chave desligada: PerfilPublico mantém a base (reputação)');
 select is((select apresentacao from public.profissional where id = 'c8180000-0000-4000-8000-000000000011'),
   'Garçom há seis anos', 'desligar não apaga o que o profissional gravou');
+
+-- ── 8. Sem a linha da chave, vale desligada ───────────────────────────────────
+-- privado.recurso_ligado lê chave ausente como false. Sem estas duas, um coalesce(…, true)
+-- passaria calado (mutante M5 da revisão do Lince no #444).
+delete from privado.recurso where chave = 'perfil_rico';
+select is(pg_temp.recusa('c8180000-0000-4000-8000-000000000001', $$select public.meu_perfil_detalhado()$$),
+  '403 sem_permissao recurso_desligado', 'chave ausente no banco: a F2 recusa como desligada');
+select ok(not (pg_temp.perfil() ? 'apresentacao'), 'chave ausente no banco: PerfilPublico vem sem os campos ricos');
 
 select * from finish();
 rollback;
