@@ -64,12 +64,14 @@ SQL
 # lado <arquivo> <atraso_inicial> <segurar> <conta|''> <sql>: uma conexão em segundo plano.
 lado() {
   local saida=$1 atraso=$2 segurar=$3 conta=$4 sql=$5
+  local conta_sql=null
+  [ -n "$conta" ] && conta_sql="'$conta'"
   (
     sleep "$atraso"
     psql <<SQL > "$saida" 2>&1
 $AUX
 begin;
-select pg_temp.tentar(${conta:+'$conta'}${conta:-null}, \$q\$ $sql \$q\$);
+select pg_temp.tentar($conta_sql, \$q\$ $sql \$q\$);
 select pg_sleep($segurar);
 commit;
 SQL
@@ -108,18 +110,31 @@ select p.id, d, '00:00', '23:59' from public.profissional p, generate_series(0, 
 SQL
 }
 
+# Id do perfil profissional da conta dada. Lido como postgres e passado como literal: dentro
+# da chamada, a sessão é a da casa, e a RLS de public.profissional esconde a linha dela.
+prof_id() { psql -c "select id from public.profissional where usuario_id = '$1';"; }
+
 # SQL de chamar_profissional para o mundo m, ao profissional (usuario) dado, numa vaga nova ou existente.
 sql_chamar() {
-  local m=$1 prof_usuario=$2 vaga=${3:-}
+  local m=$1 prof_usuario=$2 vaga=${3:-} prof
   local dia=$(( 2 + m ))
+  prof=$(prof_id "$prof_usuario")
+  if [ -n "$vaga" ]; then
+    # Com vaga_id, a RPC recusa (422 vaga_id) quem repete os campos da vaga.
+    cat <<SQL
+select public.chamar_profissional(chave => gen_random_uuid(), profissional_id => '$prof',
+  estabelecimento_id => '$(id "$m" 10)', vaga_id => '$vaga')
+SQL
+    return
+  fi
   cat <<SQL
 select public.chamar_profissional(chave => gen_random_uuid(),
-  profissional_id => (select p.id from public.profissional p where p.usuario_id = '$prof_usuario'),
+  profissional_id => '$prof',
   estabelecimento_id => '$(id "$m" 10)', funcao_id => (select id from public.funcao where nome = 'garçom'),
   inicio_em => date_trunc('hour', now()) + interval '$dia days', fim_em => date_trunc('hour', now()) + interval '$dia days 5 hours',
   local => 'CLN 201', regiao_administrativa => 'Plano Piloto', ponto => '{"latitude":-15.7942,"longitude":-47.8822}',
   valor_centavos => 15000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false,
-  responsavel_local => 'Maitre'${vaga:+, vaga_id => '$vaga'})
+  responsavel_local => 'Maitre')
 SQL
 }
 
@@ -217,7 +232,8 @@ for i in $(seq 1 "$RODADAS"); do
   fila=$(psql -c "select count(*) from pgmq.q_despacho where message->>'vaga_id' = '$vaga';")
   desp=$(psql -c "select count(*) from public.despacho where vaga_id = '$vaga';")
   conta=$(psql -c "select estado from public.usuario where id = '$(id "$m" 2)';")
-  if [ "$rb" != ok ] || [ "$conta" != anonimizada ] || [ "$fila" != 0 ] || [ "$desp" != 0 ]; then
+  # Sem resposta do aceite não houve corrida: a rodada não prova nada.
+  if [ -z "$ra" ] || [ "$rb" != ok ] || [ "$conta" != anonimizada ] || [ "$fila" != 0 ] || [ "$desp" != 0 ]; then
     falhou "rodada $i: aceite '$ra', exclusão '$rb', conta '$conta', fila $fila, despachos $desp"; erros=$((erros + 1))
   fi
 done
