@@ -33,6 +33,10 @@ comment on column public.dispositivo.versao_app is
 alter table public.vaga
   add column if not exists vaga_origem_id uuid references public.vaga(id) on delete set null;
 
+create unique index if not exists vaga_vaga_origem_id_unica
+  on public.vaga (vaga_origem_id)
+  where vaga_origem_id is not null;
+
 comment on column public.vaga.vaga_origem_id is
   'Vaga direta original a partir da qual esta vaga pública foi convertida (0.2.56, RN35).';
 
@@ -205,6 +209,7 @@ revoke execute on function public.definir_preferencia_chamadas(boolean, date, in
 grant  execute on function public.definir_preferencia_chamadas(boolean, date, int, text, boolean) to authenticated;
 
 -- ── 2. Função chamar_profissional ampliada com B5c, B5d e B5e ─────────────────
+-- contrato: corpo-sem-mudanca-de-superficie public.chamar_profissional 0.2.61
 create or replace function public.chamar_profissional(
   chave uuid default null, profissional_id uuid default null, estabelecimento_id uuid default null,
   vaga_id uuid default null, funcao_id uuid default null, inicio_em timestamptz default null,
@@ -266,6 +271,8 @@ begin
 
   -- Serializa as chamadas da casa: os limites somam os membros (RN34).
   perform 1 from public.estabelecimento e where e.id = v_estab for update;
+  -- Serializa também pelo profissional para atomicidade da cota de abertas entre casas distintas (CD-C14)
+  perform 1 from public.profissional p where p.id = v_prof for update;
   if exists (select 1 from public.chamada c where c.estabelecimento_id = v_estab
                 and c.profissional_id = v_prof and c.estado = 'aberta') then
     perform public.erro(409, 'chamada_ja_aberta');
@@ -455,11 +462,20 @@ begin
   v_janela_efetiva := v_expira_em - v_inicio_prazo;
   if v_janela_efetiva > interval '2 hours' then
     v_lembrete_em := v_inicio_prazo + (v_janela_efetiva / 2);
-    -- Se cair no silêncio (22h às 7h), ajusta
+    -- Se cair no silêncio (22h às 7h), ajusta para fora do silêncio
     if extract(hour from (v_lembrete_em at time zone 'America/Sao_Paulo'))::int >= 22 then
-      v_lembrete_em := ((v_lembrete_em at time zone 'America/Sao_Paulo')::date + interval '22 hours') at time zone 'America/Sao_Paulo';
+      v_lembrete_em := least(
+        ((v_lembrete_em at time zone 'America/Sao_Paulo')::date + interval '21 hours 30 minutes') at time zone 'America/Sao_Paulo',
+        v_expira_em - interval '30 minutes'
+      );
+      if v_lembrete_em <= v_inicio_prazo then
+        v_lembrete_em := ((v_lembrete_em at time zone 'America/Sao_Paulo')::date + interval '1 day 7 hours') at time zone 'America/Sao_Paulo';
+      end if;
     elsif extract(hour from (v_lembrete_em at time zone 'America/Sao_Paulo'))::int < 7 then
       v_lembrete_em := ((v_lembrete_em at time zone 'America/Sao_Paulo')::date + interval '7 hours') at time zone 'America/Sao_Paulo';
+    end if;
+    if v_lembrete_em >= v_expira_em then
+      v_lembrete_em := null;
     end if;
   else
     v_lembrete_em := null;
@@ -562,12 +578,18 @@ language plpgsql
 security definer set search_path = ''
 as $$
 declare
-  v_agora timestamptz := privado.agora();
-  v_count int := 0;
-  r       record;
+  v_agora   timestamptz := privado.agora();
+  v_hora_sp int         := extract(hour from (v_agora at time zone 'America/Sao_Paulo'))::int;
+  v_count   int         := 0;
+  r         record;
 begin
+  -- Não dispara lembretes durante o horário de silêncio (22h às 7h horário de Brasília)
+  if v_hora_sp >= 22 or v_hora_sp < 7 then
+    return 0;
+  end if;
+
   for r in
-    select c.id, c.vaga_id, p.usuario_id as prof_usuario_id
+    select c.id, c.vaga_id, c.expira_em, p.usuario_id as prof_usuario_id
       from public.chamada c
       join public.profissional p on p.id = c.profissional_id
      where c.estado = 'aberta'
@@ -580,11 +602,14 @@ begin
        set lembrete_em = null
      where id = r.id;
 
-    insert into public.notificacao (usuario_id, tipo, referencia_id, payload)
-    values (r.prof_usuario_id, 'chamada_lembrete', r.id, jsonb_build_object('chamada_id', r.id, 'vaga_id', r.vaga_id))
-    on conflict do nothing;
+    -- Só notifica se a chamada ainda não tiver expirado
+    if r.expira_em > v_agora then
+      insert into public.notificacao (usuario_id, tipo, referencia_id, payload)
+      values (r.prof_usuario_id, 'chamada_lembrete', r.id, jsonb_build_object('chamada_id', r.id, 'vaga_id', r.vaga_id))
+      on conflict do nothing;
 
-    v_count := v_count + 1;
+      v_count := v_count + 1;
+    end if;
   end loop;
 
   return v_count;
@@ -886,7 +911,8 @@ begin
     perform public.erro(422, 'campo_obrigatorio', 'chave');
   end if;
 
-  select * into v_orig from public.vaga where id = publicar_a_partir_da_chamada.vaga_id;
+  -- Trava exclusiva na vaga de origem para serializar tentativas concorrentes de conversão
+  select * into v_orig from public.vaga where id = publicar_a_partir_da_chamada.vaga_id for update;
   if not found then perform public.erro(404, 'nao_encontrado'); end if;
   if not privado.eh_membro(v_orig.estabelecimento_id) then perform public.erro(403, 'sem_permissao'); end if;
 
@@ -925,18 +951,28 @@ begin
   end if;
 
   -- Cria vaga normal pública apontando para a vaga direta original
-  insert into public.vaga (
-    estabelecimento_id, funcao_id, inicio_em, fim_em, local, regiao_administrativa, ponto,
-    valor_centavos, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio,
-    responsavel_local, modo, publicado_por, publicado_em, chave_cliente, origem, vaga_origem_id
-  )
-  values (
-    v_orig.estabelecimento_id, v_orig.funcao_id, v_orig.inicio_em, v_orig.fim_em, v_orig.local,
-    v_orig.regiao_administrativa, v_orig.ponto, v_orig.valor_centavos, 1, v_orig.inclui_refeicao,
-    v_orig.inclui_transporte, v_orig.exige_material_proprio, v_orig.responsavel_local,
-    v_modo, v_uid, v_agora, publicar_a_partir_da_chamada.chave, 'publicacao', v_orig.id
-  )
-  returning * into v_nova;
+  begin
+    insert into public.vaga (
+      estabelecimento_id, funcao_id, inicio_em, fim_em, local, regiao_administrativa, ponto,
+      valor_centavos, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio,
+      responsavel_local, modo, publicado_por, publicado_em, chave_cliente, origem, vaga_origem_id
+    )
+    values (
+      v_orig.estabelecimento_id, v_orig.funcao_id, v_orig.inicio_em, v_orig.fim_em, v_orig.local,
+      v_orig.regiao_administrativa, v_orig.ponto, v_orig.valor_centavos, 1, v_orig.inclui_refeicao,
+      v_orig.inclui_transporte, v_orig.exige_material_proprio, v_orig.responsavel_local,
+      v_modo, v_uid, v_agora, publicar_a_partir_da_chamada.chave, 'publicacao', v_orig.id
+    )
+    returning * into v_nova;
+  exception when unique_violation then
+    -- Em caso de colisão concorrente por vaga_origem_id ou chave_cliente, recupera a vaga convertida
+    select * into v_nova from public.vaga where vaga_origem_id = v_orig.id;
+    if found then
+      select array_agg(p.id order by p.id) into v_posicoes from public.posicao p where p.vaga_id = v_nova.id;
+      return jsonb_build_object('vaga_id', v_nova.id, 'posicoes', to_jsonb(coalesce(v_posicoes, '{}'::uuid[])));
+    end if;
+    raise;
+  end;
 
   insert into public.posicao (vaga_id, inicio_em, fim_em)
   values (v_nova.id, v_nova.inicio_em, v_nova.fim_em)
@@ -978,6 +1014,33 @@ revoke execute on function public.publicar_a_partir_da_chamada(uuid, uuid, text)
 grant  execute on function public.publicar_a_partir_da_chamada(uuid, uuid, text) to authenticated;
 
 -- ── 6. Consolidação de privado.meus_dados (0.2.58 e 0.2.59) ────────────────────
+create or replace function privado.perfil_com_servicos(prof public.profissional) returns jsonb
+language sql stable set search_path = '' as $$
+ select public.perfil_profissional_em_json(prof) || jsonb_build_object(
+  'apresentacao', prof.apresentacao, 'onde_trabalhei', prof.onde_trabalhei, 'experiencia_faixa', prof.experiencia_faixa,
+  'cursos', to_jsonb(coalesce(prof.cursos, '{}'::text[])), 'idiomas', to_jsonb(coalesce(prof.idiomas, '{}'::text[])),
+  'atende_todo_df', prof.atende_todo_df,
+  'regioes', coalesce((select jsonb_agg(to_jsonb(r) order by r.id) from public.profissional_regiao pr
+    join public.regiao_administrativa r on r.id = pr.regiao_id where pr.profissional_id = prof.id), '[]'::jsonb),
+  'servicos', coalesce((select jsonb_agg(jsonb_strip_nulls(to_jsonb(s) - array['profissional_id','funcao_id','extras','atualizado_em']) ||
+    jsonb_build_object('funcao', to_jsonb(f) - 'ativo', 'especialidades', coalesce((select jsonb_agg(to_jsonb(e) order by e.nome)
+      from public.profissional_servico_especialidade se join public.especialidade e on e.id = se.especialidade_id
+      where se.profissional_id = s.profissional_id and se.funcao_id = s.funcao_id), '[]'::jsonb)) order by f.nome)
+    from public.profissional_servico s join public.funcao f on f.id = s.funcao_id
+    where s.profissional_id = prof.id), '[]'::jsonb))
+  || coalesce(
+    (select jsonb_build_object('preferencia_chamadas', jsonb_build_object(
+      'aceita_de_quem_ja_trabalhou', pref.aceita_de_quem_ja_trabalhou,
+      'pausado_ate', pref.pausado_ate,
+      'antecedencia_minima_h', pref.antecedencia_minima_h,
+      'aceita_de', pref.aceita_de
+    ))
+    from public.profissional_preferencia_chamada pref
+    where pref.profissional_id = prof.id),
+    '{}'::jsonb
+  )
+$$;
+
 create or replace function privado.meus_dados(p_usuario uuid)
 returns jsonb
 language sql
