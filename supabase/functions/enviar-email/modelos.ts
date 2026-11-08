@@ -61,7 +61,7 @@ export function categoria(motivo: string): string {
   return CATEGORIAS[motivo] ?? "Não classificado";
 }
 
-const ASSINATURA = "Equipe Frila\nfrila.app";
+const ASSINATURA = "Equipe Frila\nfrilabr.com";
 
 // ── Denúncia (RF26, RN13) ─────────────────────────────────────────────────────
 
