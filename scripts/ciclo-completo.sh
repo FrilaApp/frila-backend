@@ -143,15 +143,16 @@ ok "e-mail em português"
 # Link mágico abre o navegador, sai do aplicativo e quebra o fluxo em Android de
 # entrada, que é onde está a maior parte da oferta.
 #
-# O código continua o caminho principal. O único link permitido é o botão de conveniência
-# para cópia por fragmento (https://frilabr.com/codigo#); qualquer link mágico ou rota
-# de verificação do Supabase Auth (verify, confirm, etc.) quebra o fluxo e é recusado.
-printf '%s' "$texto" | grep -qiE '<a[^>]+href="[^"]*(verify|confirm)' \
-  && falhou "o e-mail traz link mágico de confirmação; o fluxo é por código"
+# O e-mail é só o código em texto simples (cartão GZ6PYIMn, 08/11/2026): nenhum link,
+# nem o antigo botão de cópia para https://frilabr.com/codigo#, nem endereço escrito.
+links=$(printf '%s' "$texto" | grep -oiE 'href=|<a[[:space:]>]|<button|https?://[^" <]*|www\.[^" <]*' || true)
+[ -z "$links" ] || falhou "o e-mail traz link: $(printf '%s' "$links" | tr '\n' ' ')"
+ok "sem nenhum link no e-mail"
 
-links=$(printf '%s' "$texto" | grep -oE 'href="[^"]+"' | sed 's/href="//;s/"//' | grep -v 'frilabr.com/codigo#' || true)
-[ -z "$links" ] || falhou "o e-mail traz link inesperado: $links"
-ok "sem link mágico de login"
+# Os seis dígitos juntos no HTML que o Auth renderizou: o respiro é só CSS.
+printf '%s' "$texto" | grep -qE ">$otp</p>" \
+  || falhou "o código não aparece com os seis dígitos juntos num parágrafo"
+ok "código com os seis dígitos juntos"
 
 sessao=$(curl -s -X POST "$URL/auth/v1/verify" \
   -H "apikey: $ANON" -H 'Content-Type: application/json' \
