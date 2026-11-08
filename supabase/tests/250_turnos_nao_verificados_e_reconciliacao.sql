@@ -17,7 +17,7 @@
 -- Ids próprios, começando em `b6000000`.
 
 begin;
-select plan(40);
+select plan(54);
 
 insert into privado.ambiente (eh_teste) values (true);
 
@@ -84,6 +84,11 @@ select has_function('privado', 'fechar_turnos_passados', array[]::text[],
 
 select has_function('privado', 'reconciliar_comparecimento', array[]::text[],
   'função privado.reconciliar_comparecimento existe');
+
+select ok(
+  'turno_nao_verificado' = any (enum_range(null::public.tipo_notificacao)::text[]),
+  'tipo_notificacao inclui turno_nao_verificado'
+);
 
 -- ACLs: authenticated não tem acesso a jobs ou tabela de divergência
 select is(
@@ -269,6 +274,78 @@ select is(
   'Critério 1: turnos_realizados continua 1 (nao_verificado fica fora)'
 );
 
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno2 from turnos_teste)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000e1'),
+  1::bigint,
+  'Critério 1: profissional recebe turno_nao_verificado após check-in manual expirado'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno2 from turnos_teste)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000d1'),
+  1::bigint,
+  'Critério 1: contratante recebe turno_nao_verificado após check-in manual expirado'
+);
+
+-- Deduplicação atômica e idempotência: segunda execução de fechar_turnos_passados não duplica avisos
+select is(
+  privado.fechar_turnos_passados(),
+  0,
+  'Critério 1: segunda execução imediata de fechar_turnos_passados retorna 0 afetados'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno2 from turnos_teste)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000e1'),
+  1::bigint,
+  'Critério 1: profissional continua com exatamente 1 notificação após reexecução'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno2 from turnos_teste)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000d1'),
+  1::bigint,
+  'Critério 1: contratante continua com exatamente 1 notificação após reexecução'
+);
+
+-- Prova que privado.marca_notificacao registrou a marca durável atômica
+select is(
+  (select count(*) from privado.marca_notificacao m
+    where m.tipo = 'turno_nao_verificado'
+      and m.referencia_id = (select turno2 from turnos_teste)),
+  2::bigint,
+  'Critério 1: marca_notificacao gravou exatamente 1 marca por destinatário (profissional + contratante)'
+);
+
+-- Tentativa de chamada direta simultânea a privado.notificar é deduplicada atomicamente
+select ok(
+  privado.notificar(
+    'b6000000-0000-4000-8000-0000000000e1',
+    'turno_nao_verificado',
+    (select turno2 from turnos_teste),
+    jsonb_build_object('turno_id', (select turno2 from turnos_teste))
+  ) is not null,
+  'privado.notificar retorna id da notificação existente sem erro'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno2 from turnos_teste)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000e1'),
+  1::bigint,
+  'privado.notificar não duplica notificação para o mesmo usuário e referência'
+);
+
 -- ── 4. Critério (2): Turno confirmado sem check-in até o fim → cancelamento por no-show ──
 --
 -- Decisão 8zLfn0mt Opção 2 aprovada pela PO e liderança.
@@ -352,6 +429,51 @@ select is(
   (select p.taxa_comparecimento from public.profissional p where p.id = (select prof from ids)),
   0.500::numeric,
   'Critério 2: taxa de comparecimento cai para 0.500 com a falta por no-show (1 verificado / 2 denominador)'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno_id from noshow_ids)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000e1'),
+  1::bigint,
+  'Critério 2: profissional recebe turno_nao_verificado após cancelamento por no-show'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno_id from noshow_ids)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000d1'),
+  1::bigint,
+  'Critério 2: contratante recebe turno_nao_verificado após cancelamento por no-show'
+);
+
+-- Deduplicação no cancelamento por no-show:
+select is(
+  privado.fechar_turnos_passados(),
+  0,
+  'Critério 2: segunda execução imediata de fechar_turnos_passados não reprocessa no-show'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and (n.referencia_id = (select turno_id from noshow_ids)
+           or n.payload->>'posicao_id' = (select posicao_id::text from noshow_ids))
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000e1'),
+  1::bigint,
+  'Critério 2: profissional continua com exatamente 1 notificação após reexecução de no-show'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and (n.referencia_id = (select turno_id from noshow_ids)
+           or n.payload->>'posicao_id' = (select posicao_id::text from noshow_ids))
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000d1'),
+  1::bigint,
+  'Critério 2: contratante continua com exatamente 1 notificação após reexecução de no-show'
 );
 
 -- ── 5. Critério (3): Reconciliação corrige divergência forçada e a registra ───────

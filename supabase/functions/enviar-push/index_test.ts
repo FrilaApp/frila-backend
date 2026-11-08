@@ -24,7 +24,7 @@ import {
   GravarAceitePushParams,
   VariaveisDoTexto,
 } from "./index.ts";
-import { FcmServiceAccount, sendFcmMessage, getAccessToken } from "./fcm.ts";
+import { FcmServiceAccount, FcmMessagePayload, sendFcmMessage, getAccessToken } from "./fcm.ts";
 
 const SEGREDO_TESTE = "frila-teste-segredo-agendador-local";
 
@@ -204,6 +204,7 @@ Deno.test("FCM client: envia android por tipo com TTL, data e apns intactos (200
           badge: 1,
           "mutable-content": 1,
         },
+        ...(data?.vinculo_id ? { vinculo_id: data.vinculo_id } : {}),
       },
     });
   }
@@ -2024,6 +2025,18 @@ Deno.test("BsXIZHOw: textos de suspensao e reativacao cabem no iPhone SE e nao t
   assert(!reat.body.includes("Contestação"), "o motivo da reativação não vai no corpo do push");
 });
 
+// Contrato 0.2.62 / RN15, RN22: Aviso de turno não verificado aos dois lados
+Deno.test("0.2.62: turno_nao_verificado tem titulo e corpo conforme contrato e cabe na tela bloqueada", () => {
+  const notif = titulosECorposPorTipo("turno_nao_verificado", {});
+  assertEquals(notif, {
+    title: "Turno não verificado",
+    body: "A presença no turno não foi confirmada dentro do prazo. O turno foi encerrado como não verificado.",
+  });
+  assert(notif.title.length <= 32, "título de turno_nao_verificado cabe na tela bloqueada do iPhone SE");
+  assert(!notif.body.includes("@"), "não contém e-mail");
+  assert(!notif.body.includes("+55"), "não contém telefone");
+});
+
 // Hardening de Produção (cartão kT7NhMGV): B7, B5, B4, B3
 Deno.test("kT7NhMGV / B7: processarEnvioPush recusa notificacao_id invalido com 422 campo_invalido", async () => {
   const req = new Request("http://localhost/functions/v1/enviar-push", {
@@ -2376,6 +2389,9 @@ Deno.test("Cartão h6RoObK6: corpo enviado ao FCM traz apns.payload.aps['mutable
   assertEquals(corpoEnviado.message.data?.tipo, "vaga");
   assertEquals(corpoEnviado.message.data?.vaga_id, "d0000000-0000-4000-8000-000000000001");
 
+  // 0.2.62 (RN15): apns.payload traz vinculo_id para a Notification Service Extension
+  assertEquals(corpoEnviado.message.apns?.payload?.vinculo_id, "11111111-1111-4000-8000-000000000001");
+
   // 4. Alerta com título e corpo no APNs para iOS, e nenhum dado pessoal novo no payload
   assertEquals(corpoEnviado.message.notification, undefined);
   assertEquals(corpoEnviado.message.apns?.payload?.aps?.alert?.title, "Nova vaga no Frila");
@@ -2403,6 +2419,31 @@ Deno.test("Contrato 0.2.30: vinculo_id não entra em notificacao.payload e filtr
   assertEquals((filtrado as Record<string, string>).vinculo_id, undefined);
 });
 
+Deno.test("0.2.62 (RN15): sendFcmMessage propaga vinculo_id no payload apns para interceptação por FrilaNotificationService", async () => {
+  let requestEnviado: any = null;
+  const mockFetch: typeof fetch = (_input: RequestInfo | URL, init?: RequestInit) => {
+    requestEnviado = JSON.parse(init?.body as string);
+    return Promise.resolve(new Response(JSON.stringify({ name: "projects/frila-test/messages/msg-vinculo" }), { status: 200 }));
+  };
+
+  const payload: FcmMessagePayload = {
+    token: "token-teste-ios",
+    title: "Vaga disponível",
+    body: "Confira a nova vaga",
+    plataforma: "ios",
+    data: {
+      tipo: "vaga",
+      vinculo_id: "99999999-9999-4000-8000-999999999999",
+    },
+  };
+
+  const resultado = await sendFcmMessage("frila-test", "mock-token", payload, { fetchFn: mockFetch });
+  assertEquals(resultado.ok, true);
+  assertEquals(requestEnviado.message.apns?.payload?.vinculo_id, "99999999-9999-4000-8000-999999999999");
+  assertEquals(requestEnviado.message.apns?.payload?.aps?.["mutable-content"], 1);
+  assertEquals(requestEnviado.message.data?.vinculo_id, "99999999-9999-4000-8000-999999999999");
+});
+
 // ── Auditoria de Privacidade (RN10, RN15, LGPD) ──────────────────────────────
 
 Deno.test("RN15 / LGPD: nenhum título ou corpo vaza dados pessoais mesmo com variáveis interpoladas", () => {
@@ -2422,6 +2463,7 @@ Deno.test("RN15 / LGPD: nenhum título ou corpo vaza dados pessoais mesmo com va
     "avaliacao_disponivel",
     "suspensao",
     "reativacao",
+    "turno_nao_verificado",
     "tipo_desconhecido_fallback",
   ];
 

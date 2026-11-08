@@ -473,6 +473,11 @@ export function titulosECorposPorTipo(
         title: "Foto não publicada",
         body: "Use uma foto sua, com rosto visível, sem texto nem dados pessoais.",
       };
+    case "turno_nao_verificado":
+      return {
+        title: "Turno não verificado",
+        body: "A presença no turno não foi confirmada dentro do prazo. O turno foi encerrado como não verificado.",
+      };
     default:
       return {
         title: "Notificação Frila",
