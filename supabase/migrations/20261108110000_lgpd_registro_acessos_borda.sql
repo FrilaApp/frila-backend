@@ -92,7 +92,7 @@ comment on function privado.slot_registro_acesso() is
   'Nome do slot lógico (test_decoding) do registro de acessos.';
 
 create or replace function privado.balde_registro_acesso(p_em timestamptz) returns timestamptz
-language sql immutable set search_path = '' as $$
+language sql stable set search_path = '' as $$
   select date_trunc('hour', p_em, 'UTC')
 $$;
 comment on function privado.balde_registro_acesso(timestamptz) is
