@@ -127,6 +127,27 @@ conferir "caminho feliz passa com exit 0 fora da janela proibida" \
     --changelog "$CHANGELOG_BOM" \
     backend-v1.0.0
 
+# ── 7b. RNF12 suspensa (decisão do Cauê, 08/11/2026) ──────────
+# shellcheck disable=SC2329  # chamada pelo conferir, por nome
+suspensa_sem_fora() {  # com a RNF12 suspensa, o passo 2 não pode dizer "fora da janela"
+  local s c
+  s=$(env -u RNF12_ATIVA FRILA_AGORA="2026-10-30 20:00" "$PORTAO" \
+        --commit "$COMMIT_VALIDO_DEV" --changelog "$CHANGELOG_BOM" backend-v1.0.0 2>&1); c=$?
+  printf '%s\n' "$s"
+  if printf '%s' "$s" | grep -qF "fora da janela proibida"; then echo "disse 'fora da janela'"; return 9; fi
+  return "$c"
+}
+conferir "RNF12 suspensa (padrão), sexta 20h: o passo 2 diz que a janela não foi conferida" \
+  0 "[2/5] Janela RNF12: não conferida (RNF12 suspensa" \
+  suspensa_sem_fora
+
+conferir "RNF12_ATIVA=1 fora da janela: o passo 2 diz fora da janela proibida" \
+  0 "[2/5] Janela RNF12: fora da janela proibida" \
+  env RNF12_ATIVA=1 FRILA_AGORA="2026-11-02 10:00" "$PORTAO" \
+    --commit "$COMMIT_VALIDO_DEV" \
+    --changelog "$CHANGELOG_BOM" \
+    backend-v1.0.0
+
 # ── 8. Testes sintéticos de mutação (Sondas Lince P2-01 e P2-02) ────────
 DIR_ORIGEM="$PWD"
 REPO_SINTETICO="$TMP/repo_sintetico"
