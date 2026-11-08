@@ -87,7 +87,7 @@ Somente **após** salvar o Custom SMTP com sucesso:
 
 1. No menu **Authentication**, acesse **URL Configuration** ou **Auth Settings** (ou via Management API).
 2. Verifique os parâmetros:
-   - **Site URL**: URL pública do ambiente (ex.: `https://frila.app`), nunca `localhost` ou `127.0.0.1`.
+   - **Site URL**: URL pública do ambiente (ex.: `https://frilabr.com`, o do Prod), nunca `localhost` ou `127.0.0.1`.
    - **OTP expiry duration**: `900` segundos (15 minutos).
    - **OTP length**: `6` dígitos.
 
