@@ -7,8 +7,15 @@
 begin;
 select plan(14);
 
+-- Desde 0.2.65 (20261108150000), um recurso só liga com a chave e um mínimo por plataforma, para
+-- a versao_app que o app manda. Este arquivo mede as chaves com o mínimo alcançado (1.2.0 nas
+-- duas plataformas); sem versão, malformada ou sem mínimo é o 819.
+insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima)
+select r, p::public.plataforma, '1.2.0'
+  from unnest(array['foto_de_perfil', 'chamada_direta', 'perfil_rico']) r, unnest(array['ios', 'android']) p;
+
 create function pg_temp.recursos() returns jsonb language sql as $$
-  select public.configuracao_do_app('ios')->'recursos' $$;
+  select public.configuracao_do_app('ios', '1.2.0')->'recursos' $$;
 
 -- 1. A chave nova existe e nasce desligada.
 select is((select ligado from privado.recurso where chave = 'perfil_rico'), false, 'perfil_rico nasce desligada');
@@ -36,7 +43,7 @@ values ('android', '0.1.0', '0.1.0', 'https://play.google.com/store/apps/details
 on conflict (plataforma) do nothing;
 update privado.configuracao_app set foto_de_perfil = true where plataforma = 'ios';
 select is(pg_temp.recursos()->>'foto_de_perfil', 'true', 'foto_de_perfil ligada no iOS chega ao app iOS');
-select is(public.configuracao_do_app('android')#>>'{recursos,foto_de_perfil}', 'false',
+select is(public.configuracao_do_app('android', '1.2.0')#>>'{recursos,foto_de_perfil}', 'false',
   'foto_de_perfil segue por plataforma: o Android continua false');
 update privado.configuracao_app set foto_de_perfil = false;
 
@@ -51,7 +58,7 @@ delete from privado.recurso where chave = 'perfil_rico';
 select is(pg_temp.recursos()->>'perfil_rico', 'false', 'chave ausente no banco: false');
 
 -- 6. A leitura continua aberta ao app antes do login e a tabela continua fechada.
-select ok(has_function_privilege('anon', 'public.configuracao_do_app(text)', 'EXECUTE'), 'anon lê a configuração do app');
+select ok(has_function_privilege('anon', 'public.configuracao_do_app(text, text)', 'EXECUTE'), 'anon lê a configuração do app');
 select ok(not has_table_privilege('authenticated', 'privado.recurso', 'SELECT,UPDATE'), 'privado.recurso fechada ao cliente');
 
 select * from finish();

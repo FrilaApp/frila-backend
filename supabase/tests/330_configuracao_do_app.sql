@@ -41,15 +41,15 @@ end $$;
 
 -- ── A função existe e tem as portas certas ────────────────────────────────────
 
-select has_function('public', 'configuracao_do_app', array['text'],
-  'public.configuracao_do_app(plataforma text) existe');
+select has_function('public', 'configuracao_do_app', array['text', 'text'],
+  'public.configuracao_do_app(plataforma text, versao_app text) existe (0.2.65)');
 
 select ok(
-  has_function_privilege('anon', 'public.configuracao_do_app(text)', 'execute'),
+  has_function_privilege('anon', 'public.configuracao_do_app(text, text)', 'execute'),
   'anon executa: o app abaixo da versão mínima ainda não tem sessão');
 
 select ok(
-  has_function_privilege('authenticated', 'public.configuracao_do_app(text)', 'execute'),
+  has_function_privilege('authenticated', 'public.configuracao_do_app(text, text)', 'execute'),
   'authenticated também: o app com sessão aberta faz a mesma pergunta');
 
 -- A exceção é por nome. Se uma segunda função de public aparecer liberada para anon,
