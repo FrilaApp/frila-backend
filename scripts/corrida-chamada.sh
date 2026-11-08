@@ -34,7 +34,65 @@ RUN=$(( (RANDOM % 900) + 100 ))   # marca desta execução: reexecutar não coli
 id() { printf '%08x-0000-4000-8000-%012d' $(( 0xc0c00000 + RUN * 1000 + $1 )) "$2"; }
 
 recurso_antes=$(psql -c "select coalesce((select ligado from privado.recurso where chave = 'chamada_direta'), false);")
+MUNDOS=()   # cada montar_mundo se registra aqui, para a limpeza saber o que apagar
+
+# Apaga tudo o que os mundos desta execução criaram, como as outras corridas. A suíte e a
+# mutação rodam depois no mesmo banco, e um garçom disponível a semana toda no Plano Piloto
+# vira destinatário extra de todo despacho dos testes (medido: 240, 260, 370, 430, 803 e
+# 809 caíram na linha de base da mutação do #448). Apaga por id, e não por e-mail, porque a
+# exclusão do cenário 4 anonimiza a conta.
+limpar_mundos() {
+  [ "${#MUNDOS[@]}" -gt 0 ] || return 0
+  local m contas="" casas=""
+  for m in "${MUNDOS[@]}"; do
+    contas+="('$(id "$m" 1)'::uuid),('$(id "$m" 2)'::uuid),('$(id "$m" 3)'::uuid),"
+    casas+="('$(id "$m" 10)'::uuid),"
+  done
+  psql >/dev/null <<SQL
+set session_replication_role = 'replica';
+create temp table contas as select * from (values ${contas%,}) v(id);
+create temp table casas as select * from (values ${casas%,}) v(id);
+create temp table profs as select id from public.profissional where usuario_id in (select id from contas);
+create temp table vagas as select id from public.vaga where estabelecimento_id in (select id from casas);
+create temp table posicoes as select id from public.posicao where vaga_id in (select id from vagas);
+create temp table chamadas as select id from public.chamada
+ where vaga_id in (select id from vagas) or profissional_id in (select id from profs)
+    or estabelecimento_id in (select id from casas);
+delete from public.notificacao
+ where usuario_id in (select id from contas)
+    or referencia_id in (select id from vagas union all select id from posicoes union all select id from chamadas);
+do \$\$
+begin
+  if to_regclass('privado.marca_notificacao') is not null then
+    delete from privado.marca_notificacao
+     where usuario_id in (select id from contas)
+        or referencia_id in (select id from vagas union all select id from posicoes union all select id from chamadas);
+  end if;
+end \$\$;
+delete from pgmq.q_despacho where (message->>'vaga_id')::uuid in (select id from vagas);
+delete from public.despacho where vaga_id in (select id from vagas) or profissional_id in (select id from profs);
+delete from public.ocorrencia where autor_id in (select id from contas) or posicao_id in (select id from posicoes);
+delete from public.turno where posicao_id in (select id from posicoes);
+delete from public.candidatura where profissional_id in (select id from profs) or posicao_id in (select id from posicoes);
+delete from public.chamada where id in (select id from chamadas);
+delete from public.posicao where vaga_id in (select id from vagas);
+delete from public.vaga where id in (select id from vagas);
+delete from public.equipe_confianca where estabelecimento_id in (select id from casas) or profissional_id in (select id from profs);
+delete from public.membro_estabelecimento where usuario_id in (select id from contas) or estabelecimento_id in (select id from casas);
+delete from public.estabelecimento where id in (select id from casas);
+delete from public.disponibilidade where profissional_id in (select id from profs);
+delete from public.profissional_funcao where profissional_id in (select id from profs);
+delete from public.profissional where id in (select id from profs);
+-- O pedido de exclusão não tem FK para usuario (sobrevive à conta): sai pelo nome.
+delete from public.pedido_de_exclusao where usuario_id in (select id from contas);
+delete from public.usuario where id in (select id from contas);
+delete from auth.users where id in (select id from contas);
+set session_replication_role = 'origin';
+SQL
+}
+
 limpar() {
+  limpar_mundos || echo "  aviso: a limpeza dos mundos falhou; sobraram dados da marca $RUN" >&2
   psql >/dev/null 2>&1 <<SQL || echo "  aviso: não restaurei o recurso chamada_direta" >&2
 update privado.recurso set ligado = '${recurso_antes:-f}'::boolean where chave = 'chamada_direta';
 SQL
@@ -84,6 +142,7 @@ resultado() { grep -E '^(ok|[a-z_]+|sqlstate:.*)$' "$1" | head -1; }
 # função garçom, ponto a 1,3 km e disponibilidade a semana toda (o 2º é elegível ao despacho).
 montar_mundo() {
   local m=$1 casa prof1 prof2 estab
+  MUNDOS+=("$m")
   casa=$(id "$m" 1); prof1=$(id "$m" 2); prof2=$(id "$m" 3); estab=$(id "$m" 10)
   psql >/dev/null <<SQL
 $AUX
