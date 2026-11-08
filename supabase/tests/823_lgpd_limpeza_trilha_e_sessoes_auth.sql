@@ -6,7 +6,7 @@
 begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-08 12:00:00+00', true);
-select plan(31);
+select plan(35);
 
 -- Base limpa dentro da transação (desfeita no fim): só as linhas deste teste contam.
 delete from auth.audit_log_entries;
@@ -150,6 +150,33 @@ select ok(pg_temp.existe('c8230000-0000-4000-8000-0000000000c2'), 'e nada é apa
 select is((select count(*)::int from privado.falha_execucao
             where origem = 'limpar_trilha_e_sessoes_auth' and codigo = 'limpeza_auth_falhou'), 1,
   'a falha vai para falha_execucao, que o verificar_saude transforma em alerta');
+
+-- ── RLS só em auth.users: só a etapa (b) para; (a) e (c) seguem ──────────────
+-- O caso perigoso (Linces no #442): com auth.users invisível, uma etapa (b) que conferisse só a trilha veria toda
+-- conta como excluída e apagaria a trilha inteira, inclusive a recente da conta viva. Aqui a trilha e as sessões
+-- ficam visíveis para o dono sem BYPASSRLS, e só auth.users segue com RLS (desfeito no rollback do arquivo).
+alter table auth.audit_log_entries disable row level security;
+alter table auth.sessions disable row level security;
+grant select, delete on auth.audit_log_entries to zz_823_sem_bypass;
+grant select, update, delete on auth.sessions to zz_823_sem_bypass;
+grant select on auth.users to zz_823_sem_bypass;
+select pg_temp.trilha('c8230000-0000-4000-8000-0000000000c3', interval '1 day',
+  '{"action":"login","actor_id":"c8230000-0000-4000-8000-000000000002"}');
+select pg_temp.sessao('c8230000-0000-4000-8000-0000000000b8', '1 year', '8 months', '8 months');
+delete from privado.falha_execucao where origem = 'limpar_trilha_e_sessoes_auth';
+create temp table r4 as select privado.limpar_trilha_e_sessoes_auth() as j;
+select results_eq($$ select f->>'etapa', f->>'codigo' from r4, jsonb_array_elements(j->'falhas') f $$,
+  $$ values ('trilha_conta_excluida', 'rls_sem_bypass') $$,
+  'RLS só em auth.users: só a etapa (b) registra rls_sem_bypass');
+select ok(pg_temp.existe('c8230000-0000-4000-8000-0000000000a2') and pg_temp.existe('c8230000-0000-4000-8000-0000000000a5')
+      and pg_temp.existe('c8230000-0000-4000-8000-0000000000a8'),
+  'com auth.users invisível, a trilha recente da conta viva fica');
+select ok(pg_temp.existe('c8230000-0000-4000-8000-0000000000c3'),
+  'a etapa (b) não roda: a trilha da conta excluída espera a próxima rodada');
+select results_eq($$ select (j->>'trilha_antiga')::int, (j->>'sessoes_paradas')::int from r4 $$,
+  $$ values (2, 1) $$, '(a) e (c) seguem e apagam');
+alter table auth.audit_log_entries enable row level security;
+alter table auth.sessions enable row level security;
 alter function privado.limpar_trilha_e_sessoes_auth(integer, integer) owner to postgres;
 
 -- ── Agendamento e permissão ──────────────────────────────────────────────────
