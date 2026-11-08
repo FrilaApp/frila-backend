@@ -15,7 +15,9 @@ select set_config('lock_timeout', '2s', true);
 -- ── 1. A chave, global e por estabelecimento (RN46; leitura 6 do desenho) ─────
 -- O piloto liga o código só nas casas de teste, e privado.recurso é global. O recurso vale
 -- para um turno quando a chave global está ligada E a casa do turno está na lista. Fechado
--- por padrão: sem a linha, desligado. Ligar uma casa é uma migração, nunca o painel.
+-- por padrão: sem a linha, desligado. Ligar uma casa nunca é pelo painel, e nunca põe o UUID real
+-- de uma casa em migração: casa de pessoa física ou MEI é dado pessoal. Usa as casas de teste ou
+-- uma lista fora do repositório (Bússola, 08/11).
 
 insert into privado.recurso (chave, ligado) values ('checkin_por_codigo', false)
   on conflict (chave) do nothing;
@@ -28,7 +30,7 @@ create table privado.recurso_estabelecimento (
 alter table privado.recurso_estabelecimento enable row level security;
 revoke all on table privado.recurso_estabelecimento from public, anon, authenticated;
 comment on table privado.recurso_estabelecimento is
-  'Estabelecimentos em que uma chave de privado.recurso vale (RN46). Hoje só o check-in por código lê esta lista; as outras chaves seguem globais. Não guarda dado pessoal.';
+  'Estabelecimentos em que uma chave de privado.recurso vale (RN46). Hoje só o check-in por código lê esta lista; as outras chaves seguem globais. Guarda só a chave e o estabelecimento. Para casa de pessoa física ou MEI, é dado do contratante, com a finalidade de ligar o piloto.';
 
 create function privado.recurso_ligado_para(p_chave text, p_estabelecimento uuid) returns boolean
 language sql stable security definer set search_path = '' as $$
@@ -107,7 +109,7 @@ create table privado.checkin_codigo (
 alter table privado.checkin_codigo enable row level security;
 revoke all on table privado.checkin_codigo from public, anon, authenticated;
 comment on table privado.checkin_codigo is
-  'O check-in por código num turno (0.2.68): o código em vigor, o contador de tentativas erradas, o bloqueio, e duas marcas para a medição do piloto. Nasce no primeiro uso do caminho e sai 90 dias depois do fim do turno ou da contestação (LGPD, PR3). Não guarda quem gerou o código.';
+  'O check-in por código num turno (0.2.68): o código em vigor, o contador de tentativas erradas, o bloqueio, e duas marcas para a medição do piloto. Nasce no primeiro uso do caminho e sai 90 dias depois do fim do turno ou do fim da contestação, o que vier depois (LGPD, PR3). Não guarda quem gerou o código.';
 comment on column privado.checkin_codigo.codigo is
   'Os 6 dígitos que a casa mostra. Vale só durante a validade (a validação confere expira_em) e sai do banco ao validar, ao gerar outro ou em até 1 minuto depois de vencer. Nunca sai em erro, log, aviso, resposta de terceiros, telemetria nem exportação.';
 comment on column privado.checkin_codigo.gerado_em is
@@ -144,6 +146,10 @@ alter table privado.checkin_codigo_tentativa enable row level security;
 revoke all on table privado.checkin_codigo_tentativa from public, anon, authenticated;
 comment on table privado.checkin_codigo_tentativa is
   'Cada leitura do código que contou como tentativa: a hora, o resultado e a faixa da distância. Não guarda os metros, a coordenada, o motivo da recusa, os sinais nem quem gerou o código (regras da Bússola, 08/11). Sai com a linha de privado.checkin_codigo, em cascata. Sai na exportação do profissional.';
+comment on column privado.checkin_codigo_tentativa.em is
+  'Hora da leitura, pelo relógio do servidor. Com codigo_gerado_em, mede o tempo entre gerar e ler.';
+comment on column privado.checkin_codigo_tentativa.resultado is
+  'aceita ou recusada, sem o motivo.';
 comment on column privado.checkin_codigo_tentativa.faixa is
   'A faixa da distância medida na leitura, nunca os metros: até 100 m, acima de 100 m ou sem posição.';
 comment on column privado.checkin_codigo_tentativa.codigo_gerado_em is
