@@ -13,7 +13,8 @@
 --   R6     ocorrência com 5 anos e 1 dia: relato NULL, motivo marcador, trilha fora; com 4 anos e
 --          364 dias, ligada a posição ainda nos 5 anos, ou de outro tipo: intacta.
 --   R7     a trilha de candidatura e avaliação do turno expurgado sai.
---   R8     marca_notificacao órfã ou com mais de 5 anos sai; as outras ficam.
+--   R8     marca_notificacao órfã ou com mais de 5 anos sai; as outras ficam. A marca de vaga
+--          (que nunca é apagada) só sai pelo prazo.
 --   R9     contadores do profissional iguais antes e depois do expurgo. O resíduo da
 --          reconciliação diária fica num todo() (cartão 8KFuT8UP).
 --   Q3     posição sem turno da vaga expirada sai, com candidaturas e trilha. A com falta fica
@@ -22,6 +23,8 @@
 --   Exclusão de conta: com a conta anonimizada há mais de 15 dias, esta rotina e
 --          limpar_contas_anonimizadas agem na mesma vaga e ocorrência sem desfazer uma à outra
 --          (a terceira rodada não reescreve a linha: ctid igual).
+--   Trava interna: anonimizar_contexto_das_vagas chamada direto recusa vaga com posição recente.
+--   Rodada 2 da revisão (Lince Codex e Lince AG 2): M9, MD/M12, MV e MP.
 --   Vaga com uma posição recente: nada muda. Piso de 5 anos não encurtável. Lote limitado e
 --   idempotente (a concorrência com SKIP LOCKED não cabe numa sessão pgTAP; ver o PR).
 
@@ -32,7 +35,7 @@ insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2026-11-08 12:00:00+00', true);
 set local timezone = 'UTC';
 
-select plan(70);
+select plan(76);
 
 -- ── 1. Catálogo ───────────────────────────────────────────────────────────────
 
@@ -392,6 +395,11 @@ select is((select count(*)::int from public.despacho where vaga_id = (select id 
   0, 'R5/Q3: despacho e posição sem turno da vaga antiga de conta anonimizada saem');
 
 -- VB e VB2: uma posição recente, nada da vaga muda
+-- E2 do Lince AG 2 (mutante MP): a trava de dentro recusa a vaga com posição recente mesmo
+-- quando alguém chama a função direto, sem passar pela seleção de quem a chama.
+select is(privado.anonimizar_contexto_das_vagas(array[(select id from ids where chave = 'vb'),
+                                                       (select id from ids where chave = 'vb2')]),
+  0, 'anonimizar_contexto_das_vagas chamada direto com vaga de posição recente devolve 0');
 select results_eq(
   $$ select id, local, responsavel_local, observacoes, traje, ponto::text
        from public.vaga where id in (select id from ids where chave in ('vb', 'vb2', 'vf')) order by id $$,
@@ -546,35 +554,44 @@ select results_eq(
 select is(privado.expurgar_vagas_antigas(5, 1), 1, 'lote: a rodada seguinte pega a vaga que faltava');
 select is(privado.expurgar_vagas_antigas(5, 1), 0, 'lote: depois disso não sobra nada');
 
--- ── 5. Dias seguintes: a exclusão de conta e o expurgo não se desfazem ────────
+-- ── 5. Rodadas seguintes: a exclusão de conta e o expurgo não se desfazem ─────
 --
--- O estado final de cada rodada seria o mesmo mesmo se as duas rotinas brigassem (uma
--- reescreve, a outra desfaz, na mesma rodada). Por isso a prova é o ctid: qualquer UPDATE
--- gera uma versão nova da linha, e nenhuma outra rotina da retenção diária escreve em vaga
--- ou ocorrência.
+-- E1 do Lince AG 2 (mutante MV), com a conta VC3 anonimizada há 20 dias: a rodada 1 é a do
+-- bloco 3; aqui vêm a 2 e a 3, no mesmo dia. O estado final de cada rodada seria o mesmo
+-- mesmo se as duas rotinas brigassem (uma reescreve, a outra desfaz, na mesma rodada). Por
+-- isso a prova são as contagens de cada rotina e o ctid: qualquer UPDATE gera uma versão nova
+-- da linha, e nenhuma outra rotina da retenção diária escreve em vaga ou ocorrência.
 
-do $$ begin perform set_config('frila.agora', '2026-11-09 12:00:00+00', true); end $$;
-do $$ begin perform privado.executar_retencao_diaria(); end $$;
+create temp table rodada_2 as select privado.executar_retencao_diaria() as res;
 
 select results_eq(
   $$ select local, responsavel_local, observacoes, traje, extensions.st_astext(ponto)
        from public.vaga where id = (select id from ids where chave = 'vc3') $$,
   $$ values ('[removido por exclusão de conta]'::text, '[removido por exclusão de conta]'::text, null::text, null::text,
              'POINT(-47.8825 -15.7942)'::text) $$,
-  'dia seguinte: limpar_contas_anonimizadas põe o marcador dela no local (o turno verificado saiu) e o expurgo não desfaz');
+  'rodada 2: limpar_contas_anonimizadas põe o marcador dela no local (o turno verificado saiu) e o expurgo não desfaz');
+select is((select (res->>'expurgo_vagas_antigas')::int from rodada_2), 0,
+  'rodada 2: expurgar_vagas_antigas não refaz a vaga que a exclusão de conta remarcou');
+select is((select (res->>'anonimizacao_ocorrencias_antigas')::int from rodada_2), 0,
+  'rodada 2: nenhuma ocorrência refeita');
 
-create temp table linhas_dia_2 as
+create temp table linhas_rodada_2 as
 select (select ctid::text from public.vaga where id = (select id from ids where chave = 'vc3')) as vaga_ctid,
        (select ctid::text from public.ocorrencia where id = (select id from ids where chave = 'oc_c3')) as ocorrencia_ctid;
 
-do $$ begin perform set_config('frila.agora', '2026-11-10 12:00:00+00', true); end $$;
-do $$ begin perform privado.executar_retencao_diaria(); end $$;
+create temp table rodada_3 as select privado.executar_retencao_diaria() as res;
 
 select results_eq(
   $$ select (select ctid::text from public.vaga where id = (select id from ids where chave = 'vc3')),
             (select ctid::text from public.ocorrencia where id = (select id from ids where chave = 'oc_c3')) $$,
-  $$ select vaga_ctid, ocorrencia_ctid from linhas_dia_2 $$,
-  'terceiro dia: nenhuma das duas rotinas reescreve a vaga nem a ocorrência (ctid igual)');
+  $$ select vaga_ctid, ocorrencia_ctid from linhas_rodada_2 $$,
+  'rodada 3: nenhuma das duas rotinas reescreve a vaga nem a ocorrência (ctid igual)');
+select is((select (res->>'contas_anonimizadas_limpas')::int from rodada_3), 0,
+  'rodada 3: limpar_contas_anonimizadas não refaz nada');
+select is((select (res->>'expurgo_vagas_antigas')::int from rodada_3), 0,
+  'rodada 3: expurgar_vagas_antigas não refaz nada');
+select is((select (res->>'anonimizacao_ocorrencias_antigas')::int from rodada_3), 0,
+  'rodada 3: nenhuma ocorrência refeita');
 select results_eq(
   $$ select o.motivo, o.relato,
             (select count(*)::int from privado.auditoria_ciclo a where a.entidade = 'ocorrencia' and a.entidade_id = o.id)
