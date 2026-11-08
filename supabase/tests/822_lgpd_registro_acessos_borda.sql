@@ -9,7 +9,7 @@ select 1 from pg_create_logical_replication_slot('frila_registro_acesso', 'test_
 select 1 from pg_create_logical_replication_slot('zz_822_extra', 'test_decoding', true);
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-08 12:10:00+00', true);
-select plan(40);
+select plan(34);
 
 delete from privado.registro_acesso;
 delete from privado.falha_execucao where origem in ('consumir_registro_acesso', 'verificar_saude');
@@ -121,9 +121,9 @@ select pg_temp.requisicao('c8220000-0000-4000-8000-00000000000b', '{"cf-connecti
 select pg_temp.agora('2026-11-08 13:05:00+00');
 select pg_temp.requisicao('c8220000-0000-4000-8000-00000000000a', '{"cf-connecting-ip":"198.51.100.20"}');
 select pg_temp.flush();
--- O consumidor é chamado direto, como o pg_cron faz (uma chamada por sessão). Chamado dentro de um CREATE TABLE AS,
--- o plpgsql_check pré-carregado deixa a pilha do pldbgapi2 inconsistente e a próxima função plpgsql da sessão cai
--- ("cannot find parent statement on pldbgapi2 call stack", medido em 08/11/2026).
+-- UMA chamada do consumidor por sessão, como no pg_cron (uma conexão por rodada). Com o plpgsql_check pré-carregado
+-- (padrão da imagem do Supabase), a 2ª chamada na mesma sessão cai com "cannot find parent statement on pldbgapi2
+-- call stack" (medido em 08/11/2026). Por isso o teto do slot, que chama o consumidor de novo, está no 824.
 select is((privado.consumir_registro_acesso() ->> 'consumidas')::int, 5, 'o consumidor leu as 5 mensagens');
 select results_eq($$ select usuario_id::text, host(ip), acessado_em from privado.registro_acesso order by 1, 3 $$,
   $$ values ('c8220000-0000-4000-8000-00000000000a', '198.51.100.20', '2026-11-08 12:10:00+00'::timestamptz),
@@ -137,9 +137,12 @@ select is((select consumido_em from privado.registro_acesso_coleta), '2026-11-08
 -- Depois de gravado, o pre-request deduplica: a mesma conta e IP na mesma hora não emite de novo.
 select pg_temp.agora('2026-11-08 13:40:00+00');
 select pg_temp.requisicao('c8220000-0000-4000-8000-00000000000a', '{"cf-connecting-ip":"198.51.100.20"}');
-select pg_temp.flush();
-select is((privado.consumir_registro_acesso() ->> 'consumidas')::int, 0, 'mesma conta, IP e hora já gravados: nenhuma mensagem nova');
-select is((select count(*)::int from privado.registro_acesso), 4, 'e nenhuma linha nova');
+select is((select count(*)::int from pg_temp.espiar('frila_registro_acesso')), 0,
+  'mesma conta, IP e hora já gravados: o pre-request não emite de novo');
+select ok(exists (select 1 from privado.registro_acesso_recente
+                   where usuario_id = 'c8220000-0000-4000-8000-00000000000a' and host(ip) = '198.51.100.20'
+                     and balde = '2026-11-08 13:00:00+00'),
+  'porque o consumidor marcou (conta, IP, hora) em registro_acesso_recente');
 
 -- A falha do pre-request (acima) virou registro em falha_execucao, sem dado pessoal.
 select results_eq($$ select codigo, detalhes ->> 'ultimo_sqlstate', detalhes::text !~ '198\.51|c8220000'
@@ -193,34 +196,6 @@ update privado.registro_acesso_coleta set consumido_em = privado.agora() - inter
 select privado.verificar_saude();
 select ok(exists (select 1 from privado.alerta_emitido where codigo = 'registro_acesso_parado'),
   'consumidor parado há mais de 15 minutos: alerta registro_acesso_parado');
-
--- WAL de verdade para o atraso: ~20 MB numa tabela desta transação (desfeita no rollback).
-update privado.registro_acesso_coleta set teto_wal_mb = 32, consumido_em = privado.agora();
-create table privado.zz_822_wal as select repeat(md5(n::text), 32) as x from generate_series(1, 20000) n;
-select privado.verificar_saude();
-select ok(exists (select 1 from privado.alerta_emitido where codigo = 'registro_acesso_wal_atrasado'),
-  'atraso do slot acima da metade do teto: alerta registro_acesso_wal_atrasado');
-select ok(exists (select 1 from pg_replication_slots where slot_name = 'frila_registro_acesso'),
-  'abaixo do teto, o slot fica');
-
--- ── Autoproteção: acima do teto, o consumidor derruba o slot e registra o buraco ─
-update privado.registro_acesso_coleta set teto_wal_mb = 16;
-delete from privado.falha_execucao where codigo = 'registro_acesso_buraco';
-select privado.consumir_registro_acesso() ->> 'protecao' is not null as consumiu;
-select ok(not exists (select 1 from pg_replication_slots where slot_name = 'frila_registro_acesso'),
-  'atraso acima do teto: o slot cai e o WAL fica livre');
-select results_eq($$ select detalhes ->> 'motivo', (detalhes ->> 'teto_mb')::int, detalhes ? 'desde', detalhes ? 'ate',
-                            detalhes::text !~ '198\.51|c8220000'
-                       from privado.falha_execucao where codigo = 'registro_acesso_buraco' $$,
-  $$ values ('slot_acima_do_teto'::text, 16, true, true, true) $$,
-  'o buraco vai para falha_execucao com motivo, teto e período, sem dado pessoal');
--- Aqui a transação já escreveu, e o Postgres não deixa recriar o slot: o buraco diz isso.
-select is((select (detalhes ->> 'recriado')::boolean from privado.falha_execucao where codigo = 'registro_acesso_buraco'), false,
-  'sem poder recriar agora, o buraco registra recriado = false (o pg_cron recria na rodada seguinte)');
-select privado.verificar_saude();
-select ok(exists (select 1 from privado.falha_execucao where codigo = 'registro_acesso_buraco' and origem = 'verificar_saude'
-                   and detalhes ->> 'motivo' = 'slot_ausente'),
-  'a verificar_saude também vigia: slot ausente com a coleta ligada é buraco');
 
 -- ── Agendamento ─────────────────────────────────────────────────────────────
 select results_eq($$ select schedule, command from cron.job where jobname = 'consumir_registro_acesso' $$,

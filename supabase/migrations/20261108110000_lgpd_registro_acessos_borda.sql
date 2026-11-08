@@ -149,48 +149,6 @@ comment on column privado.registro_acesso_guarda.referencia is
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 5. O pre-request: registra e depois confere o limite de escrita (que não muda)
 -- ─────────────────────────────────────────────────────────────────────────────
-create or replace function privado.registrar_acesso_da_requisicao(p_uid uuid) returns void
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  v_ip    text;
-  v_em    timestamptz;
-  v_balde timestamptz;
-begin
-  if not exists (select 1 from privado.registro_acesso_coleta c where c.unica and c.ligada) then
-    return;
-  end if;
-  -- Só o cf-connecting-ip: a borda recusa o forjado. X-Forwarded-For, x-real-ip e true-client-ip, nunca (M1).
-  v_ip := nullif(current_setting('request.headers', true), '')::json ->> 'cf-connecting-ip';
-  if v_ip is null or not pg_input_is_valid(v_ip, 'inet') then
-    return;
-  end if;
-  v_em := privado.agora();
-  v_balde := privado.balde_registro_acesso(v_em);
-  if exists (select 1 from privado.registro_acesso_recente r
-              where r.usuario_id = p_uid and r.ip = v_ip::inet and r.balde = v_balde) then
-    return;
-  end if;
-  -- Fora da transação: vale no GET só leitura e sobrevive à requisição que falha. Sem fsync próprio.
-  perform pg_logical_emit_message(false, 'frila_registro_acesso',
-    p_uid::text || ' ' || host(v_ip::inet) || ' ' || to_char(v_em at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'));
-exception
-  -- Nunca derruba a requisição. A falha vira outra mensagem, só com o SQLSTATE (RN15), que o consumidor conta.
-  -- query_canceled não entra: um statement_timeout ou cancelamento da requisição segue o caminho normal.
-  when others then
-    begin
-      perform pg_logical_emit_message(false, 'frila_registro_acesso_falha', sqlstate);
-    exception when others then
-      null;
-    end;
-end $$;
-
-comment on function privado.registrar_acesso_da_requisicao(uuid) is
-  'Chamada pelo db_pre_request em toda requisição autenticada: com a coleta ligada, emite uma mensagem lógica não transacional (conta, cf-connecting-ip, data e hora em UTC) na 1ª requisição de cada (conta, IP, hora) que ainda não está em privado.registro_acesso_recente. Só lê tabelas, por isso vale no GET só leitura. Nunca derruba a requisição: o erro vira a mensagem frila_registro_acesso_falha, só com o SQLSTATE.';
-revoke all on function privado.registrar_acesso_da_requisicao(uuid) from public, anon, authenticated;
-
 create or replace function requisicao.conferir_limite() returns void
 language plpgsql
 security definer set search_path = ''
@@ -199,6 +157,8 @@ declare
   v_uid      uuid := (select auth.uid());
   v_papel    text := nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role';
   v_metodo   text := coalesce(current_setting('request.method', true), '');
+  v_ip       text;
+  v_em       timestamptz;
   v_janela   timestamptz;
   v_contagem int;
 begin
@@ -206,8 +166,34 @@ begin
     return;
   end if;
 
-  -- Registro de acessos (Marco Civil art. 15): antes do retorno do GET, para cobrir a leitura.
-  perform privado.registrar_acesso_da_requisicao(v_uid);
+  -- Registro de acessos (Marco Civil art. 15), antes do retorno do GET para cobrir a leitura. Só lê tabelas: com a
+  -- coleta ligada, na 1ª requisição de cada (conta, IP, hora) que ainda não está em registro_acesso_recente, emite
+  -- uma mensagem lógica NÃO transacional, que vale no GET só leitura e sobrevive à requisição que falha (sem fsync
+  -- próprio). Fica aqui, e não numa função à parte, para não somar uma chamada com troca de GUC a cada requisição.
+  begin
+    if exists (select 1 from privado.registro_acesso_coleta c where c.unica and c.ligada) then
+      -- Só o cf-connecting-ip: a borda recusa o forjado. X-Forwarded-For, x-real-ip e true-client-ip, nunca (M1).
+      v_ip := nullif(current_setting('request.headers', true), '')::json ->> 'cf-connecting-ip';
+      if v_ip is not null and pg_input_is_valid(v_ip, 'inet') then
+        v_em := privado.agora();
+        if not exists (select 1 from privado.registro_acesso_recente r
+                        where r.usuario_id = v_uid and r.ip = v_ip::inet
+                          and r.balde = privado.balde_registro_acesso(v_em)) then
+          perform pg_logical_emit_message(false, 'frila_registro_acesso',
+            v_uid::text || ' ' || host(v_ip::inet) || ' ' || to_char(v_em at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'));
+        end if;
+      end if;
+    end if;
+  exception
+    -- Nunca derruba a requisição. A falha vira outra mensagem, só com o SQLSTATE (RN15), que o consumidor conta.
+    -- query_canceled não entra: um statement_timeout ou cancelamento da requisição segue o caminho normal.
+    when others then
+      begin
+        perform pg_logical_emit_message(false, 'frila_registro_acesso_falha', sqlstate);
+      exception when others then
+        null;
+      end;
+  end;
 
   if v_metodo in ('', 'GET', 'HEAD')
      or current_setting('transaction_read_only') = 'on' then
@@ -229,7 +215,7 @@ begin
 end $$;
 
 comment on function requisicao.conferir_limite() is
-  'db_pre_request do PostgREST: registra o acesso da conta autenticada (privado.registrar_acesso_da_requisicao, Marco Civil art. 15), inclusive no GET, e conta as escritas da conta no minuto, recusando com 429 limite_excedido acima de privado.limite_de_escrita_por_minuto() (RNF07, cartão kT7NhMGV).';
+  'db_pre_request do PostgREST: registra o acesso da conta autenticada (Marco Civil art. 15), inclusive no GET: com privado.registro_acesso_coleta ligada, emite uma mensagem lógica não transacional (conta, cf-connecting-ip, data e hora em UTC) na 1ª requisição de cada (conta, IP, hora), que privado.consumir_registro_acesso grava; erro no registro nunca derruba a requisição. Depois conta as escritas da conta no minuto e recusa com 429 limite_excedido acima de privado.limite_de_escrita_por_minuto() (RNF07, cartão kT7NhMGV).';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 6. Autoproteção do slot: nunca enche o disco
@@ -274,13 +260,19 @@ begin
     v_motivo := 'slot_ausente';
   end if;
 
-  -- A criação vem antes de qualquer escrita desta transação (o Postgres exige).
-  begin
-    perform pg_create_logical_replication_slot(v_slot, 'test_decoding');
-    v_recriado := true;
-  exception when others then
-    v_sqlstate := sqlstate;
-  end;
+  -- O Postgres só cria slot em transação que ainda não escreveu (sem XID). Numa que já escreveu, a criação falha
+  -- DEPOIS de reservar o slot, e o bloco de exceção deixaria um slot efêmero preso à sessão (medido): por isso nem
+  -- tenta, e a rodada seguinte do pg_cron, que começa sem escrita, recria.
+  if pg_current_xact_id_if_assigned() is null then
+    begin
+      perform pg_create_logical_replication_slot(v_slot, 'test_decoding');
+      v_recriado := true;
+    exception when others then
+      v_sqlstate := sqlstate;
+    end;
+  else
+    v_sqlstate := '25001';
+  end if;
 
   -- O buraco: tudo o que foi emitido desde o último consumo até agora se perdeu. Sem dado pessoal (RN15).
   perform privado.registrar_falha_execucao(p_origem, 'registro_acesso_buraco', jsonb_build_object(
@@ -399,7 +391,7 @@ begin
 end $$;
 
 comment on function privado.consumir_registro_acesso(integer) is
-  'Job do pg_cron (consumir_registro_acesso, a cada minuto): lê o slot lógico do registro de acessos (peek, até p_max linhas), grava a 1ª mensagem de cada (conta, IP, hora) que ainda não está em privado.registro_acesso_recente, conta as falhas do pre-request e só então avança o slot. Com a coleta desligada, derruba o slot. Começa pela autoproteção (privado.proteger_slot_registro_acesso). Erro na gravação não consome nada e vira registro_acesso_consumo_falhou em privado.falha_execucao.';
+  'Job do pg_cron (consumir_registro_acesso, a cada minuto): lê o slot lógico do registro de acessos (peek, até p_max linhas), grava a 1ª mensagem de cada (conta, IP, hora) que ainda não está em privado.registro_acesso_recente, conta as falhas do pre-request e só então avança o slot. Com a coleta desligada, derruba o slot. Começa pela autoproteção (privado.proteger_slot_registro_acesso). Erro na gravação não consome nada e vira registro_acesso_consumo_falhou em privado.falha_execucao. UMA chamada por sessão: com o plpgsql_check pré-carregado (padrão da imagem do Supabase), a 2ª chamada na mesma sessão cai com "cannot find parent statement on pldbgapi2 call stack" (medido em 08/11/2026); o pg_cron abre uma conexão por rodada.';
 revoke all on function privado.consumir_registro_acesso(integer) from public, anon, authenticated;
 grant execute on function privado.consumir_registro_acesso(integer) to service_role;
 
