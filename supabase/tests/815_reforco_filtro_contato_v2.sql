@@ -82,6 +82,33 @@ select is(privado.texto_sem_contato_ou_pix(t), false, 'barrado, não é data: ' 
   ('01/02/2019 15/11/2023')
  ) v(t);
 
+-- (5) Parecer do Lince no PR #446: data colada a número por extenso ou a dígito é telefone disfarçado.
+-- Os três primeiros são os do parecer; os dois seguintes têm 9 itens e a máscara de data também os
+-- deixava passar. Antes da máscara, todos eram barrados.
+select is(privado.texto_sem_contato_ou_pix(t), false, 'barrado, data colada a outro item: ' || t)
+ from (values
+  ('seis um nove 12/05/2020'),
+  ('nove oito sete 31.12.1999'),
+  ('meu numero: nove 9 12/05/2020'),
+  ('nove 12/05/2020'),
+  ('9 12/05/2020'),
+  ('12/05/2020 nove'),
+  ('seis um nove 12 05 2020')
+ ) v(t);
+
+-- A regra 10 conta número por extenso: dez itens, sem nenhuma máscara.
+select is(privado.texto_sem_contato_ou_pix('seis um nove oito oito oito oito sete sete sete'), false,
+  'barrado, dez números por extenso seguidos');
+select is(privado.texto_sem_contato_ou_pix('um dois três'), true, 'poucos números por extenso passam');
+
+-- E a data sozinha, ou entre palavras comuns, continua passando.
+select is(privado.texto_sem_contato_ou_pix(t), true, 'passa, data entre palavras: ' || t)
+ from (values
+  ('Admitido em 31/12/2018.'),
+  ('Fiz o curso em 12/05/2020. Depois, mudei de casa em 31/12/2021.'),
+  ('De 01/02/2019, até 15/11/2023, como garçom e barman')
+ ) v(t);
+
 -- Nada mudou na superfície: mesma assinatura e mesmos privilégios.
 select has_function('privado', 'texto_sem_contato_ou_pix', array['text'], 'a assinatura do filtro é a mesma');
 select ok(not has_function_privilege('authenticated', 'privado.texto_sem_contato_ou_pix(text)', 'execute'),
