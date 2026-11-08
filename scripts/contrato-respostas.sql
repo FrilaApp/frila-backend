@@ -883,6 +883,7 @@ select pg_temp.guarda('promete:atualizarPerfilProfissional:404',
 select pg_temp.guarda('promete:definirServicos:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.definir_servicos('[]')$$));
 select pg_temp.guarda('promete:definirRegioesAtendidas:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.definir_regioes_atendidas('{}',false)$$));
 select pg_temp.guarda('promete:atualizarApresentacaoProfissional:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$$));
+select pg_temp.guarda('promete:meuPerfilDetalhado:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.meu_perfil_detalhado()$$));
 delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000096';
 delete from auth.users where id = 'ee000000-0000-4000-8000-000000000096';
 
@@ -1615,6 +1616,10 @@ select pg_temp.guarda('atualizarApresentacaoProfissional', pg_temp.como('cc00000
 select pg_temp.guarda('promete:atualizarApresentacaoProfissional:401',pg_temp.observado(null,$$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$$));
 select pg_temp.guarda('promete:atualizarApresentacaoProfissional:403',pg_temp.observado('cc000000-0000-4000-8000-000000000004',$$select public.atualizar_apresentacao_profissional('{"apresentacao":"x"}')$$));
 select pg_temp.guarda('promete:atualizarApresentacaoProfissional:422',pg_temp.observado('cc000000-0000-4000-8000-000000000002',$$select public.atualizar_apresentacao_profissional('{"apresentacao":"ligue 61 98888-7777"}')$$));
+select pg_temp.guarda('meuPerfilDetalhado', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$select public.meu_perfil_detalhado()$$));
+select pg_temp.guarda('promete:meuPerfilDetalhado:401',pg_temp.observado(null,$$select public.meu_perfil_detalhado()$$));
+select pg_temp.guarda('promete:meuPerfilDetalhado:422',pg_temp.observado('cc000000-0000-4000-8000-000000000001',$$select public.meu_perfil_detalhado()$$));
 
 -- B4a: URLs e projeções de mídia, incluindo cada recusa declarada no contrato.
 create temp table midia_colheita as

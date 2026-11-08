@@ -20,7 +20,7 @@ on conflict (chave) do update set ligado = true;
 select set_config('frila.agora', '2026-11-20 14:00:00-03', true);
 set local frila.agendador_secret = 'segredo-de-teste';
 
-select plan(48);
+select plan(50);
 
 -- Helpers
 create function pg_temp.executar(conta uuid, sql text) returns void language plpgsql as $$
@@ -797,6 +797,18 @@ begin
   ), 'limpar_contas_anonimizadas deve zerar todos os campos F2 do profissional';
 end $$;
 select pass('Retencao F2: limpar_contas_anonimizadas zera apresentacao, cursos e idiomas');
+
+-- 6.4 Agendamento dos jobs em pg_cron (expirar e lembrar)
+select is(
+  (select count(*) = 1 from cron.job where jobname = 'expirar_chamadas_diretas'),
+  true,
+  'Job expirar_chamadas_diretas agendado em cron.job'
+);
+select is(
+  (select count(*) = 1 from cron.job where jobname = 'lembrar_chamadas_diretas'),
+  true,
+  'Job lembrar_chamadas_diretas agendado em cron.job'
+);
 
 select * from finish();
 rollback;

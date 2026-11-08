@@ -620,6 +620,28 @@ comment on function privado.lembrar_chamadas() is
 revoke all on function privado.lembrar_chamadas() from public, anon, authenticated;
 grant execute on function privado.lembrar_chamadas() to service_role;
 
+-- Agendamento periódico dos jobs de expiração e lembrete de chamadas via pg_cron (B5c, RN31)
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.unschedule('expirar_chamadas_diretas')
+      where exists (select 1 from cron.job where jobname = 'expirar_chamadas_diretas');
+    perform cron.schedule(
+      'expirar_chamadas_diretas',
+      '* * * * *',
+      'select privado.expirar_chamadas()'
+    );
+
+    perform cron.unschedule('lembrar_chamadas_diretas')
+      where exists (select 1 from cron.job where jobname = 'lembrar_chamadas_diretas');
+    perform cron.schedule(
+      'lembrar_chamadas_diretas',
+      '* * * * *',
+      'select privado.lembrar_chamadas()'
+    );
+  end if;
+end $$;
+
 -- ── 4. RPCs de Leitura de Chamada (B5d, contrato 0.2.56) ───────────────────────
 create or replace function public.minhas_chamadas(
   estado text default null,
