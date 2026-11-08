@@ -285,14 +285,17 @@ values ('00000000-0000-0000-0000-000000000000', 'a2310000-0000-4000-8000-0000000
         'authenticated', 'avulsa-231@frilabr.com', now(), now(), false, false),
        ('00000000-0000-0000-0000-000000000000', 'a2310000-0000-4000-8000-0000000000b4', 'authenticated',
         'authenticated', 'demonstracao-231@frilabr.com', now(), now(), false, false);
+-- A avulsa tem public.usuario, mas com demonstracao = false: ter usuário não basta para ser adotada.
 insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, demonstracao)
-values ('a2310000-0000-4000-8000-0000000000b4', 'contratante', 'Demonstração 231', '+5561999982310',
+values ('a2310000-0000-4000-8000-0000000000b3', 'contratante', 'Avulsa 231', '+5561999982311',
+        'avulsa-231@frilabr.com', '1985-01-01', '2026-09-22', privado.agora(), false),
+       ('a2310000-0000-4000-8000-0000000000b4', 'contratante', 'Demonstração 231', '+5561999982310',
         'demonstracao-231@frilabr.com', '1985-01-01', '2026-09-22', privado.agora(), true);
 
 select throws_like(
   $$ select privado.resolver_conta_demonstracao('a2310000-0000-4000-8000-0000000000c0'::uuid, 'avulsa-231@frilabr.com') $$,
   '%conta_de_demonstracao_nao_canonica%',
-  'sem o canônico: a conta avulsa com o endereço faz falhar fechado (409), sem adotar');
+  'sem o canônico: a conta avulsa com o endereço (com usuário, mas demonstracao = false) faz falhar fechado (409), sem adotar');
 select is(privado.resolver_conta_demonstracao('a2310000-0000-4000-8000-0000000000c0'::uuid, 'demonstracao-231@frilabr.com'),
   'a2310000-0000-4000-8000-0000000000b4'::uuid,
   'sem o canônico: a conta com o endereço que já é de demonstração é aceita');
