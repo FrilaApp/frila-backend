@@ -6,7 +6,7 @@
 begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-08 12:00:00+00', true);
-select plan(28);
+select plan(31);
 
 -- Base limpa dentro da transação (desfeita no fim): só as linhas deste teste contam.
 delete from auth.audit_log_entries;
@@ -128,6 +128,29 @@ select ok(pg_temp.existe('c8230000-0000-4000-8000-0000000000c1'), 'a etapa que f
 select results_eq($$ select codigo, detalhes::text !~ '@' from privado.falha_execucao where origem = 'limpar_trilha_e_sessoes_auth' $$,
   $$ values ('limpeza_auth_falhou', true) $$, 'a falha vai para falha_execucao, sem e-mail');
 drop trigger zz_823_nega on auth.audit_log_entries;
+
+-- ── Dono sem BYPASSRLS: a etapa não roda e registra, em vez de não apagar nada calada ──
+-- As tabelas do Auth têm RLS ligado e nenhuma política. Um dono sem BYPASSRLS não enxerga linha nenhuma.
+create role zz_823_sem_bypass nologin;
+grant zz_823_sem_bypass to postgres;
+-- CREATE no esquema: exigido para o papel virar dono de função em privado.
+grant usage, create on schema privado to zz_823_sem_bypass;
+grant execute on function privado.agora() to zz_823_sem_bypass;
+grant execute on function privado.registrar_falha_execucao(text, text, jsonb) to zz_823_sem_bypass;
+alter function privado.limpar_trilha_e_sessoes_auth(integer, integer) owner to zz_823_sem_bypass;
+select pg_temp.trilha('c8230000-0000-4000-8000-0000000000c2', interval '7 months',
+  '{"action":"login","actor_id":"c8230000-0000-4000-8000-000000000001"}');
+delete from privado.falha_execucao where origem = 'limpar_trilha_e_sessoes_auth';
+create temp table r3 as select privado.limpar_trilha_e_sessoes_auth() as j;
+select results_eq($$ select f->>'etapa', f->>'codigo' from r3, jsonb_array_elements(j->'falhas') f order by 1 $$,
+  $$ values ('sessoes_paradas', 'rls_sem_bypass'), ('trilha_antiga', 'rls_sem_bypass'),
+            ('trilha_conta_excluida', 'rls_sem_bypass') $$,
+  'dono sem BYPASSRLS: as três etapas registram rls_sem_bypass e não rodam');
+select ok(pg_temp.existe('c8230000-0000-4000-8000-0000000000c2'), 'e nada é apagado');
+select is((select count(*)::int from privado.falha_execucao
+            where origem = 'limpar_trilha_e_sessoes_auth' and codigo = 'limpeza_auth_falhou'), 1,
+  'a falha vai para falha_execucao, que o verificar_saude transforma em alerta');
+alter function privado.limpar_trilha_e_sessoes_auth(integer, integer) owner to postgres;
 
 -- ── Agendamento e permissão ──────────────────────────────────────────────────
 -- FOR UPDATE pede UPDATE na tabela: só a etapa das sessões trava linha, e a trilha pede só SELECT e DELETE
