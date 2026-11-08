@@ -108,10 +108,11 @@ select fk_ok('public', 'vaga', 'regiao_administrativa',
              'public', 'regiao_administrativa', 'nome',
              'vaga.regiao_administrativa aponta para o catálogo (RN44)');
 
--- Fase 1: constraints nascem com NOT VALID para evitar lock de varredura
-select ok(not convalidated, 'estabelecimento_regiao_administrativa_fkey nasce NOT VALID na Fase 1')
+-- Fase 1 instalou as chaves NOT VALID; a Fase 2 (20261108050000) as validou. O estado final,
+-- depois das duas migrações, é validado. O detalhe da Fase 2 está no 812.
+select ok(convalidated, 'estabelecimento_regiao_administrativa_fkey validada depois da Fase 2')
   from pg_constraint where conname = 'estabelecimento_regiao_administrativa_fkey';
-select ok(not convalidated, 'vaga_regiao_administrativa_fkey nasce NOT VALID na Fase 1')
+select ok(convalidated, 'vaga_regiao_administrativa_fkey validada depois da Fase 2')
   from pg_constraint where conname = 'vaga_regiao_administrativa_fkey';
 
 -- Mutação de CHECKs: prova que remover qualquer restrição causa falha comportamental (23514)
