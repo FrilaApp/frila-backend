@@ -20,7 +20,7 @@ on conflict (chave) do update set ligado = true;
 select set_config('frila.agora', '2026-11-20 14:00:00-03', true);
 set local frila.agendador_secret = 'segredo-de-teste';
 
-select plan(50);
+select plan(64);
 
 -- Helpers
 create function pg_temp.executar(conta uuid, sql text) returns void language plpgsql as $$
@@ -808,6 +808,111 @@ select is(
   (select count(*) = 1 from cron.job where jobname = 'lembrar_chamadas_diretas'),
   true,
   'Job lembrar_chamadas_diretas agendado em cron.job'
+);
+
+-- ── 7. Cobertura de Restrições (CHECK) contra Mutação (B5e) ─────────────────
+-- 7.1 dispositivo_versao_app_check (length <= 32)
+select throws_ok(
+  $$ update public.dispositivo
+        set versao_app = repeat('v', 33)
+      where token_fcm = 'token_fcm_prof_1_abc' $$,
+  '23514',
+  null,
+  'dispositivo_versao_app_check: versao_app com mais de 32 caracteres viola CHECK 23514'
+);
+select throws_ok(
+  $$ insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app)
+     values ('80900000-0000-4000-8000-000000000001', 'token_mut_inv', 'ios', repeat('v', 33)) $$,
+  '23514',
+  null,
+  'dispositivo_versao_app_check (insert): versao_app com mais de 32 caracteres viola CHECK 23514'
+);
+select lives_ok(
+  $$ update public.dispositivo
+        set versao_app = repeat('v', 32)
+      where token_fcm = 'token_fcm_prof_1_abc' $$,
+  'dispositivo_versao_app_check: versao_app com 32 caracteres e aceita'
+);
+select lives_ok(
+  $$ update public.dispositivo
+        set versao_app = null
+      where token_fcm = 'token_fcm_prof_1_abc' $$,
+  'dispositivo_versao_app_check: versao_app nula e aceita'
+);
+
+-- 7.2 profissional_preferencia_chamada_pausado_ate_check (pausado_ate is null or pausado_ate >= current_date)
+select throws_ok(
+  $$ update public.profissional_preferencia_chamada
+        set pausado_ate = current_date - 1
+      where profissional_id = '80900000-0000-4000-8000-000000000011' $$,
+  '23514',
+  null,
+  'profissional_preferencia_chamada_pausado_ate_check: pausado_ate no passado viola CHECK 23514'
+);
+select throws_ok(
+  $$ insert into public.profissional_preferencia_chamada (profissional_id, pausado_ate)
+     values ('80900000-0000-4000-8000-000000000012', current_date - 1) $$,
+  '23514',
+  null,
+  'profissional_preferencia_chamada_pausado_ate_check (insert): pausado_ate no passado viola CHECK 23514'
+);
+select lives_ok(
+  $$ update public.profissional_preferencia_chamada
+        set pausado_ate = current_date + 7
+      where profissional_id = '80900000-0000-4000-8000-000000000011' $$,
+  'profissional_preferencia_chamada_pausado_ate_check: pausado_ate no futuro e aceito'
+);
+select lives_ok(
+  $$ update public.profissional_preferencia_chamada
+        set pausado_ate = null
+      where profissional_id = '80900000-0000-4000-8000-000000000011' $$,
+  'profissional_preferencia_chamada_pausado_ate_check: pausado_ate nulo e aceito'
+);
+
+-- 7.3 profissional_preferencia_chamada_antecedencia_minima_h_check (in (2, 6, 24, 48))
+select throws_ok(
+  $$ update public.profissional_preferencia_chamada
+        set antecedencia_minima_h = 5
+      where profissional_id = '80900000-0000-4000-8000-000000000011' $$,
+  '23514',
+  null,
+  'profissional_preferencia_chamada_antecedencia_minima_h_check: antecedencia fora de (2,6,24,48) viola CHECK 23514'
+);
+select throws_ok(
+  $$ insert into public.profissional_preferencia_chamada (profissional_id, antecedencia_minima_h)
+     values ('80900000-0000-4000-8000-000000000012', 10) $$,
+  '23514',
+  null,
+  'profissional_preferencia_chamada_antecedencia_minima_h_check (insert): antecedencia 10 viola CHECK 23514'
+);
+select lives_ok(
+  $$ update public.profissional_preferencia_chamada
+        set antecedencia_minima_h = 48
+      where profissional_id = '80900000-0000-4000-8000-000000000011' $$,
+  'profissional_preferencia_chamada_antecedencia_minima_h_check: antecedencia 48h e aceita'
+);
+
+-- 7.4 profissional_preferencia_chamada_aceita_de_check (in ('todos', 'so_cnpj'))
+select throws_ok(
+  $$ update public.profissional_preferencia_chamada
+        set aceita_de = 'invalido'
+      where profissional_id = '80900000-0000-4000-8000-000000000011' $$,
+  '23514',
+  null,
+  'profissional_preferencia_chamada_aceita_de_check: aceita_de fora de todos/so_cnpj viola CHECK 23514'
+);
+select throws_ok(
+  $$ insert into public.profissional_preferencia_chamada (profissional_id, aceita_de)
+     values ('80900000-0000-4000-8000-000000000012', 'ninguem') $$,
+  '23514',
+  null,
+  'profissional_preferencia_chamada_aceita_de_check (insert): aceita_de ninguem viola CHECK 23514'
+);
+select lives_ok(
+  $$ update public.profissional_preferencia_chamada
+        set aceita_de = 'so_cnpj'
+      where profissional_id = '80900000-0000-4000-8000-000000000011' $$,
+  'profissional_preferencia_chamada_aceita_de_check: aceita_de so_cnpj e aceito'
 );
 
 select * from finish();
