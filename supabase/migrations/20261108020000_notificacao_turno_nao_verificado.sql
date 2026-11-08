@@ -120,6 +120,9 @@ declare
   v_afetados integer := 0;
   v_rec      record;
 begin
+  -- Serialização atômica para evitar corridas entre execuções concorrentes (cron vs invocador operacional)
+  perform pg_advisory_xact_lock(hashtext('privado.fechar_turnos_passados'));
+
   perform set_config('frila.em_lote', 'true', true);
 
   -- 1. Check-in manual não confirmado até o fim do turno vira nao_verificado (Critério 1).
