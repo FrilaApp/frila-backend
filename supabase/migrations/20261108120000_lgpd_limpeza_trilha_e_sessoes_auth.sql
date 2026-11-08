@@ -41,6 +41,9 @@ declare
   v_trilha_conta_excluida integer := 0;
   v_sessoes_paradas       integer := 0;
   v_falhas                jsonb := '[]'::jsonb;
+  v_rls_trilha            boolean;
+  v_rls_usuarios          boolean;
+  v_rls_sessoes           boolean;
   -- Teto por etapa e por execução: 100 lotes. O resto sai na rodada seguinte.
   c_teto_lotes constant integer := 100;
   c_teto_lote  constant integer := 10000;
@@ -57,6 +60,21 @@ begin
   p_limite := least(p_limite, c_teto_lote);
   v_limite_data := privado.agora() - make_interval(months => p_meses);
 
+  -- Autoconferência de RLS: as tabelas do Auth têm RLS ligado e nenhuma política. Um dono (current_user, dentro do
+  -- security definer) sem BYPASSRLS, que não é o dono da tabela, não enxerga linha nenhuma. Sem esta conferência a
+  -- limpeza não apagaria nada, calada. Pior: com auth.users invisível, a etapa (b) veria toda conta como excluída e
+  -- apagaria a trilha inteira. Etapa bloqueada não roda e vira falha_execucao (codigo rls_sem_bypass). Só catálogo.
+  select coalesce(bool_or(c.relname = 'audit_log_entries' and b.bloqueada), true),
+         coalesce(bool_or(c.relname = 'users' and b.bloqueada), true),
+         coalesce(bool_or(c.relname = 'sessions' and b.bloqueada), true)
+    into v_rls_trilha, v_rls_usuarios, v_rls_sessoes
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace and n.nspname = 'auth'
+    join pg_roles r on r.rolname = current_user
+    cross join lateral (select c.relrowsecurity and not (r.rolsuper or r.rolbypassrls)
+                               and (c.relforcerowsecurity or c.relowner <> r.oid) as bloqueada) b
+   where c.relname in ('audit_log_entries', 'users', 'sessions');
+
   -- Cada lote roda num bloco próprio: o erro (privilégio no esquema auth do hospedado, trava, statement_timeout)
   -- desfaz só aquele lote, fica registrado e encerra a etapa; os lotes anteriores e as outras etapas ficam.
   -- Todos rodam na transação da chamada (o pg_cron confirma no fim), como no #430.
@@ -64,7 +82,11 @@ begin
   -- (a) Trilha do Auth com mais de 6 meses. Sem FOR UPDATE: o Auth só insere na trilha, ninguém trava linha
   --     dela, e assim a etapa pede só SELECT e DELETE (Lince no #442, R-1).
   v_lotes := 0;
+  if v_rls_trilha then
+    v_falhas := v_falhas || jsonb_build_object('etapa', 'trilha_antiga', 'codigo', 'rls_sem_bypass');
+  end if;
   loop
+    exit when v_rls_trilha;
     begin
       delete from auth.audit_log_entries a
        where a.id in (select x.id from auth.audit_log_entries x
@@ -83,7 +105,11 @@ begin
   -- (b) Trilha de conta excluída, de qualquer idade: actor_id OU traits.user_id de conta que não existe mais.
   --     O CASE garante que só um uuid válido vira uuid. Sem FOR UPDATE, pelo mesmo motivo de (a).
   v_lotes := 0;
+  if v_rls_trilha or v_rls_usuarios then
+    v_falhas := v_falhas || jsonb_build_object('etapa', 'trilha_conta_excluida', 'codigo', 'rls_sem_bypass');
+  end if;
   loop
+    exit when v_rls_trilha or v_rls_usuarios;
     begin
       delete from auth.audit_log_entries a
        where a.id in (
@@ -113,7 +139,11 @@ begin
   --     Sessão sem nenhuma das três datas fica (greatest de nulos é nulo). Aqui o FOR UPDATE SKIP LOCKED fica:
   --     o Auth atualiza a sessão na renovação, e a rotina não espera por ela. Pede UPDATE em auth.sessions.
   v_lotes := 0;
+  if v_rls_sessoes then
+    v_falhas := v_falhas || jsonb_build_object('etapa', 'sessoes_paradas', 'codigo', 'rls_sem_bypass');
+  end if;
   loop
+    exit when v_rls_sessoes;
     begin
       with alvo as (
         select s.id
@@ -153,7 +183,7 @@ begin
 end $$;
 
 comment on function privado.limpar_trilha_e_sessoes_auth(integer, integer) is
-  'Rotina diária própria (pg_cron limpar_trilha_e_sessoes_auth): apaga a trilha do Auth com mais de 6 meses, a trilha de conta excluída (actor_id ou traits.user_id de conta que não existe mais) de qualquer idade, e só as sessões sem atividade há mais de 6 meses (com refresh_tokens e mfa_amr_claims em cascata). Piso de 6 meses que nenhum parâmetro encurta; lote de até 10 mil e teto de 100 lotes por etapa; FOR UPDATE SKIP LOCKED só nas sessões. Erro de um lote (privilégio no esquema auth do hospedado, trava, statement_timeout) encerra só aquela etapa e vira registro em privado.falha_execucao, só com etapa e SQLSTATE. Privilégios do dono: SELECT e DELETE em auth.audit_log_entries, SELECT, UPDATE e DELETE em auth.sessions, SELECT em auth.users. Base: LGPD art. 16 e ROPA linha 2 (e-mail apagado na exclusão), jurídico em frila-docs #182.';
+  'Rotina diária própria (pg_cron limpar_trilha_e_sessoes_auth): apaga a trilha do Auth com mais de 6 meses, a trilha de conta excluída (actor_id ou traits.user_id de conta que não existe mais) de qualquer idade, e só as sessões sem atividade há mais de 6 meses (com refresh_tokens e mfa_amr_claims em cascata). Piso de 6 meses que nenhum parâmetro encurta; lote de até 10 mil e teto de 100 lotes por etapa; FOR UPDATE SKIP LOCKED só nas sessões. Erro de um lote (privilégio no esquema auth do hospedado, trava, statement_timeout) encerra só aquela etapa e vira registro em privado.falha_execucao, só com etapa e SQLSTATE. Privilégios do dono: SELECT e DELETE em auth.audit_log_entries, SELECT, UPDATE e DELETE em auth.sessions, SELECT em auth.users, e BYPASSRLS (ou ser dono das tabelas): sem isso a etapa não roda e registra rls_sem_bypass. Base: LGPD art. 16 e ROPA linha 2 (e-mail apagado na exclusão), jurídico em frila-docs #182.';
 
 revoke all on function privado.limpar_trilha_e_sessoes_auth(integer, integer) from public, anon, authenticated;
 grant execute on function privado.limpar_trilha_e_sessoes_auth(integer, integer) to service_role;
