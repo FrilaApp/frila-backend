@@ -130,9 +130,11 @@ select set_eq(
     'expurgar_midias_horario',
     -- Jobs de expiração e lembrete de chamadas diretas (B5c / RN31).
     'expirar_chamadas_diretas',
-    'lembrar_chamadas_diretas'
+    'lembrar_chamadas_diretas',
+    -- Consumidor do registro de acessos, a cada minuto (LGPD-J6 R11, Marco Civil art. 15).
+    'consumir_registro_acesso'
   ],
-  'Os jobs agendados são exatamente os vinte e um conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os vinte e dois conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;
