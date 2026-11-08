@@ -5,11 +5,11 @@
 --   (a) a trilha do Auth com mais de 6 meses e (b) a de conta excluída: pelo actor_id ou pelo traits.user_id;
 --   (c) a sessão parada há mais de 6 meses, com o refresh_token.
 -- Sem guarda, com a guarda vencida ou ainda por começar, tudo sai, como no #442. Com a guarda invisível ao dono da
--- função, nenhuma etapa roda e a falha é registrada, nomeando a guarda (autoconferência de RLS).
+-- função, ou ausente, nenhuma etapa roda e a falha é registrada, nomeando a guarda (autoconferência de RLS).
 begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-08 12:00:00+00', true);
-select plan(34);
+select plan(36);
 
 -- Base limpa dentro da transação (desfeita no fim): só as linhas deste teste contam.
 delete from auth.audit_log_entries;
@@ -140,6 +140,27 @@ select results_eq($$ select (j->>'trilha_antiga')::int, (j->>'trilha_conta_exclu
 select ok(not (pg_temp.tem_trilha('aa01') or pg_temp.tem_trilha('aa07') or pg_temp.tem_trilha('ab01')
                or pg_temp.tem_trilha('ab07') or pg_temp.tem_sessao('c8350000-0000-4000-8000-0000000000b1')),
   'as linhas que a guarda vencida segurava são as que saíram');
+
+-- ── Sem a tabela de guarda: as três etapas param, e nenhuma tenta rodar ──────
+-- Com o postgres como dono, o Auth fica visível (BYPASSRLS) e só a guarda some (renomeada dentro da transação). As
+-- três etapas registram rls_sem_bypass nomeando SÓ a guarda. Uma etapa que nomeasse a guarda sem parar rodaria o
+-- not exists sobre a tabela ausente e registraria um 42P01 a mais (Lince AG no #460). Desfeito no fim do bloco.
+select pg_temp.sessao('02', 'c8350000-0000-4000-8000-0000000000b9', interval '7 months');
+select pg_temp.trilha('aa09', interval '7 months', pg_temp.conta('02'));
+select pg_temp.trilha('ab09', interval '1 day', pg_temp.conta('d2'));
+alter table privado.registro_acesso_guarda rename to registro_acesso_guarda_zz835;
+create temp table r_sem_tabela as select privado.limpar_trilha_e_sessoes_auth() as j;
+alter table privado.registro_acesso_guarda_zz835 rename to registro_acesso_guarda;
+select is((select j->'falhas' from r_sem_tabela),
+  '[{"etapa": "trilha_antiga", "codigo": "rls_sem_bypass", "tabelas": ["privado.registro_acesso_guarda"]},
+    {"etapa": "trilha_conta_excluida", "codigo": "rls_sem_bypass", "tabelas": ["privado.registro_acesso_guarda"]},
+    {"etapa": "sessoes_paradas", "codigo": "rls_sem_bypass", "tabelas": ["privado.registro_acesso_guarda"]}]'::jsonb,
+  'sem a tabela de guarda: as três etapas param e nomeiam só a guarda, e nenhuma tenta rodar (nenhum 42P01)');
+select results_eq($$ select (j->>'trilha_antiga')::int, (j->>'trilha_conta_excluida')::int, (j->>'sessoes_paradas')::int,
+                            pg_temp.tem_trilha('aa09') and pg_temp.tem_trilha('ab09')
+                              and pg_temp.tem_sessao('c8350000-0000-4000-8000-0000000000b9')
+                       from r_sem_tabela $$,
+  $$ values (0, 0, 0, true) $$, 'sem a tabela de guarda: nada sai');
 
 -- ── A guarda invisível ao dono: nenhuma etapa roda, e cada uma registra a falha nomeando a guarda ──
 -- Premissa medida: no banco da suíte, as tabelas do Auth têm RLS e o postgres não alcança papel que as enxergue sem
