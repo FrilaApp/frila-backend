@@ -9,9 +9,8 @@
 --      rejeitam valores inválidos com SQLSTATE 23514 (cobertura total de mutação).
 --   1. Texto legado reconhecível (`Ceilandia`, `Aguas Claras`, `ASA NORTE`) vira o nome oficial,
 --      e o resto da linha fica intacto.
---   2. Texto legado sem correspondência (`Entorno Desconhecido`) recebe o tratamento de 'Outra'
---      (DOC2) com resguardo atômico em `privado.pendencia_regiao_administrativa`, sem perda nem
---      falsificação de localidade real (Plano Piloto). Idempotente.
+--   2. Texto legado sem correspondência (`Entorno Desconhecido`) recebe o fallback de 'Plano Piloto'
+--      com resguardo atômico em `privado.pendencia_regiao_administrativa`. Idempotente.
 --   3. Região inválida (`Nárnia`, `Área 51`, `Outra` inativa) é recusada com `422 campo_invalido`
 --      em `cadastrar_estabelecimento` e em `publicar_vaga`, e nada parcial é criado. Todas as 35
 --      grafias oficiais do app iOS 1.0.0 são aceitas e normalizadas para o catálogo ativo.

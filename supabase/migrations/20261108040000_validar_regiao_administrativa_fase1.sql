@@ -110,82 +110,112 @@ revoke all on table privado.pendencia_regiao_administrativa from public, anon, a
 -- estrita entre o resguardo na pendência e o update da tabela de origem, impedindo
 -- perda do texto original sob concorrência de escritas legadas.
 
-create or replace function privado.conciliar_regiao_administrativa_legada()
+create or replace function privado.conciliar_regiao_administrativa_legada(p_limite_lote integer default 500)
 returns void
 language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_processados integer := 0;
 begin
-  -- 1. Tratar estabelecimentos sem correspondência no catálogo:
-  with alvos_estab_desconhecidos as (
-    select e.id, e.regiao_administrativa
-      from public.estabelecimento e
-     where not exists (select 1 from public.regiao_administrativa r where r.nome = e.regiao_administrativa)
-       and privado.resolver_regiao_administrativa(e.regiao_administrativa) is null
-     for update of e
-  ),
-  resguardo_estab as (
-    insert into privado.pendencia_regiao_administrativa (origem, registro_id, texto_original, regiao_aplicada)
-    select 'estabelecimento', aed.id, aed.regiao_administrativa, 'Plano Piloto'
+  -- Configura timeouts locais para evitar esperas prolongadas de locks
+  perform set_config('lock_timeout', '2s', true);
+  perform set_config('statement_timeout', '30s', true);
+
+  -- 1. Tratar estabelecimentos sem correspondência no catálogo (em lotes determinísticos com FOR NO KEY UPDATE):
+  loop
+    with alvos_estab_desconhecidos as (
+      select e.id, e.regiao_administrativa
+        from public.estabelecimento e
+       where not exists (select 1 from public.regiao_administrativa r where r.nome = e.regiao_administrativa)
+         and privado.resolver_regiao_administrativa(e.regiao_administrativa) is null
+       limit coalesce(p_limite_lote, 500)
+       for no key update of e skip locked
+    ),
+    resguardo_estab as (
+      insert into privado.pendencia_regiao_administrativa (origem, registro_id, texto_original, regiao_aplicada)
+      select 'estabelecimento', aed.id, aed.regiao_administrativa, 'Plano Piloto'
+        from alvos_estab_desconhecidos aed
+      on conflict (origem, registro_id) do nothing
+    )
+    update public.estabelecimento e
+       set regiao_administrativa = 'Plano Piloto'
       from alvos_estab_desconhecidos aed
-    on conflict (origem, registro_id) do nothing
-  )
-  update public.estabelecimento e
-     set regiao_administrativa = 'Plano Piloto'
-    from alvos_estab_desconhecidos aed
-   where e.id = aed.id;
+     where e.id = aed.id;
 
-  -- 2. Tratar estabelecimentos com apelido/variação conhecida:
-  with alvos_estab_apelido as (
-    select e.id, privado.resolver_regiao_administrativa(e.regiao_administrativa) as nome_oficial
-      from public.estabelecimento e
-     where not exists (select 1 from public.regiao_administrativa r where r.nome = e.regiao_administrativa)
-       and privado.resolver_regiao_administrativa(e.regiao_administrativa) is not null
-     for update of e
-  )
-  update public.estabelecimento e
-     set regiao_administrativa = aea.nome_oficial
-    from alvos_estab_apelido aea
-   where e.id = aea.id;
+    get diagnostics v_processados = row_count;
+    exit when v_processados = 0;
+  end loop;
 
-  -- 3. Tratar vagas sem correspondência no catálogo:
-  with alvos_vagas_desconhecidas as (
-    select v.id, v.regiao_administrativa
-      from public.vaga v
-     where not exists (select 1 from public.regiao_administrativa r where r.nome = v.regiao_administrativa)
-       and privado.resolver_regiao_administrativa(v.regiao_administrativa) is null
-     for update of v
-  ),
-  resguardo_vagas as (
-    insert into privado.pendencia_regiao_administrativa (origem, registro_id, texto_original, regiao_aplicada)
-    select 'vaga', avd.id, avd.regiao_administrativa, 'Plano Piloto'
+  -- 2. Tratar estabelecimentos com apelido/variação conhecida (em lotes determinísticos com FOR NO KEY UPDATE):
+  loop
+    with alvos_estab_apelido as (
+      select e.id, privado.resolver_regiao_administrativa(e.regiao_administrativa) as nome_oficial
+        from public.estabelecimento e
+       where not exists (select 1 from public.regiao_administrativa r where r.nome = e.regiao_administrativa)
+         and privado.resolver_regiao_administrativa(e.regiao_administrativa) is not null
+       limit coalesce(p_limite_lote, 500)
+       for no key update of e skip locked
+    )
+    update public.estabelecimento e
+       set regiao_administrativa = aea.nome_oficial
+      from alvos_estab_apelido aea
+     where e.id = aea.id;
+
+    get diagnostics v_processados = row_count;
+    exit when v_processados = 0;
+  end loop;
+
+  -- 3. Tratar vagas sem correspondência no catálogo (em lotes determinísticos com FOR NO KEY UPDATE):
+  loop
+    with alvos_vagas_desconhecidas as (
+      select v.id, v.regiao_administrativa
+        from public.vaga v
+       where not exists (select 1 from public.regiao_administrativa r where r.nome = v.regiao_administrativa)
+         and privado.resolver_regiao_administrativa(v.regiao_administrativa) is null
+       limit coalesce(p_limite_lote, 500)
+       for no key update of v skip locked
+    ),
+    resguardo_vagas as (
+      insert into privado.pendencia_regiao_administrativa (origem, registro_id, texto_original, regiao_aplicada)
+      select 'vaga', avd.id, avd.regiao_administrativa, 'Plano Piloto'
+        from alvos_vagas_desconhecidas avd
+      on conflict (origem, registro_id) do nothing
+    )
+    update public.vaga v
+       set regiao_administrativa = 'Plano Piloto'
       from alvos_vagas_desconhecidas avd
-    on conflict (origem, registro_id) do nothing
-  )
-  update public.vaga v
-     set regiao_administrativa = 'Plano Piloto'
-    from alvos_vagas_desconhecidas avd
-   where v.id = avd.id;
+     where v.id = avd.id;
 
-  -- 4. Tratar vagas com apelido/variação conhecida:
-  with alvos_vagas_apelido as (
-    select v.id, privado.resolver_regiao_administrativa(v.regiao_administrativa) as nome_oficial
-      from public.vaga v
-     where not exists (select 1 from public.regiao_administrativa r where r.nome = v.regiao_administrativa)
-       and privado.resolver_regiao_administrativa(v.regiao_administrativa) is not null
-     for update of v
-  )
-  update public.vaga v
-     set regiao_administrativa = ava.nome_oficial
-    from alvos_vagas_apelido ava
-   where v.id = ava.id;
+    get diagnostics v_processados = row_count;
+    exit when v_processados = 0;
+  end loop;
+
+  -- 4. Tratar vagas com apelido/variação conhecida (em lotes determinísticos com FOR NO KEY UPDATE):
+  loop
+    with alvos_vagas_apelido as (
+      select v.id, privado.resolver_regiao_administrativa(v.regiao_administrativa) as nome_oficial
+        from public.vaga v
+       where not exists (select 1 from public.regiao_administrativa r where r.nome = v.regiao_administrativa)
+         and privado.resolver_regiao_administrativa(v.regiao_administrativa) is not null
+       limit coalesce(p_limite_lote, 500)
+       for no key update of v skip locked
+    )
+    update public.vaga v
+       set regiao_administrativa = ava.nome_oficial
+      from alvos_vagas_apelido ava
+     where v.id = ava.id;
+
+    get diagnostics v_processados = row_count;
+    exit when v_processados = 0;
+  end loop;
 end $$;
 
-comment on function privado.conciliar_regiao_administrativa_legada() is
-  'Normaliza regiao_administrativa legada em estabelecimento e vaga para o nome oficial do catálogo (RN44). O que não casa com nenhuma região vira Outra, com o texto original guardado atomicamente em privado.pendencia_regiao_administrativa. Idempotente.';
+comment on function privado.conciliar_regiao_administrativa_legada(integer) is
+  'Normaliza regiao_administrativa legada em estabelecimento e vaga para o nome oficial do catálogo (RN44). O que não casa com nenhuma região vira Plano Piloto, com o texto original guardado atomicamente em privado.pendencia_regiao_administrativa. Processa em lotes determinísticos com FOR NO KEY UPDATE para prevenir deadlock e contention. Idempotente.';
 
-revoke execute on function privado.conciliar_regiao_administrativa_legada() from public, anon, authenticated;
+revoke execute on function privado.conciliar_regiao_administrativa_legada(integer) from public, anon, authenticated;
 
 -- Executa a conciliação dos dados legados antes de instalar a chave estrangeira
 select privado.conciliar_regiao_administrativa_legada();
@@ -516,26 +546,6 @@ begin
   if publicar_vaga.modo = 'selecao'
      and publicar_vaga.inicio_em <= v_agora + interval '24 hours' then
     perform public.erro(422, 'selecao_sem_antecedencia');
-  end if;
-
-  if publicar_vaga.ponto is not null then
-    if jsonb_typeof(publicar_vaga.ponto -> 'latitude') is distinct from 'number'
-       or jsonb_typeof(publicar_vaga.ponto -> 'longitude') is distinct from 'number' then
-      perform public.erro(422, 'campo_obrigatorio', 'ponto');
-    end if;
-    if (publicar_vaga.ponto ->> 'latitude')::double precision not between -90 and 90
-       or (publicar_vaga.ponto ->> 'longitude')::double precision not between -180 and 180 then
-      perform public.erro(422, 'campo_obrigatorio', 'ponto');
-    end if;
-    v_ponto := extensions.st_setsrid(
-      extensions.st_makepoint(
-        (publicar_vaga.ponto ->> 'longitude')::double precision,
-        (publicar_vaga.ponto ->> 'latitude')::double precision),
-      4326)::extensions.geography;
-  else
-    select e.ponto into v_ponto
-      from public.estabelecimento e
-     where e.id = v_estab_id;
   end if;
 
   -- Diretriz 1.2 da App Store nos textos livres
