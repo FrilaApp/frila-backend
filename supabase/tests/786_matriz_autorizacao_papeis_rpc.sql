@@ -23,7 +23,7 @@ set local frila.agendador_secret = 'segredo-de-teste';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(268);
+select plan(272);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -31,8 +31,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  65::bigint,
-  'censo de RPCs: schema public contem exatamente 65 RPCs expostas'
+  66::bigint,
+  'censo de RPCs: schema public contem exatamente 66 RPCs expostas'
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -224,7 +224,7 @@ begin
           elsif v_code in ('conta_existente', 'sem_suspensao_ativa', 'perfil_ja_existe',
                            'a_caminho_fora_da_janela', 'republicacao_indisponivel',
                            'candidatura_indisponivel', 'posicao_nao_cancelavel',
-                           'checkin_ja_confirmado') then
+                           'checkin_ja_confirmado', 'midia_indisponivel') then
             -- Regra de negócio nunca pode ter status HTTP 401 ou 403
             if v_status in (401, 403) then
               v_res := 'STATUS_INVALIDO_PARA_REGRA:' || coalesce(v_status::text, 'NULL') || ':' || v_code;
@@ -643,6 +643,13 @@ from (values ('anon',null::uuid,'anon'),
  ('authenticated','78600000-0000-4000-8000-000000000002'::uuid,'outro contratante'),
  ('authenticated','78600000-0000-4000-8000-000000000001'::uuid,'dono')) papeis(papel,conta,rotulo)
 cross join unnest(array['solicitar_upload_midia','confirmar_upload_midia','remover_midia','minhas_midias']) operacao;
+
+-- --- pedir_nova_analise_midia (0.2.54): dono e membro passam a autorização e caem na regra
+-- (a foto da matriz está `enviando`, não recusada); quem não é dono toma 404 ---
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.pedir_nova_analise_midia(''78600000-0000-4000-8000-000000000801'')'), '42501_SEM_EXECUTE', 'pedir_nova_analise_midia [anon]: anon nao possui EXECUTE');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.pedir_nova_analise_midia(''78600000-0000-4000-8000-000000000801'')'), 'REGRA:midia_indisponivel', 'pedir_nova_analise_midia [profissional]: dono passa e cai na regra 409');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.pedir_nova_analise_midia(''78600000-0000-4000-8000-000000000802'')'), '404_NAO_ENCONTRADO', 'pedir_nova_analise_midia [outro contratante]: foto alheia toma 404');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.pedir_nova_analise_midia(''78600000-0000-4000-8000-000000000802'')'), 'REGRA:midia_indisponivel', 'pedir_nova_analise_midia [dono]: membro passa e cai na regra 409');
 
 -- ============================================================================
 -- 6. Autoteste e Mutacao do Classificador de Autorizacao (Anti-Falso Positivo)
