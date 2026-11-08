@@ -24,22 +24,24 @@ Os números abaixo foram consolidados e remedidos em 01/11/2026 (commit de refer
 | Edge Functions | **10** (inclui `limpar-contas-orfas` e `_compartilhado`) | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
 | Testes unitários em `exportar-turnos` | **44**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
 | Scripts em `scripts/` | **56** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
-| Contrato espelhado | **0.2.48** (sincronizado com o canônico no docs depois do frila-docs#110) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
+| Contrato espelhado | **0.2.62** (igual ao canônico do frila-docs#176; a 0.2.63 do frila-docs#180 chega com o #435) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
 Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **197** arquivos de teste de regras,
 e alcança **198** com `supabase/tests/carga/gerar_df.sql`, que é gerador de carga e não teste de regra.
 
-> ## 🟢 O espelho do contrato está em 0.2.48 (alinhado com o canônico em frila-docs)
+> ## 🟡 O espelho do contrato está em 0.2.62, um passo atrás do canônico (0.2.63)
 >
-> O contrato espelhado em `contrato/openapi.yaml` está na versão **0.2.48** (frila-docs#110, commit `bd1fe92`).
-> A 0.2.48 é só texto: `cancelar_posicao` recusa pelo estado da posição, não pelo relógio, e `Protocolo`
-> não diz se a contestação já foi respondida. Nenhum comportamento de servidor muda; o
-> `cancelar_posicao` da develop já decide pelo estado (`20261005090000_cancelamento_idempotente.sql`).
+> O contrato espelhado em `contrato/openapi.yaml` na `develop` está na versão **0.2.62**, byte a byte
+> igual ao canônico do frila-docs#176 (commit `fadb915`). O canônico já está em **0.2.63**
+> (frila-docs#180, commit `1ef4533`: o `upload_url` da foto passa a ser da Edge Function
+> `enviar-midia`), e a 0.2.63 chega ao backend com o PR #435, que implementa essa função.
+> Conferido em 08/11/2026.
 >
 > | | Versão | Origem | SHA-256 |
 > |---|---|---|---|
-> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.48** | `frila-backend` | `b3f936fe0730cbff16ef9e797c8252a34e5aee90cf07c018f6a6f2d3d57800ee` |
-> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` | **0.2.48** | `frila-docs` (commit `bd1fe92`) | `b3f936fe0730cbff16ef9e797c8252a34e5aee90cf07c018f6a6f2d3d57800ee` |
+> | espelho, `contrato/openapi.yaml` na `develop` | **0.2.62** | `frila-backend` | `161f7dba4f395bd0020d429fc2b39ebe9565e408ed22544c8287aded76b11621` |
+> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` em `fadb915` | **0.2.62** | `frila-docs#176` | `161f7dba4f395bd0020d429fc2b39ebe9565e408ed22544c8287aded76b11621` |
+> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` na `main` (`1ef4533`) | **0.2.63** | `frila-docs#180` | `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4` |
 
 > ## 🟢 Instabilidades de concorrência em `Corridas do ciclo` sanadas na raiz
 >
@@ -216,7 +218,7 @@ O que custou caro descobrir na aplicação:
 
 ## O contrato em detalhes
 
-Versão espelhada: **0.2.46** em `contrato/openapi.yaml` (sincronizada com o canônico em `FrilaApp/frila-docs · api/openapi.yaml` no PR #342 / commit `4ddc9e5`, SHA-256 `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10`).
+Versão espelhada: **0.2.62** em `contrato/openapi.yaml` (igual ao canônico em `FrilaApp/frila-docs · api/openapi.yaml` no frila-docs#176 / commit `fadb915`, SHA-256 `161f7dba4f395bd0020d429fc2b39ebe9565e408ed22544c8287aded76b11621`). O canônico já está em 0.2.63 (frila-docs#180), que chega com o #435.
 
 Histórico das versões recentes integradas no backend:
 
