@@ -23,8 +23,8 @@ campo de senha ao lado de cada e-mail nesta mesma tela.
 
 | E-mail | Perfil | O que ela é |
 |---|---|---|
-| `revisao-contratante@frila.app` | Contratante | Administradora do estabelecimento "Bar da Revisão" |
-| `revisao-profissional@frila.app` | Profissional | Funções de garçom e bartender |
+| `revisao-contratante@frilabr.com` | Contratante | Administradora do estabelecimento "Bar da Revisão" |
+| `revisao-profissional@frilabr.com` | Profissional | Funções de garçom e bartender |
 
 São duas contas porque cada conta do Frila tem um perfil só, para sempre: quem se cadastra
 como profissional não publica vaga, e quem se cadastra como contratante não se candidata.
@@ -95,8 +95,8 @@ field next to each email on this screen.
 
 | Email | Profile | What it is |
 |---|---|---|
-| `revisao-contratante@frila.app` | Business | Administrator of the venue "Bar da Revisão" |
-| `revisao-profissional@frila.app` | Worker | Waiter and bartender roles |
+| `revisao-contratante@frilabr.com` | Business | Administrator of the venue "Bar da Revisão" |
+| `revisao-profissional@frilabr.com` | Worker | Waiter and bartender roles |
 
 There are two accounts because each Frila account has exactly one profile, permanently:
 a worker account cannot post a shift, and a business account cannot apply to one. Testing
