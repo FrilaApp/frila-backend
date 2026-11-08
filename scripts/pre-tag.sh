@@ -137,7 +137,13 @@ if ! "$SCRIPT_DIR/janela-de-manutencao.sh"; then
   echo "  De quinta a domingo das 16h às 02h (horário de São Paulo) o deploy em Prod é bloqueado." >&2
   exit 1
 fi
-echo "✓ [2/5] Janela RNF12: fora da janela proibida."
+# Janela de pico da RNF12 suspensa (decisão do Cauê, 08/11/2026): sem RNF12_ATIVA=1, o janela-de-manutencao.sh
+# não confere a janela, e este passo não pode dizer que conferiu.
+if [ "${RNF12_ATIVA:-}" = "1" ]; then
+  echo "✓ [2/5] Janela RNF12: fora da janela proibida."
+else
+  echo "✓ [2/5] Janela RNF12: não conferida (janela de pico da RNF12 suspensa até 10 mil usuários ativos; a meta de 99,5% segue; RNF12_ATIVA=1 religa)."
+fi
 
 # ─────────────────────────────────────────────────────────────
 # 3. CHANGELOG com a versão semântica NO COMMIT ALVO

@@ -16,12 +16,13 @@ select plan(29);
 
 -- 1. Estrutura da tabela privado.registro_acesso
 select has_table('privado', 'registro_acesso', 'tabela privado.registro_acesso deve existir');
-select has_column('privado', 'registro_acesso', 'id', 'coluna id deve existir');
+-- O layout enxuto (20261108110000, registro de acessos pela borda) tira id, recurso e user_agent.
+select hasnt_column('privado', 'registro_acesso', 'id', 'sem a coluna id (layout enxuto de 20261108110000)');
 select has_column('privado', 'registro_acesso', 'usuario_id', 'coluna usuario_id deve existir');
 select has_column('privado', 'registro_acesso', 'ip', 'coluna ip deve existir');
 select has_column('privado', 'registro_acesso', 'acessado_em', 'coluna acessado_em deve existir');
-select has_column('privado', 'registro_acesso', 'recurso', 'coluna recurso deve existir');
-select has_column('privado', 'registro_acesso', 'user_agent', 'coluna user_agent deve existir');
+select hasnt_column('privado', 'registro_acesso', 'recurso', 'sem a coluna recurso (layout enxuto de 20261108110000)');
+select hasnt_column('privado', 'registro_acesso', 'user_agent', 'sem a coluna user_agent (jurídico: o registro não guarda user_agent)');
 
 -- 2. Segurança e RLS
 select results_eq(
@@ -42,35 +43,23 @@ select results_eq(
   'authenticated não deve ter acesso a privado.registro_acesso'
 );
 
--- 3. Função privado.registrar_acesso
-select has_function('privado', 'registrar_acesso', ARRAY['uuid', 'inet', 'text', 'text'], 'função privado.registrar_acesso deve existir');
-
--- Teste de inserção via registrar_acesso
-select ok(
-  privado.registrar_acesso(
-    null,
-    '192.168.1.1'::inet,
-    'api/v1/auth',
-    'FrilaApp/1.0 (iOS)'
-  ) > 0,
-  'privado.registrar_acesso deve inserir com sucesso e retornar ID positivo'
-);
-
-select is(
-  privado.registrar_acesso(null, null, 'api', 'agent'),
-  null::bigint,
-  'privado.registrar_acesso com IP nulo deve retornar null sem inserir'
-);
+-- 3. A gravação manual saiu (20261108110000): quem grava é privado.consumir_registro_acesso
+select hasnt_function('privado', 'registrar_acesso', ARRAY['uuid', 'inet', 'text', 'text'], 'privado.registrar_acesso saiu');
+select is((select count(*)::int from pg_constraint where conrelid = 'privado.registro_acesso'::regclass and contype = 'f'), 0,
+  'sem chave estrangeira: o registro dura 6 meses depois da exclusão da conta');
+select is((select count(*)::int from pg_index i join pg_class c on c.oid = i.indexrelid join pg_am a on a.oid = c.relam
+            where i.indrelid = 'privado.registro_acesso'::regclass and a.amname = 'brin'), 1,
+  'a limpeza usa uma BRIN em acessado_em');
 
 -- 4. Função privado.limpar_registros_acesso (6 meses, MCI art. 15)
 select has_function('privado', 'limpar_registros_acesso', ARRAY['integer', 'integer'], 'função privado.limpar_registros_acesso(integer, integer) deve existir');
 
 -- Inserção manual de registros para teste de expurgo (calendário real de meses)
-insert into privado.registro_acesso (ip, acessado_em, recurso)
-values ('10.0.0.1'::inet, privado.agora() - interval '7 months', 'antigo');
+insert into privado.registro_acesso (ip, acessado_em)
+values ('10.0.0.1'::inet, privado.agora() - interval '7 months');
 
-insert into privado.registro_acesso (ip, acessado_em, recurso)
-values ('10.0.0.2'::inet, privado.agora() - interval '1 month', 'recente');
+insert into privado.registro_acesso (ip, acessado_em)
+values ('10.0.0.2'::inet, privado.agora() - interval '1 month');
 
 -- Executa a limpeza com lote
 select is(
