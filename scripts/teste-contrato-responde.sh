@@ -204,6 +204,7 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:atualizarApresentacaoProfissional:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:atualizarApresentacaoProfissional:422","corpo":{"status":422,"code":"campo_invalido"}}
 {"op":"promete:meuPerfilDetalhado:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:meuPerfilDetalhado:403","corpo":{"status":403,"code":"sem_permissao"}}
 {"op":"promete:meuPerfilDetalhado:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:meuPerfilDetalhado:422","corpo":{"status":422,"code":"perfil_incompativel"}}
 {"op":"promete:resolverServico:401","corpo":{"status":401,"code":"nao_autenticado"}}
@@ -220,6 +221,10 @@ PROMESSA_OK=$(cat <<'EOF'
 {"op":"promete:removerMidia:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:minhasMidias:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:minhasMidias:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:pedirNovaAnaliseMidia:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:pedirNovaAnaliseMidia:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:pedirNovaAnaliseMidia:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:pedirNovaAnaliseMidia:409","corpo":{"status":409,"code":"midia_indisponivel"}}
 {"op":"promete:chamarProfissional:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:chamarProfissional:403","corpo":{"status":403,"code":"sem_permissao"}}
 {"op":"promete:chamarProfissional:404","corpo":{"status":404,"code":"nao_encontrado"}}

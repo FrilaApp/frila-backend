@@ -1353,3 +1353,64 @@ Deno.test("o provedor externo recebe a imagem já sanitizada, nunca o original c
   assertFalse(contem(recebida!, "GPSLatitude"));
   assertFalse(contem(recebida!, "iPhone"));
 });
+
+// ---------------------------------------------------------------------------------------
+// #433: nova análise pedida pelo titular (LGPD art. 20). Regressão do Lince Codex.
+// A recusa original gasta a única chamada por foto; a mensagem da RPC traz reanalise=true,
+// que autoriza exatamente UMA consulta extra: 2 no total, nunca 3, sem autoaprovar.
+// ---------------------------------------------------------------------------------------
+
+async function recusadaPeloProvedor(mundo: Mundo, provedor: ReturnType<typeof provedorMock>) {
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  await rodar(criarDeps(mundo, { provedor }));
+  assertEquals(mundo.midias.get(MIDIA_1)?.estado, "recusada");
+  assertEquals(mundo.chamadasProvedor, 1);
+  // O pedido de nova análise devolve a foto a em_analise (a RPC limpa o motivo).
+  const m = mundo.midias.get(MIDIA_1)!;
+  m.estado = "em_analise";
+  m.motivo_codigo = null;
+  mundo.fila = [];
+  mundo.removidosDaFila = [];
+}
+
+Deno.test("#433: nova análise com reanalise=true consulta o provedor uma segunda vez e publica a foto aprovada", async () => {
+  const mundo = novoMundo();
+  let n = 0;
+  const provedor = provedorMock(mundo, () => ++n > 1);
+  await recusadaPeloProvedor(mundo, provedor);
+  semear(mundo, MIDIA_1, IMAGEM_BOA, { reanalise: true });
+  await rodar(criarDeps(mundo, { provedor }));
+  assertEquals(mundo.chamadasProvedor, 2, "o direito de revisão chega ao provedor");
+  assertEquals(mundo.midias.get(MIDIA_1)?.estado, "aprovada");
+});
+
+Deno.test("#433: sem reanalise, a mesma foto não ganha consulta extra e fica em análise (falha fechada)", async () => {
+  const mundo = novoMundo();
+  let n = 0;
+  const provedor = provedorMock(mundo, () => ++n > 1);
+  await recusadaPeloProvedor(mundo, provedor);
+  const msg = semear(mundo, MIDIA_1, IMAGEM_BOA);
+  const { corpo } = await rodar(criarDeps(mundo, { provedor }));
+  assertEquals(mundo.chamadasProvedor, 1);
+  assertFalhouFechado(mundo, corpo, msg, "limite_por_foto");
+});
+
+Deno.test("#433: reanalise=true nunca dá uma terceira consulta, e a segunda recusa não vira aprovação", async () => {
+  const mundo = novoMundo();
+  const provedor = provedorMock(mundo, () => false);
+  await recusadaPeloProvedor(mundo, provedor);
+  semear(mundo, MIDIA_1, IMAGEM_BOA, { reanalise: true });
+  await rodar(criarDeps(mundo, { provedor }));
+  assertEquals(mundo.chamadasProvedor, 2);
+  assertEquals(mundo.midias.get(MIDIA_1)?.estado, "recusada");
+  // Uma mensagem forjada ou repetida com o marcador não abre uma terceira chamada.
+  const m = mundo.midias.get(MIDIA_1)!;
+  m.estado = "em_analise";
+  m.motivo_codigo = null;
+  mundo.fila = [];
+  mundo.removidosDaFila = [];
+  const msg = semear(mundo, MIDIA_1, IMAGEM_BOA, { reanalise: true });
+  const { corpo } = await rodar(criarDeps(mundo, { provedor }));
+  assertEquals(mundo.chamadasProvedor, 2, "teto de 2 chamadas no total por foto");
+  assertFalhouFechado(mundo, corpo, msg, "limite_por_foto");
+});
