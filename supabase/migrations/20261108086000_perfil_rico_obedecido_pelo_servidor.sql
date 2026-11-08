@@ -41,7 +41,7 @@ revoke all on function privado.exigir_recurso(text) from public, anon, authentic
 grant execute on function privado.exigir_recurso(text) to service_role;
 
 -- ── 2. As quatro operações da F2 ──────────────────────────────────────────────
--- contrato: corpo-sem-mudanca-de-superficie public.atualizar_apresentacao_profissional 0.2.62
+-- contrato: corpo-sem-mudanca-de-superficie public.atualizar_apresentacao_profissional 0.2.63
 
 create or replace function public.atualizar_apresentacao_profissional(jsonb) returns jsonb
 language plpgsql security definer set search_path = '' as $$
@@ -107,7 +107,7 @@ begin
 end $$;
 
 
--- contrato: corpo-sem-mudanca-de-superficie public.definir_servicos 0.2.62
+-- contrato: corpo-sem-mudanca-de-superficie public.definir_servicos 0.2.63
 
 create or replace function public.definir_servicos(servicos jsonb) returns jsonb
 language plpgsql security definer set search_path = '' as $$
@@ -184,7 +184,7 @@ begin
 end $$;
 
 
--- contrato: corpo-sem-mudanca-de-superficie public.definir_regioes_atendidas 0.2.62
+-- contrato: corpo-sem-mudanca-de-superficie public.definir_regioes_atendidas 0.2.63
 
 create or replace function public.definir_regioes_atendidas(regioes int[], atende_todo_df boolean) returns jsonb
 language plpgsql security definer set search_path = '' as $$
@@ -208,7 +208,7 @@ begin
 end $$;
 
 
--- contrato: corpo-sem-mudanca-de-superficie public.meu_perfil_detalhado 0.2.62
+-- contrato: corpo-sem-mudanca-de-superficie public.meu_perfil_detalhado 0.2.63
 
 create or replace function public.meu_perfil_detalhado()
 returns jsonb
