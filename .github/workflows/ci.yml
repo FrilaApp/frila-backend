@@ -99,6 +99,11 @@ jobs:
       - name: Corrida entre notificar e purga de 60 dias (N1)
         run: ./scripts/corrida-notificar-purga.sh
 
+      # Chamada direta (T1): aceites simultâneos da mesma vaga, aceite x cancelamento da casa,
+      # duas chamadas ao mesmo par e exclusão de conta x aceite. Duas conexões de verdade.
+      - name: Corridas da chamada direta
+        run: ./scripts/corrida-chamada.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
