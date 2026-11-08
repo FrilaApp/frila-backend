@@ -174,7 +174,7 @@ begin
 end $$;
 
 comment on function privado.executar_retencao_diaria() is
-  'Rotina diária consolidada de retenção e limpeza: contas anonimizadas (15 dias), higiene de tabelas, eventos do app (90 dias), expurgo de mídias de identidade e fotos recusadas (24 h), chamadas não aceitas (90 dias), o estado do check-in por código (90 dias depois do fim do turno ou da contestação, 0.2.68), turnos com mais de 5 anos e o contexto deles (vaga, chamada, despacho, posição sem turno, ocorrência de denúncia e cancelamento, marcas de notificação e trilha; LGPD-J6 fases 1 e 2) e registros de acesso à aplicação com mais de 6 meses (Marco Civil art. 15).';
+  'Rotina diária consolidada de retenção e limpeza: contas anonimizadas (15 dias), higiene de tabelas, eventos do app (90 dias), expurgo de mídias de identidade e fotos recusadas (24 h), chamadas não aceitas (90 dias), o estado do check-in por código (90 dias depois do mais tarde entre o fim do turno e o fim da contestação, 0.2.68), turnos com mais de 5 anos e o contexto deles (vaga, chamada, despacho, posição sem turno, ocorrência de denúncia e cancelamento, marcas de notificação e trilha; LGPD-J6 fases 1 e 2) e registros de acesso à aplicação com mais de 6 meses (Marco Civil art. 15).';
 
 revoke execute on function privado.executar_retencao_diaria() from public, anon, authenticated;
 grant  execute on function privado.executar_retencao_diaria() to service_role;
