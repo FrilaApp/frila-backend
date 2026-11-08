@@ -475,6 +475,13 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
+# Recebe o JPEG da foto de perfil e grava no bucket privado (contrato 0.2.63). O app envia
+# sem sessão, por desenho: quem autoriza é o token opaco de uso único da upload_url.
+# verify_jwt fica desligado porque, ligado, o gateway recusaria o envio antes de a função rodar.
+[functions.enviar-midia]
+enabled = true
+verify_jwt = false
+
 
 
 
