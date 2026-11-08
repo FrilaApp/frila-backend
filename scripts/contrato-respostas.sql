@@ -879,6 +879,11 @@ select pg_temp.guarda('promete:atualizarPerfilProfissional:404',
   pg_temp.observado('ee000000-0000-4000-8000-000000000096', format(
     $$ select public.atualizar_perfil_profissional(array[%L::uuid], null, null) $$, (select id from f))));
 
+-- F2 atrás da chave perfil_rico (RN46, contrato 0.2.60): desligada, a F2 recusa com 403
+-- recurso_desligado. Colhe a recusa e liga a chave antes de qualquer outra colheita da F2.
+select pg_temp.guarda('promete:meuPerfilDetalhado:403', pg_temp.observado('cc000000-0000-4000-8000-000000000002', $$select public.meu_perfil_detalhado()$$));
+update privado.recurso set ligado = true where chave = 'perfil_rico';
+
 -- F2: perfil ainda não cadastrado.
 select pg_temp.guarda('promete:definirServicos:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.definir_servicos('[]')$$));
 select pg_temp.guarda('promete:definirRegioesAtendidas:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.definir_regioes_atendidas('{}',false)$$));
