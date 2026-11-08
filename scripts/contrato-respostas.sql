@@ -294,11 +294,18 @@ select pg_temp.guarda('fazerCheckout', pg_temp.como('cc000000-0000-4000-8000-000
   $$ select public.fazer_checkout(%L::uuid, 55, '2027-01-19 02:55:00+00'::timestamptz) $$,
   ((select r from cand)->>'turno_id')::uuid)));
 
--- Check-in manual na segunda vaga, e a confirmação pelo contratante.
+-- Check-in manual na segunda vaga, e a confirmação pelo contratante. Desde a 0.2.68, com a
+-- chave do código ligada para a casa e um sinal suspeito: a 40 m, o check-in fica manual e
+-- pendente, a resposta traz codigo_exigido e codigo_disponivel, e a casa ainda confirma à mão
+-- (leitura 8: o código ou o manual).
 set local frila.agora = '2027-01-25 21:05:00+00';
-select pg_temp.como('cc000000-0000-4000-8000-000000000003', format(
-  $$ select public.fazer_checkin(%L::uuid, null, '2027-01-25 21:05:00+00'::timestamptz) $$,
-  ((select r from cand2)->>'turno_id')::uuid));
+update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
+insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
+select 'checkin_por_codigo', casa_id from ids;
+select pg_temp.guarda('fazerCheckin', pg_temp.como('cc000000-0000-4000-8000-000000000003', format(
+  $$ select public.fazer_checkin(%L::uuid, 40, '2027-01-25 21:05:00+00'::timestamptz,
+       '{"localizacao_simulada": true, "precisao_m": 12, "salto_de_posicao": false}'::jsonb) $$,
+  ((select r from cand2)->>'turno_id')::uuid)));
 select pg_temp.guarda('painelEstabelecimento', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.painel_estabelecimento(%L::uuid, '2027-01-01T00:00:00Z'::timestamptz, '2027-12-31T00:00:00Z'::timestamptz) $$,
   (select casa_id from ids))));
