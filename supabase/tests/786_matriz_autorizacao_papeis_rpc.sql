@@ -344,6 +344,9 @@ select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-0
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.resolver_servico(''diarista'')'), 'AUTORIZADO', 'resolver_servico [dono]: dono consulta o catalogo');
 
 -- F2: edição do próprio perfil exige profissional; cada tentativa é revertida.
+-- A F2 obedece à chave perfil_rico (RN46, contrato 0.2.60; 20261108086000), que nasce desligada.
+-- A matriz mede o papel com o recurso ligado; desligado é o 818.
+update privado.recurso set ligado = true where chave = 'perfil_rico';
 select is(pg_temp.testar_autorizacao('anon', null, $f2$select public.definir_servicos('[]')$f2$), '42501_SEM_EXECUTE', 'definir_servicos: anon sem sessão');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', $f2$select public.definir_servicos('[]')$f2$), 'AUTORIZADO', 'definir_servicos: authenticated 78600000-0000-4000-8000-000000000003');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', $f2$select public.definir_servicos('[]')$f2$), '422_PERFIL_INCOMPATIVEL', 'definir_servicos: authenticated 78600000-0000-4000-8000-000000000002');
