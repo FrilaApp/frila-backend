@@ -291,8 +291,11 @@ for i in $(seq 1 "$RODADAS"); do
   fila=$(psql -c "select count(*) from pgmq.q_despacho where message->>'vaga_id' = '$vaga';")
   desp=$(psql -c "select count(*) from public.despacho where vaga_id = '$vaga';")
   conta=$(psql -c "select estado from public.usuario where id = '$(id "$m" 2)';")
-  # Sem resposta do aceite não houve corrida: a rodada não prova nada.
-  if [ -z "$ra" ] || [ "$rb" != ok ] || [ "$conta" != anonimizada ] || [ "$fila" != 0 ] || [ "$desp" != 0 ]; then
+  # O aceite precisa ter respondido uma das três saídas legítimas da disputa: venceu (ok),
+  # chegou depois da exclusão (chamada_indisponivel ou nao_autenticado). Vazio ou outro erro
+  # (sqlstate:*) quer dizer que não houve corrida, e a rodada não prova nada.
+  case "$ra" in ok|chamada_indisponivel|nao_autenticado) aceite_ok=1 ;; *) aceite_ok=0 ;; esac
+  if [ "$aceite_ok" != 1 ] || [ "$rb" != ok ] || [ "$conta" != anonimizada ] || [ "$fila" != 0 ] || [ "$desp" != 0 ]; then
     falhou "rodada $i: aceite '$ra', exclusão '$rb', conta '$conta', fila $fila, despachos $desp"; erros=$((erros + 1))
   fi
 done
