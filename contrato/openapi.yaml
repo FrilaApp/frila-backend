@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.61
+  version: 0.2.62
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -109,6 +109,23 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.62, de 07/11/2026.** Peças finais da v1.1 (RF27, RN15, RN22):
+    - **Acompanhamento da contestação do despacho no perfil (RF27):** `CriteriosDeNotificacao` ganha
+      o campo opcional `contestacao` (`Protocolo` ou `null`), no mesmo molde de
+      `SituacaoDaConta.suspensao.contestacao` (0.2.36). Permite ao aplicativo exibir o protocolo oficial
+      para acompanhamento da análise pela Equipe Frila e desativar o formulário de reenvio sem
+      precisar forçar uma chamada que responderia `409 contestacao_ja_aberta`.
+    - **Aviso de turno não verificado aos dois lados (RN15, RN22):** `TipoNotificacao` ganha o tipo
+      `turno_nao_verificado`. Disparado pelo encerramento de turno com check-in manual pendente sem
+      confirmação ou sem check-in. Título: "Turno não verificado"; corpo: "A presença no turno não foi
+      confirmada dentro do prazo. O turno foi encerrado como não verificado."
+    - **Extensão de notificação e privacidade na tela bloqueada (RN15):** Documentação consolidada
+      do comportamento do push FCM/APNs. O envio no iOS carrega `mutable-content: 1` e `vinculo_id`
+      no payload, permitindo à Notification Service Extension (`FrilaNotificationService`) neutralizar
+      e substituir títulos/corpos de notificações na tela bloqueada e na central por texto neutro genérico
+      ("Nova notificação do Frila", "Abra o aplicativo para conferir.") sempre que o vínculo divergir
+      da sessão ativa no aparelho, garantindo isolamento total de dados entre contas no mesmo dispositivo.
 
     **Versão 0.2.61, de 07/11/2026.** Uma só mídia: a foto de perfil (decisões do Cauê de
     07/11/2026; `produto/contratacao-direta/05-midia.md`, CD-M02, e D3 = C). `TipoMidia` perde os
@@ -4813,7 +4830,11 @@ paths:
         garantindo a interceptação pelo serviço nativo para conferência de `vinculo_id` mesmo em segundo
         plano ou com app fechado. O cliente Android seleciona o canal de notificação (`canal_urgencia`,
         `canal_turnos` ou `canal_sistema`) mapeando `data.tipo` conforme a tabela canônica descrita no
-        Estado da versão 0.2.46. No iOS, o alerta vai em `apns.payload.aps.alert` com `mutable-content: 1`.
+        Estado da versão 0.2.46. No iOS, o alerta vai em `apns.payload.aps.alert` com `mutable-content: 1`
+        e `vinculo_id` no payload. A Notification Service Extension (`FrilaNotificationService`) intercepta
+        o push antes da exibição: se o `vinculo_id` divergir do vínculo ativo no App Group (outra conta
+        deslogada ou sessão encerrada), o título e o corpo são neutralizados por texto neutro genérico
+        sem `tipo`, impedindo qualquer vazamento visual entre contas na tela bloqueada e na central (RN15).
       x-requisitos: [RF06, RN15, RNF02]
       requestBody:
         required: true
@@ -5552,6 +5573,12 @@ components:
         (`recusada` ou `nao_publicada`), só com `tipo` e `midia_id`. Título "Foto não publicada";
         corpo "Use uma foto sua, com rosto visível, sem texto nem dados pessoais."
 
+        **Turno não verificado (0.2.62, RN22).** Disparado aos dois lados quando o turno encerra sem confirmação de presença (check-in manual não confirmado ou sem check-in).
+
+        | Tipo | Quem recebe | Título | Corpo |
+        |---|---|---|---|
+        | `turno_nao_verificado` | Ambos os lados | Turno não verificado | A presença no turno não foi confirmada dentro do prazo. O turno foi encerrado como não verificado. |
+
         `confirmacao` em vaga de urgência mantém o texto de sempre ("Turno confirmado"). O
         `selecao_lembrete` sai uma vez por vaga: faltando 6 horas ou menos para o prazo de escolha
         (RN24) e com ao menos uma candidatura pendente. O horário é o do fuso America/Sao_Paulo (RN18).
@@ -5561,7 +5588,7 @@ components:
              checkin_manual_pendente, cancelamento, avaliacao_disponivel, suspensao, reativacao,
              candidatura_recusada, selecao_encerrada, selecao_lembrete, midia_recusada,
              chamada_recebida, chamada_lembrete, chamada_aceita, chamada_recusada,
-             chamada_expirada, chamada_cancelada, chamada_encerrada]
+             chamada_expirada, chamada_cancelada, chamada_encerrada, turno_nao_verificado]
     EventoDeTelemetria:
       description: |
         Dicionário fechado. Acrescentar evento é mudança de contrato, com versão subindo — é o
@@ -6142,6 +6169,14 @@ components:
           type: integer
           description: Teto de RN23; hoje, 30.
           example: 30
+        contestacao:
+          description: |
+            0.2.62 (RF27). Protocolo da contestação do despacho vinculada ao titular, quer esteja em
+            análise ou já respondida pela Equipe Frila (0.2.37). Nulo se o titular ainda não contestou.
+            Permite ao app exibir o protocolo para acompanhamento no perfil e desativar o formulário.
+          oneOf:
+            - $ref: '#/components/schemas/Protocolo'
+            - type: 'null'
     NovoEstabelecimento:
       type: object
       required: [nome, documento, tipo, endereco, regiao_administrativa, ponto]

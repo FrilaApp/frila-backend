@@ -44,7 +44,6 @@ comment on column public.vaga.vaga_origem_id is
 drop function if exists public.registrar_dispositivo(text, text);
 drop function if exists public.registrar_dispositivo(text, text, text);
 
--- contrato: corpo-sem-mudanca-de-superficie public.registrar_dispositivo 0.2.61
 create or replace function public.registrar_dispositivo(
   token_fcm text default null,
   plataforma text default null,
