@@ -70,16 +70,16 @@ Somente **após** salvar o Custom SMTP com sucesso:
 
 ### 3.2. Campos do modelo
 
-1. **Subject** (Assunto):
+1. **Subject** (Assunto), igual nas abas **Magic Link** e **Confirm signup** e ao `supabase/config.toml`:
    ```
-   Seu código de entrada no Frila: {{ .Token }}
+   Seu código de entrada no Frila
    ```
-   *(ou `Seu código de entrada no Frila`)*
 
 2. **Body** (Corpo do e-mail):
-   - Copie o conteúdo exato do arquivo versionado [`supabase/templates/codigo-de-entrada.html`](../templates/codigo-de-entrada.html).
-   - O corpo utiliza exclusivamente a tag `{{ .Token }}` para exibir o código de 6 dígitos.
-   - **Nunca inclua** `{{ .ConfirmationURL }}` ou tags de link: o Frila opera exclusivamente com código digitado no app, evitando que links mágicos abram navegadores externos e quebrem o fluxo.
+   - Copie o conteúdo exato do arquivo versionado [`supabase/templates/codigo-de-entrada.html`](../templates/codigo-de-entrada.html), nas duas abas.
+   - O corpo é só o código, em texto simples: a tag `{{ .Token }}` aparece uma vez, sozinha num parágrafo, com os 6 dígitos juntos (o espaçamento é só CSS `letter-spacing`). Assim o próprio cliente de e-mail reconhece o código e oferece a cópia.
+   - **Nenhum link, nenhum botão** (decisão de 08/11/2026, cartão GZ6PYIMn). Saíram o botão "Copiar código", o link para `frilabr.com/codigo` e a frase "toque e segure". **Nunca inclua** `{{ .ConfirmationURL }}`: o Frila opera só com código digitado no app, e link mágico abre o navegador e quebra o fluxo.
+   - O texto diz que o código vale **10 minutos** e serve uma vez só. Isso tem de bater com o **OTP expiry** da seção 3.3.
 
 3. Clique em **Save changes**.
 
@@ -88,7 +88,7 @@ Somente **após** salvar o Custom SMTP com sucesso:
 1. No menu **Authentication**, acesse **URL Configuration** ou **Auth Settings** (ou via Management API).
 2. Verifique os parâmetros:
    - **Site URL**: URL pública do ambiente (ex.: `https://frila.app`), nunca `localhost` ou `127.0.0.1`.
-   - **OTP expiry duration**: `900` segundos (15 minutos).
+   - **OTP expiry duration**: `600` segundos (10 minutos), igual ao `otp_expiry` do `supabase/config.toml` e ao texto do e-mail. Outro valor faz o e-mail prometer uma validade que o Auth não cumpre.
    - **OTP length**: `6` dígitos.
 
 ---
