@@ -13,7 +13,7 @@
 begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-06-01 12:00:00+00', true);
-select plan(19);
+select plan(23);
 
 create temp table ids as
 select
@@ -164,6 +164,35 @@ select ok(
   and not has_function_privilege('authenticated', 'privado.apagar_checkin_codigo_da_conta()', 'execute')
   and not has_function_privilege('anon', 'privado.limpar_checkin_por_codigo(integer, integer)', 'execute'),
   'as funções da guarda não são executáveis pelo app');
+
+-- ── 5. A leitura (a) e a borda (R1 do Lince no #459) ──────────────────────────
+-- As duas contestações contam juntas, valendo a mais tarde, e qualquer uma aberta segura
+-- (Bússola, #459). Dois profissionais novos, porque a suspensão é por profissional.
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em) values
+ ('c8290000-0000-4000-8000-000000000004', 'profissional', 'Prof 829 C', '+5561999998294', 'prof829c@test.invalid', '1994-01-01', '1.0', '2026-09-20 12:00:00-03'),
+ ('c8290000-0000-4000-8000-000000000005', 'profissional', 'Prof 829 D', '+5561999998295', 'prof829d@test.invalid', '1995-01-01', '1.0', '2026-09-20 12:00:00-03');
+insert into public.profissional (id, usuario_id, ponto_base) values
+ ('c8290000-0000-4000-8000-000000000013', 'c8290000-0000-4000-8000-000000000004', 'POINT(-47.8800 -15.7700)'),
+ ('c8290000-0000-4000-8000-000000000014', 'c8290000-0000-4000-8000-000000000005', 'POINT(-47.8800 -15.7700)');
+
+select pg_temp.turno('t9_turno_fechado_91d_suspensao_aberta', 'c8290000-0000-4000-8000-000000000013', 200);
+select pg_temp.contestacao(pg_temp.t('t9_turno_fechado_91d_suspensao_aberta'), null, 91);
+select pg_temp.contestacao(null, 'c8290000-0000-4000-8000-000000000004', null);
+
+select pg_temp.turno('t10_turno_fechado_91d_suspensao_fechada_89d', 'c8290000-0000-4000-8000-000000000014', 201);
+select pg_temp.contestacao(pg_temp.t('t10_turno_fechado_91d_suspensao_fechada_89d'), null, 91);
+select pg_temp.contestacao(null, 'c8290000-0000-4000-8000-000000000005', 89);
+
+-- O profissional B tem a suspensão fechada há 91 dias: no turno que terminou há exatamente 90, vale o fim.
+select pg_temp.turno('t11_fim_exato_90d', (select prof_b from ids), 90);
+
+select is(privado.limpar_checkin_por_codigo(), 1, 'na rodada da leitura (a), só o turno da borda sai');
+select ok(exists (select 1 from privado.checkin_codigo where turno_id = pg_temp.t('t9_turno_fechado_91d_suspensao_aberta')),
+  'leitura (a): contestação do turno fechada há 91 dias, com a suspensão do profissional aberta, fica (qualquer uma aberta segura)');
+select ok(exists (select 1 from privado.checkin_codigo where turno_id = pg_temp.t('t10_turno_fechado_91d_suspensao_fechada_89d')),
+  'leitura (a): contestação do turno fechada há 91 dias e suspensão fechada há 89 fica (vale a mais tarde)');
+select ok(not exists (select 1 from privado.checkin_codigo where turno_id = pg_temp.t('t11_fim_exato_90d')),
+  'a borda: o turno que terminou há exatamente 90 dias sai');
 
 select * from finish();
 rollback;

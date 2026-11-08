@@ -13,7 +13,7 @@
 begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
-select plan(55);
+select plan(60);
 
 create temp table ids as
 select
@@ -191,6 +191,12 @@ select throws_ok($$update privado.checkin_codigo set codigo = '482913', gerado_e
   '23514', pg_temp.violacao('checkin_codigo', 'codigo_com_validade'), 'codigo_com_validade: código sem hora de geração é recusado');
 select throws_ok($$update privado.checkin_codigo set codigo = '482913', gerado_em = '2027-01-11 21:30:00+00', expira_em = '2027-01-11 21:30:00+00'$$,
   '23514', pg_temp.violacao('checkin_codigo', 'codigo_com_validade'), 'codigo_com_validade: código que vence ao nascer é recusado');
+select throws_ok($$update privado.checkin_codigo set codigo = '482913', gerado_em = '2027-01-11 21:30:00+00', expira_em = null$$,
+  '23514', pg_temp.violacao('checkin_codigo', 'codigo_com_validade'), 'codigo_com_validade: código sem validade é recusado (B1: o nulo não passa)');
+select throws_ok($$update privado.checkin_codigo set codigo = '482913', gerado_em = '2027-01-11 21:30:00+00', expira_em = '2027-02-10 21:30:00+00'$$,
+  '23514', pg_temp.violacao('checkin_codigo', 'codigo_com_validade'), 'codigo_com_validade: validade de 30 dias é recusada');
+select throws_ok($$update privado.checkin_codigo set codigo = '482913', gerado_em = '2027-01-11 21:30:00+00', expira_em = '2027-01-11 21:35:01+00'$$,
+  '23514', pg_temp.violacao('checkin_codigo', 'codigo_com_validade'), 'codigo_com_validade: um segundo além dos 5 min da regra é recusado');
 select lives_ok($$update privado.checkin_codigo set codigo = '048291', gerado_em = '2027-01-11 21:30:00+00', expira_em = '2027-01-11 21:35:00+00'$$,
   'código de 6 dígitos com validade vale, inclusive começando por zero');
 select throws_ok($$update privado.checkin_codigo set erros = 7$$,
@@ -256,6 +262,14 @@ update privado.regra_checkin_codigo set bloqueio_s = 120;
 select pg_temp.erro(); select pg_temp.erro(); select pg_temp.erro();
 select is((select bloqueado_ate from privado.checkin_codigo where turno_id = (select turno from ids)),
   '2027-01-11 21:37:01+00'::timestamptz, 'o bloqueio segue a regra ajustada (2 min)');
+
+-- Sem a linha da regra, a 3ª ainda bloqueia, pelo padrão de 5 min (R1 do Lince no #458).
+delete from privado.checkin_codigo where turno_id = (select turno from ids);
+delete from privado.regra_checkin_codigo;
+select is(array[pg_temp.erro(), pg_temp.erro(), pg_temp.erro()], array['invalido', 'invalido', 'temporario'],
+  'regra vazia: a 3ª errada ainda responde temporario');
+select is((select bloqueado_ate from privado.checkin_codigo where turno_id = (select turno from ids)),
+  '2027-01-11 21:40:01+00'::timestamptz, 'regra vazia: o bloqueio vale o padrão de 5 min, e não some');
 
 select * from finish();
 rollback;
