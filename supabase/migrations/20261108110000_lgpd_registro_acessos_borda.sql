@@ -11,8 +11,9 @@
 --     PostgREST abre em transação SÓ LEITURA. Ali, INSERT não passa; pg_logical_emit_message(false, …) passa, porque
 --     vai ao WAL fora da transação (medido). Por isso a 1ª requisição de cada (conta, IP, hora) emite uma mensagem
 --     lógica, e um job do pg_cron a consome a cada minuto e grava. A mensagem sobrevive até a requisição que falha;
---   · o pre-request só lê: confere a chave da coleta e a tabela pequena registro_acesso_recente. Medido: +10 a 15 µs
---     por requisição, sem espera de trava. Erro no registro nunca derruba a requisição;
+--   · o pre-request só lê: confere a chave da coleta e a tabela pequena registro_acesso_recente. Medido: +5 µs com a
+--     coleta desligada; +20 µs ligada, com a hora já registrada (20 mil chamadas, 5 rodadas, mediana), sem espera de
+--     trava. Erro no registro nunca derruba a requisição;
 --   · a mensagem vai ao disco com o WAL, sem fsync próprio: o consumidor a vê depois do flush, em até ~1 s, e o
 --     atraso de até 1 min do agendamento é aceito (Forja, 08/11).
 --
@@ -72,7 +73,7 @@ create table privado.registro_acesso_coleta (
   ligada       boolean not null default false,
   alterada_em  timestamptz not null default privado.agora(),
   consumido_em timestamptz,
-  teto_wal_mb  integer not null default 128 check (teto_wal_mb between 16 and 1024)
+  teto_wal_mb  integer not null default 128 check (teto_wal_mb between 16 and 192)
 );
 insert into privado.registro_acesso_coleta (unica, ligada) values (true, false);
 
@@ -81,7 +82,7 @@ revoke all on table privado.registro_acesso_coleta from public, anon, authentica
 grant select, update (teto_wal_mb) on table privado.registro_acesso_coleta to service_role;
 
 comment on table privado.registro_acesso_coleta is
-  'Chave da coleta de registros de acesso (uma linha só). Nasce desligada; liga e desliga só por privado.definir_coleta_registro_acesso, que cria ou derruba o slot lógico. consumido_em é o último consumo bem-sucedido (o alerta registro_acesso_parado e o início de um buraco). teto_wal_mb é o atraso máximo do slot antes de a autoproteção o derrubar (128 MB; o service_role ajusta). Não guarda dado pessoal.';
+  'Chave da coleta de registros de acesso (uma linha só). Nasce desligada; liga e desliga só por privado.definir_coleta_registro_acesso, que cria ou derruba o slot lógico. consumido_em é o último consumo bem-sucedido (o alerta registro_acesso_parado e o início de um buraco). teto_wal_mb é o atraso máximo do slot antes de a autoproteção o derrubar (128 MB; o service_role ajusta entre 16 e 192). O máximo de 192 MB é 75% do max_slot_wal_keep_size de 256 MB do Prod: com o teto acima dele, o servidor invalidaria o slot primeiro, e a autoproteção ainda mediria "ok" pelo confirmed_flush_lsn. Subir o teto exige migração e, antes, subir o max_slot_wal_keep_size. Não guarda dado pessoal.';
 
 -- O nome do slot e o balde moram em funções, para que a granularidade mude num lugar só.
 create or replace function privado.slot_registro_acesso() returns text

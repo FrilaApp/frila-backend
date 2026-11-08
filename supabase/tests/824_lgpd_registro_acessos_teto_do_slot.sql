@@ -7,11 +7,19 @@ begin;
 select 1 from pg_create_logical_replication_slot('frila_registro_acesso', 'test_decoding', true);
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-08 12:00:00+00', true);
-select plan(7);
+select plan(11);
 
 select is((privado.definir_coleta_registro_acesso(true) ->> 'slot')::boolean, true, 'coleta ligada, com o slot');
 delete from privado.alerta_emitido where codigo like 'registro_acesso_%';
 delete from privado.falha_execucao where codigo like 'registro_acesso_%';
+
+-- O teto fica entre 16 e 192 MB: 192 é 75% do max_slot_wal_keep_size de 256 MB do Prod. Acima dele, o servidor
+-- invalidaria o slot antes de a autoproteção agir.
+select lives_ok($$ update privado.registro_acesso_coleta set teto_wal_mb = 192 $$, 'teto de 192 MB é aceito');
+select throws_ok($$ update privado.registro_acesso_coleta set teto_wal_mb = 193 $$, '23514', null,
+  'teto de 193 MB é recusado (acima de 75% do max_slot_wal_keep_size do Prod)');
+select lives_ok($$ update privado.registro_acesso_coleta set teto_wal_mb = 16 $$, 'teto de 16 MB é aceito');
+select throws_ok($$ update privado.registro_acesso_coleta set teto_wal_mb = 15 $$, '23514', null, 'teto de 15 MB é recusado');
 
 -- WAL de verdade para o atraso: ~20 MB numa tabela desta transação (desfeita no rollback).
 update privado.registro_acesso_coleta set teto_wal_mb = 32, consumido_em = privado.agora();
