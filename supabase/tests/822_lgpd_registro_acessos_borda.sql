@@ -77,11 +77,14 @@ select is((select teto_wal_mb from privado.registro_acesso_coleta), 128, 'teto d
 select throws_ok($$ insert into privado.registro_acesso_coleta (unica) values (false) $$, '23514', null,
   'a chave da coleta tem uma linha só (CHECK unica)');
 -- A referência da guarda: de 1 a 80 caracteres depois do btrim. Período válido, para só esse CHECK barrar.
+-- A mensagem exata fixa a restrição: um CHECK novo na tabela não faz o teste passar pelo motivo errado (Lince AG).
 select throws_ok($$ insert into privado.registro_acesso_guarda (usuario_id, desde, ate, referencia)
-                    values ('c8220000-0000-4000-8000-0000000000d1', '2026-11-01', '2026-12-01', '   ') $$, '23514', null,
+                    values ('c8220000-0000-4000-8000-0000000000d1', '2026-11-01', '2026-12-01', '   ') $$, '23514',
+  'new row for relation "registro_acesso_guarda" violates check constraint "registro_acesso_guarda_referencia_check"',
   'guarda: referência vazia depois do btrim é recusada');
 select throws_ok($$ insert into privado.registro_acesso_guarda (usuario_id, desde, ate, referencia)
-                    values ('c8220000-0000-4000-8000-0000000000d1', '2026-11-01', '2026-12-01', repeat('x', 81)) $$, '23514', null,
+                    values ('c8220000-0000-4000-8000-0000000000d1', '2026-11-01', '2026-12-01', repeat('x', 81)) $$, '23514',
+  'new row for relation "registro_acesso_guarda" violates check constraint "registro_acesso_guarda_referencia_check"',
   'guarda: referência com 81 caracteres é recusada');
 select lives_ok($$ insert into privado.registro_acesso_guarda (usuario_id, desde, ate, referencia)
                    values ('c8220000-0000-4000-8000-0000000000d1', '2026-11-01', '2026-12-01', repeat('x', 80)) $$,
@@ -192,7 +195,8 @@ select 'c8220000-0000-4000-8000-0000000000c5', '198.51.100.40', '2026-11-08 12:0
 select is(privado.limpar_registros_acesso(6, 1), 100, 'teto de 100 lotes por execução');
 select throws_ok($$ insert into privado.registro_acesso_guarda (usuario_id, desde, ate, referencia)
                     values ('c8220000-0000-4000-8000-0000000000c6', '2026-12-01', '2026-11-01', 'OF-822-6') $$,
-  '23514', null, 'a guarda precisa de fim depois do início');
+  '23514', 'new row for relation "registro_acesso_guarda" violates check constraint "registro_acesso_guarda_periodo"',
+  'a guarda precisa de fim depois do início');
 
 -- ── Coleta desligada derruba o slot (no slot extra, para os casos seguintes) ─
 create or replace function privado.slot_registro_acesso() returns text language sql immutable set search_path = '' as $$
