@@ -129,6 +129,11 @@ OUTRAS_VIGIADAS=$(cat <<'EOF'
 {"op":"promete:gerarCodigoCheckin:404","corpo":{"status":404,"code":"nao_encontrado"}}
 {"op":"promete:gerarCodigoCheckin:409","corpo":{"status":409,"code":"checkin_ja_confirmado"}}
 {"op":"promete:gerarCodigoCheckin:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
+{"op":"promete:validarCodigoCheckin:401","corpo":{"status":401,"code":"nao_autenticado"}}
+{"op":"promete:validarCodigoCheckin:403","corpo":{"status":403,"code":"sem_permissao"}}
+{"op":"promete:validarCodigoCheckin:404","corpo":{"status":404,"code":"nao_encontrado"}}
+{"op":"promete:validarCodigoCheckin:409","corpo":{"status":409,"code":"checkin_ja_confirmado"}}
+{"op":"promete:validarCodigoCheckin:422","corpo":{"status":422,"code":"codigo_invalido"}}
 {"op":"promete:reabrirPorAtraso:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:avaliar:401","corpo":{"status":401,"code":"nao_autenticado"}}
 {"op":"promete:bloquear:401","corpo":{"status":401,"code":"nao_autenticado"}}
