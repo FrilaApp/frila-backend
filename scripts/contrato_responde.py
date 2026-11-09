@@ -334,6 +334,10 @@ VIGIADAS = {
     ("publicarAPartirDaChamada", "404"): "nao_encontrado",
     ("publicarAPartirDaChamada", "409"): "vaga_encerrada",
     ("publicarAPartirDaChamada", "422"): "campo_obrigatorio",
+    # Sair da equipe de confiança (contrato 0.2.72; LGPD art. 18): vigiada desde o nascimento.
+    ("sair_da_equipe", "401"): "nao_autenticado",
+    ("sair_da_equipe", "403"): "sem_permissao",
+    ("sair_da_equipe", "422"): "campo_invalido",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
