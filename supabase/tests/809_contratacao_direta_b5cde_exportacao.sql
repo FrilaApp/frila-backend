@@ -104,6 +104,14 @@ insert into public.equipe_confianca (estabelecimento_id, profissional_id) values
 
 -- Liga recurso chamada_direta
 update privado.recurso set ligado = true where chave = 'chamada_direta';
+-- 0.2.66 (20261108160000): só se chama quem tem aparelho na versão mínima de chamada_direta.
+-- Este arquivo mede a chamada com o portão satisfeito; o portão em si é o 830.
+insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima) values ('chamada_direta', 'ios', '1.2.0')
+on conflict (recurso, plataforma) do nothing;
+insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app)
+select p.usuario_id, 'tok-teste-' || p.usuario_id, 'ios', '1.2.0'
+  from public.profissional p where p.usuario_id::text like '80900000-%'
+on conflict (token_fcm) do nothing;
 
 -- ── 2. Testes de B5e: Preferências de Chamada e Versão do Dispositivo ───────────
 -- 2.1 Contratante tentando definir preferências toma 422 perfil_incompativel
@@ -371,6 +379,12 @@ insert into public.equipe_confianca (estabelecimento_id, profissional_id) values
   ('80900000-0000-4000-8000-000000000021', '80900000-0000-4000-8000-000000000013'),
   ('80900000-0000-4000-8000-000000000021', '80900000-0000-4000-8000-000000000014'),
   ('80900000-0000-4000-8000-000000000021', '80900000-0000-4000-8000-000000000015');
+
+-- 0.2.66: os profissionais criados acima também precisam de aparelho na versão mínima.
+insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app)
+select p.usuario_id, 'tok-teste-' || p.usuario_id, 'ios', '1.2.0'
+  from public.profissional p where p.usuario_id::text like '80900000-%'
+on conflict (token_fcm) do nothing;
 
 -- Abre chamada 1
 select pg_temp.como('80900000-0000-4000-8000-000000000003',

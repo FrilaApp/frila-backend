@@ -34,6 +34,9 @@ RUN=$(( (RANDOM % 900) + 100 ))   # marca desta execução: reexecutar não coli
 id() { printf '%08x-0000-4000-8000-%012d' $(( 0xc0c00000 + RUN * 1000 + $1 )) "$2"; }
 
 recurso_antes=$(psql -c "select coalesce((select ligado from privado.recurso where chave = 'chamada_direta'), false);")
+# 0.2.66: só se chama quem tem aparelho na versão mínima de chamada_direta (#451). A corrida guarda o
+# mínimo do iOS que havia antes, para devolvê-lo na limpeza.
+minimo_antes=$(psql -c "select versao_minima from privado.recurso_versao_minima where recurso = 'chamada_direta' and plataforma = 'ios';")
 MUNDOS=()   # cada montar_mundo se registra aqui, para a limpeza saber o que apagar
 
 # Apaga tudo o que os mundos desta execução criaram, como as outras corridas. A suíte e a
@@ -81,6 +84,7 @@ delete from public.equipe_confianca where estabelecimento_id in (select id from 
 delete from public.membro_estabelecimento where usuario_id in (select id from contas) or estabelecimento_id in (select id from casas);
 delete from public.estabelecimento where id in (select id from casas);
 delete from public.disponibilidade where profissional_id in (select id from profs);
+delete from public.dispositivo where usuario_id in (select id from contas);
 delete from public.profissional_funcao where profissional_id in (select id from profs);
 delete from public.profissional where id in (select id from profs);
 -- O pedido de exclusão não tem FK para usuario (sobrevive à conta): sai pelo nome.
@@ -95,6 +99,9 @@ limpar() {
   limpar_mundos || echo "  aviso: a limpeza dos mundos falhou; sobraram dados da marca $RUN" >&2
   psql >/dev/null 2>&1 <<SQL || echo "  aviso: não restaurei o recurso chamada_direta" >&2
 update privado.recurso set ligado = '${recurso_antes:-f}'::boolean where chave = 'chamada_direta';
+delete from privado.recurso_versao_minima where recurso = 'chamada_direta' and plataforma = 'ios';
+insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima)
+select 'chamada_direta', 'ios', nullif('${minimo_antes:-}', '') where nullif('${minimo_antes:-}', '') is not null;
 SQL
   rm -rf "$TMP"
 }
@@ -164,6 +171,9 @@ insert into public.profissional_funcao
 select p.id, (select id from public.funcao where nome = 'garçom') from public.profissional p where p.usuario_id in ('$prof1', '$prof2');
 insert into public.equipe_confianca (estabelecimento_id, profissional_id)
 select '$estab', p.id from public.profissional p where p.usuario_id in ('$prof1', '$prof2');
+-- Aparelho na versão mínima de chamada_direta para os dois profissionais (0.2.66, #451).
+insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app) values
+  ('$prof1', 'tok-corrida-$prof1', 'ios', '1.2.0'), ('$prof2', 'tok-corrida-$prof2', 'ios', '1.2.0');
 insert into public.disponibilidade (profissional_id, dia_semana, hora_inicio, hora_fim)
 select p.id, d, '00:00', '23:59' from public.profissional p, generate_series(0, 6) d where p.usuario_id = '$prof2';
 SQL
@@ -213,6 +223,7 @@ SQL
 
 echo "▸ Corridas da chamada direta: $RODADAS rodadas por cenário (marca $RUN)"
 psql >/dev/null -c "update privado.recurso set ligado = true where chave = 'chamada_direta';"
+psql >/dev/null -c "insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima) values ('chamada_direta', 'ios', '1.2.0') on conflict (recurso, plataforma) do update set versao_minima = excluded.versao_minima;"
 
 # ── 1. Aceites simultâneos de duas chamadas da mesma vaga ──────────────────────
 echo "▸ 1. duas chamadas da mesma vaga aceitas ao mesmo tempo"
