@@ -7,7 +7,7 @@
 Toda a vigilância do Prod roda dentro do próprio agendador:
 - **`verificar_saude`**, a cada 5 min, é quem emite os alertas (`privado.emitir_alerta`).
 - **`processar_fila_email`**, a cada minuto, entrega esses alertas por e-mail. O `emitir_alerta` põe o aviso na fila `pgmq` `email`, e é esse job que a esvazia.
-- **`consumir_registro_acesso`**, a cada minuto, é a autoproteção do slot lógico (`docs/RunbookWalESlot.md`).
+- **`consumir_registro_acesso`**, a cada minuto, e a própria **`verificar_saude`** chamam a autoproteção do slot lógico (`docs/RunbookWalESlot.md`). Com o `pg_cron` inteiro parado, nenhuma das duas roda.
 
 Se o `pg_cron` parar, nada avisa ninguém. Isso pode vir de um worker morto, da extensão fora depois de um restart ou de manutenção da plataforma, ou de jobs desativados por engano. Ao mesmo tempo:
 - os turnos param de fechar e o despacho de reprocessar (`docs/RUNBOOK-INCIDENTES.md`, seção 3);

@@ -18,9 +18,11 @@ Medido no frila-prod em 08/11/2026, só leitura (Management API `config/disk` e 
 Um slot lógico segura todo o WAL desde o `restart_lsn` dele. Parado, ele retém ~480 MB/h.
 
 **Três defesas, em ordem:**
-1. **Autoproteção:** o job `consumir_registro_acesso`, a cada minuto, derruba o slot com atraso acima de `teto_wal_mb` (128 MB, ~16 min de WAL) e registra o buraco (`registro_acesso_buraco` em `privado.falha_execucao`, motivo `slot_acima_do_teto`).
+1. **Autoproteção:** `privado.proteger_slot_registro_acesso` derruba o slot com atraso acima de `teto_wal_mb` (128 MB, ~16 min de WAL) e registra o buraco (`registro_acesso_buraco` em `privado.falha_execucao`, motivo `slot_acima_do_teto`).
+   - Ela roda no começo do job `consumir_registro_acesso`, a cada minuto, **e** no começo da `verificar_saude`, a cada 5 min (`20261108110000:302` e `:542`).
+   - Com só o consumidor parado, a `verificar_saude` ainda derruba o slot em 128 MB.
 2. **Alertas:** a `verificar_saude`, a cada 5 min, emite `registro_acesso_wal_atrasado` (atraso acima da metade do teto) e `registro_acesso_parado` (sem consumo há mais de 15 min).
-3. **O servidor:** acima de 1 GB retido, o Postgres invalida o slot (`wal_status = lost`). Leva ~2 h a partir do slot parado.
+3. **O servidor:** acima de 1 GB retido, o Postgres invalida o slot (`wal_status = lost`). Leva ~2 h a partir do slot parado. É a defesa de quando o `pg_cron` inteiro para: os dois jobs juntos.
 
 As defesas 1 e 2 rodam no `pg_cron`. **Se o `pg_cron` parar, só a 3 protege o disco, e nada avisa ninguém** (desenho do alerta externo: `docs/desenho-alerta-pg-cron-parado.md`).
 
@@ -87,11 +89,15 @@ E o disco, fora do banco, pela Management API: `GET /v1/projects/hbjkkcenbudiezm
 ## 4. O que fazer
 
 - **Atraso subindo com o job rodando** (🟡): a autoproteção derruba em 128 MB e registra o buraco. Conferir em `cron.job_run_details` se o `consumir_registro_acesso` está `succeeded`, e ler a `return_message` das falhas.
-- **`pg_cron` parado ou job inativo** (🔴): seguir a seção 3 do `docs/RUNBOOK-INCIDENTES.md`. Com o job parado, o slot cresce ~480 MB/h e chega a 1 GB em ~2 h.
+- **`pg_cron` parado ou job inativo** (🔴): seguir a seção 3 do `docs/RUNBOOK-INCIDENTES.md`.
+  - Com só o `consumir_registro_acesso` parado, a `verificar_saude` ainda derruba o slot em 128 MB, e o buraco fica registrado.
+  - Com o `pg_cron` inteiro parado, o slot cresce ~480 MB/h e chega a 1 GB em ~2 h.
   - **Se o agendador não volta logo, desligar a coleta.** É o que libera o disco: a chave vira, o slot cai, e nada mais retém WAL.
     - Comando: `select privado.definir_coleta_registro_acesso(false);`, pelo `service_role`.
     - Rodar entre os segundos :15 e :45 do minuto. A função não protege o `drop`: com o slot em uso, a transação inteira volta e a coleta segue ligada ("is active"). Nesse caso, repetir depois de 15 s.
-  - Religar só com a causa resolvida e o teto conferido (o `ligar` exige o `max_slot_wal_keep_size` de 1 GB lido de volta).
+  - Religar só com a causa resolvida e o teto conferido.
+    - A função `privado.definir_coleta_registro_acesso(true)` **não** confere o teto do servidor. Antes de religar, ler o `max_slot_wal_keep_size` e confirmar `1GB`.
+    - Na janela de 08/11, quem conferiu foi a trava do `ligar-coleta.sql` do executor da janela, fora do repositório, que aceita 1024 ou 2048 MB.
 - **Slot `lost` ou buraco registrado** (`registro_acesso_buraco`, com motivo `slot_invalidado`, `slot_acima_do_teto` ou `slot_ausente`): o intervalo de `desde` a `ate` não foi registrado.
   - A autoproteção recria o slot na rodada seguinte.
   - Anotar o intervalo no log de plantão, porque é um buraco no registro do Marco Civil. Avisar o dono.
