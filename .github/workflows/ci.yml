@@ -109,6 +109,12 @@ jobs:
       - name: Corridas da chamada direta
         run: ./scripts/corrida-chamada.sh
 
+      # Check-in por código (0.2.68 e 0.2.69): duas validações do mesmo código, validação x
+      # confirmação manual nos dois sentidos, dois gerar e validação x gerar, com duas conexões de
+      # verdade. Qualquer falha, ou corrida que não aconteceu, sai diferente de zero.
+      - name: Corridas do check-in por código
+        run: ./scripts/corrida-checkin-codigo.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
