@@ -85,6 +85,23 @@ create temp table colhido (ordem serial, op text, corpo jsonb);
 create function pg_temp.guarda(op text, corpo jsonb) returns void
 language sql as $$ insert into colhido (op, corpo) values (op, corpo) $$;
 
+-- Colhe a resposta e desfaz o que a chamada escreveu: o bloco termina numa exceção própria,
+-- e só a resposta sobrevive. Serve à chamada que mudaria o cenário de quem vem depois (o manual
+-- clássico colhido no turno que, logo abaixo, recebe o check-in com sinais). Qualquer outro erro
+-- passa adiante.
+create function pg_temp.sem_rastro(conta uuid, sql text) returns jsonb
+language plpgsql as $$
+declare r jsonb;
+begin
+  begin
+    r := pg_temp.como(conta, sql);
+    raise exception using errcode = 'FRDES', message = 'desfaz a chamada colhida';
+  exception when sqlstate 'FRDES' then
+    null;
+  end;
+  return r;
+end $$;
+
 -- ── O cenário ──────────────────────────────────────────────────────────────────
 insert into privado.ambiente (id, eh_teste) values (true, true);
 set local frila.agora = '2027-01-11 09:00:00+00';
@@ -299,6 +316,12 @@ select pg_temp.guarda('fazerCheckout', pg_temp.como('cc000000-0000-4000-8000-000
 -- pendente, a resposta traz codigo_exigido e codigo_disponivel, e a casa ainda confirma à mão
 -- (leitura 8: o código ou o manual).
 set local frila.agora = '2027-01-25 21:05:00+00';
+-- O manual clássico, com a chave desligada: o caminho do app publicado (1.0 e 1.1, sem sinais e
+-- sem distância). Colhido sem rastro, porque o mesmo turno recebe logo abaixo o check-in com
+-- sinais (FYI do Lince AG no #464).
+select pg_temp.guarda('fazerCheckin', pg_temp.sem_rastro('cc000000-0000-4000-8000-000000000003', format(
+  $$ select public.fazer_checkin(%L::uuid, null, '2027-01-25 21:05:00+00'::timestamptz) $$,
+  ((select r from cand2)->>'turno_id')::uuid)));
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
 insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
 select 'checkin_por_codigo', casa_id from ids;
