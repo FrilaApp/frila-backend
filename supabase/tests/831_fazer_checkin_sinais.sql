@@ -15,7 +15,7 @@
 begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
-select plan(32);
+select plan(36);
 
 create temp table ids as
 select 'c8310000-0000-4000-8000-000000000002'::uuid as casa_user,
@@ -100,7 +100,7 @@ create function pg_temp.t(nome text) returns uuid language sql as $$ select turn
 
 select pg_temp.novo(n) from unnest(array[
   'off', 'off_mal', 'fora', 'sem_sinais', 'sem_sinais_180', 'normal', 'simulada', 'salto', 'precisao_100',
-  'precisao_99', 'precisao_nula', 'faixa_150', 'faixa_149', 'faixa_200', 'acima_201', 'mal', 'sem_distancia']) n;
+  'precisao_99', 'precisao_20_0', 'precisao_100_0', 'precisao_nula', 'faixa_150', 'faixa_149', 'faixa_200', 'acima_201', 'mal', 'sem_distancia']) n;
 
 -- ── 1. Chave desligada: nada muda (critério 7) ────────────────────────────────
 select is(pg_temp.resumo(pg_temp.checkin('off', 50, '{"localizacao_simulada": true, "precisao_m": 5, "salto_de_posicao": false}')),
@@ -143,6 +143,20 @@ select is(pg_temp.resumo(pg_temp.checkin('precisao_100', 50, '{"localizacao_simu
   'manual pendente exigido=true disponivel=true', 'leitura 5: precisão ruim a partir de 100 m');
 select is(pg_temp.resumo(pg_temp.checkin('precisao_99', 50, '{"localizacao_simulada": false, "precisao_m": 99, "salto_de_posicao": false}')),
   'geolocalizado verificado exigido=false disponivel=false', 'leitura 5: 99 m de imprecisão ainda não é precisão ruim');
+-- A precisão é inteira pelo valor (contrato: type integer, metros inteiros): 20.0, como o Kotlin
+-- serializa um Double, passa e é avaliada, sem erro cru (bloqueio do Lince AG 2 no #464).
+select is(pg_temp.resumo(pg_temp.checkin('precisao_20_0', 50, '{"localizacao_simulada": false, "precisao_m": 20.0, "salto_de_posicao": false}')),
+  'geolocalizado verificado exigido=false disponivel=false', 'precisao_m 20.0: passa e é avaliada como 20, sem erro cru (#464)');
+select is(pg_temp.resumo(pg_temp.checkin('precisao_100_0', 50, '{"localizacao_simulada": false, "precisao_m": 100.0, "salto_de_posicao": false}')),
+  'manual pendente exigido=true disponivel=true', 'precisao_m 100.0: avaliada como 100, precisão ruim (#464)');
+select lives_ok($$ select privado.sinal_suspeito(v.s, 50)
+                     from (values ('{"localizacao_simulada": false, "precisao_m": 0, "salto_de_posicao": false}'::jsonb),
+                                  ('{"localizacao_simulada": false, "precisao_m": 20.0, "salto_de_posicao": false}'),
+                                  ('{"localizacao_simulada": false, "precisao_m": 1e2, "salto_de_posicao": false}'),
+                                  ('{"localizacao_simulada": false, "precisao_m": 2147483647.0, "salto_de_posicao": false}'),
+                                  ('{"localizacao_simulada": false, "precisao_m": null, "salto_de_posicao": false}')) v (s)
+                    where privado.sinais_validos(v.s) $$,
+  'todo sinal que passa no sinais_validos é avaliado sem erro cru: 0, 20.0, 1e2, 2147483647.0 e nulo (#464)');
 select is(pg_temp.resumo(pg_temp.checkin('precisao_nula', 50, '{"localizacao_simulada": false, "precisao_m": null, "salto_de_posicao": false}')),
   'geolocalizado verificado exigido=false disponivel=false', 'D5 PENDENTE do JP: provisoriamente, precisão nula não conta como ruim (muda só em privado.precisao_ruim)');
 select is(pg_temp.resumo(pg_temp.checkin('faixa_150', 150, '{"localizacao_simulada": false, "precisao_m": 5, "salto_de_posicao": false}')),
@@ -163,6 +177,8 @@ select is(pg_temp.recusa('mal', 50, '{"localizacao_simulada": false, "salto_de_p
   '422 campo_invalido sinais', 'sinais sem precisao_m: 422 campo_invalido (sinais)');
 select is(pg_temp.recusa('mal', 50, '{"localizacao_simulada": false, "precisao_m": -1, "salto_de_posicao": false}'),
   '422 campo_invalido sinais', 'precisao_m negativa: 422 campo_invalido (sinais)');
+select is(pg_temp.recusa('mal', 50, '{"localizacao_simulada": false, "precisao_m": 4.7, "salto_de_posicao": false}'),
+  '422 campo_invalido sinais', 'precisao_m com fração (4.7): 422 campo_invalido (sinais), como os outros sinais fora do contrato (#464)');
 select is(pg_temp.recusa('mal', 50, '{"localizacao_simulada": "sim", "precisao_m": 5, "salto_de_posicao": false}'),
   '422 campo_invalido sinais', 'localizacao_simulada que não é booleano: 422 campo_invalido (sinais)');
 select ok((select checkin_em is null from public.turno where id = pg_temp.t('mal')),

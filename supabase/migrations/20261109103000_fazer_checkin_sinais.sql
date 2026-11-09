@@ -24,6 +24,7 @@ select set_config('lock_timeout', '2s', true);
 create function privado.sinais_validos(p_sinais jsonb) returns boolean
 language sql immutable set search_path = '' as $$
   -- SinaisDoCheckin: os três campos, dois booleanos e a precisão inteira de 0 em diante, ou nula.
+  -- Inteira é o valor, e não a grafia (JSON Schema, type integer): 20 e 20.0 valem; 4.7 não (#464).
   select jsonb_typeof(p_sinais) = 'object'
      and jsonb_typeof(p_sinais -> 'localizacao_simulada') = 'boolean'
      and jsonb_typeof(p_sinais -> 'salto_de_posicao') = 'boolean'
@@ -57,7 +58,8 @@ create function privado.sinal_suspeito(p_sinais jsonb, p_distancia_m integer) re
 language sql stable security definer set search_path = '' as $$
   select (p_sinais ->> 'localizacao_simulada')::boolean
       or (p_sinais ->> 'salto_de_posicao')::boolean
-      or privado.precisao_ruim((p_sinais ->> 'precisao_m')::integer)
+      -- Por numeric: o jsonb guarda 20.0 com a escala, e o ::integer direto daria 22P02 cru (#464).
+      or privado.precisao_ruim(((p_sinais ->> 'precisao_m')::numeric)::integer)
       or p_distancia_m between 150 and 200
 $$;
 comment on function privado.sinal_suspeito(jsonb, integer) is
