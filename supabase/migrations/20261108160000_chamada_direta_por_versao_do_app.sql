@@ -7,9 +7,11 @@
 -- 20261108150000). E a checagem do vínculo (RN28) sobe para junto da preferência só-CNPJ e da versão:
 -- antes ela vinha depois da validação do corpo, e um corpo inválido distinguia o vínculo da
 -- preferência (revisão do Lince AG no frila-documentacao #193). Efeito colateral: sem vínculo e com
--- corpo inválido, a resposta passa de campo_* para nao_aceita_chamadas.
+-- corpo inválido, a resposta passa de campo_* para nao_aceita_chamadas. As três condições são
+-- calculadas sempre e o erro sai uma vez só (nem o tempo distingue), e a pausa ("pausado") passa
+-- para depois delas: só quem passa pelas três vê que o profissional está pausado.
 --
--- Corpo copiado da versão vigente (20261107370000), com só esses dois trechos mudados. A assinatura
+-- Corpo copiado da versão vigente (20261107370000), com só esse trecho reorganizado. A assinatura
 -- não muda, então os grants ficam. O push chamada_* com o mesmo mínimo vem no enviar-push (B2).
 
 select set_config('lock_timeout', '2s', true);
@@ -40,6 +42,10 @@ declare
   v_c              public.chamada%rowtype;
   v_falta          text;
   v_veterana       boolean;
+  v_tem_pref       boolean;
+  v_so_cnpj        boolean;
+  v_sem_versao     boolean;
+  v_sem_vinculo    boolean;
   v_pref           public.profissional_preferencia_chamada%rowtype;
   v_ant_min_h      int := 6;
   v_casa_doc       text;
@@ -89,40 +95,39 @@ begin
 
   -- Preferências do profissional (B5e)
   select * into v_pref from public.profissional_preferencia_chamada where profissional_id = v_prof;
-  if found then
-    v_ant_min_h := v_pref.antecedencia_minima_h;
-    -- Pausa de chamadas
-    if v_pref.pausado_ate is not null and v_pref.pausado_ate >= (v_agora at time zone 'America/Sao_Paulo')::date then
-      perform public.erro(422, 'profissional_indisponivel', 'pausado');
-    end if;
-    -- Aceita somente de CNPJ
-    if v_pref.aceita_de = 'so_cnpj' and length(v_casa_doc) = 11 then
-      perform public.erro(422, 'profissional_indisponivel', 'nao_aceita_chamadas');
-    end if;
-  end if;
+  v_tem_pref := found;
 
-  -- 0.2.66: a versão do app do profissional (portão (c) do corte por versão). Só chama quem tem
-  -- algum aparelho cuja versao_app alcança o mínimo de chamada_direta da plataforma: a chamada
-  -- nunca nasce para quem não receberia o aviso. Sem permissão de notificação o app não registra
-  -- aparelho, então esse profissional não pode ser chamado.
-  if not exists (select 1 from public.dispositivo d
-                  where d.usuario_id = v_conta.id
-                    and privado.recurso_na_versao('chamada_direta', d.plataforma::text, d.versao_app)) then
-    perform public.erro(422, 'profissional_indisponivel', 'nao_aceita_chamadas');
-  end if;
-
-  -- RN28 na v1.1: só quem já cumpriu turno com presença verificada na casa, ou está na equipe de
-  -- confiança. Subiu para junto da preferência e da versão (0.2.66): as três recusas genéricas saem
-  -- no mesmo ponto, antes da validação do corpo, para a ordem não denunciar qual delas valeu.
-  -- É também daqui que vem o isolamento da demonstração nesta RPC: conta de demonstração não tem
-  -- turno nem equipe com a população real.
+  -- As três recusas genéricas (0.2.66): preferência só-CNPJ, versão do app e vínculo (RN28). As três
+  -- são calculadas sempre, cada uma na sua variável, e o erro sai uma vez só, antes da validação do
+  -- corpo. Assim nem a ordem nem o tempo de resposta denunciam qual delas valeu (revisão do Lince AG
+  -- no frila-documentacao #193 e no #451).
+  v_so_cnpj := coalesce(v_tem_pref and v_pref.aceita_de = 'so_cnpj' and length(v_casa_doc) = 11, false);
+  -- Versão: só chama quem tem algum aparelho cuja versao_app alcança o mínimo de chamada_direta da
+  -- plataforma; a chamada nunca nasce para quem não receberia o aviso. Sem permissão de notificação o
+  -- app não registra aparelho, então esse profissional não pode ser chamado.
+  v_sem_versao := not exists (select 1 from public.dispositivo d
+                               where d.usuario_id = v_conta.id
+                                 and privado.recurso_na_versao('chamada_direta', d.plataforma::text, d.versao_app));
+  -- Vínculo (RN28 na v1.1): turno cumprido com presença verificada na casa, ou equipe de confiança.
+  -- É daqui que vem o isolamento da demonstração nesta RPC: conta de demonstração não tem turno nem
+  -- equipe com a população real.
   v_veterana := exists (select 1 from public.turno t join public.posicao p on p.id = t.posicao_id
                           join public.vaga g on g.id = p.vaga_id
                          where g.estabelecimento_id = v_estab and p.profissional_id = v_prof
                            and p.estado = 'cumprida' and t.verificacao = 'verificado');
-  if not v_veterana and not exists (select 1 from public.equipe_confianca q
-                                      where q.estabelecimento_id = v_estab and q.profissional_id = v_prof) then
+  v_sem_vinculo := not v_veterana and not exists (select 1 from public.equipe_confianca q
+                                                    where q.estabelecimento_id = v_estab and q.profissional_id = v_prof);
+  if v_so_cnpj or v_sem_versao or v_sem_vinculo then
     perform public.erro(422, 'profissional_indisponivel', 'nao_aceita_chamadas');
+  end if;
+
+  if v_tem_pref then
+    v_ant_min_h := v_pref.antecedencia_minima_h;
+    -- Pausa de chamadas: depois do bloco genérico (0.2.66), para só quem passa por ele ver "pausado".
+    -- Antes, uma casa sem vínculo descobria que o profissional estava pausado.
+    if v_pref.pausado_ate is not null and v_pref.pausado_ate >= (v_agora at time zone 'America/Sao_Paulo')::date then
+      perform public.erro(422, 'profissional_indisponivel', 'pausado');
+    end if;
   end if;
 
   -- Limites de par CD-C13 (B5d):
