@@ -15,6 +15,7 @@
 --        permanecem exatamente os mesmos de antes do expurgo (zero divergências).
 --   4. Recálculo pontual (privado.recalcular_comparecimento) também preserva os contadores expurgados.
 --   5. Integridade referencial: exclusão do profissional cascateia para a base histórica expurgada.
+--   6. Integridade de dados: 6 restrições CHECK da tabela protegidas contra mutação.
 
 begin;
 
@@ -22,7 +23,7 @@ insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2026-11-09 12:00:00+00', true);
 set local timezone = 'UTC';
 
-select plan(27);
+select plan(34);
 
 -- ── 1. Schema e permissões da base histórica expurgada ─────────────────────────
 
@@ -394,6 +395,79 @@ select is(
     where profissional_id = (select id from ids where chave = 'dummy_prof')),
   0,
   'deleção de profissional cascateia para privado.profissional_reputacao_expurgada (ON DELETE CASCADE)'
+);
+
+-- ── 8. Restrições CHECK da tabela privado.profissional_reputacao_expurgada (mutação) ──
+
+do $$
+declare
+  v_u uuid := gen_random_uuid();
+  v_p uuid;
+begin
+  insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
+  values (v_u, 'profissional', 'Check 840', '+5561999984095', 'check840@teste.com', '1990-01-01', '0.2.68', privado.agora());
+  insert into public.profissional (usuario_id, perfil, ponto_base)
+  values (v_u, 'profissional', 'POINT(-47.88 -15.77)'::extensions.geography)
+  returning id into v_p;
+  insert into ids values ('prof_check', v_p);
+end $$;
+
+select throws_ok(
+  $$ insert into privado.profissional_reputacao_expurgada (profissional_id, turnos_realizados, presencas, faltas, aval_positivas, aval_total)
+     values ((select id from ids where chave = 'prof_check'), -1, 0, 0, 0, 0) $$,
+  '23514',
+  null,
+  'turnos_realizados_nao_negativo: valor negativo recusado'
+);
+
+select throws_ok(
+  $$ insert into privado.profissional_reputacao_expurgada (profissional_id, turnos_realizados, presencas, faltas, aval_positivas, aval_total)
+     values ((select id from ids where chave = 'prof_check'), 0, -1, 0, 0, 0) $$,
+  '23514',
+  null,
+  'presencas_nao_negativo: valor negativo recusado'
+);
+
+select throws_ok(
+  $$ insert into privado.profissional_reputacao_expurgada (profissional_id, turnos_realizados, presencas, faltas, aval_positivas, aval_total)
+     values ((select id from ids where chave = 'prof_check'), 0, 0, -1, 0, 0) $$,
+  '23514',
+  null,
+  'faltas_nao_negativo: valor negativo recusado'
+);
+
+select throws_ok(
+  $$ insert into privado.profissional_reputacao_expurgada (profissional_id, turnos_realizados, presencas, faltas, aval_positivas, aval_total)
+     values ((select id from ids where chave = 'prof_check'), 0, 0, 0, -1, 0) $$,
+  '23514',
+  null,
+  'aval_positivas_nao_negativo: valor negativo recusado'
+);
+
+select throws_ok(
+  $$ insert into privado.profissional_reputacao_expurgada (profissional_id, turnos_realizados, presencas, faltas, aval_positivas, aval_total)
+     values ((select id from ids where chave = 'prof_check'), 0, 0, 0, 0, -1) $$,
+  '23514',
+  null,
+  'aval_total_nao_negativo: valor negativo recusado'
+);
+
+-- Como aval_coerente (aval_positivas <= aval_total) subsume aval_total >= 0 quando aval_positivas >= 0,
+-- a asserção de catálogo garante detecção direta da restrição na mutação.
+select is(
+  (select count(*)::int from pg_constraint c
+    where c.conrelid = 'privado.profissional_reputacao_expurgada'::regclass
+      and c.conname = 'aval_total_nao_negativo'),
+  1,
+  'aval_total_nao_negativo: restrição check existe no catálogo'
+);
+
+select throws_ok(
+  $$ insert into privado.profissional_reputacao_expurgada (profissional_id, turnos_realizados, presencas, faltas, aval_positivas, aval_total)
+     values ((select id from ids where chave = 'prof_check'), 0, 0, 0, 5, 2) $$,
+  '23514',
+  null,
+  'aval_coerente: avaliacoes_positivas > total recusado'
 );
 
 select * from finish();
