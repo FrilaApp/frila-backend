@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.69
+  version: 0.2.70
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -111,6 +111,15 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.70, de 08/11/2026.** Só descrição, no check-in por código. Nenhum campo, operação,
+    status ou código de erro novo:
+    - **A guarda dos registros do código em `MeusDados.checkins_por_codigo`:** os 90 dias contam do
+      mais tarde entre o fim do turno e o fim da contestação. Conta a contestação do turno, quando
+      existir, e a de suspensão do profissional, valendo a mais tarde; qualquer uma aberta segura os
+      registros. A 0.2.68 falava só da contestação do turno, que hoje nenhuma operação registra. É a
+      regra que a Modelagem já descreve e que o `frila-backend` #459 aplica.
+    - **Fica para depois:** o espelho no backend, junto com a exportação de `checkins_por_codigo`.
 
     **Versão 0.2.69, de 08/11/2026.** Só descrição, aditiva, no check-in por código. Nenhum campo,
     operação, status ou código de erro novo:
@@ -8030,13 +8039,14 @@ components:
             $ref: '#/components/schemas/Chamada'
         checkins_por_codigo:
           description: |
-            0.2.68. O que o check-in por código registrou sobre o titular como profissional (LGPD,
-            art. 18, II, e art. 19): por turno, se a confirmação da casa foi exigida, a marca de
-            confiança baixa e as tentativas de leitura. Não diz qual sinal pesou para exigir o
-            código, não traz os metros da leitura nem quem da casa gerou o código, que o servidor não
-            grava. Entra só o turno com algum desses registros, e só enquanto eles existem: o
-            servidor os apaga 90 dias depois do fim do turno ou do fim da contestação do turno, o que
-            vier depois.
+            0.2.68, revisto na 0.2.70. O que o check-in por código registrou sobre o titular como
+            profissional (LGPD, art. 18, II, e art. 19): por turno, se a confirmação da casa foi
+            exigida, a marca de confiança baixa e as tentativas de leitura. Não diz qual sinal pesou
+            para exigir o código, não traz os metros da leitura nem quem da casa gerou o código, que
+            o servidor não grava. Entra só o turno com algum desses registros, e só enquanto eles
+            existem: o servidor os apaga 90 dias depois do mais tarde entre o fim do turno e o fim da
+            contestação. Conta a contestação do turno, quando existir, e a de suspensão do
+            profissional, valendo a mais tarde; qualquer uma aberta segura os registros.
 
             Só na exportação do próprio profissional: na de quem opera a casa vem `[]`, porque a
             marca e as tentativas não saem para a casa. Fora daqui, a marca não sai em resposta
