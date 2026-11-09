@@ -23,7 +23,7 @@ set local frila.agendador_secret = 'segredo-de-teste';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(276);
+select plan(281);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -31,8 +31,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  67::bigint,
-  'censo de RPCs: schema public contem exatamente 67 RPCs expostas'
+  68::bigint,
+  'censo de RPCs: schema public contem exatamente 68 RPCs expostas'
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -602,6 +602,13 @@ insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
 select 'checkin_por_codigo', privado.estabelecimento_da_posicao(t.posicao_id)
   from public.turno t where t.id = '78600000-0000-4000-8000-000000000301';
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.gerar_codigo_checkin(''78600000-0000-4000-8000-000000000301''::uuid)'), 'REGRA:checkin_ja_confirmado', 'gerar_codigo_checkin [dono]: dono autorizado valida estado do checkin');
+
+-- --- validar_codigo_checkin (0.2.68, PR6 do B-CHECKIN-BACK); a chave segue ligada para a casa do dono ---
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.validar_codigo_checkin(''78600000-0000-4000-8000-000000000301''::uuid, ''123456'', 10)'), '42501_SEM_EXECUTE', 'validar_codigo_checkin [anon]: anon nao possui EXECUTE em validar_codigo_checkin');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000004', 'select public.validar_codigo_checkin(''78600000-0000-4000-8000-000000000301''::uuid, ''123456'', 10)'), '404_NAO_ENCONTRADO', 'validar_codigo_checkin [outro profissional]: outro profissional toma 404 em turno alheio');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.validar_codigo_checkin(''78600000-0000-4000-8000-000000000301''::uuid, ''123456'', 10)'), '422_PERFIL_INCOMPATIVEL', 'validar_codigo_checkin [outro contratante]: outro contratante toma 422 perfil_incompativel');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.validar_codigo_checkin(''78600000-0000-4000-8000-000000000301''::uuid, ''123456'', 10)'), '422_PERFIL_INCOMPATIVEL', 'validar_codigo_checkin [dono]: dono toma 422 perfil_incompativel (quem valida e o profissional)');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.validar_codigo_checkin(''78600000-0000-4000-8000-000000000301''::uuid, ''123456'', 10)'), 'REGRA:checkin_ja_confirmado', 'validar_codigo_checkin [profissional]: profissional do turno, com a chave ligada, chega ao estado do checkin');
 
 -- --- meus_turnos ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.meus_turnos(''2026-11-01 00:00:00+00''::timestamptz, ''2026-11-30 23:59:59+00''::timestamptz, null)'), '42501_SEM_EXECUTE', 'meus_turnos [anon]: anon nao possui EXECUTE em meus_turnos');
