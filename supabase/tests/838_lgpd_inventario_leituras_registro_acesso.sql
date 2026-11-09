@@ -5,7 +5,7 @@
 begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-09 12:00:00+00', true);
-select plan(45);
+select plan(49);
 
 delete from privado.registro_acesso;
 delete from privado.registro_acesso_leitura;
@@ -111,7 +111,7 @@ select is(pg_temp.inventario(), 1, 'a leitura grava exatamente 1 linha no invent
 select results_eq(
   $$ select papel_sessao, papel_chamada, responsavel, arquivo, conta::text, desde, ate, motivo, linhas
        from privado.registro_acesso_leitura $$,
-  $$ values (session_user::text, 'service_role'::text, 'cauecarneiro'::text, 'privado.registro_acesso'::text,
+  $$ values (session_user::text collate "default", 'service_role'::text, 'cauecarneiro'::text, 'privado.registro_acesso'::text,
              'c8380000-0000-4000-8000-0000000000a1'::text, '2026-11-01 00:00:00+00'::timestamptz,
              '2026-11-01 12:00:00+00'::timestamptz, 'Ofício 123/2026'::text, 2) $$,
   'o inventário guarda o papel da sessão e o da chamada, o responsável, o arquivo acessado, a conta, o período, o motivo e quantas linhas');
@@ -176,17 +176,28 @@ create function pg_temp.linha(resp text default 'cauecarneiro', arq text default
 language sql as $$
   select format('insert into privado.registro_acesso_leitura (papel_sessao, responsavel, arquivo, conta, desde, ate, motivo, linhas, inicio, fim) values (''postgres'', %L, %L, gen_random_uuid(), %L, %L, %L, %s, %L, %L)',
                 resp, arq, de, a, mot, lin, ini, fi) $$;
-select throws_ok(pg_temp.linha(resp => ' cauecarneiro'), '23514', null,
-  'registro_acesso_leitura_responsavel: o responsável é gravado sem espaços nas pontas e com até 80 caracteres');
-select throws_ok(pg_temp.linha(arq => 'privado.registro_acesso_recente'), '23514', null,
+-- A mensagem exata fixa QUAL restrição recusou; cada condição dos CHECKs de responsável e de motivo tem caso próprio.
+create function pg_temp.viola(nome text) returns text language sql as $$
+  select format('new row for relation "registro_acesso_leitura" violates check constraint "%s"', nome) $$;
+select throws_ok(pg_temp.linha(resp => ''), '23514', pg_temp.viola('registro_acesso_leitura_responsavel'),
+  'registro_acesso_leitura_responsavel: o responsável não é vazio (char_length >= 1)');
+select throws_ok(pg_temp.linha(resp => repeat('x', 81)), '23514', pg_temp.viola('registro_acesso_leitura_responsavel'),
+  'registro_acesso_leitura_responsavel: o responsável tem até 80 caracteres');
+select throws_ok(pg_temp.linha(resp => ' cauecarneiro'), '23514', pg_temp.viola('registro_acesso_leitura_responsavel'),
+  'registro_acesso_leitura_responsavel: o responsável é gravado sem espaços nas pontas');
+select throws_ok(pg_temp.linha(arq => 'privado.registro_acesso_recente'), '23514', pg_temp.viola('registro_acesso_leitura_arquivo'),
   'registro_acesso_leitura_arquivo: o arquivo acessado é privado.registro_acesso');
-select throws_ok(pg_temp.linha(mot => repeat('x', 201)), '23514', null,
-  'registro_acesso_leitura_motivo: o motivo tem de 1 a 200 caracteres, sem espaços nas pontas');
-select throws_ok(pg_temp.linha(lin => -1), '23514', null,
+select throws_ok(pg_temp.linha(mot => ''), '23514', pg_temp.viola('registro_acesso_leitura_motivo'),
+  'registro_acesso_leitura_motivo: o motivo não é vazio (char_length >= 1)');
+select throws_ok(pg_temp.linha(mot => repeat('x', 201)), '23514', pg_temp.viola('registro_acesso_leitura_motivo'),
+  'registro_acesso_leitura_motivo: o motivo tem até 200 caracteres');
+select throws_ok(pg_temp.linha(mot => ' Ofício 1 '), '23514', pg_temp.viola('registro_acesso_leitura_motivo'),
+  'registro_acesso_leitura_motivo: o motivo é gravado sem espaços nas pontas');
+select throws_ok(pg_temp.linha(lin => -1), '23514', pg_temp.viola('registro_acesso_leitura_linhas'),
   'registro_acesso_leitura_linhas: a contagem de linhas lidas não é negativa');
-select throws_ok(pg_temp.linha(de => '2026-11-02', a => '2026-11-02'), '23514', null,
+select throws_ok(pg_temp.linha(de => '2026-11-02', a => '2026-11-02'), '23514', pg_temp.viola('registro_acesso_leitura_periodo'),
   'registro_acesso_leitura_periodo: o fim do período vem depois do início');
-select throws_ok(pg_temp.linha(ini => '2026-11-09 10:00:01', fi => '2026-11-09 10:00'), '23514', null,
+select throws_ok(pg_temp.linha(ini => '2026-11-09 10:00:01', fi => '2026-11-09 10:00'), '23514', pg_temp.viola('registro_acesso_leitura_duracao'),
   'registro_acesso_leitura_duracao: o fim da leitura não vem antes do início');
 
 select * from finish();

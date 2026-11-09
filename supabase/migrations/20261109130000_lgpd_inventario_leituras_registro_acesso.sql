@@ -2,7 +2,7 @@
 -- Escopo: B-T2c, filho do LGPD-J6 R11 (cartão HAWhzOJ4). Inventário das leituras do registro de acessos
 -- (Decreto 8.771/2016, art. 13, III): o momento, a duração, a identidade do funcionário ou do responsável
 -- designado e o "arquivo acessado" (texto literal do decreto, conferido pela Bússola no Planalto em 08/11/2026).
--- Desenho: ADR-002, seção "Leitura do registro" (frila-docs). Brief: orquestracao/briefs/B-T2c-*.md.
+-- Desenho: ADR-002, seção "Leitura do registro" (frila-documentacao #205). Brief: orquestracao/briefs/B-T2c-*.md.
 --
 -- O que muda:
 --   · nenhum papel de API (anon, authenticated, service_role) toca direto em privado.registro_acesso nem em
@@ -13,10 +13,11 @@
 --   · quem pode chamar (art. 13, I): só o service_role, além do dono (postgres). Para o postgres a regra é de
 --     processo: lê só pela função, e leitura direta vira ocorrência anotada (ADR-002);
 --   · como a pessoa é identificada (art. 13, II): pelo responsável declarado em cada leitura (o login individual
---     de quem lê, nunca a conta técnica), guardado junto com os papéis técnicos da sessão.
+--     da pessoa que lê, nunca a conta técnica nem o agente que lê por ordem dela), guardado junto com os papéis
+--     técnicos da sessão.
 -- Prazo de guarda do inventário (Bússola, 08/11/2026): 5 anos contados do fim de cada leitura, sem FK para a conta
 -- lida. Base: LGPD art. 7º, II e art. 16, I (o inventário cumpre o Decreto 8.771, art. 13, III) e art. 6º, X
--- (prestação de contas). O decreto não fixa prazo: os 5 anos são inferência do time, o mesmo prazo do turno.
+-- (prestação de contas). O decreto não fixa prazo: os 5 anos são inferência do time: o prazo da ação punitiva federal (Lei 9.873/1999, art. 1º; inferência: vale para a ANPD).
 -- A limpeza é privado.limpar_inventario_leituras_registro_acesso. Ela não entra aqui em
 -- privado.executar_retencao_diaria, porque o #459 (20261109102000) reescreve essa rotina: a chamada entra depois
 -- dele, numa linha (a primeira linha só vence em 2031).
@@ -62,13 +63,13 @@ alter table privado.registro_acesso_leitura enable row level security;
 revoke all on table privado.registro_acesso_leitura from public, anon, authenticated, service_role;
 
 comment on table privado.registro_acesso_leitura is
-  'Inventário das leituras do registro de acessos (Decreto 8.771/2016, art. 13, III: o momento, a duração, a identidade do funcionário ou do responsável designado e o arquivo acessado; o motivo é decisão nossa). Uma linha por chamada de privado.ler_registros_acesso, mesmo quando a leitura volta vazia. Guarda referência e motivo, nunca cópia das linhas lidas (RN15). Só a função escreve; nenhum papel de API lê nem escreve direto. Prazo de guarda: 5 anos contados do fim de cada leitura, inclusive depois da exclusão da conta lida (sem FK), por privado.limpar_inventario_leituras_registro_acesso. Base legal: LGPD art. 7º, II e art. 16, I (cumprimento do Decreto 8.771, art. 13, III) e art. 6º, X (prestação de contas à ANPD e ao titular: quem leu e por quê). Para o advogado: o decreto não fixa prazo; os 5 anos são inferência do time (Bússola, 08/11/2026), o mesmo prazo do turno.';
+  'Inventário das leituras do registro de acessos (Decreto 8.771/2016, art. 13, III: o momento, a duração, a identidade do funcionário ou do responsável designado e o arquivo acessado; o motivo é decisão nossa). Uma linha por chamada de privado.ler_registros_acesso, mesmo quando a leitura volta vazia. Guarda referência e motivo, nunca cópia das linhas lidas (RN15). Só a função escreve; nenhum papel de API lê nem escreve direto. Prazo de guarda: 5 anos contados do fim de cada leitura, inclusive depois da exclusão da conta lida (sem FK), por privado.limpar_inventario_leituras_registro_acesso. Base legal: LGPD art. 7º, II e art. 16, I (cumprimento do Decreto 8.771, art. 13, III) e art. 6º, X (prestação de contas à ANPD e ao titular: quem leu e por quê). Para o advogado: o decreto não fixa prazo; os 5 anos são inferência do time (Bússola, 08/11/2026): o prazo da ação punitiva federal (Lei 9.873/1999, art. 1º; inferência: vale para a ANPD).';
 comment on column privado.registro_acesso_leitura.papel_sessao is
   'session_user da leitura: o papel técnico que abriu a conexão (authenticator pelo PostgREST, postgres pelo painel ou psql). Não identifica a pessoa; quem identifica é responsavel.';
 comment on column privado.registro_acesso_leitura.papel_chamada is
   'O papel ativo de quem chamou (o SET ROLE da sessão, como o service_role que o PostgREST assume); nulo quando a sessão não trocou de papel.';
 comment on column privado.registro_acesso_leitura.responsavel is
-  'Identidade de quem leu (art. 13, II e III): o login individual do funcionário ou do responsável designado, declarado em cada leitura. Nunca o nome de um papel do banco (a função recusa). Dado pessoal do funcionário, com a finalidade única de prestar contas da leitura.';
+  'Identidade de quem leu (art. 13, II e III): o login individual do funcionário ou do responsável designado, declarado em cada leitura: a pessoa, nunca o agente que lê por ordem dela. Nunca o nome de um papel do banco (a função recusa). Dado pessoal do funcionário, com a finalidade única de prestar contas da leitura.';
 comment on column privado.registro_acesso_leitura.arquivo is
   'O arquivo acessado (art. 13, III): a tabela lida. Hoje só privado.registro_acesso.';
 comment on column privado.registro_acesso_leitura.conta is
@@ -198,6 +199,6 @@ begin
 end $$;
 
 comment on function privado.limpar_inventario_leituras_registro_acesso(integer, integer) is
-  'Expurga do inventário das leituras (privado.registro_acesso_leitura) as linhas cuja leitura terminou há mais de 5 anos, inclusive de conta excluída, em lotes com SKIP LOCKED e teto de 100 lotes por execução. Piso de 5 anos que nenhum parâmetro encurta (Bússola, 08/11/2026; para o advogado: o Decreto 8.771 não fixa prazo, e os 5 anos são inferência do time). Ainda não é chamada por privado.executar_retencao_diaria: entra lá depois do #459, que reescreve a rotina.';
+  'Expurga do inventário das leituras (privado.registro_acesso_leitura) as linhas cuja leitura terminou há mais de 5 anos, inclusive de conta excluída, em lotes com SKIP LOCKED e teto de 100 lotes por execução. Piso de 5 anos que nenhum parâmetro encurta (Bússola, 08/11/2026; para o advogado: o Decreto 8.771 não fixa prazo, e os 5 anos são inferência do time: o prazo da ação punitiva federal (Lei 9.873/1999, art. 1º; inferência: vale para a ANPD)). Ainda não é chamada por privado.executar_retencao_diaria: entra lá depois do #459, que reescreve a rotina.';
 revoke all on function privado.limpar_inventario_leituras_registro_acesso(integer, integer) from public, anon, authenticated;
 grant execute on function privado.limpar_inventario_leituras_registro_acesso(integer, integer) to service_role;
