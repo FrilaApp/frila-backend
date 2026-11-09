@@ -57,6 +57,18 @@ export interface SqlClient {
     tipo: string,
   ) => Promise<{ title: string; body: string } | null>;
   reivindicarLotePendentes?: (limite: number) => Promise<NotificacaoLinha[]>;
+  /**
+   * 0.2.66 (portão (c) do corte por versão): ids dos aparelhos cuja `versao_app` alcança o mínimo
+   * de `chamada_direta` da plataforma, decidido no banco por `privado.recurso_na_versao`. Sem este
+   * método, nenhum aviso `chamada_*` sai (fechado por padrão).
+   */
+  aparelhosQueRecebemChamada?: (aparelhos: AparelhoParaVersao[]) => Promise<string[]>;
+}
+
+export interface AparelhoParaVersao {
+  id: string;
+  plataforma: string;
+  versao_app?: string | null;
 }
 
 export interface Dependencias {
@@ -542,6 +554,21 @@ export function criarSqlClient(deps?: Dependencias): SqlClient {
         await sql.end({ timeout: 2 });
       }
     },
+    async aparelhosQueRecebemChamada(aparelhos: AparelhoParaVersao[]): Promise<string[]> {
+      if (aparelhos.length === 0) return [];
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        const lista = aparelhos.map((a) => ({ id: a.id, plataforma: a.plataforma, versao_app: a.versao_app ?? null }));
+        const res = await sql`
+          select x.id
+            from jsonb_to_recordset(${JSON.stringify(lista)}::jsonb) as x(id text, plataforma text, versao_app text)
+           where privado.recurso_na_versao('chamada_direta', x.plataforma, x.versao_app)
+        `;
+        return res.map((r) => String(r.id));
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
     async removerTokenFcm(token: string): Promise<number> {
       const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
       try {
@@ -815,20 +842,38 @@ export async function processarEnvioPush(
     let aparelhos: Array<{ id: string; token_fcm: string; plataforma: string; vinculo_id?: string; versao_app?: string | null }> =
       dispRes.ok ? await dispRes.json() : [];
 
-    // B5e / CD-RF13: push de chamada direta só sai para aparelho com versão suportada
-    if (n.tipo.startsWith("chamada_")) {
-      aparelhos = aparelhos.filter((a) => {
-        if (!a.versao_app) return false;
-        const m = a.versao_app.trim().match(/^(\d+)\.(\d+)\.(\d+)/);
-        if (!m) return false;
-        const major = parseInt(m[1], 10);
-        const minor = parseInt(m[2], 10);
-        const patch = parseInt(m[3], 10);
-        if (major > 0) return true;
-        if (major === 0 && minor > 2) return true;
-        if (major === 0 && minor === 2 && patch >= 0) return true;
-        return false;
-      });
+    // B5e / CD-RF13, revisto na 0.2.66 (portão (c) do corte por versão): o aviso de chamada direta só
+    // sai para aparelho cuja versao_app alcança o mínimo de chamada_direta da plataforma, o mesmo que
+    // decide recursos.chamada_direta em configuracao_do_app e que chamar_profissional exige. Quem
+    // decide é o banco (privado.recurso_na_versao). Sem a consulta, nada sai: fechado por padrão,
+    // como o resto do corte. Se a consulta falhar, também nada sai agora, mas o aviso volta com
+    // backoff, como erro transitório: uma falha de rede não vira "versão não suportada" para sempre.
+    if (n.tipo.startsWith("chamada_") && aparelhos.length > 0) {
+      let recebem: Set<string>;
+      try {
+        recebem = new Set(
+          sqlClient.aparelhosQueRecebemChamada ? await sqlClient.aparelhosQueRecebemChamada(aparelhos) : [],
+        );
+      } catch (_e) {
+        const novaTentativa = n.tentativas + 1;
+        const teto = 5;
+        const atingiuTeto = novaTentativa >= teto;
+        const proximaTentativa = atingiuTeto ? null : calcularProximaTentativa(novaTentativa);
+        await sqlClient.gravarFalhaPush({
+          notificacaoId: n.id,
+          motivo: "erro_transitorio: versao_do_aparelho",
+          permanente: false,
+          teto: teto,
+          proximaTentativaEm: proximaTentativa ? proximaTentativa.toISOString() : null,
+        });
+        relatorio.push({
+          notificacao_id: n.id,
+          status: atingiuTeto ? "falhou" : "pendente",
+          detalhe: "erro_transitorio: versao_do_aparelho",
+        });
+        continue;
+      }
+      aparelhos = aparelhos.filter((a) => recebem.has(a.id));
     }
 
     if (aparelhos.length === 0) {
