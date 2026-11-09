@@ -50,7 +50,9 @@ create table privado.registro_acesso_leitura (
   linhas          integer not null,
   inicio          timestamptz not null,
   fim             timestamptz not null,
-  constraint registro_acesso_leitura_responsavel check (char_length(responsavel) between 1 and 80 and responsavel = btrim(responsavel)),
+  -- Login como o do GitHub: minúsculas ASCII, números e hífen interno, de 1 a 39 caracteres. Recusa espaço (inclusive
+  -- o não separável), quebra de linha, ponto, sublinhado e letra não ASCII, também para quem grava direto (postgres).
+  constraint registro_acesso_leitura_responsavel check (responsavel ~ '^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$'),
   constraint registro_acesso_leitura_arquivo check (arquivo = 'privado.registro_acesso'),
   constraint registro_acesso_leitura_motivo check (char_length(motivo) between 1 and 200 and motivo = btrim(motivo)),
   constraint registro_acesso_leitura_linhas check (linhas >= 0),
@@ -69,7 +71,7 @@ comment on column privado.registro_acesso_leitura.papel_sessao is
 comment on column privado.registro_acesso_leitura.papel_chamada is
   'O papel ativo de quem chamou (o SET ROLE da sessão, como o service_role que o PostgREST assume); nulo quando a sessão não trocou de papel.';
 comment on column privado.registro_acesso_leitura.responsavel is
-  'Identidade de quem leu (art. 13, II e III): o login individual do funcionário ou do responsável designado, declarado em cada leitura: a pessoa, nunca o agente que lê por ordem dela. Nunca o nome de um papel do banco (a função recusa). Dado pessoal do funcionário, com a finalidade única de prestar contas da leitura.';
+  'Identidade de quem leu (art. 13, II e III): o login individual do funcionário ou do responsável designado, declarado em cada leitura: a pessoa, nunca o agente que lê por ordem dela. Formato de login como o do GitHub (minúsculas ASCII, números e hífen interno, de 1 a 39 caracteres), gravado sem os espaços das pontas e em minúsculas. Nunca o nome de um papel do banco, nem disfarçado (a função recusa). Dado pessoal do funcionário, com a finalidade única de prestar contas da leitura.';
 comment on column privado.registro_acesso_leitura.arquivo is
   'O arquivo acessado (art. 13, III): a tabela lida. Hoje só privado.registro_acesso.';
 comment on column privado.registro_acesso_leitura.conta is
@@ -103,7 +105,12 @@ as $$
 #variable_conflict use_column
 declare
   v_inicio      timestamptz := clock_timestamp();
-  v_responsavel text := btrim(p_responsavel);
+  -- Normaliza: tira das pontas todo espaço Unicode (inclusive o não separável e os de largura zero) e põe em
+  -- minúsculas. É o valor gravado.
+  v_responsavel text := lower(regexp_replace(p_responsavel,
+    '^[[:space:]\u00a0\u1680\u180e\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]+|[[:space:]\u00a0\u1680\u180e\u2000-\u200b\u2028\u2029\u202f\u205f\u3000\ufeff]+$',
+    '', 'g'));
+  v_chave       text;
   v_motivo      text := btrim(p_motivo);
   v_linhas      integer;
 begin
@@ -111,9 +118,16 @@ begin
   if v_responsavel is null or v_responsavel = '' then
     perform public.erro(422, 'responsavel_obrigatorio', 'informe o login de quem lê');
   end if;
-  if char_length(v_responsavel) > 80
-     or exists (select 1 from pg_catalog.pg_roles r where r.rolname = lower(v_responsavel)) then
+  -- Papel do banco, também disfarçado: compara com pg_roles depois de trocar cada trecho que não é letra nem número
+  -- por '_' (service-role, service_role., "service_role" e service role caem como service_role).
+  v_chave := btrim(regexp_replace(v_responsavel, '[^a-z0-9]+', '_', 'g'), '_');
+  if exists (select 1 from pg_catalog.pg_roles r
+              where btrim(regexp_replace(lower(r.rolname), '[^a-z0-9]+', '_', 'g'), '_') = v_chave) then
     perform public.erro(422, 'responsavel_invalido', 'o responsável é a pessoa que lê, não um papel do banco');
+  end if;
+  if v_responsavel !~ '^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$' then
+    perform public.erro(422, 'responsavel_invalido',
+      'o responsável é um login: letras sem acento, números e hífen interno, de 1 a 39 caracteres');
   end if;
   if v_motivo is null or v_motivo = '' then
     perform public.erro(422, 'motivo_obrigatorio', 'informe o motivo ou o número da ordem');
@@ -145,7 +159,7 @@ begin
 end $$;
 
 comment on function privado.ler_registros_acesso(uuid, timestamptz, timestamptz, text, text) is
-  'Única leitura de privado.registro_acesso (Decreto 8.771/2016, art. 13, III). Devolve as linhas da conta no período [desde, ate) e grava 1 linha no inventário privado.registro_acesso_leitura (papéis técnicos da sessão, responsável, arquivo acessado, conta, período, motivo, quantas linhas, início e fim), mesmo quando volta vazia. Recusa sem ler (422): responsavel_obrigatorio, responsavel_invalido (acima de 80 caracteres ou nome de papel do banco), motivo_obrigatorio, motivo_invalido (acima de 200), conta_obrigatoria, periodo_invalido. Quem chama (art. 13, I): só o service_role e o dono. Não é API: o esquema privado não está exposto no PostgREST.';
+  'Única leitura de privado.registro_acesso (Decreto 8.771/2016, art. 13, III). Devolve as linhas da conta no período [desde, ate) e grava 1 linha no inventário privado.registro_acesso_leitura (papéis técnicos da sessão, responsável, arquivo acessado, conta, período, motivo, quantas linhas, início e fim), mesmo quando volta vazia. Recusa sem ler (422): responsavel_obrigatorio, responsavel_invalido (nome de papel do banco, também disfarçado, ou fora do formato de login: minúsculas ASCII, números e hífen interno, de 1 a 39 caracteres; o responsável é gravado sem os espaços das pontas e em minúsculas), motivo_obrigatorio, motivo_invalido (acima de 200), conta_obrigatoria, periodo_invalido. Quem chama (art. 13, I): só o service_role e o dono. Não é API: o esquema privado não está exposto no PostgREST.';
 revoke all on function privado.ler_registros_acesso(uuid, timestamptz, timestamptz, text, text) from public, anon, authenticated;
 grant execute on function privado.ler_registros_acesso(uuid, timestamptz, timestamptz, text, text) to service_role;
 
