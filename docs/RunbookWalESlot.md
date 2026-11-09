@@ -44,15 +44,13 @@ Uma vez por dia, junto da `docs/ChecagemDiariaProd.md`. Também logo depois de q
 
 ```sql
 begin read only;
--- 1. A coleta e o slot. O atraso é medido pelo restart_lsn, que é o que retém o WAL.
-select c.ligada, c.teto_wal_mb, c.consumido_em,
-       round(extract(epoch from now() - c.consumido_em) / 60) as minutos_sem_consumo,
-       s.slot_name, s.active, s.wal_status,
+-- 1. O slot e o WAL que ele retém, SÓ pelo catálogo: nenhuma leitura de privado.registro_acesso* (regra do Cauê
+--    de 08/11/2026). Os metadados do slot, nunca o peek. O atraso é medido pelo restart_lsn, que é o que retém o WAL.
+select s.slot_name, s.plugin, s.temporary, s.active, s.wal_status,
        round(pg_wal_lsn_diff(pg_current_wal_lsn(), s.restart_lsn) / 1048576.0) as atraso_mb,
        round(s.safe_wal_size / 1048576.0) as folga_ate_invalidar_mb
-  from privado.registro_acesso_coleta c
-  left join pg_replication_slots s on s.slot_name = privado.slot_registro_acesso()
- where c.unica;
+  from pg_replication_slots s
+ where s.slot_name = 'frila_registro_acesso';
 -- 2. A pasta do WAL e os tetos.
 select count(*) as arquivos_wal, round(sum(size) / 1048576.0) as pasta_wal_mb from pg_ls_waldir();
 select name, setting, unit from pg_settings
@@ -74,15 +72,20 @@ select codigo, ultimo_em, suprimidos from privado.alerta_emitido where codigo li
 rollback;
 ```
 
+**Sem ler a tabela da chave:**
+- **O teto da autoproteção** (`teto_wal_mb`) é 128 MB, o padrão da `20261108110000:76`. O `service_role` pode ajustá-lo entre 16 e 192 MB sem migração. Esse ajuste só existe na tabela: quem o fizer registra no log de plantão, e a conferência usa 128.
+- **Coleta ligada** se lê pela presença do slot. Com a coleta desligada, o consumidor derruba o slot na rodada seguinte.
+- **O consumo** se lê pela última rodada boa do `consumir_registro_acesso` (consulta 3). Uma rodada que não consegue consumir vira `registro_acesso_consumo_falhou` ou `registro_acesso_buraco` (consulta 4).
+
 E o disco, fora do banco, pela Management API: `GET /v1/projects/hbjkkcenbudiezmamiak/config/disk/util` devolve `fs_size_bytes`, `fs_used_bytes` e `fs_avail_bytes`.
 - Em 08/11 funcionou com o token de 24 h da janela (permissões FGA de Edge Functions, segredos, chaves e `database_config`). A permissão exata dessa rota não foi isolada.
 - **Não conferido:** onde o painel mostra o mesmo número.
 
 | Veredito | Critério |
 |---|---|
-| 🟢 VERDE | coleta `ligada`; slot `active` ou entre rodadas, com `wal_status = reserved`; atraso abaixo de 64 MB (metade do teto); sem consumo há menos de 15 min; os 2 jobs `active`, com rodada boa nos últimos 10 min; disco com mais de 0,6 GB livres |
+| 🟢 VERDE | slot `frila_registro_acesso` presente (coleta ligada), `active` ou entre rodadas, com `wal_status = reserved`; atraso abaixo de 64 MB (metade do teto de 128 MB); os 2 jobs `active`, com rodada boa nos últimos 10 min; nenhum buraco novo; disco com mais de 0,6 GB livres |
 | 🟡 AMARELO | atraso entre 64 e 128 MB; ou pasta do WAL perto de 1 GB com o slot saudável (rastro de evento antigo, seção 2); ou disco entre 0,3 e 0,6 GB livres |
-| 🔴 VERMELHO | `wal_status` `unreserved` ou `lost`; coleta ligada **sem** slot; sem consumo há mais de 15 min; um dos 2 jobs inativo ou sem rodada boa há mais de 15 min; disco abaixo de 0,3 GB livres |
+| 🔴 VERMELHO | `wal_status` `unreserved` ou `lost`; slot ausente com a coleta ligada (fora o intervalo de uma rodada entre a derrubada e a recriação, que deixa um `registro_acesso_buraco` na consulta 4); um dos 2 jobs inativo ou sem rodada boa há mais de 15 min; disco abaixo de 0,3 GB livres |
 
 **Sobre o `wal_status` neste Prod:** como o `max_wal_size` (4 GB) é maior que o teto do slot (1 GB), o `extended` não deve aparecer. O caminho é `reserved` → `unreserved` (passou de 1 GB; o próximo checkpoint apaga) → `lost` (inferência pela documentação do PostgreSQL 17, não medida no Prod).
 

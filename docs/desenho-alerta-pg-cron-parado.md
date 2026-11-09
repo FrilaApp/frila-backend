@@ -1,6 +1,6 @@
 # Desenho · Alerta de `pg_cron` parado que não depende do `pg_cron`
 
-> **Só desenho. Nenhum código neste documento nem no PR que o traz.** As decisões em aberto estão na seção 6; a implementação vira cartões próprios (seção 7).
+> **Só desenho. Nenhum código neste documento nem no PR que o traz.** O desenho foi **aceito** pelo Cauê em 08/11/2026, com as escolhas da seção 6. A implementação vira cartões próprios (seção 7).
 
 ## 1. O problema
 
@@ -33,9 +33,10 @@ Hoje, um `pg_cron` parado só aparece na checagem diária (`docs/ChecagemDiariaP
 - Banco fora do ar continua dando 503 `indisponivel`, como hoje.
 
 **(b) O vigia, fora do Supabase.**
-- Um monitor de disponibilidade externo faz `HEAD /functions/v1/saude` a cada 5 min. Com 2 falhas seguidas, ele manda e-mail para o endereço da equipe.
-- Qualquer serviço de uptime com plano gratuito e alerta por e-mail serve. A escolha é a decisão 6.1.
-- **Segunda linha, opcional:** um workflow agendado do GitHub Actions (`schedule`, a cada 15 min) faz o mesmo `HEAD` e abre uma issue na falha. O `schedule` do GitHub pode atrasar ou pular rodadas sob carga, por isso ele não é a primeira linha.
+- O monitor de uptime **HetrixTools** (plano grátis, seção 6) faz `HEAD /functions/v1/saude` a cada 5 min.
+- Com "Alert only after 10 minutes", ele só avisa se o 503 durar 2 rodadas seguidas.
+- O aviso vai por e-mail para a equipe, no `suporte@frilabr.com`.
+- Não há segunda linha no GitHub Actions (decisão 6.4).
 
 **(c) A ação continua humana.** O vigia avisa e não conserta. O plantonista segue a seção 3 do `docs/RUNBOOK-INCIDENTES.md`. Se o agendador não volta logo, desliga a coleta do registro de acessos (`docs/RunbookWalESlot.md`, seção 4).
 
@@ -43,24 +44,43 @@ Hoje, um `pg_cron` parado só aparece na checagem diária (`docs/ChecagemDiariaP
 
 - **Alerta dentro do banco** (mais um item da `verificar_saude`): descartado, porque depende do próprio `pg_cron` que ele vigia.
 - **Só o GitHub Actions:** descartado como primeira linha, pelo atraso do `schedule`.
-- **Alertas e log drains da plataforma:** **não conferido** se o plano free oferece algum que veja o `pg_cron`. Se oferecer, entra como alternativa na decisão 6.1.
+- **Alertas e log drains da plataforma:** **não conferido** se o plano free oferece algum que veja o `pg_cron`. Se oferecer, fica como alternativa ao HetrixTools (6.1).
 - **Vantagem da `saude`:** ela já é pública, já tem fumaça (`scripts/fumaca-prod-leitura.sh`) e não está no contrato (`contrato/openapi.yaml` não a cita; conferido em 08/11). Mudar o corpo dela é interno; a fumaça e quem espera "200 saudavel" mudam junto.
 
 ## 5. Riscos do desenho
 
 - **Falso positivo depois de um restart planejado** (os jobs voltam com atraso): o monitor espera 2 falhas seguidas. Numa manutenção avisada, pausar o monitor.
 - **A `saude` lendo `cron.job_run_details` em toda chamada:** a tabela cresce com um job a cada minuto. O custo da consulta, com a janela das últimas horas, não foi medido (não conferi os índices dela): medir no cartão de implementação, e limitar a consulta à última rodada de cada job.
-- **O vigia externo é mais uma conta e mais um segredo** (no máximo, o endereço de e-mail da equipe; a `saude` não pede chave). Fica registrado em `docs/ESTADO.md` quando entrar.
+- **O vigia externo é mais uma conta** (a `saude` não pede chave). Fica registrado em `docs/ESTADO.md` quando entrar.
+- **A conta grátis do HetrixTools exige entrar no painel pelo menos uma vez a cada 90 dias.** Sem isso, o vigia some em silêncio. Isso vira um lembrete no plantão (cartão 2).
 
-## 6. Decisões em aberto (do Cauê e da PO)
+## 6. Decisões (do Cauê, 08/11/2026, pela Central e pela Forja)
 
-1. Qual serviço de monitoramento externo e em que conta.
-2. O endereço que recebe o aviso.
-3. Os limiares (15 min para a `verificar_saude`, 10 min para o consumidor e para a fila de e-mail) e a carência de 2 falhas.
-4. Se a segunda linha do GitHub Actions entra.
+**1. Serviço: HetrixTools, plano grátis.** O Opus Back pesquisou os termos, os preços e a documentação, lidos em 08/11/2026:
+- os termos não proíbem uso comercial e preveem "one free HetrixTools account per person or organization" (https://hetrixtools.com/terms-of-service/). Ressalva: a cláusula de reembolso chama o grátis de "demo/trial";
+- o monitor aceita GET ou HEAD e tem "Alert only after X minutes" (https://docs.hetrixtools.com/api-add-website-ping-service-smtp-uptime-monitor/), com "Every feature here comes with every plan, even Free" (https://hetrixtools.com/feature/website-monitor/);
+- o grátis checa a cada minuto, mas pede entrar no painel a cada 90 dias e não manda aviso para outro destinatário ("Multiple email recipients": Free = "Not included", https://hetrixtools.com/pricing/uptime-monitor/).
+
+**2. Conta e destino do aviso:**
+- a conta fica na `frila.org@gmail.com`;
+- o aviso chega ao `suporte@frilabr.com` por um filtro de encaminhamento do Gmail dessa conta, porque o grátis só avisa o e-mail da própria conta;
+- se o encaminhamento não funcionar (a conferir no cartão 2), a decisão volta ao Cauê: criar a conta no próprio `suporte@frilabr.com`;
+- nunca no Gmail pessoal do Cauê.
+
+**3. Limiares:**
+- 15 min para a `verificar_saude`;
+- 10 min para o `consumir_registro_acesso` (só com a coleta ligada) e para a `processar_fila_email`;
+- a carência de 2 falhas é a checagem `HEAD` a cada 5 min com "Alert only after 10 minutes".
+
+**4. Sem a segunda linha no GitHub Actions.**
 
 ## 7. Cartões que este desenho gera
 
-1. `privado.idade_do_agendador()` mais o 503 `agendador_parado` na `saude`, com pgTAP da função, teste da Edge Function e fumaça atualizada.
-2. Configurar o monitor externo (decisões 6.1 e 6.2) e registrar em `docs/ESTADO.md`.
-3. (Opcional) O workflow agendado de segunda linha.
+1. `privado.idade_do_agendador()` mais o 503 `agendador_parado` na `saude`, com pgTAP da função, teste da Edge Function e fumaça atualizada. Vai ao Opus Back, depois do pacote 5.
+2. Pelo portal:
+   - criar a conta HetrixTools na `frila.org@gmail.com` e o monitor `HEAD` de 5 min com "Alert only after 10 minutes";
+   - criar e testar o filtro de encaminhamento para o `suporte@frilabr.com`;
+   - pôr o lembrete de login a cada 90 dias;
+   - registrar tudo em `docs/ESTADO.md`.
+
+   A Forja distribui depois do pacote 5. Só vale depois do cartão 1: antes dele, a `saude` não dá 503 com o agendador parado.
