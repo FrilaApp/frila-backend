@@ -21,7 +21,7 @@
 begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
-select plan(75);
+select plan(77);
 
 -- A casa 833 (dono e operador) e um contratante de outra casa.
 create temp table ids as
@@ -190,6 +190,11 @@ select is(pg_temp.v('fora', '482913', 40), '200:verificado', 'a conta de demonst
 -- ── O acerto, com posição ────────────────────────────────────────────────────
 select pg_temp.gerar(n) from unnest(array['a', 'sem_posicao', 'raio', 'erros', 'vencido', 'regra', 'cancelada', 'r2']) n;
 select ok(pg_temp.painel()->'checkins_pendentes' ? pg_temp.t('a')::text, 'antes da validação, o turno espera no painel');
+-- Com a chave ligada e o código em vigor, o formato recusa do mesmo jeito e não conta (contrato :731, "Parâmetro nulo").
+select is(pg_temp.v('a', null, 40) || ' ' || pg_temp.v('a', '1234567', 40) || ' ' || pg_temp.v('a', pg_temp.cod('a'), -1),
+  '422:campo_obrigatorio:codigo 422:campo_invalido:codigo 422:campo_invalido:distancia_m',
+  'com a chave ligada e o código em vigor: codigo nulo, fora do formato e distância negativa recusam com 422');
+select is(pg_temp.erros('a') * 10 + pg_temp.tentativas('a'), 0, 'o formato e o nulo não contam como tentativa: nem contador, nem tentativa');
 create temp table cod_a as select pg_temp.cod('a') as c,
   (select gerado_em from privado.checkin_codigo where turno_id = pg_temp.t('a')) as gerado_em,
   (select expira_em from privado.checkin_codigo where turno_id = pg_temp.t('a')) as expira_em;
