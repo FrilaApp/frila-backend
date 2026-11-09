@@ -376,8 +376,15 @@ ISENTAS = {
 # Operações que o contrato 0.2.52 a 0.2.57 declara e que ainda não têm RPC (contratação
 # direta, fatias F2 a F4). Diferente de ISENTAS: estas VÃO entrar pela colheita, e cada uma
 # sai daqui no PR que a implementa. Operação pendente que ganha resposta colhida reprova.
-PENDENTES = {op: "contratação direta, ainda sem implementação" for op in (
-    "listarEspecialidades", "listarRegioesAdministrativas")}
+PENDENTES = {
+    **{op: "contratação direta, ainda sem implementação" for op in (
+        "listarEspecialidades", "listarRegioesAdministrativas")},
+    # Check-in por código (0.2.68): o espelho entra antes das RPCs (PR4 do B-CHECKIN-BACK). Cada
+    # uma sai daqui no PR que a implementa, com os pares em VIGIADAS: gerar no PR5; validar no
+    # PR7, porque a recusa dele responde por response.status e o harness precisa aprender a lê-lo.
+    **{op: "check-in por código, ainda sem implementação" for op in (
+        "gerarCodigoCheckin", "validarCodigoCheckin")},
+}
 
 def recusas_declaradas(doc):
     """operationId -> conjunto de status de recusa que o contrato declara."""

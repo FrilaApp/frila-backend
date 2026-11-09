@@ -20,7 +20,7 @@ on conflict (id) do update set eh_teste = true;
 set local "frila.agora" = '2026-11-20 12:00:00+00';
 set local frila.agendador_secret = 'segredo-de-teste';
 
-select plan(28);
+select plan(29);
 
 -- 2. Helpers de autenticação e contexto
 create or replace function pg_temp.autenticar(p_id uuid, p_role text default 'authenticated')
@@ -131,8 +131,11 @@ select ok(not has_function_privilege('anon', 'public.cancelar_posicao(uuid, text
 select ok(not has_function_privilege('anon', 'public.cancelar_vaga(uuid, text)', 'execute'),
   'RPC critica blindada: anon nao executa cancelar_vaga');
 
-select ok(not has_function_privilege('anon', 'public.fazer_checkin(uuid, integer, timestamp with time zone)', 'execute'),
-  'RPC critica blindada: anon nao executa fazer_checkin');
+select ok(not has_function_privilege('anon', 'public.fazer_checkin(uuid, integer, timestamp with time zone, jsonb)', 'execute'),
+  'RPC critica blindada: anon nao executa fazer_checkin (com sinais, 0.2.68)');
+
+select is((select count(*)::int from pg_proc where proname = 'fazer_checkin' and pronamespace = 'public'::regnamespace), 1,
+  'fazer_checkin tem uma assinatura só: a de três argumentos saiu, e não há sobrecarga (PGRST203)');
 
 select ok(not has_function_privilege('anon', 'public.fazer_checkout(uuid, integer, timestamp with time zone)', 'execute'),
   'RPC critica blindada: anon nao executa fazer_checkout');
