@@ -134,9 +134,11 @@ select set_eq(
     -- Consumidor do registro de acessos, a cada minuto (LGPD-J6 R11, Marco Civil art. 15).
     'consumir_registro_acesso',
     -- Limpa a trilha do Auth e as sessões paradas há mais de 6 meses (LGPD-J6 T2b, 20261108120000).
-    'limpar_trilha_e_sessoes_auth'
+    'limpar_trilha_e_sessoes_auth',
+    -- Apaga o valor do código de check-in vencido, a cada minuto (check-in por código, LGPD).
+    'apagar_codigos_checkin_vencidos'
   ],
-  'Os jobs agendados são exatamente os vinte e três conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os vinte e quatro conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;
