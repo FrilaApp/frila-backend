@@ -599,12 +599,11 @@ select results_eq(
   $$ values ('[removido por exclusão de conta]'::text, null::text, 0) $$,
   'conta anonimizada: a denúncia antiga fica com o marcador da exclusão, sem relato e sem trilha');
 
--- ── 6. Resíduo registrado: a reconciliação diária recalcula do histórico ──────
+-- ── 6. R9 garantido: a reconciliação diária preserva a reputação expurgada ──
 
 -- Em comando separado: no mesmo comando, a leitura usaria o retrato de antes da reconciliação.
 do $$ begin perform privado.reconciliar_comparecimento(); end $$;
 
-select todo('Resíduo R9: privado.reconciliar_comparecimento (06:00 UTC) recalcula os contadores a partir de turno, posição e avaliação, que o expurgo apagou. Base histórica expurgada: https://trello.com/c/8KFuT8UP (frila-docs A11 primeiro)', 1);
 select results_eq(
   $$ select p.id, p.turnos_realizados, p.taxa_comparecimento, p.aval_positivas, p.aval_total
        from public.profissional p
