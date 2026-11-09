@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.65
+  version: 0.2.66
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -109,6 +109,19 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.66, de 08/11/2026.** Só descrição; nenhum campo, operação, status ou código muda.
+    Fecha o portão (c) do corte por versão da 0.2.65 (desenho em
+    `arquitetura/desenho-recursos-por-versao-do-app-v1.2.md`):
+    - O aviso `chamada_*` só sai para aparelho cuja `versao_app` (de `registrar_dispositivo`)
+      alcança a versão mínima de `chamada_direta` na plataforma do aparelho, a mesma que decide
+      `recursos.chamada_direta` em `configuracao_do_app`. Antes era "versão que suporta a chamada"
+      (0.2.56), sem número.
+    - `chamar_profissional` recusa com `422 profissional_indisponivel` (`nao_aceita_chamadas`) quando
+      o profissional não tem nenhum aparelho nessa versão mínima. É a recusa genérica que já existe,
+      e ela não revela o motivo, como nas preferências e no vínculo. Sem permissão de notificação o
+      app não registra o aparelho, então esse profissional não pode ser chamado.
+    - Por que é só descrição: o código e o `details` já existem, e nenhum cliente precisa mudar.
 
     **Versão 0.2.65, de 08/11/2026.** Recursos por versão do app, para a revisão da 1.2 não ligar os
     recursos de quem está na 1.1 (desenho em `arquitetura/desenho-recursos-por-versao-do-app-v1.2.md`):
@@ -3454,6 +3467,12 @@ paths:
 
         O `recado` passa pelo filtro de termos e de contato (RN38). A preferência "aceito só de
         estabelecimentos com CNPJ" e as demais saem como `nao_aceita_chamadas`, sem dizer qual. Profissional sem vínculo de trabalho com a casa recebe a mesma recusa genérica (`422 profissional_indisponivel`, `nao_aceita_chamadas`), sem revelar que o vínculo falta.
+
+        **Versão do app (0.2.66).** O profissional sem nenhum aparelho registrado com `versao_app` na
+        versão mínima de `chamada_direta` da plataforma (0.2.65) recebe a mesma recusa genérica
+        (`422 profissional_indisponivel`, `nao_aceita_chamadas`). Assim nunca se cria uma chamada para
+        quem não a receberia. Isso inclui quem não deu permissão de notificação: sem ela, o app não
+        registra o aparelho.
       x-requisitos: [RN28, RN29, RN30, RN31, RN33, RN34, RN38, RN45, RN46, RN02, RN19, RF26]
       requestBody:
         required: true
@@ -4918,7 +4937,8 @@ paths:
                   description: |
                     0.2.56. Opcional. Versão do app, no formato de `ConfiguracaoDoApp.versao_minima`.
                     O servidor guarda junto do token e só manda aviso `chamada_*` para aparelho cuja
-                    versão suporta a chamada; sem versão, o aparelho conta como antigo.
+                    versão alcança a versão mínima de `chamada_direta` da plataforma (0.2.66); sem
+                    versão, o aparelho conta como antigo.
                   type: string
                   pattern: '^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$'
                   example: "1.1.0"
@@ -5621,8 +5641,10 @@ components:
         | `selecao_lembrete` | Membro do estabelecimento | Candidatos esperando sua escolha | {N} candidato(s) para a vaga de {função}. Escolha até {dd/mm às HH:MM}, quando a vaga fecha. |
 
         **Chamadas diretas (0.2.55).** Sem nome de pessoa e sem contato no texto; payload só com
-        `tipo`, `chamada_id` e `vaga_id`. Não contam no teto da RN23. Só saem para aparelho com
-        `versao_app` que suporta a chamada (0.2.56); aparelho sem versão conta como antigo.
+        `tipo`, `chamada_id` e `vaga_id`. Não contam no teto da RN23. Só saem para aparelho cuja
+        `versao_app` alcança a versão mínima de `chamada_direta` da plataforma (0.2.66; era "que
+        suporta a chamada", 0.2.56), comparando parte a parte e completando com zeros, como em
+        `configuracao_do_app`. Aparelho sem versão conta como antigo.
 
         | Tipo | Quem recebe | Título | Corpo |
         |---|---|---|---|
