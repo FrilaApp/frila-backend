@@ -252,7 +252,6 @@ declare
   v_resultado jsonb := jsonb_build_object('executado_em', privado.agora());
   v_falhas    jsonb := '[]'::jsonb;
   v_valor     jsonb;
-  i           integer;
 begin
   for i in 1 .. array_length(c_passos, 1) loop
     begin
