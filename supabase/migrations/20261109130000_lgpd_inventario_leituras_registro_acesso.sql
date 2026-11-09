@@ -18,9 +18,11 @@
 -- Prazo de guarda do inventário (Bússola, 08/11/2026): 5 anos contados do fim de cada leitura, sem FK para a conta
 -- lida. Base: LGPD art. 7º, II e art. 16, I (o inventário cumpre o Decreto 8.771, art. 13, III) e art. 6º, X
 -- (prestação de contas). O decreto não fixa prazo: os 5 anos são inferência do time: o prazo da ação punitiva federal (Lei 9.873/1999, art. 1º; inferência: vale para a ANPD).
--- A limpeza é privado.limpar_inventario_leituras_registro_acesso. Ela não entra aqui em
--- privado.executar_retencao_diaria, porque o #459 (20261109102000) reescreve essa rotina: a chamada entra depois
--- dele, numa linha (a primeira linha só vence em 2031).
+-- A limpeza é privado.limpar_inventario_leituras_registro_acesso, chamada pela privado.executar_retencao_diaria
+-- (seção 5). Esta migração vem depois da 20261109102000 (#459) e parte da versão dela da rotina.
+-- Escopo a mais, decidido pela Central em 08/11/2026 (análise do pacote 6): na rotina diária, cada passo roda no seu
+-- próprio bloco de exceção. Antes, um erro em qualquer passo (por exemplo, o novo limpar_checkin_por_codigo do #459)
+-- parava a rotina inteira, inclusive o expurgo de 6 meses do registro de acessos (Marco Civil, art. 15).
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. Ninguém da API lê nem escreve direto no registro
@@ -213,6 +215,66 @@ begin
 end $$;
 
 comment on function privado.limpar_inventario_leituras_registro_acesso(integer, integer) is
-  'Expurga do inventário das leituras (privado.registro_acesso_leitura) as linhas cuja leitura terminou há mais de 5 anos, inclusive de conta excluída, em lotes com SKIP LOCKED e teto de 100 lotes por execução. Piso de 5 anos que nenhum parâmetro encurta (Bússola, 08/11/2026; para o advogado: o Decreto 8.771 não fixa prazo, e os 5 anos são inferência do time: o prazo da ação punitiva federal (Lei 9.873/1999, art. 1º; inferência: vale para a ANPD)). Ainda não é chamada por privado.executar_retencao_diaria: entra lá depois do #459, que reescreve a rotina.';
+  'Expurga do inventário das leituras (privado.registro_acesso_leitura) as linhas cuja leitura terminou há mais de 5 anos, inclusive de conta excluída, em lotes com SKIP LOCKED e teto de 100 lotes por execução. Piso de 5 anos que nenhum parâmetro encurta (Bússola, 08/11/2026; para o advogado: o Decreto 8.771 não fixa prazo, e os 5 anos são inferência do time: o prazo da ação punitiva federal (Lei 9.873/1999, art. 1º; inferência: vale para a ANPD)). Chamada por privado.executar_retencao_diaria, todo dia.';
 revoke all on function privado.limpar_inventario_leituras_registro_acesso(integer, integer) from public, anon, authenticated;
 grant execute on function privado.limpar_inventario_leituras_registro_acesso(integer, integer) to service_role;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 5. A rotina diária: a limpeza do inventário entra, e um passo que falha não para os outros
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Parte da 20261109102000 (#459): os mesmos passos, na mesma ordem, mais o inventário depois do registro de acessos.
+-- Cada passo roda num bloco de exceção próprio (uma subtransação): se falha, o que ele fez é desfeito, a falha vai
+-- para privado.falha_execucao (origem executar_retencao_diaria, código retencao_passo_falhou, só o passo e o
+-- SQLSTATE, sem dado pessoal: RN15), o item 6 da verificar_saude alerta em até 15 min, e a rotina segue.
+create or replace function privado.executar_retencao_diaria()
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  -- (chave do resultado, chamada). As chamadas são fixas e qualificadas; nada vem de fora.
+  c_passos constant text[][] := array[
+    ['contas_anonimizadas_limpas',       'privado.limpar_contas_anonimizadas(15)'],
+    ['higiene',                          'privado.higienizar_tabelas()'],
+    ['eventos_app_limpos',               'privado.limpar_eventos_app(90)'],
+    ['expurgo_midia_identidade',         'privado.expurgar_midias_verificacao_identidade()'],
+    ['expurgo_midia_perfil',             'privado.expurgar_midias_recusadas()'],
+    ['expurgo_chamadas_nao_aceitas',     'privado.limpar_chamadas_expurgadas(90)'],
+    ['expurgo_checkin_por_codigo',       'privado.limpar_checkin_por_codigo(90, 500)'],
+    ['expurgo_turnos_antigos',           'privado.expurgar_turnos_antigos(5, 500)'],
+    ['expurgo_vagas_antigas',            'privado.expurgar_vagas_antigas(5, 500)'],
+    ['anonimizacao_ocorrencias_antigas', 'privado.anonimizar_ocorrencias_antigas(5, 500)'],
+    ['expurgo_marcas_notificacao',       'privado.limpar_marcas_notificacao(5, 1000)'],
+    ['expurgo_registros_acesso',         'privado.limpar_registros_acesso(6, 1000)'],
+    ['expurgo_inventario_leituras',      'privado.limpar_inventario_leituras_registro_acesso(5, 1000)']
+  ];
+  v_resultado jsonb := jsonb_build_object('executado_em', privado.agora());
+  v_falhas    jsonb := '[]'::jsonb;
+  v_valor     jsonb;
+  i           integer;
+begin
+  for i in 1 .. array_length(c_passos, 1) loop
+    begin
+      execute format('select to_jsonb(%s)', c_passos[i][2]) into v_valor;
+    exception when others then
+      v_valor := null;
+      v_falhas := v_falhas || jsonb_build_object('passo', c_passos[i][1], 'sqlstate', sqlstate);
+      begin
+        perform privado.registrar_falha_execucao('executar_retencao_diaria', 'retencao_passo_falhou',
+          jsonb_build_object('passo', c_passos[i][1], 'sqlstate', sqlstate));
+      exception when others then
+        null;  -- a falha segue no retorno ('falhas'); o registro não pode parar a rotina
+      end;
+    end;
+    v_resultado := v_resultado || jsonb_build_object(c_passos[i][1], v_valor);
+  end loop;
+
+  return v_resultado || jsonb_build_object('falhas', v_falhas);
+end $$;
+
+comment on function privado.executar_retencao_diaria() is
+  'Rotina diária consolidada de retenção e limpeza: contas anonimizadas (15 dias), higiene de tabelas, eventos do app (90 dias), expurgo de mídias de identidade e fotos recusadas (24 h), chamadas não aceitas (90 dias), o estado do check-in por código (90 dias depois do mais tarde entre o fim do turno e o fim da contestação, 0.2.68), turnos com mais de 5 anos e o contexto deles (vaga, chamada, despacho, posição sem turno, ocorrência de denúncia e cancelamento, marcas de notificação e trilha; LGPD-J6 fases 1 e 2), registros de acesso à aplicação com mais de 6 meses (Marco Civil art. 15) e o inventário das leituras deles com mais de 5 anos (Decreto 8.771, art. 13, III). Cada passo roda num bloco de exceção próprio: um passo que falha é desfeito, vai para privado.falha_execucao (executar_retencao_diaria / retencao_passo_falhou, com o passo e o SQLSTATE) e para a chave falhas do retorno, e os outros passos rodam mesmo assim.';
+
+revoke execute on function privado.executar_retencao_diaria() from public, anon, authenticated;
+grant  execute on function privado.executar_retencao_diaria() to service_role;

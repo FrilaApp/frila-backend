@@ -5,7 +5,7 @@
 begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-09 12:00:00+00', true);
-select plan(71);
+select plan(78);
 
 delete from privado.registro_acesso;
 delete from privado.registro_acesso_leitura;
@@ -252,6 +252,31 @@ select throws_ok(pg_temp.linha(de => '2026-11-02', a => '2026-11-02'), '23514', 
   'registro_acesso_leitura_periodo: o fim do período vem depois do início');
 select throws_ok(pg_temp.linha(ini => '2026-11-09 10:00:01', fi => '2026-11-09 10:00'), '23514', pg_temp.viola('registro_acesso_leitura_duracao'),
   'registro_acesso_leitura_duracao: o fim da leitura não vem antes do início');
+
+-- ─── 10. A rotina diária: um passo que falha não para os outros (decisão da Central, análise do pacote 6) ───
+-- O passo novo do #459 é forçado a falhar, só dentro desta transação.
+create or replace function privado.limpar_checkin_por_codigo(p_dias integer default 90, p_limite integer default 500)
+returns integer language plpgsql as $$ begin raise exception 'falha forçada no 838' using errcode = 'U0838'; end $$;
+delete from privado.falha_execucao where origem = 'executar_retencao_diaria';
+insert into privado.registro_acesso (usuario_id, ip, acessado_em) values
+  ('c8380000-0000-4000-8000-0000000000c3', '203.0.113.30', '2026-04-01 10:00:00+00');  -- passou dos 6 meses
+insert into privado.registro_acesso_leitura (papel_sessao, responsavel, arquivo, conta, desde, ate, motivo, linhas, inicio, fim) values
+  ('postgres', 'zz838-velha2', 'privado.registro_acesso', 'c8380000-0000-4000-8000-0000000000a1',
+   '2021-01-01', '2021-01-02', 'Ofício antigo', 1, '2021-01-01 10:00:00+00', '2021-01-01 10:00:01+00');  -- passou dos 5 anos
+select lives_ok($$ create temp table r838 as select privado.executar_retencao_diaria() as r $$,
+  'um passo da rotina diária que falha não derruba a rotina');
+select is((select r->'falhas' from r838), '[{"passo": "expurgo_checkin_por_codigo", "sqlstate": "U0838"}]'::jsonb,
+  'o retorno diz qual passo falhou, e só ele falhou');
+select is((select r->'expurgo_checkin_por_codigo' from r838), 'null'::jsonb, 'o passo que falhou fica nulo no retorno');
+select is((select r->>'expurgo_registros_acesso' from r838), '1',
+  'o expurgo de 6 meses do registro de acessos roda mesmo com um passo anterior falhando (Marco Civil, art. 15)');
+select ok(not exists (select 1 from privado.registro_acesso where usuario_id = 'c8380000-0000-4000-8000-0000000000c3'),
+  'a linha de mais de 6 meses saiu do registro');
+select is((select r->>'expurgo_inventario_leituras' from r838), '1', 'a rotina diária chama a limpeza do inventário');
+select results_eq(
+  $$ select codigo, detalhes from privado.falha_execucao where origem = 'executar_retencao_diaria' $$,
+  $$ values ('retencao_passo_falhou'::text, '{"passo": "expurgo_checkin_por_codigo", "sqlstate": "U0838"}'::jsonb) $$,
+  'a falha vai para privado.falha_execucao, com o passo e o SQLSTATE, sem dado pessoal (o item 6 da verificar_saude alerta)');
 
 select * from finish();
 rollback;
