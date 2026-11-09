@@ -6,7 +6,7 @@
 -- padrão). Só dados sintéticos; o arquivo desfaz tudo no rollback.
 
 begin;
-select plan(34);
+select plan(36);
 
 insert into privado.configuracao_app (plataforma, versao_minima, versao_recomendada, url_da_loja)
 values ('android', '0.1.0', '0.1.0', 'https://play.google.com/store/apps/details?id=br.com.frila')
@@ -49,7 +49,9 @@ select is(pg_temp.r('ios', null), '{"foto_de_perfil": false, "chamada_direta": f
   'versao_app nula: os três vêm false');
 select is(pg_temp.r('ios', v), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false}'::jsonb,
   'versao_app malformada (' || quote_literal(v) || '): vale como ausente, sem erro')
-  from unnest(array['1.2.0.1', 'v1.2', '1..2', '1.2.', '', ' 1.2', '1.2 (20261108)', '1234567']) v;
+  from unnest(array['1.2.0.0.1', 'v1.2', '1..2', '1.2.', '', ' 1.2', '1.2 (20261108)', '1234567']) v;
+-- 0.2.67: até quatro partes, a mesma regra de registrar_dispositivo e de recurso_na_versao.
+select is(pg_temp.r('ios', '1.2.0.1')->>'perfil_rico', 'true', 'versao_app de 4 partes ("1.2.0.1") alcança o mínimo "1.2.0" (0.2.67)');
 
 -- O resto da resposta não depende da versão.
 select is(public.configuracao_do_app('ios', '1.2') - 'recursos', public.configuracao_do_app('ios') - 'recursos',
@@ -73,8 +75,10 @@ select is(pg_temp.r('ios', '1.2')->>'foto_de_perfil', 'true', 'foto_de_perfil se
 -- ── 5. As regras da tabela do mínimo ──────────────────────────────────────────
 select throws_ok($$ select pg_temp.minimo('agenda', 'ios', '1.2.0') $$, '23514', null,
   'recurso_versao_minima_recurso: só os três recursos do contrato');
-select throws_ok($$ select pg_temp.minimo('perfil_rico', 'ios', '1.2.0.1') $$, '23514', null,
-  'recurso_versao_minima_formato: o mínimo tem de 1 a 3 partes, como versao_app');
+select throws_ok($$ select pg_temp.minimo('perfil_rico', 'ios', '1.2.0.0.1') $$, '23514', null,
+  'recurso_versao_minima_formato: o mínimo tem de 1 a 4 partes, como versao_app (0.2.67)');
+select lives_ok($$ select pg_temp.minimo('perfil_rico', 'android', '1.2.0.1') $$,
+  'recurso_versao_minima_formato: mínimo de 4 partes é aceito (0.2.67)');
 select throws_ok($$ insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima)
                     values ('foto_de_perfil', 'ios', '1.3.0') $$, '23505', null,
   'recurso_versao_minima_pkey: um mínimo por recurso e plataforma');

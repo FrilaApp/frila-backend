@@ -18,20 +18,10 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 # função|sqlState — um por linha.
-# Há 1 conhecido (08/11/2026, #443): privado.resolver_conta_demonstracao|00000, "routine is
-# marked as STABLE, but expression is VOLATILE" no `perform public.erro(409, ...)` da
-# 20261108085500. Não é artefato da ferramenta: é STABLE que só levanta pelo public.erro;
-# sem efeito de comportamento; fica até a migração de correção depois da janela de 09/11
-# (`alter function ... volatile`), que tira esta linha no mesmo PR. Fora ele, o lint está
-# limpo: o próximo achado reprova, e quem for adicioná-lo aqui tem que justificar por escrito.
-CONHECIDOS="privado.resolver_conta_demonstracao|00000"
+# Vazio: hoje o lint está limpo. O primeiro achado que aparecer reprova, e quem for
+# adicioná-lo aqui tem que justificar por que é artefato da ferramenta e não defeito.
+CONHECIDOS=""
 
-# #444, 20261108086000: privado.exigir_recurso|00000, "routine is marked as STABLE, but
-# expression is VOLATILE" no `perform public.erro`. Não é artefato da ferramenta: STABLE que
-# só levanta pelo public.erro; sem efeito de comportamento; fica até a migração de correção
-# depois da janela de 09/11, junto com a do #443. Acrescenta à lista sem linha vazia.
-CONHECIDOS="${CONHECIDOS:+$CONHECIDOS
-}privado.exigir_recurso|00000"
 # A versão da CLI muda o conjunto de checagens do plpgsql_check. Rodar uma versão
 # antiga aqui e `latest` na integração contínua faz o portão abrir na máquina e fechar
 # no servidor — foi o que aconteceu no primeiro dia: a CI viu que `public.erro` estava
