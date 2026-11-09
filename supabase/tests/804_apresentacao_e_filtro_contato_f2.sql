@@ -3,6 +3,9 @@ begin;
 insert into privado.ambiente values (true, true) on conflict (id) do update set eh_teste = true;
 set local frila.agora = '2027-01-11 09:00:00+00';
 select no_plan();
+-- A F2 obedece à chave perfil_rico (RN46, contrato 0.2.60; 20261108086000), que nasce desligada.
+-- Este arquivo mede a F2 com o recurso ligado; desligado é o 818.
+update privado.recurso set ligado = true where chave = 'perfil_rico';
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
 begin

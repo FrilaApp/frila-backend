@@ -6,7 +6,7 @@
 -- padrão). Só dados sintéticos; o arquivo desfaz tudo no rollback.
 
 begin;
-select plan(35);
+select plan(36);
 
 insert into privado.configuracao_app (plataforma, versao_minima, versao_recomendada, url_da_loja)
 values ('android', '0.1.0', '0.1.0', 'https://play.google.com/store/apps/details?id=br.com.frila')
@@ -89,6 +89,10 @@ select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.
   'uma configuracao_do_app só: duas com default deixariam a chamada com plataforma ambígua (PGRST203)');
 select ok(has_function_privilege('anon', 'public.configuracao_do_app(text, text)', 'EXECUTE'),
   'anon lê a configuração do app antes do login');
+-- anon e authenticated têm o grant de propósito; PUBLIC não, senão um papel novo herdaria a leitura
+-- sem ninguém decidir (mutante O-2 da revisão do Lince no #450).
+select ok(not has_function_privilege('public', 'public.configuracao_do_app(text, text)', 'EXECUTE'),
+  'PUBLIC não executa configuracao_do_app: o acesso é só o que se deu a anon e authenticated');
 select ok(not has_table_privilege('anon', 'privado.recurso_versao_minima', 'SELECT')
           and not has_table_privilege('authenticated', 'privado.recurso_versao_minima', 'SELECT,INSERT,UPDATE,DELETE'),
   'privado.recurso_versao_minima fechada ao cliente');
