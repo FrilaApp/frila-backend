@@ -172,7 +172,7 @@ revoke execute on function privado.foto_de_perfil_projecao(uuid, uuid, uuid) fro
 grant  execute on function privado.foto_de_perfil_projecao(uuid, uuid, uuid) to service_role;
 
 -- ── 3. public.perfil_publico ──────────────────────────────────────────────────
--- contrato: corpo-sem-mudanca-de-superficie public.perfil_publico 0.2.63
+-- contrato: corpo-sem-mudanca-de-superficie public.perfil_publico 0.2.68
 create or replace function public.perfil_publico(id uuid)
 returns jsonb
 language plpgsql security definer set search_path = '' as $$
@@ -229,7 +229,7 @@ begin
 end $$;
 
 -- ── 4. public.candidatos_da_vaga ──────────────────────────────────────────────
--- contrato: corpo-sem-mudanca-de-superficie public.candidatos_da_vaga 0.2.63
+-- contrato: corpo-sem-mudanca-de-superficie public.candidatos_da_vaga 0.2.68
 create or replace function public.candidatos_da_vaga(vaga_id uuid)
 returns jsonb
 language plpgsql security definer set search_path = '' as $$
@@ -282,7 +282,7 @@ begin
 end $$;
 
 -- ── 5. public.detalhe_chamada ─────────────────────────────────────────────────
--- contrato: corpo-sem-mudanca-de-superficie public.detalhe_chamada 0.2.63
+-- contrato: corpo-sem-mudanca-de-superficie public.detalhe_chamada 0.2.68
 
 create or replace function public.detalhe_chamada(chamada_id uuid)
 returns jsonb

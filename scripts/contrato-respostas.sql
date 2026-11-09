@@ -462,6 +462,13 @@ select (select casa_id from ids), p.id from public.profissional p where p.usuari
 select pg_temp.guarda('promete:chamarProfissional:403',
   pg_temp.observado('cc000000-0000-4000-8000-000000000001', pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
 update privado.recurso set ligado = true where chave = 'chamada_direta';
+-- 0.2.66: só se chama quem tem aparelho na versão mínima de chamada_direta (20261108160000).
+insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima) values ('chamada_direta', 'ios', '1.2.0')
+on conflict (recurso, plataforma) do nothing;
+insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app)
+select p.usuario_id, 'tok-colheita-' || p.usuario_id, 'ios', '1.2.0'
+  from public.profissional p where p.usuario_id::text like 'cc000000-%'
+on conflict (token_fcm) do nothing;
 select pg_temp.guarda('chamarProfissional', pg_temp.como('cc000000-0000-4000-8000-000000000001',
   pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
 select pg_temp.guarda('promete:chamarProfissional:409',
@@ -472,6 +479,88 @@ select pg_temp.guarda('promete:chamarProfissional:404',
   pg_temp.observado('cc000000-0000-4000-8000-000000000001', pg_temp.chamar('cc000000-0000-4000-8000-0000000000fe')));
 select pg_temp.guarda('promete:chamarProfissional:401',
   pg_temp.observado(null, pg_temp.chamar('cc000000-0000-4000-8000-000000000005')));
+
+-- ── Chamada direta, F4 partes B e C (0.2.55, 0.2.56): as seis RPCs vigiadas ───
+-- A chamada 1 (casa → Pê Três) fica aberta acima. Leitura e preferência pelo Pê Três; as
+-- recusas de resposta antes do aceite e depois o aceite (200). A chamada 2 (casa → Pê do
+-- Contrato, posto na equipe; o Pê Dois bloqueou a casa acima) é cancelada (200) e a vaga dela
+-- vira pública (200). Repetir resposta ou cancelamento é idempotente (200); os 409 vêm do
+-- outro estado: cancelar a chamada 1, já aceita, e responder a chamada 2, já cancelada. A 409
+-- da conversão usa a vaga da chamada 1, encerrada à mão no cenário. O Pê Suspenso (…0004)
+-- mede os 403; o Pê Sem Perfil (…0006), o 404 da preferência; a conta nula, os 401.
+create temp table ch1 as
+  select c.id, c.vaga_id from public.chamada c
+    join public.profissional p on p.id = c.profissional_id
+   where p.usuario_id = 'cc000000-0000-4000-8000-000000000005' and c.estado = 'aberta'
+   order by c.criada_em limit 1;
+
+select pg_temp.guarda('detalheChamada', pg_temp.como('cc000000-0000-4000-8000-000000000005',
+  format('select public.detalhe_chamada(%L)', (select id from ch1))));
+select pg_temp.guarda('promete:detalheChamada:404', pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+  format('select public.detalhe_chamada(%L)', (select id from ch1))));
+select pg_temp.guarda('minhasChamadas', pg_temp.como('cc000000-0000-4000-8000-000000000005',
+  $$select public.minhas_chamadas()$$));
+select pg_temp.guarda('promete:minhasChamadas:422', pg_temp.observado('cc000000-0000-4000-8000-000000000005',
+  $$select public.minhas_chamadas(estado => 'qualquer')$$));
+select pg_temp.guarda('definirPreferenciaChamadas', pg_temp.como('cc000000-0000-4000-8000-000000000005',
+  $$select public.definir_preferencia_chamadas(aceita_de_quem_ja_trabalhou => true)$$));
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
+values ('00000000-0000-0000-0000-000000000000', 'cc000000-0000-4000-8000-000000000006', 'authenticated', 'authenticated',
+        'contrato-sem-perfil@t.test', privado.agora(), privado.agora(), false, false);
+select pg_temp.como('cc000000-0000-4000-8000-000000000006',
+  $$ select public.criar_conta('profissional','Pê Sem Perfil','+5561944440006','1991-05-05','2026-09-22') $$);
+select pg_temp.guarda('promete:definirPreferenciaChamadas:404', pg_temp.observado('cc000000-0000-4000-8000-000000000006',
+  $$select public.definir_preferencia_chamadas(aceita_de_quem_ja_trabalhou => true)$$));
+select pg_temp.guarda('promete:definirPreferenciaChamadas:422', pg_temp.observado('cc000000-0000-4000-8000-000000000005',
+  $$select public.definir_preferencia_chamadas()$$));
+
+select pg_temp.guarda('promete:responderChamada:422', pg_temp.observado('cc000000-0000-4000-8000-000000000005',
+  format('select public.responder_chamada(%L, %L)', (select id from ch1), 'talvez')));
+select pg_temp.guarda('promete:responderChamada:404', pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+  format('select public.responder_chamada(%L, %L)', (select id from ch1), 'aceitar')));
+select pg_temp.guarda('responderChamada', pg_temp.como('cc000000-0000-4000-8000-000000000005',
+  format('select public.responder_chamada(%L, %L)', (select id from ch1), 'aceitar')));
+
+insert into public.equipe_confianca (estabelecimento_id, profissional_id)
+select (select casa_id from ids), p.id from public.profissional p where p.usuario_id = 'cc000000-0000-4000-8000-000000000002';
+select pg_temp.como('cc000000-0000-4000-8000-000000000001', pg_temp.chamar('cc000000-0000-4000-8000-000000000002'));
+create temp table ch2 as
+  select c.id, c.vaga_id from public.chamada c
+    join public.profissional p on p.id = c.profissional_id
+   where p.usuario_id = 'cc000000-0000-4000-8000-000000000002' and c.estado = 'aberta'
+   order by c.criada_em limit 1;
+select pg_temp.guarda('cancelarChamada', pg_temp.como('cc000000-0000-4000-8000-000000000001',
+  format('select public.cancelar_chamada(%L)', (select id from ch2))));
+select pg_temp.guarda('promete:cancelarChamada:409', pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+  format('select public.cancelar_chamada(%L)', (select id from ch1))));
+select pg_temp.guarda('promete:responderChamada:409', pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+  format('select public.responder_chamada(%L, %L)', (select id from ch2), 'aceitar')));
+
+select pg_temp.guarda('promete:publicarAPartirDaChamada:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+  format('select public.publicar_a_partir_da_chamada(%L)', (select vaga_id from ch2))));
+select pg_temp.guarda('publicarAPartirDaChamada', pg_temp.como('cc000000-0000-4000-8000-000000000001',
+  format('select public.publicar_a_partir_da_chamada(%L, gen_random_uuid())', (select vaga_id from ch2))));
+update public.vaga set estado = 'cancelada' where id = (select vaga_id from ch1);
+select pg_temp.guarda('promete:publicarAPartirDaChamada:409', pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+  format('select public.publicar_a_partir_da_chamada(%L, gen_random_uuid())', (select vaga_id from ch1))));
+
+select pg_temp.guarda('promete:' || op || ':401', pg_temp.observado(null, sql)) from (values
+  ('detalheChamada', $$select public.detalhe_chamada(gen_random_uuid())$$),
+  ('minhasChamadas', $$select public.minhas_chamadas()$$),
+  ('definirPreferenciaChamadas', $$select public.definir_preferencia_chamadas(aceita_de_quem_ja_trabalhou => true)$$),
+  ('responderChamada', $$select public.responder_chamada(gen_random_uuid(), 'aceitar')$$),
+  ('cancelarChamada', $$select public.cancelar_chamada(gen_random_uuid())$$),
+  ('publicarAPartirDaChamada', $$select public.publicar_a_partir_da_chamada(gen_random_uuid(), gen_random_uuid())$$)) t(op, sql);
+select pg_temp.guarda('promete:' || op || ':403', pg_temp.observado('cc000000-0000-4000-8000-000000000004', sql)) from (values
+  ('detalheChamada', $$select public.detalhe_chamada(gen_random_uuid())$$),
+  ('minhasChamadas', $$select public.minhas_chamadas()$$),
+  ('definirPreferenciaChamadas', $$select public.definir_preferencia_chamadas(aceita_de_quem_ja_trabalhou => true)$$),
+  ('responderChamada', $$select public.responder_chamada(gen_random_uuid(), 'aceitar')$$),
+  ('cancelarChamada', $$select public.cancelar_chamada(gen_random_uuid())$$),
+  ('publicarAPartirDaChamada', $$select public.publicar_a_partir_da_chamada(gen_random_uuid(), gen_random_uuid())$$)) t(op, sql);
+select pg_temp.guarda('promete:' || op || ':404', pg_temp.observado('cc000000-0000-4000-8000-000000000001', sql)) from (values
+  ('cancelarChamada', $$select public.cancelar_chamada(gen_random_uuid())$$),
+  ('publicarAPartirDaChamada', $$select public.publicar_a_partir_da_chamada(gen_random_uuid(), gen_random_uuid())$$)) t(op, sql);
 
 -- ── A direção contrato-à-frente: a recusa que o contrato promete ─────────────
 --
@@ -878,6 +967,11 @@ on conflict do nothing;
 select pg_temp.guarda('promete:atualizarPerfilProfissional:404',
   pg_temp.observado('ee000000-0000-4000-8000-000000000096', format(
     $$ select public.atualizar_perfil_profissional(array[%L::uuid], null, null) $$, (select id from f))));
+
+-- F2 atrás da chave perfil_rico (RN46, contrato 0.2.60): desligada, a F2 recusa com 403
+-- recurso_desligado. Colhe a recusa e liga a chave antes de qualquer outra colheita da F2.
+select pg_temp.guarda('promete:meuPerfilDetalhado:403', pg_temp.observado('cc000000-0000-4000-8000-000000000002', $$select public.meu_perfil_detalhado()$$));
+update privado.recurso set ligado = true where chave = 'perfil_rico';
 
 -- F2: perfil ainda não cadastrado.
 select pg_temp.guarda('promete:definirServicos:404', pg_temp.observado('ee000000-0000-4000-8000-000000000096', $$select public.definir_servicos('[]')$$));

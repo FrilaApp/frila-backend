@@ -279,6 +279,7 @@ VIGIADAS = {
     ("atualizarApresentacaoProfissional", "422"): "campo_invalido",
     # Leitura do próprio perfil completo (F2, contrato 0.2.53, RN26).
     ("meuPerfilDetalhado", "401"): "nao_autenticado",
+    ("meuPerfilDetalhado", "403"): "sem_permissao",   # RN46: perfil_rico desligado (contrato 0.2.60)
     ("meuPerfilDetalhado", "404"): "nao_encontrado",
     ("meuPerfilDetalhado", "422"): "perfil_incompativel",
     # Resolver serviço (fatia F1, contrato 0.2.52, RN44)
@@ -308,6 +309,31 @@ VIGIADAS = {
     ("chamarProfissional", "404"): "nao_encontrado",
     ("chamarProfissional", "409"): "chamada_ja_aberta",
     ("chamarProfissional", "422"): "profissional_indisponivel",
+    # Chamada direta, F4 partes B e C (0.2.55, 0.2.56): implementadas em #423 e #425.
+    ("detalheChamada", "401"): "nao_autenticado",
+    ("detalheChamada", "403"): "sem_permissao",
+    ("detalheChamada", "404"): "nao_encontrado",
+    ("minhasChamadas", "401"): "nao_autenticado",
+    ("minhasChamadas", "403"): "sem_permissao",
+    ("minhasChamadas", "422"): "campo_invalido",
+    ("definirPreferenciaChamadas", "401"): "nao_autenticado",
+    ("definirPreferenciaChamadas", "403"): "sem_permissao",
+    ("definirPreferenciaChamadas", "404"): "nao_encontrado",
+    ("definirPreferenciaChamadas", "422"): "campo_obrigatorio",
+    ("responderChamada", "401"): "nao_autenticado",
+    ("responderChamada", "403"): "sem_permissao",
+    ("responderChamada", "404"): "nao_encontrado",
+    ("responderChamada", "409"): "chamada_indisponivel",
+    ("responderChamada", "422"): "campo_invalido",
+    ("cancelarChamada", "401"): "nao_autenticado",
+    ("cancelarChamada", "403"): "sem_permissao",
+    ("cancelarChamada", "404"): "nao_encontrado",
+    ("cancelarChamada", "409"): "chamada_indisponivel",
+    ("publicarAPartirDaChamada", "401"): "nao_autenticado",
+    ("publicarAPartirDaChamada", "403"): "sem_permissao",
+    ("publicarAPartirDaChamada", "404"): "nao_encontrado",
+    ("publicarAPartirDaChamada", "409"): "vaga_encerrada",
+    ("publicarAPartirDaChamada", "422"): "campo_obrigatorio",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
@@ -315,18 +341,11 @@ VIGIADAS = {
 ISENTAS = {
     # O espelho inclui F1/F2/F4 e B4c, entregues em PRs próprios. Lista fechada:
     # ao implementar uma dessas operações, trocar a isenção por cenário e VIGIADAS.
-    ("meuPerfilDetalhado", "403"): "recursos.perfil_rico desligado no contrato 0.2.60; trava ainda não ativa no backend",
     **{
         (op, status): "contrato 0.2.57 antecipado; implementação em outra fatia"
         for op, statuses in {
             "listarRegioesAdministrativas": ("401",),
             "listarEspecialidades": ("401",),
-            "responderChamada": ("401", "403", "404", "409", "422"),
-            "cancelarChamada": ("401", "403", "404", "409"),
-            "minhasChamadas": ("401", "403", "422"),
-            "detalheChamada": ("401", "403", "404"),
-            "publicarAPartirDaChamada": ("401", "403", "404", "409", "422"),
-            "definirPreferenciaChamadas": ("401", "403", "404", "422"),
         }.items()
         for status in statuses
     },
@@ -358,11 +377,7 @@ ISENTAS = {
 # direta, fatias F2 a F4). Diferente de ISENTAS: estas VÃO entrar pela colheita, e cada uma
 # sai daqui no PR que a implementa. Operação pendente que ganha resposta colhida reprova.
 PENDENTES = {op: "contratação direta, ainda sem implementação" for op in (
-    "cancelarChamada",
-    "definirPreferenciaChamadas", "detalheChamada",
-    "listarEspecialidades", "listarRegioesAdministrativas", "minhasChamadas",
-    "publicarAPartirDaChamada",
-    "responderChamada")}
+    "listarEspecialidades", "listarRegioesAdministrativas")}
 
 def recusas_declaradas(doc):
     """operationId -> conjunto de status de recusa que o contrato declara."""
