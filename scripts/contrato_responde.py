@@ -334,6 +334,18 @@ VIGIADAS = {
     ("publicarAPartirDaChamada", "404"): "nao_encontrado",
     ("publicarAPartirDaChamada", "409"): "vaga_encerrada",
     ("publicarAPartirDaChamada", "422"): "campo_obrigatorio",
+    # Check-in por código (0.2.68, PR5 do B-CHECKIN-BACK): a casa gera ou revê o código.
+    ("gerarCodigoCheckin", "401"): "nao_autenticado",
+    ("gerarCodigoCheckin", "403"): "sem_permissao",
+    ("gerarCodigoCheckin", "404"): "nao_encontrado",
+    ("gerarCodigoCheckin", "409"): "checkin_ja_confirmado",
+    ("gerarCodigoCheckin", "422"): "campo_obrigatorio",
+    # O profissional valida (PR7): o 422 sai por response.status, sem raise (D2), e o harness o lê.
+    ("validarCodigoCheckin", "401"): "nao_autenticado",
+    ("validarCodigoCheckin", "403"): "sem_permissao",
+    ("validarCodigoCheckin", "404"): "nao_encontrado",
+    ("validarCodigoCheckin", "409"): "checkin_ja_confirmado",
+    ("validarCodigoCheckin", "422"): "codigo_invalido",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
@@ -376,8 +388,10 @@ ISENTAS = {
 # Operações que o contrato 0.2.52 a 0.2.57 declara e que ainda não têm RPC (contratação
 # direta, fatias F2 a F4). Diferente de ISENTAS: estas VÃO entrar pela colheita, e cada uma
 # sai daqui no PR que a implementa. Operação pendente que ganha resposta colhida reprova.
-PENDENTES = {op: "contratação direta, ainda sem implementação" for op in (
-    "listarEspecialidades", "listarRegioesAdministrativas")}
+PENDENTES = {
+    **{op: "contratação direta, ainda sem implementação" for op in (
+        "listarEspecialidades", "listarRegioesAdministrativas")},
+}
 
 def recusas_declaradas(doc):
     """operationId -> conjunto de status de recusa que o contrato declara."""

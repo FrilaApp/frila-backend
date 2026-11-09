@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.66
+  version: 0.2.70
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -70,7 +70,8 @@ info:
     | 409 | `posicao_ja_preenchida` | Alguém chegou antes (RN19). **Funcionamento normal no modo urgência** |
     | 409 | `vaga_encerrada` | A vaga fechou, já começou ou foi cancelada por outro autor. Reenvio pelo mesmo contratante autor do cancelamento devolve 200 (0.2.35). Posição reaberta por atraso: a partir de `fim_em - 1 h` |
     | 409 | `checkin_pendente` | Check-out ou confirmação de um turno que ainda não teve check-in. O código diz qual é o passo que falta |
-    | 409 | `checkin_ja_confirmado` | Confirmação de um check-in geolocalizado, que já nasceu verificado |
+    | 409 | `checkin_ja_confirmado` | Confirmação de um check-in geolocalizado, que já nasceu verificado. Desde a 0.2.68, também o código pedido ou lido num turno com a presença já verificada; desde a 0.2.69, a confirmação manual de turno verificado pelo código |
+    | 409 | `codigo_bloqueado` | Check-in por código bloqueado no turno (0.2.68); `details`: `temporario` (3 tentativas erradas: espere o bloqueio) ou `encerrado` (2 bloqueios: o código fecha para o turno e vale a confirmação manual) |
     | 409 | `posicao_nao_cancelavel` | A posição não está confirmada: aberta não tem o que cancelar, cumprida não volta atrás, ou posição cancelada pela outra parte. Passar do horário de início não basta: a posição confirmada continua cancelável (0.2.48). Reenvio pelo mesmo autor devolve 200 (0.2.35) |
     | 409 | `candidatura_indisponivel` | A candidatura foi retirada, expirou ou já foi escolhida |
     | 409 | `avaliacao_ja_registrada` | Já existe avaliação **deste lado** do turno, com outra resposta — de quem chama ou de outro membro do mesmo estabelecimento |
@@ -84,7 +85,7 @@ info:
     | 409 | `chamada_ja_aberta` | O par estabelecimento e profissional já tem chamada aberta (0.2.55, RN34) |
     | 409 | `chamada_indisponivel` | Responder ou cancelar chamada que não está aberta; `details`: `aceita`, `recusada`, `expirada`, `cancelada` ou `encerrada` (0.2.55) |
     | 409 | `recorrencia_nao_confirmada` | 3ª chamada da mesma casa pessoa física ao mesmo profissional em 7 dias sem `confirmo_recorrencia: true` (0.2.55, RN45) |
-    | 422 | `profissional_indisponivel` | A chamada fura preferência ou limite do profissional; `details`: `nao_aceita_chamadas`, `antecedencia_insuficiente`, `agenda_cheia` ou `pausa_por_recusas` (0.2.55, RN30, RN33, RN34) |
+    | 422 | `profissional_indisponivel` | A chamada fura preferência ou limite do profissional; `details`: `nao_aceita_chamadas`, `antecedencia_insuficiente`, `agenda_cheia`, `pausado`, `par_em_pausa` ou `par_bloqueado_temporariamente` (0.2.55, RN30, RN33, RN34; os três últimos listados na 0.2.67). `pausa_por_recusas` foi listado na 0.2.55, mas o servidor não o devolve |
     | 422 | `limite_de_chamadas` | Limite do estabelecimento; `details`: `por_vaga`, `abertas`, `por_dia` ou `conta_nova` (0.2.55, RN34) |
     | 403 | `sem_permissao` + `recurso_desligado` | O recurso está desligado no servidor (`ConfiguracaoDoApp.recursos`, 0.2.54, RN46) |
     | 409 | `midia_indisponivel` | `pedir_nova_analise_midia` em mídia que não está `recusada` nem `nao_publicada`; `details: estado_invalido` ou `expurgada` (0.2.54) |
@@ -101,6 +102,7 @@ info:
     | 422 | `inelegivel` | `details`: `turno_sobreposto` (RN21), `perfil_suspenso` (RN13) ou `funcao_incompativel` (RN05) |
     | 422 | `avaliacao_indisponivel` | `details`: `antes_do_fim` ou `sem_presenca_verificada` (RN07) |
     | 422 | `fora_da_janela` | Check-in ou check-out fora da janela que a regra permite para o turno (RN22) |
+    | 422 | `codigo_invalido` | Código de check-in recusado (0.2.68): errado, vencido, de outro turno ou lido a mais de 100 m. Um código só, sem `details`, para não dizer a quem tenta qual foi o motivo |
     | 422 | `a_caminho_fora_da_janela` | Chamada de `avisar_a_caminho` fora da janela permitida (de 3 h antes até 15 min depois do início do turno) (US14, RF12) |
     | 422 | `registro_no_futuro` | Instante de check-in ou check-out adiante do relógio do servidor. O relógio que vale é o do servidor, nunca o do aparelho |
     | 422 | `reabertura_antes_da_tolerancia` | Reabrir por atraso antes dos 15 minutos (D06) |
@@ -109,6 +111,77 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.70, de 08/11/2026.** Só descrição, no check-in por código. Nenhum campo, operação,
+    status ou código de erro novo:
+    - **A guarda dos registros do código em `MeusDados.checkins_por_codigo`:** os 90 dias contam do
+      mais tarde entre o fim do turno e o fim da contestação. Conta a contestação do turno, quando
+      existir, e a de suspensão do profissional, valendo a mais tarde; qualquer uma aberta segura os
+      registros. A 0.2.68 falava só da contestação do turno, que hoje nenhuma operação registra. É a
+      regra que a Modelagem já descreve e que o `frila-backend` #459 aplica.
+    - **Fica para depois:** o espelho no backend, junto com a exportação de `checkins_por_codigo`.
+
+    **Versão 0.2.69, de 08/11/2026.** Só descrição, aditiva, no check-in por código. Nenhum campo,
+    operação, status ou código de erro novo:
+    - **`confirmar_checkin_manual` depois do código:** turno com a presença já verificada pelo código
+      (`tipo: codigo`) também recusa `409 checkin_ja_confirmado`, e a hora da validação não muda. O
+      servidor já recusa assim todo check-in que não é `manual`; a 0.2.69 só o escreve.
+    - **`validar_codigo_checkin` sem resposta:** se a resposta se perder (timeout), o app não repete
+      sozinho; relê o turno e deixa a pessoa digitar de novo. A tentativa errada é gravada no
+      servidor, e a repetição automática contaria outra e anteciparia o bloqueio.
+    - **Fica para depois:** o espelho no backend, junto com a trava do turno em
+      `confirmar_checkin_manual`.
+
+    **Versão 0.2.68, de 08/11/2026.** Check-in por código: a casa mostra um código (QR e 6 dígitos)
+    e o profissional lê, quando o GPS não basta ou quando a localização dá sinal de falsa (RN22,
+    RN46). Desenho, decisões e pontos a confirmar em `arquitetura/desenho-checkin-por-codigo-v1.2.md`.
+    Nada disto está implementado no backend nem no app. Tudo é aditivo:
+    - **Duas operações novas, atrás da chave `checkin_por_codigo`:** `gerar_codigo_checkin` (o
+      membro da casa gera ou revê o código do turno) e `validar_codigo_checkin` (o profissional manda
+      o código lido e a distância medida no toque). Com a chave desligada para o estabelecimento do
+      turno, as duas respondem `403 sem_permissao` (`recurso_desligado`) sem tocar em dado.
+    - **`TipoRegistro` ganha `codigo`:** presença verificada pela leitura do código da casa. Com
+      `codigo`, `checkin_confirmado_em` é a hora da validação, pelo relógio do servidor.
+    - **`fazer_checkin` aceita `sinais` e devolve `codigo_exigido` e `codigo_disponivel`, os três
+      opcionais.** Com sinal suspeito, a presença não é verificada pelo GPS, mesmo a até 200 m, e
+      espera a casa: código ou confirmação manual. Sem `sinais`, como mandam o app 1.0 e o 1.1, o
+      check-in segue exatamente como hoje.
+    - **`RecursosDoApp` ganha `checkin_por_codigo`**, com a regra da 0.2.65 (chave e versão mínima
+      por plataforma).
+    - **Erros novos:** `422 codigo_invalido` e `409 codigo_bloqueado` (`temporario` ou `encerrado`).
+    - **`MeusDados` ganha `checkins_por_codigo` (opcional):** na exportação do profissional, por
+      turno, o "código exigido", a marca de confiança baixa e as tentativas (hora, resultado e
+      faixa da leitura). A exportação de quem opera a casa não traz (LGPD, art. 18; regra da
+      Bússola, 08/11).
+    - **Por que não é `_v2`:** nenhum campo existente muda de forma, e o valor novo em resposta
+      (`codigo`) já é tolerado pelo app publicado: o iOS 1.0 e o 1.1 leem tipo desconhecido como
+      `manual` ou nulo, e o Android compara texto (evidência no desenho).
+    - **Não muda:** o check-in a até 200 m sem sinal suspeito, `confirmar_checkin_manual`, o
+      check-out, a janela de 60 minutos, o aviso `turno_nao_verificado` e os textos dos avisos
+      `checkin` e `checkin_manual_pendente`, que continuam sem dado pessoal. Nenhum tipo de aviso novo.
+    - **Fica para depois:** a migração e as RPCs no backend, com o pgTAP dos critérios de aceite e o
+      espelho deste contrato (as duas operações ficam em `PENDENTES` do `contrato_responde.py` até
+      existirem); a tela da casa e a leitura no iOS; o Android, antes de qualquer casa com Android
+      no piloto.
+
+    **Versão 0.2.67, de 08/11/2026.** Só formato e descrição. Nenhum campo, operação, status ou
+    código de erro novo:
+    - **`configuracao_do_app.versao_app` aceita até quatro partes**, como `versao_minima` e
+      `registrar_dispositivo.versao_app`. Era até três (0.2.65). Assim a mesma versão vale igual na
+      abertura e no aparelho: um app `1.2.0.1` não pode ser chamado e receber o aviso de chamada com
+      a tela escondida.
+    - **Aparelho sem versão, ou com ela fora do formato, conta como antigo**, nos avisos `chamada_*`
+      e em `registrar_dispositivo.versao_app`.
+    - **Os `details` de `profissional_indisponivel` que o servidor já devolvia** e o contrato não
+      listava: `pausado`, `par_em_pausa` e `par_bloqueado_temporariamente` (em `chamar_profissional`).
+      `pausa_por_recusas`, listado na 0.2.55, o servidor nunca devolveu: a pausa de 24 h depois de
+      recusa é `par_em_pausa`, e a de 30 dias é `par_bloqueado_temporariamente`.
+    - **`configuracao_do_app` sai do RNF12**, que é a disponibilidade e a janela do Prod, e não a
+      atualização do app. O Documento de Requisitos v1.5.0 não tem requisito próprio de atualização
+      do app; fica a RN46.
+    - **Até o espelho no backend**, que vem antes de ligar as chaves, o servidor ainda aceita só três
+      partes em `configuracao_do_app` (`frila-backend` `20261108150000:83`) e no mínimo guardado (o
+      CHECK de `20261108150000:41`). Até lá, `1.2.0.1` conta como ausente, e os recursos vêm `false`.
 
     **Versão 0.2.66, de 08/11/2026.** Só descrição; nenhum campo, operação, status ou código muda.
     Fecha o portão (c) do corte por versão da 0.2.65 (desenho em
@@ -1700,7 +1773,7 @@ paths:
         `versao_minima`, que é a do bloqueio.
       security:
         - chaveDoProjeto: []
-      x-requisitos: [RNF12, RN46]
+      x-requisitos: [RN46]
       parameters:
         - name: plataforma
           in: query
@@ -1711,15 +1784,16 @@ paths:
           in: query
           required: false
           description: |
-            0.2.65. Versão do app que chama (no iOS, o `CFBundleShortVersionString`). De uma a três
-            partes numéricas separadas por ponto; a parte que faltar vale 0 (`1.2` é `1.2.0`), e a
+            0.2.65, revisto na 0.2.67. Versão do app que chama (no iOS, o `CFBundleShortVersionString`).
+            De uma a quatro partes numéricas separadas por ponto, como `versao_minima` e
+            `registrar_dispositivo.versao_app`; a parte que faltar vale 0 (`1.2` é `1.2.0`), e a
             comparação é parte a parte, como número (`1.10.0` é maior que `1.9.0`). Fora desse
             formato, o servidor trata como ausente e devolve os recursos `false`, sem erro, porque esta
             é a chamada da abertura e não pode travar o app. Só decide `recursos`; o bloqueio por
             `versao_minima` continua comparado pelo app.
           schema:
             type: string
-            pattern: '^[0-9]{1,6}(\.[0-9]{1,6}){0,2}$'
+            pattern: '^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$'
             example: "1.2"
       responses:
         '200':
@@ -3454,8 +3528,9 @@ paths:
         RN29). Os termos não mudam com chamada aberta.
 
         **Limites (RN33, RN34):** 1 chamada aberta por par estabelecimento e profissional
-        (`409 chamada_ja_aberta`); 24 h depois de recusa e pausa de 30 dias depois de 3 recusas ou
-        expirações seguidas (`422 profissional_indisponivel`, `pausa_por_recusas`); 5 chamadas abertas
+        (`409 chamada_ja_aberta`); 24 h depois de recusa (`422 profissional_indisponivel`,
+        `par_em_pausa`) e 30 dias quando as três últimas chamadas respondidas ou expiradas do par foram
+        recusadas ou expiraram (`par_bloqueado_temporariamente`; cancelada não conta); 5 chamadas abertas
         no profissional (`agenda_cheia`); por estabelecimento, somando os membros, 3 por trabalho, 10
         abertas e 20 por dia civil, ou 3 abertas e 5 em 7 dias sem turno cumprido
         (`422 limite_de_chamadas`). Cancelar não devolve cota de envio.
@@ -3473,6 +3548,14 @@ paths:
         (`422 profissional_indisponivel`, `nao_aceita_chamadas`). Assim nunca se cria uma chamada para
         quem não a receberia. Isso inclui quem não deu permissão de notificação: sem ela, o app não
         registra o aparelho.
+
+        **Pausas que o servidor já aplicava (listadas na 0.2.67).** `pausado`: o profissional pausou as
+        chamadas nas preferências. Só aparece para quem passa pelas três recusas genéricas
+        (preferência só-CNPJ, versão e vínculo), para a casa sem vínculo não descobrir a pausa.
+        `par_em_pausa`: o profissional recusou uma chamada desta casa há menos de 24 h.
+        `par_bloqueado_temporariamente`: nos últimos 30 dias, as três últimas chamadas desta casa a
+        este profissional que foram respondidas ou expiraram (cancelada não conta) foram recusadas ou
+        expiraram, sem nenhuma aceita no período.
       x-requisitos: [RN28, RN29, RN30, RN31, RN33, RN34, RN38, RN45, RN46, RN02, RN19, RF26]
       requestBody:
         required: true
@@ -4053,13 +4136,23 @@ paths:
         demonstração/revisão da App Store (`usuario.demonstracao`) atravessa a janela de turno sem recusa
         de `fora_da_janela` para permitir inspeção assíncrona da diretriz 2.1, mas mantém a trava de
         `registro_no_futuro`.
-      x-requisitos: [RF13, RN11, RN22, UC05]
+
+        **Check-in por código (0.2.68).** O app 1.2 manda também `sinais`, o que o aparelho diz
+        sobre a leitura de localização. Com a chave `checkin_por_codigo` ligada para o
+        estabelecimento do turno e um sinal suspeito (localização simulada, precisão ruim, salto de
+        posição, ou distância entre 150 e 200 m), o servidor não verifica pelo GPS: o check-in fica
+        `manual`, a presença fica `pendente` e a resposta traz `codigo_exigido: true`. A casa recebe o
+        mesmo aviso `checkin_manual_pendente` e atesta a chegada pelo código
+        (`gerar_codigo_checkin` e `validar_codigo_checkin`) ou pela confirmação manual. O limiar de
+        precisão fica no servidor, e a resposta não diz qual sinal pesou. Sem `sinais`, ou com a
+        chave desligada, nada muda: a distância de até 200 m verifica na hora, como acima.
+      x-requisitos: [RF13, RN11, RN22, RN46, UC05]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RegistroDePresenca'
+              $ref: '#/components/schemas/RegistroDeCheckin'
       responses:
         '200':
           description: Check-in registrado.
@@ -4088,6 +4181,8 @@ paths:
 
         Tentativa de confirmar turno em que o profissional ainda não realizou o check-in é recusada com
         `409 checkin_pendente`. Turno com check-in geolocalizado (que já nasce verificado) recusa `409 checkin_ja_confirmado`.
+        Turno com a presença já verificada pelo código (`tipo: codigo`, 0.2.68) também recusa
+        `409 checkin_ja_confirmado`, e a hora da validação não muda (0.2.69).
         Turno que não existe é `404 nao_encontrado`.
       x-requisitos: [RF13, RF20, RN22, UC05, UC07]
       requestBody:
@@ -4117,6 +4212,151 @@ paths:
           $ref: '#/components/responses/Conflito'
         '422':
           $ref: '#/components/responses/ParametroObrigatorio'
+
+  /rpc/gerar_codigo_checkin:
+    post:
+      tags: [Turno]
+      operationId: gerarCodigoCheckin
+      summary: Casa gera ou revê o código de check-in do turno
+      description: |
+        0.2.68. A tela da casa chama esta operação ao abrir pelo aviso `checkin_manual_pendente` e
+        mostra o código já visível, em QR e nos 6 dígitos, sem navegação extra. O código é gerado e
+        guardado só no servidor, preso ao turno e ao vínculo, e vale o tempo configurado (hoje 5
+        minutos; faixa de 2 a 5). Chamar de novo dentro da validade devolve o mesmo código; vencido,
+        um novo. Código novo não devolve tentativas ao profissional, e com ele em bloqueio
+        temporário a casa ainda gera.
+
+        O QR carrega exatamente os 6 dígitos, e nada mais: é a mesma credencial, validada no mesmo
+        ponto (`validar_codigo_checkin`), e quem usa leitor de tela digita. `segundos_restantes` é a
+        validade contada pelo servidor no momento da resposta; a tela conta a partir dele, e não do
+        relógio do aparelho.
+
+        Só membro do estabelecimento dono do turno gera: o profissional do turno recebe
+        `403 sem_permissao`, como em `confirmar_checkin_manual`. Chave `checkin_por_codigo`
+        desligada para o estabelecimento: `403 sem_permissao` (`recurso_desligado`), sem tocar em
+        dado. Conta excluída (token de conta já anonimizada, RF25): `401 nao_autenticado`. Conta
+        suspensa: `403 sem_permissao` (`conta_suspensa`). Turno que não existe, ou com bloqueio
+        entre as partes: `404 nao_encontrado`. Sem check-in: `409 checkin_pendente`.
+        Presença já verificada: `409 checkin_ja_confirmado`. Caminho do código encerrado no turno
+        (2 bloqueios): `409 codigo_bloqueado` (`encerrado`), e vale a confirmação manual. Fora da
+        janela do check-in: `422 fora_da_janela`.
+      x-requisitos: [RF13, RF20, RN22, RN46, UC05, UC07]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [turno_id]
+              properties:
+                turno_id:
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: O código em vigor para o turno.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodigoDeCheckin'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/validar_codigo_checkin:
+    post:
+      tags: [Turno]
+      operationId: validarCodigoCheckin
+      summary: Profissional valida o código de check-in da casa
+      description: |
+        0.2.68. O profissional lê o QR ou digita os 6 dígitos que a casa mostra, depois de um
+        `fazer_checkin` que ficou `pendente`. O app lê a localização no toque, como no check-in, e
+        manda só a distância até o endereço da vaga, nunca a coordenada. A hora que vale é a do
+        servidor.
+
+        - Código certo, em vigor, deste turno, com `distancia_m` de até 100 m: presença
+          `verificado`, `tipo: codigo`, e `checkin_confirmado_em` é a hora da validação. O código não
+          serve de novo. Os membros da casa recebem o aviso `checkin`.
+        - Código certo sem posição (`distancia_m` nulo: permissão negada ou GPS desligado): valida
+          do mesmo jeito, e o servidor marca o turno como de confiança baixa. A marca não sai nas
+          respostas operacionais; sai só na exportação do próprio profissional
+          (`MeusDados.checkins_por_codigo`, LGPD, art. 18).
+        - Qualquer outro caso: `422 codigo_invalido`, um código só, sem dizer se o código estava
+          errado, vencido, era de outro turno ou se a distância passou de 100 m. Cada recusa conta
+          como tentativa errada. O código já usado não chega aqui: com a presença verificada, a
+          resposta é `409 checkin_ja_confirmado`.
+
+        A resposta é o registro do check-in: `registrado_em` é a hora do toque em `fazer_checkin`, e
+        `distancia_m` vem nulo, porque a distância da leitura não é gravada.
+
+        Tentativas: 3 erradas no turno bloqueiam a leitura pelo tempo configurado (hoje 5 minutos;
+        faixa de 2 a 5), e a terceira já responde `409 codigo_bloqueado` (`temporario`). A sexta
+        errada é o segundo bloqueio e fecha o caminho do código para o turno: ela e toda leitura
+        depois dela respondem `409 codigo_bloqueado` (`encerrado`), sem novo tempo de espera, e vale
+        a confirmação manual. O contador é do servidor, por turno, e não zera quando a casa gera
+        código novo.
+
+        Duas leituras ao mesmo tempo do mesmo código: uma só vence, e a outra recebe
+        `409 checkin_ja_confirmado`, como toda leitura que chega com a presença já verificada por
+        qualquer caminho; o app trata como presença verificada e relê o turno. Sem check-in:
+        `409 checkin_pendente`. Fora da janela do check-in: `422 fora_da_janela`. Turno que não
+        existe, que não é de quem chama ou com bloqueio entre as partes: `404 nao_encontrado`. Chave
+        desligada para o estabelecimento do turno: `403 sem_permissao` (`recurso_desligado`), sem
+        tocar em dado nem no contador. Conta excluída (token de conta já anonimizada, RF25):
+        `401 nao_autenticado`. Conta suspensa: `403 sem_permissao` (`conta_suspensa`). Conta de
+        contratante: `422 perfil_incompativel` (RN25). `codigo` fora do formato de 6 dígitos é
+        `422 campo_invalido` (`codigo`) e não conta como tentativa.
+
+        Se a resposta se perder (timeout), o app não repete sozinho: relê o turno e deixa a pessoa
+        digitar de novo. A tentativa errada já foi gravada, e a repetição contaria outra (0.2.69).
+      x-requisitos: [RF13, RN22, RN46, UC05]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [turno_id, codigo, distancia_m]
+              properties:
+                turno_id:
+                  $ref: '#/components/schemas/Uuid'
+                codigo:
+                  description: Os 6 dígitos lidos do QR ou digitados.
+                  type: string
+                  pattern: '^[0-9]{6}$'
+                  example: '482913'
+                distancia_m:
+                  description: |
+                    Distância até o endereço da vaga, medida no aparelho no momento da leitura. Nulo
+                    sem localização. Não é gravada: o servidor guarda só se veio até 100 m, acima
+                    disso ou sem posição.
+                  oneOf:
+                    - type: integer
+                      minimum: 0
+                    - type: 'null'
+      responses:
+        '200':
+          description: Presença verificada pelo código.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoRegistro'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/fazer_checkout:
     post:
@@ -4938,7 +5178,7 @@ paths:
                     0.2.56. Opcional. Versão do app, no formato de `ConfiguracaoDoApp.versao_minima`.
                     O servidor guarda junto do token e só manda aviso `chamada_*` para aparelho cuja
                     versão alcança a versão mínima de `chamada_direta` da plataforma (0.2.66); sem
-                    versão, o aparelho conta como antigo.
+                    versão, ou com ela fora do formato, o aparelho conta como antigo (0.2.67).
                   type: string
                   pattern: '^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$'
                   example: "1.1.0"
@@ -5412,6 +5652,13 @@ components:
                 message: checkin_pendente
                 details: null
                 hint: null
+            codigo_bloqueado:
+              summary: Leitura do código bloqueada por 3 tentativas erradas (0.2.68)
+              value:
+                code: codigo_bloqueado
+                message: codigo_bloqueado
+                details: temporario
+                hint: null
             verificacao_indisponivel:
               value:
                 code: verificacao_indisponivel
@@ -5490,6 +5737,13 @@ components:
               value:
                 code: registro_no_futuro
                 message: registro_no_futuro
+                details: null
+                hint: null
+            codigo_invalido:
+              summary: Código de check-in recusado, sem dizer o motivo (0.2.68)
+              value:
+                code: codigo_invalido
+                message: codigo_invalido
                 details: null
                 hint: null
     LimiteExcedido:
@@ -5589,13 +5843,22 @@ components:
       enum: [pendente, aceita, recusada, retirada, expirada]
     TipoRegistro:
       type: string
-      enum: [geolocalizado, manual]
+      enum: [geolocalizado, manual, codigo]
+      description: |
+        Como a presença foi provada no check-in. `codigo` (0.2.68): o profissional leu o código que a
+        casa mostrou (`validar_codigo_checkin`); o check-in nasce `manual` e passa a `codigo` na
+        validação. `fazer_checkout` devolve o tipo do check-in, e por isso também pode trazer
+        `codigo`.
+
+        Cliente que não conhece um valor não quebra. O app publicado já se comporta assim: o iOS 1.0
+        e o 1.1 leem valor desconhecido como `manual` ou nulo, e o Android compara texto.
     Verificacao:
       type: string
       enum: [pendente, verificado, nao_verificado]
       description: |
-        `verificado` só com prova: check-in geolocalizado a até 200 m, ou manual confirmado pelo
-        contratante. `nao_verificado` não conta a favor nem contra na taxa de comparecimento (RN22).
+        `verificado` só com prova: check-in geolocalizado a até 200 m, manual confirmado pelo
+        contratante, ou código da casa validado (0.2.68). `nao_verificado` não conta a favor nem
+        contra na taxa de comparecimento (RN22).
     TipoEstabelecimento:
       type: string
       enum: [food_service, evento, varejo, logistica, servico_domestico, outro]
@@ -5644,7 +5907,8 @@ components:
         `tipo`, `chamada_id` e `vaga_id`. Não contam no teto da RN23. Só saem para aparelho cuja
         `versao_app` alcança a versão mínima de `chamada_direta` da plataforma (0.2.66; era "que
         suporta a chamada", 0.2.56), comparando parte a parte e completando com zeros, como em
-        `configuracao_do_app`. Aparelho sem versão conta como antigo.
+        `configuracao_do_app`. Aparelho sem versão, ou com ela fora do formato, conta como antigo
+        (0.2.67).
 
         | Tipo | Quem recebe | Título | Corpo |
         |---|---|---|---|
@@ -5665,6 +5929,10 @@ components:
         | Tipo | Quem recebe | Título | Corpo |
         |---|---|---|---|
         | `turno_nao_verificado` | Ambos os lados | Turno não verificado | A presença no turno não foi confirmada dentro do prazo. O turno foi encerrado como não verificado. |
+
+        **Check-in por código (0.2.68).** Nenhum tipo novo, e os textos não mudam. No app 1.2,
+        `checkin_manual_pendente` abre a tela da casa já com o código; `checkin` também avisa os
+        membros da presença verificada pelo código.
 
         `confirmacao` em vaga de urgência mantém o texto de sempre ("Turno confirmado"). O
         `selecao_lembrete` sai uma vez por vaga: faltando 6 horas ou menos para o prazo de escolha
@@ -6037,6 +6305,14 @@ components:
             e `meu_perfil_detalhado`) respondem `403 sem_permissao` (`recurso_desligado`) e os campos
             opcionais do perfil rico em `PerfilPublico` vêm omitidos. Um servidor que ainda não
             conhece a chave não a manda, e ausente vale `false`.
+          type: boolean
+        checkin_por_codigo:
+          description: |
+            0.2.68. Check-in por código: a tela da casa com o código e a leitura no app do
+            profissional. Segue a regra da 0.2.65 (chave e versão mínima por plataforma). Mesmo com
+            `true`, o estabelecimento de um turno pode estar fora do piloto: aí as duas operações
+            respondem `403 sem_permissao` (`recurso_desligado`) e `fazer_checkin` devolve
+            `codigo_disponivel: false`. Ausente vale `false`.
           type: boolean
     TipoMidia:
       type: string
@@ -6913,6 +7189,37 @@ components:
             - type: 'null'
         registrado_em:
           $ref: '#/components/schemas/Instante'
+    RegistroDeCheckin:
+      description: |
+        0.2.68. O corpo de `fazer_checkin`: `RegistroDePresenca` mais os `sinais` opcionais. O
+        check-out continua com `RegistroDePresenca` e não aceita `sinais`.
+      allOf:
+        - $ref: '#/components/schemas/RegistroDePresenca'
+        - type: object
+          properties:
+            sinais:
+              $ref: '#/components/schemas/SinaisDoCheckin'
+    SinaisDoCheckin:
+      type: object
+      required: [localizacao_simulada, precisao_m, salto_de_posicao]
+      description: |
+        0.2.68. O que o aparelho diz da leitura de localização do toque, para a proteção por risco.
+        Nenhuma coordenada. O servidor usa os sinais na decisão e não os grava: guarda só se o código
+        foi exigido. O app que manda `sinais` manda os três; sem `sinais`, o servidor entende app sem
+        a proteção (1.0 e 1.1) e segue a regra de antes da 0.2.68.
+      properties:
+        localizacao_simulada:
+          description: A leitura veio de fonte simulada por software (iOS `CLLocationSourceInformation.isSimulatedBySoftware`, Android `Location.isMock`).
+          type: boolean
+        precisao_m:
+          description: Precisão horizontal da leitura, em metros inteiros (iOS `horizontalAccuracy`, Android `getAccuracy`). Nulo quando o aparelho não informa.
+          oneOf:
+            - type: integer
+              minimum: 0
+            - type: 'null'
+        salto_de_posicao:
+          description: Entre as leituras do mesmo toque, a posição saltou mais do que um deslocamento possível no intervalo.
+          type: boolean
     ResultadoRegistro:
       type: object
       required: [turno_id, tipo, verificacao, registrado_em, distancia_m]
@@ -6930,6 +7237,41 @@ components:
             - type: integer
               minimum: 0
             - type: 'null'
+        codigo_exigido:
+          description: |
+            0.2.68. Só em `fazer_checkin`. `true` quando o servidor recusou a verificação pelo GPS
+            por sinal suspeito: a presença fica `pendente`, e a casa precisa atestar a chegada, pelo
+            código ou pela confirmação manual. A tela não diz qual sinal pesou. Ausente vale
+            `false`. O reenvio devolve o mesmo valor.
+          type: boolean
+        codigo_disponivel:
+          description: |
+            0.2.68. Só em `fazer_checkin`. `true` quando a presença está `pendente` e o caminho do
+            código está aberto para o turno: chave ligada para o estabelecimento e caminho não
+            encerrado por bloqueios. O app só oferece a leitura do código com `true`; sem ele, mostra
+            a espera da confirmação manual, como hoje. Ausente vale `false`. No reenvio, vale o
+            estado do momento.
+          type: boolean
+    CodigoDeCheckin:
+      type: object
+      required: [turno_id, codigo, expira_em, segundos_restantes]
+      description: |
+        0.2.68. O código de check-in em vigor, só para membro da casa dona do turno. O QR carrega
+        exatamente `codigo`. Não aparece em nenhuma outra resposta, nem em aviso.
+      properties:
+        turno_id:
+          $ref: '#/components/schemas/Uuid'
+        codigo:
+          type: string
+          pattern: '^[0-9]{6}$'
+          example: '482913'
+        expira_em:
+          $ref: '#/components/schemas/Instante'
+        segundos_restantes:
+          description: A validade que resta, contada pelo servidor no momento da resposta. Até 300.
+          type: integer
+          minimum: 0
+          maximum: 300
     ResultadoACaminho:
       type: object
       required: [turno_id, a_caminho_em]
@@ -7103,7 +7445,9 @@ components:
             $ref: '#/components/schemas/VagaNoPainel'
         checkins_pendentes:
           type: array
-          description: Turnos com check-in manual esperando a confirmação do contratante.
+          description: |
+            Turnos com check-in manual esperando a confirmação do contratante. Desde a 0.2.68,
+            inclui o que espera o código, e o turno sai da lista quando o código é validado.
           items:
             $ref: '#/components/schemas/Uuid'
     VagaNoPainel:
@@ -7181,7 +7525,7 @@ components:
             - $ref: '#/components/schemas/Instante'
             - type: 'null'
         checkin_tipo:
-          description: O tipo do check-in (0.2.31), o mesmo `Turno.checkin_tipo`. Nulo sem check-in. Opcional.
+          description: O tipo do check-in (0.2.31), o mesmo `Turno.checkin_tipo`. Nulo sem check-in. Opcional. Desde a 0.2.68, pode ser `codigo`.
           oneOf:
             - $ref: '#/components/schemas/TipoRegistro'
             - type: 'null'
@@ -7189,7 +7533,8 @@ components:
           description: |
             Quando um membro da casa confirmou o check-in manual (0.2.31), o mesmo
             `Turno.checkin_confirmado_em`. Nulo no check-in geolocalizado, que já nasce
-            verificado, e no manual ainda sem confirmação. Opcional.
+            verificado, e no manual ainda sem confirmação. Com `checkin_tipo: codigo` (0.2.68), é a
+            hora em que o código foi validado. Opcional.
           oneOf:
             - $ref: '#/components/schemas/Instante'
             - type: 'null'
@@ -7692,6 +8037,56 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Chamada'
+        checkins_por_codigo:
+          description: |
+            0.2.68, revisto na 0.2.70. O que o check-in por código registrou sobre o titular como
+            profissional (LGPD, art. 18, II, e art. 19): por turno, se a confirmação da casa foi
+            exigida, a marca de confiança baixa e as tentativas de leitura. Não diz qual sinal pesou
+            para exigir o código, não traz os metros da leitura nem quem da casa gerou o código, que
+            o servidor não grava. Entra só o turno com algum desses registros, e só enquanto eles
+            existem: o servidor os apaga 90 dias depois do mais tarde entre o fim do turno e o fim da
+            contestação. Conta a contestação do turno, quando existir, e a de suspensão do
+            profissional, valendo a mais tarde; qualquer uma aberta segura os registros.
+
+            Só na exportação do próprio profissional: na de quem opera a casa vem `[]`, porque a
+            marca e as tentativas não saem para a casa. Fora daqui, a marca não sai em resposta
+            nenhuma.
+
+            Opcional nesta versão, pelo mesmo motivo de `midias`.
+          type: array
+          items:
+            type: object
+            required: [turno_id, codigo_exigido, confianca_baixa, tentativas]
+            properties:
+              turno_id:
+                $ref: '#/components/schemas/Uuid'
+              codigo_exigido:
+                description: O servidor pediu a confirmação da casa por sinal suspeito no check-in. Não diz qual sinal.
+                type: boolean
+              confianca_baixa:
+                description: O código foi validado sem posição. Até uma decisão registrada, só alimenta a medição do piloto.
+                type: boolean
+              tentativas:
+                description: As leituras que contaram como tentativa, em ordem. Sem o motivo da recusa.
+                type: array
+                items:
+                  type: object
+                  required: [em, resultado, faixa, codigo_gerado_em]
+                  properties:
+                    em:
+                      $ref: '#/components/schemas/Instante'
+                    resultado:
+                      type: string
+                      enum: [aceita, recusada]
+                    faixa:
+                      description: A faixa da distância medida na leitura, nunca os metros.
+                      type: string
+                      enum: [ate_100_m, acima_de_100_m, sem_posicao]
+                    codigo_gerado_em:
+                      description: Quando a casa gerou o código em vigor no momento da leitura. Nulo se não havia código em vigor.
+                      oneOf:
+                        - $ref: '#/components/schemas/Instante'
+                        - type: 'null'
         eventos_app:
           description: |
             Eventos de telemetria emitidos pelo aplicativo e vinculados à conta do titular (LGPD art. 18,

@@ -15,11 +15,11 @@ select is((privado.definir_coleta_registro_acesso(true) ->> 'slot')::boolean, tr
 delete from privado.alerta_emitido where codigo like 'registro_acesso_%';
 delete from privado.falha_execucao where codigo like 'registro_acesso_%';
 
--- O teto fica entre 16 e 192 MB: 192 é 75% do max_slot_wal_keep_size de 256 MB do Prod. Acima dele, o servidor
--- invalidaria o slot antes de a autoproteção agir.
+-- O teto fica entre 16 e 192 MB, bem abaixo do max_slot_wal_keep_size de 1 GB do Prod (o mínimo que o Supabase aceita,
+-- desde 08/11/2026). Acima do teto do servidor, ele invalidaria o slot antes de a autoproteção agir.
 select lives_ok($$ update privado.registro_acesso_coleta set teto_wal_mb = 192 $$, 'teto de 192 MB é aceito');
 select throws_ok($$ update privado.registro_acesso_coleta set teto_wal_mb = 193 $$, '23514', null,
-  'teto de 193 MB é recusado (acima de 75% do max_slot_wal_keep_size do Prod)');
+  'teto de 193 MB é recusado (o máximo da autoproteção é 192 MB)');
 select lives_ok($$ update privado.registro_acesso_coleta set teto_wal_mb = 16 $$, 'teto de 16 MB é aceito');
 select throws_ok($$ update privado.registro_acesso_coleta set teto_wal_mb = 15 $$, '23514', null, 'teto de 15 MB é recusado');
 
