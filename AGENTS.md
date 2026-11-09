@@ -121,7 +121,7 @@ Nove regras vivem **no banco**, não na aplicação. Três clientes nativos (iOS
 | RN25: uma conta, um perfil, para sempre | trigger + chave estrangeira composta `(id, perfil)` |
 | RN02: vaga incompleta não existe | `NOT NULL` nas colunas obrigatórias |
 | RN24: modo seleção só com mais de 24 h | `CHECK` em `vaga` |
-| RN22: geolocalizado vale até 200 m; manual só conta confirmado | `CHECK verificacao_coerente` |
+| RN22: geolocalizado vale até 200 m; manual só conta confirmado; código só conta validado (0.2.68) | `CHECK verificacao_coerente` |
 | RN07: avaliação binária, após o fim, com presença verificada | `UNIQUE (turno_id, alvo_tipo)` (**um voto por lado**, não por pessoa), mais o `UNIQUE (turno_id, autor_id)` que já existia, e o trigger |
 
 ### Como se escreve uma RPC
@@ -150,7 +150,7 @@ end $$;
 - Nunca altere o esquema pelo painel do Supabase: o que não está em arquivo, o próximo ambiente não tem.
 - Mudança destrutiva em duas fases: adiciona e escreve nos dois, depois remove.
 - **Desvio.** `scripts/desvio.sh <project_ref>` compara o banco remoto com o que as migrações constroem e pega o que foi mudado à mão (função reescrita, `grant` a `anon`, job do `pg_cron` pausado). Rode depois de aplicar no remoto.
-- **Janela proibida do Prod (RNF12):** nada é publicado no `frila-prod` de quinta a domingo, das 16h às 2h do dia seguinte (horário de São Paulo), quando os turnos acontecem. `scripts/janela-de-manutencao.sh` recusa dentro dela.
+- **Janela proibida do Prod (RNF12):** **a janela de pico da RNF12 (quinta a domingo, das 16h às 2h) vale a partir de 10 mil usuários ativos** (decisão do Cauê, 08/11/2026); a meta de 99,5% segue. Quando valer: nada é publicado no `frila-prod` de quinta a domingo, das 16h às 2h do dia seguinte (horário de São Paulo), quando os turnos acontecem. Por padrão, `scripts/janela-de-manutencao.sh` não confere a janela e sai 0 com um aviso; com `RNF12_ATIVA=1`, ele recusa dentro dela, como antes.
 - `seed.sql` tem só o catálogo de funções. Dado de teste vive em `supabase/tests/`.
 
 ### Testes

@@ -74,6 +74,14 @@ values ('c8030000-0000-4000-8000-0000000000f2', '2026-11-01 18:00+00', 'geolocal
 select is(pg_temp.r('c8030000-0000-4000-8000-000000000001', pg_temp.nova((select a from ids))),
   'sem_permissao:recurso_desligado', 'F4 nasce desligada: 403 recurso_desligado');
 update privado.recurso set ligado = true where chave = 'chamada_direta';
+-- 0.2.66 (20261108160000): só se chama quem tem aparelho na versão mínima de chamada_direta.
+-- Este arquivo mede a chamada com o portão satisfeito; o portão em si é o 830.
+insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima) values ('chamada_direta', 'ios', '1.2.0')
+on conflict (recurso, plataforma) do nothing;
+insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app)
+select p.usuario_id, 'tok-teste-' || p.usuario_id, 'ios', '1.2.0'
+  from public.profissional p where p.usuario_id::text like 'c8030000-%'
+on conflict (token_fcm) do nothing;
 select is(pg_temp.r(null, pg_temp.nova((select a from ids))), 'nao_autenticado', 'sem sessão: 401');
 select is(pg_temp.r('c8030000-0000-4000-8000-000000000005', pg_temp.nova((select a from ids))),
   'sem_permissao', 'contratante que não é membro: 403');
@@ -102,8 +110,13 @@ select is(pg_temp.r('c8030000-0000-4000-8000-000000000001', pg_temp.nova('c80300
   'nao_encontrado', '404: profissional inexistente');
 select is(pg_temp.r('c8030000-0000-4000-8000-000000000001', pg_temp.nova((select b from ids))),
   'profissional_indisponivel:nao_aceita_chamadas', '422: sem vínculo, a recusa genérica');
+-- 0.2.66: a recusa genérica vem antes da validação do corpo, então sem vínculo o corpo inválido também
+-- dá nao_aceita_chamadas (830). Para medir a RN02, o B ganha vínculo só nesta asserção.
+insert into public.equipe_confianca (estabelecimento_id, profissional_id) select 'c8030000-0000-4000-8000-0000000000e1', b from ids;
 select is(pg_temp.r('c8030000-0000-4000-8000-000000000001', replace(pg_temp.nova((select b from ids)), ', local => ''CLN 201''', '')),
   'campo_obrigatorio:local', '422: campo da RN02 ausente');
+delete from public.equipe_confianca where estabelecimento_id = 'c8030000-0000-4000-8000-0000000000e1'
+   and profissional_id = (select b from ids);
 update public.chamada set estado = 'cancelada';
 select is(pg_temp.r('c8030000-0000-4000-8000-000000000001', pg_temp.nova((select a from ids), inicio => '2026-11-07 16:30+00')),
   'profissional_indisponivel:antecedencia_insuficiente', '422: menos de 2 h para o início');

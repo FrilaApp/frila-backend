@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.63
+  version: 0.2.67
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -84,7 +84,7 @@ info:
     | 409 | `chamada_ja_aberta` | O par estabelecimento e profissional já tem chamada aberta (0.2.55, RN34) |
     | 409 | `chamada_indisponivel` | Responder ou cancelar chamada que não está aberta; `details`: `aceita`, `recusada`, `expirada`, `cancelada` ou `encerrada` (0.2.55) |
     | 409 | `recorrencia_nao_confirmada` | 3ª chamada da mesma casa pessoa física ao mesmo profissional em 7 dias sem `confirmo_recorrencia: true` (0.2.55, RN45) |
-    | 422 | `profissional_indisponivel` | A chamada fura preferência ou limite do profissional; `details`: `nao_aceita_chamadas`, `antecedencia_insuficiente`, `agenda_cheia` ou `pausa_por_recusas` (0.2.55, RN30, RN33, RN34) |
+    | 422 | `profissional_indisponivel` | A chamada fura preferência ou limite do profissional; `details`: `nao_aceita_chamadas`, `antecedencia_insuficiente`, `agenda_cheia`, `pausado`, `par_em_pausa` ou `par_bloqueado_temporariamente` (0.2.55, RN30, RN33, RN34; os três últimos listados na 0.2.67). `pausa_por_recusas` foi listado na 0.2.55, mas o servidor não o devolve |
     | 422 | `limite_de_chamadas` | Limite do estabelecimento; `details`: `por_vaga`, `abertas`, `por_dia` ou `conta_nova` (0.2.55, RN34) |
     | 403 | `sem_permissao` + `recurso_desligado` | O recurso está desligado no servidor (`ConfiguracaoDoApp.recursos`, 0.2.54, RN46) |
     | 409 | `midia_indisponivel` | `pedir_nova_analise_midia` em mídia que não está `recusada` nem `nao_publicada`; `details: estado_invalido` ou `expurgada` (0.2.54) |
@@ -109,6 +109,60 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.67, de 08/11/2026.** Só formato e descrição. Nenhum campo, operação, status ou
+    código de erro novo:
+    - **`configuracao_do_app.versao_app` aceita até quatro partes**, como `versao_minima` e
+      `registrar_dispositivo.versao_app`. Era até três (0.2.65). Assim a mesma versão vale igual na
+      abertura e no aparelho: um app `1.2.0.1` não pode ser chamado e receber o aviso de chamada com
+      a tela escondida.
+    - **Aparelho sem versão, ou com ela fora do formato, conta como antigo**, nos avisos `chamada_*`
+      e em `registrar_dispositivo.versao_app`.
+    - **Os `details` de `profissional_indisponivel` que o servidor já devolvia** e o contrato não
+      listava: `pausado`, `par_em_pausa` e `par_bloqueado_temporariamente` (em `chamar_profissional`).
+      `pausa_por_recusas`, listado na 0.2.55, o servidor nunca devolveu: a pausa de 24 h depois de
+      recusa é `par_em_pausa`, e a de 30 dias é `par_bloqueado_temporariamente`.
+    - **`configuracao_do_app` sai do RNF12**, que é a disponibilidade e a janela do Prod, e não a
+      atualização do app. O Documento de Requisitos v1.5.0 não tem requisito próprio de atualização
+      do app; fica a RN46.
+    - **Até o espelho no backend**, que vem antes de ligar as chaves, o servidor ainda aceita só três
+      partes em `configuracao_do_app` (`frila-backend` `20261108150000:83`) e no mínimo guardado (o
+      CHECK de `20261108150000:41`). Até lá, `1.2.0.1` conta como ausente, e os recursos vêm `false`.
+
+    **Versão 0.2.66, de 08/11/2026.** Só descrição; nenhum campo, operação, status ou código muda.
+    Fecha o portão (c) do corte por versão da 0.2.65 (desenho em
+    `arquitetura/desenho-recursos-por-versao-do-app-v1.2.md`):
+    - O aviso `chamada_*` só sai para aparelho cuja `versao_app` (de `registrar_dispositivo`)
+      alcança a versão mínima de `chamada_direta` na plataforma do aparelho, a mesma que decide
+      `recursos.chamada_direta` em `configuracao_do_app`. Antes era "versão que suporta a chamada"
+      (0.2.56), sem número.
+    - `chamar_profissional` recusa com `422 profissional_indisponivel` (`nao_aceita_chamadas`) quando
+      o profissional não tem nenhum aparelho nessa versão mínima. É a recusa genérica que já existe,
+      e ela não revela o motivo, como nas preferências e no vínculo. Sem permissão de notificação o
+      app não registra o aparelho, então esse profissional não pode ser chamado.
+    - Por que é só descrição: o código e o `details` já existem, e nenhum cliente precisa mudar.
+
+    **Versão 0.2.65, de 08/11/2026.** Recursos por versão do app, para a revisão da 1.2 não ligar os
+    recursos de quem está na 1.1 (desenho em `arquitetura/desenho-recursos-por-versao-do-app-v1.2.md`):
+    - **`configuracao_do_app` ganha o parâmetro opcional `versao_app`.** Os três campos de
+      `RecursosDoApp` (`foto_de_perfil`, `chamada_direta` e `perfil_rico`) só vêm `true` quando o
+      servidor liga a chave **e** a `versao_app` informada alcança a versão mínima que o servidor
+      guarda para aquele recurso naquela plataforma. Sem `versao_app`, com ela malformada, abaixo do
+      mínimo ou sem mínimo configurado para a plataforma, vêm `false`. O mínimo não sai na resposta.
+    - **Por que não é `_v2`:** a forma da resposta não muda; só o valor fica mais restrito, e só para
+      quem não manda a versão. O app 1.0 e o 1.1 não mandam e foram revisados pela loja com os três
+      recursos desligados, e é exatamente `false` nos três o que passam a receber em qualquer caso.
+    - **Não muda:** as operações atrás das chaves recusam com `403 sem_permissao`
+      (`recurso_desligado`) só pela chave (RN46), porque não conhecem a versão do app. Nenhum campo,
+      status ou código de erro novo.
+    - **Fica para depois:** o espelho no backend (a função e o mínimo por chave e plataforma) e o
+      envio de `versao_app` pelo app 1.2, com um teste de contrato que confira o corpo.
+
+    **Versão 0.2.64, de 08/11/2026.** Só descrição; nenhum campo, operação, status ou código muda.
+    O endereço de suporte citado em `abrir_suporte` passa a ser `suporte@frilabr.com`: o domínio
+    `frila.app` não é do Frila (sem MX, aponta para IPs de terceiro). É o endereço que a Equipe
+    Frila já usa no backend (`EMAIL_EQUIPE` da Edge Function `enviar-email`) e que o app 1.0 e o
+    1.1 já abrem (`EnderecosOficiais.swift:22`). A mudança é só no texto do contrato: o app não muda.
 
     **Versão 0.2.63, de 08/11/2026.** Só descrição; nenhum campo, operação, status ou código muda, e o
     app 1.1 não precisa de alteração. A `upload_url` de `solicitar_upload_midia` deixa de ser uma URL
@@ -1581,7 +1635,7 @@ paths:
                 token:
                   type: string
                   description: Código recebido no e-mail.
-                  example: '123456'
+                  example: '000000'
                 type:
                   type: string
                   const: email
@@ -1653,15 +1707,40 @@ paths:
         Existe porque a v1.1 sai com o piloto rodando e o app antigo continua nos aparelhos. Sem
         este canal, um defeito grave não sai de circulação e o backend fica preso à compatibilidade
         com ele para sempre.
+
+        **Recursos por versão (0.2.65).** Sem `versao_app`, ou com ela malformada, todos os campos de
+        `recursos` vêm `false`: é o que recebem o app 1.0 e o 1.1, que não a mandam. Com ela, cada
+        recurso vem `true` só se as duas condições valem: o servidor liga a chave do recurso, e a
+        versão é igual ou maior que a versão mínima que o servidor guarda para aquele recurso naquela
+        plataforma. Sem mínimo configurado para a plataforma, o recurso vem `false` (fechado por
+        padrão, como a chave ausente). Ligar um recurso numa plataforma exige, portanto, dois atos: a
+        chave e o mínimo. Assim, um build com código ainda não revisado pela loja nunca liga por
+        esquecimento. O mínimo do recurso não aparece na resposta e não tem relação com
+        `versao_minima`, que é a do bloqueio.
       security:
         - chaveDoProjeto: []
-      x-requisitos: [RNF12]
+      x-requisitos: [RN46]
       parameters:
         - name: plataforma
           in: query
           required: true
           schema:
             $ref: '#/components/schemas/Plataforma'
+        - name: versao_app
+          in: query
+          required: false
+          description: |
+            0.2.65, revisto na 0.2.67. Versão do app que chama (no iOS, o `CFBundleShortVersionString`).
+            De uma a quatro partes numéricas separadas por ponto, como `versao_minima` e
+            `registrar_dispositivo.versao_app`; a parte que faltar vale 0 (`1.2` é `1.2.0`), e a
+            comparação é parte a parte, como número (`1.10.0` é maior que `1.9.0`). Fora desse
+            formato, o servidor trata como ausente e devolve os recursos `false`, sem erro, porque esta
+            é a chamada da abertura e não pode travar o app. Só decide `recursos`; o bloqueio por
+            `versao_minima` continua comparado pelo app.
+          schema:
+            type: string
+            pattern: '^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$'
+            example: "1.2"
       responses:
         '200':
           description: Configuração em vigor para a plataforma.
@@ -3395,8 +3474,9 @@ paths:
         RN29). Os termos não mudam com chamada aberta.
 
         **Limites (RN33, RN34):** 1 chamada aberta por par estabelecimento e profissional
-        (`409 chamada_ja_aberta`); 24 h depois de recusa e pausa de 30 dias depois de 3 recusas ou
-        expirações seguidas (`422 profissional_indisponivel`, `pausa_por_recusas`); 5 chamadas abertas
+        (`409 chamada_ja_aberta`); 24 h depois de recusa (`422 profissional_indisponivel`,
+        `par_em_pausa`) e 30 dias quando as três últimas chamadas respondidas ou expiradas do par foram
+        recusadas ou expiraram (`par_bloqueado_temporariamente`; cancelada não conta); 5 chamadas abertas
         no profissional (`agenda_cheia`); por estabelecimento, somando os membros, 3 por trabalho, 10
         abertas e 20 por dia civil, ou 3 abertas e 5 em 7 dias sem turno cumprido
         (`422 limite_de_chamadas`). Cancelar não devolve cota de envio.
@@ -3408,6 +3488,20 @@ paths:
 
         O `recado` passa pelo filtro de termos e de contato (RN38). A preferência "aceito só de
         estabelecimentos com CNPJ" e as demais saem como `nao_aceita_chamadas`, sem dizer qual. Profissional sem vínculo de trabalho com a casa recebe a mesma recusa genérica (`422 profissional_indisponivel`, `nao_aceita_chamadas`), sem revelar que o vínculo falta.
+
+        **Versão do app (0.2.66).** O profissional sem nenhum aparelho registrado com `versao_app` na
+        versão mínima de `chamada_direta` da plataforma (0.2.65) recebe a mesma recusa genérica
+        (`422 profissional_indisponivel`, `nao_aceita_chamadas`). Assim nunca se cria uma chamada para
+        quem não a receberia. Isso inclui quem não deu permissão de notificação: sem ela, o app não
+        registra o aparelho.
+
+        **Pausas que o servidor já aplicava (listadas na 0.2.67).** `pausado`: o profissional pausou as
+        chamadas nas preferências. Só aparece para quem passa pelas três recusas genéricas
+        (preferência só-CNPJ, versão e vínculo), para a casa sem vínculo não descobrir a pausa.
+        `par_em_pausa`: o profissional recusou uma chamada desta casa há menos de 24 h.
+        `par_bloqueado_temporariamente`: nos últimos 30 dias, as três últimas chamadas desta casa a
+        este profissional que foram respondidas ou expiraram (cancelada não conta) foram recusadas ou
+        expiraram, sem nenhuma aceita no período.
       x-requisitos: [RN28, RN29, RN30, RN31, RN33, RN34, RN38, RN45, RN46, RN02, RN19, RF26]
       requestBody:
         required: true
@@ -4419,7 +4513,7 @@ paths:
       description: |
         Registra o chamado e devolve o `Protocolo`, com o prazo de até 5 dias úteis. **Não envia
         e-mail**: o app chama esta operação e em seguida abre o e-mail do aparelho para
-        `suporte@frila.app`, com o protocolo curto no assunto, no formato
+        `suporte@frilabr.com`, com o protocolo curto no assunto, no formato
         `[Frila Suporte #<protocolo curto>]`. O texto da pessoa vai só nesse e-mail, e o Frila não o
         guarda no banco (RN15). Sem atendimento ao vivo (RF23). Em risco imediato, o app mostra os
         atalhos para o 190 e o 180 sem esperar a resposta (UC14).
@@ -4872,7 +4966,8 @@ paths:
                   description: |
                     0.2.56. Opcional. Versão do app, no formato de `ConfiguracaoDoApp.versao_minima`.
                     O servidor guarda junto do token e só manda aviso `chamada_*` para aparelho cuja
-                    versão suporta a chamada; sem versão, o aparelho conta como antigo.
+                    versão alcança a versão mínima de `chamada_direta` da plataforma (0.2.66); sem
+                    versão, ou com ela fora do formato, o aparelho conta como antigo (0.2.67).
                   type: string
                   pattern: '^[0-9]{1,6}(\.[0-9]{1,6}){0,3}$'
                   example: "1.1.0"
@@ -5575,8 +5670,11 @@ components:
         | `selecao_lembrete` | Membro do estabelecimento | Candidatos esperando sua escolha | {N} candidato(s) para a vaga de {função}. Escolha até {dd/mm às HH:MM}, quando a vaga fecha. |
 
         **Chamadas diretas (0.2.55).** Sem nome de pessoa e sem contato no texto; payload só com
-        `tipo`, `chamada_id` e `vaga_id`. Não contam no teto da RN23. Só saem para aparelho com
-        `versao_app` que suporta a chamada (0.2.56); aparelho sem versão conta como antigo.
+        `tipo`, `chamada_id` e `vaga_id`. Não contam no teto da RN23. Só saem para aparelho cuja
+        `versao_app` alcança a versão mínima de `chamada_direta` da plataforma (0.2.66; era "que
+        suporta a chamada", 0.2.56), comparando parte a parte e completando com zeros, como em
+        `configuracao_do_app`. Aparelho sem versão, ou com ela fora do formato, conta como antigo
+        (0.2.67).
 
         | Tipo | Quem recebe | Título | Corpo |
         |---|---|---|---|
@@ -5951,6 +6049,11 @@ components:
         0.2.54. Interruptores do servidor. Ausente, ou campo ausente, vale `false`. O app esconde a
         entrada do recurso desligado, e o servidor recusa as operações dele com
         `403 sem_permissao` (`recurso_desligado`) independentemente do app (RN46).
+
+        0.2.65. O valor depende também da `versao_app` que o app manda a `configuracao_do_app`: sem
+        ela, malformada, abaixo da versão mínima do recurso na plataforma ou sem mínimo configurado,
+        o campo vem `false`. A recusa das operações continua seguindo só a chave, porque a operação
+        não conhece a versão do app.
       properties:
         foto_de_perfil:
           type: boolean

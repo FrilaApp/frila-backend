@@ -3695,3 +3695,145 @@ Deno.test("enviar-push: helpers capitalizar e formatarHorario tratam nulos e ent
   assertEquals(formatarHorario("data-invalida"), undefined);
   assertEquals(formatarHorario(""), undefined);
 });
+
+// ── 0.2.66: o aviso chamada_* segue o mínimo de chamada_direta da plataforma ──
+// Portão (c) do corte por versão. Quem decide é o banco (privado.recurso_na_versao), pelo
+// sqlClient; aqui o mock faz o papel do banco. Dois aparelhos da mesma conta: um no mínimo e
+// um abaixo dele.
+
+function fetchDeChamada(tipo: string, enviados: string[]): typeof fetch {
+  return (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    if (url === "http://mock-oauth/token") {
+      return Promise.resolve(new Response(
+        JSON.stringify({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ));
+    }
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(new Response(JSON.stringify([{
+        id: "a2660000-0000-4000-8000-000000000001",
+        usuario_id: "u2660000-0000-4000-8000-000000000001",
+        tipo,
+        referencia_id: "c2660000-0000-4000-8000-000000000001",
+        payload: { chamada_id: "c2660000-0000-4000-8000-000000000001", vaga_id: "d2660000-0000-4000-8000-000000000001" },
+        tentativas: 0,
+        estado_entrega: "pendente",
+        proxima_tentativa_em: null,
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(new Response(JSON.stringify([
+        { id: "disp-novo", token_fcm: "fcm_token_aparelho_novo", plataforma: "ios", versao_app: "1.2.0" },
+        { id: "disp-velho", token_fcm: "fcm_token_aparelho_velho", plataforma: "ios", versao_app: "1.1.0" },
+      ]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/messages:send")) {
+      const corpo = JSON.parse(String(init?.body ?? "{}"));
+      enviados.push(corpo?.message?.token);
+      return Promise.resolve(new Response(
+        JSON.stringify({ name: "projects/frila-test-project/messages/msg_266" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ));
+    }
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+}
+
+function pedidoDeChamada(): Request {
+  return new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+    body: JSON.stringify({ notificacao_id: "a2660000-0000-4000-8000-000000000001" }),
+  });
+}
+
+Deno.test("0.2.66: chamada_recebida só sai para o aparelho que alcança o mínimo de chamada_direta", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const enviados: string[] = [];
+  const perguntados: unknown[] = [];
+  const sqlClient: SqlClient = {
+    ...criarMockSqlClient(),
+    aparelhosQueRecebemChamada: (aparelhos) => {
+      perguntados.push(...aparelhos);
+      return Promise.resolve(["disp-novo"]);
+    },
+  };
+  const res = await processarEnvioPush(pedidoDeChamada(), {
+    serviceAccount: sa, fetchFn: fetchDeChamada("chamada_recebida", enviados),
+    fcmApiUrl: "http://mock-fcm/messages:send", sqlClient,
+  });
+  assertEquals(res.status, 200);
+  assertEquals((await res.json()).relatorio[0].status, "enviada");
+  assertEquals(enviados, ["fcm_token_aparelho_novo"], "só o aparelho no mínimo recebe");
+  assertEquals(perguntados.length, 2, "o banco decide sobre os dois aparelhos da conta");
+  assertEquals((perguntados[1] as { versao_app: string }).versao_app, "1.1.0", "com a versão e a plataforma de cada um");
+});
+
+Deno.test("0.2.66: nenhum aparelho no mínimo: nada sai e o aviso falha como versao_nao_suportada", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const enviados: string[] = [];
+  const chamadasFalha: GravarFalhaPushParams[] = [];
+  const sqlClient: SqlClient = {
+    ...criarMockSqlClient({ chamadasFalha }),
+    aparelhosQueRecebemChamada: () => Promise.resolve([]),
+  };
+  const res = await processarEnvioPush(pedidoDeChamada(), {
+    serviceAccount: sa, fetchFn: fetchDeChamada("chamada_recebida", enviados),
+    fcmApiUrl: "http://mock-fcm/messages:send", sqlClient,
+  });
+  assertEquals((await res.json()).relatorio[0].detalhe, "versao_nao_suportada");
+  assertEquals(enviados.length, 0);
+  assertEquals(chamadasFalha[0]?.permanente, true);
+});
+
+Deno.test("0.2.66: sem a consulta de versão no sqlClient, nenhum chamada_* sai (fechado por padrão)", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const enviados: string[] = [];
+  const res = await processarEnvioPush(pedidoDeChamada(), {
+    serviceAccount: sa, fetchFn: fetchDeChamada("chamada_lembrete", enviados),
+    fcmApiUrl: "http://mock-fcm/messages:send", sqlClient: criarMockSqlClient(),
+  });
+  assertEquals((await res.json()).relatorio[0].detalhe, "versao_nao_suportada");
+  assertEquals(enviados.length, 0, "o aparelho 1.2.0 não recebe sem o banco dizer que pode");
+});
+
+Deno.test("0.2.66: a consulta de versão falhou: nada sai agora e o aviso volta como erro transitório", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const enviados: string[] = [];
+  const chamadasFalha: GravarFalhaPushParams[] = [];
+  const sqlClient: SqlClient = {
+    ...criarMockSqlClient({ chamadasFalha }),
+    aparelhosQueRecebemChamada: () => Promise.reject(new Error("conexão recusada")),
+  };
+  const res = await processarEnvioPush(pedidoDeChamada(), {
+    serviceAccount: sa, fetchFn: fetchDeChamada("chamada_recebida", enviados),
+    fcmApiUrl: "http://mock-fcm/messages:send", sqlClient,
+  });
+  const item = (await res.json()).relatorio[0];
+  assertEquals(item.status, "pendente");
+  assertEquals(item.detalhe, "erro_transitorio: versao_do_aparelho");
+  assertEquals(enviados.length, 0);
+  assertEquals(chamadasFalha[0]?.permanente, false, "não vira falha permanente");
+  assert(typeof chamadasFalha[0]?.proximaTentativaEm === "string", "volta com backoff");
+});
+
+Deno.test("0.2.66: aviso que não é de chamada não passa pelo filtro de versão", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const enviados: string[] = [];
+  let perguntou = false;
+  const sqlClient: SqlClient = {
+    ...criarMockSqlClient(),
+    aparelhosQueRecebemChamada: () => {
+      perguntou = true;
+      return Promise.resolve([]);
+    },
+  };
+  const res = await processarEnvioPush(pedidoDeChamada(), {
+    serviceAccount: sa, fetchFn: fetchDeChamada("vaga", enviados),
+    fcmApiUrl: "http://mock-fcm/messages:send", sqlClient,
+  });
+  assertEquals((await res.json()).relatorio[0].status, "enviada");
+  assertEquals(enviados.sort(), ["fcm_token_aparelho_novo", "fcm_token_aparelho_velho"], "os dois aparelhos recebem");
+  assertEquals(perguntou, false);
+});
