@@ -44,6 +44,7 @@ comment on column privado.profissional_reputacao_expurgada.aval_total is
 
 revoke all on table privado.profissional_reputacao_expurgada from public, anon, authenticated;
 grant all on table privado.profissional_reputacao_expurgada to service_role;
+alter table privado.profissional_reputacao_expurgada enable row level security;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2. Atualização de privado.expurgar_turnos_antigos (acumulação R9 antes de apagar)
@@ -484,8 +485,8 @@ end $$;
 comment on function privado.perfil_publico_profissional(uuid) is
   'Gera o json de perfil público de profissional, somando histórico vivo e base histórica expurgada (R9). Inclui campos F2 se recurso perfil_rico estiver ligado e houver vínculo legítimo.';
 
-revoke execute on function privado.perfil_publico_profissional(uuid) from public, anon;
-grant execute on function privado.perfil_publico_profissional(uuid) to authenticated, service_role;
+revoke execute on function privado.perfil_publico_profissional(uuid) from public, anon, authenticated;
+grant execute on function privado.perfil_publico_profissional(uuid) to service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 6. Atualização de public.perfil_publico
