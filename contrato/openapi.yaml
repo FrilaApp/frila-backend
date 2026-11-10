@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.72
+  version: 0.2.73
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -112,6 +112,16 @@ info:
 
     ## Estado
 
+    **Versão 0.2.73, de 09/11/2026.** Múltiplos membros por estabelecimento com papéis (RF21, US24).
+    - **`POST /rpc/convidar_membro`**: gera convite para novo membro do estabelecimento com token
+      opaco de uso único e validade de 7 dias. Exige ser administrador do estabelecimento.
+    - **`POST /rpc/aceitar_convite_membro`**: consome o token de convite e vincula o usuário autenticado
+      (perfil contratante) ao estabelecimento com o papel designado (administrador ou operador).
+    - **`POST /rpc/remover_membro`**: remove membro da equipe do estabelecimento. Bloqueia a remoção
+      do último administrador (`422 ultimo_administrador`).
+    - **`POST /rpc/transferir_administracao`**: promove outro membro do estabelecimento para o papel de
+      administrador. Exige ser administrador atual.
+
     **Versão 0.2.72, de 09/11/2026.** Equipe de confiança: autoexclusão do profissional e expurgo após 5 anos sem turnos juntos.
     - **`POST /rpc/sair_da_equipe`**: o profissional sai voluntariamente da equipe de confiança de um
       estabelecimento (LGPD art. 18, direito de autoexclusão). Sem penalidade nem aviso ao estabelecimento.
@@ -119,6 +129,14 @@ info:
     - **Expurgo após 5 anos sem turnos juntos:** a rotina diária de retenção remove vínculos da equipe de
       confiança onde o último turno verificado/cumprido entre o profissional e o estabelecimento ocorreu há
       mais de 5 anos (ou onde a data de inclusão tem mais de 5 anos e não houve nenhum turno nos últimos 5 anos).
+
+    **Versão 0.2.71, de 09/11/2026.** Denúncia feita na chamada leva o `chamada_id` (CD-S13, cartão
+    AGkBFg9a):
+    - **`chamada_id` em `/rpc/denunciar` (opcional):** associa a denúncia à chamada direta. A chamada
+      deve existir e envolver tanto o denunciante quanto o alvo (`alvo_tipo` + `alvo_id`); caso
+      contrário, recusa com `422 campo_invalido` (`details: chamada_id`). O servidor grava apenas a
+      referência em `public.ocorrencia` (RN15, nenhum recado ou texto é duplicado). Denúncias sem
+      `chamada_id` continuam funcionando como antes.
 
     **Versão 0.2.70, de 08/11/2026.** Só descrição, no check-in por código. Nenhum campo, operação,
     status ou código de erro novo:
@@ -2771,6 +2789,223 @@ paths:
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
+  /rpc/convidar_membro:
+    post:
+      tags: [Estabelecimento]
+      operationId: convidarMembro
+      summary: Convidar novo membro para o estabelecimento com papel
+      description: |
+        0.2.73. Gera convite para novo membro do estabelecimento com token de uso único (RF21, US24).
+        Apenas o administrador do estabelecimento pode convidar. O convite tem validade de 7 dias
+        e expira automaticamente.
+
+        Recusas: `401 nao_autenticado` se sem sessão; `403 sem_permissao` se o chamador não for
+        administrador do estabelecimento; `404 nao_encontrado` se o estabelecimento não existir;
+        `422 campo_obrigatorio` (`details: papel`) quando ausente; `422 campo_invalido` (`details: email`)
+        quando o formato do e-mail for inválido.
+      x-requisitos: [RF21, US24]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estabelecimento_id, email, papel]
+              properties:
+                estabelecimento_id:
+                  $ref: '#/components/schemas/Uuid'
+                email:
+                  type: string
+                  format: email
+                papel:
+                  $ref: '#/components/schemas/PapelMembro'
+      responses:
+        '200':
+          description: Convite gerado com sucesso.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, convite_id, expira_em]
+                properties:
+                  convite_id:
+                    $ref: '#/components/schemas/Uuid'
+                  estabelecimento_id:
+                    $ref: '#/components/schemas/Uuid'
+                  email:
+                    type: string
+                    format: email
+                  papel:
+                    $ref: '#/components/schemas/PapelMembro'
+                  token:
+                    type: string
+                    description: Token opaco de 64 caracteres hexadecimais para aceitar o convite.
+                  expira_em:
+                    type: string
+                    format: date-time
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/aceitar_convite_membro:
+    post:
+      tags: [Estabelecimento]
+      operationId: aceitarConviteMembro
+      summary: Aceitar convite para ingressar como membro do estabelecimento
+      description: |
+        0.2.73. Consome token de uso único e adiciona o chamador à equipe do estabelecimento
+        com o papel designado (RF21, US24). Exige conta com perfil contratante ativa.
+
+        Recusas: `401 nao_autenticado` se sem sessão; `422 perfil_incompativel` se a conta for de profissional;
+        `422 convite_invalido` se o token não existir, já tiver sido usado ou estiver expirado.
+      x-requisitos: [RF21, US24]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  description: Token recebido no convite.
+      responses:
+        '200':
+          description: Convite aceito e membro adicionado com sucesso.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: membro_adicionado
+                  membro_id:
+                    $ref: '#/components/schemas/Uuid'
+                  estabelecimento_id:
+                    $ref: '#/components/schemas/Uuid'
+                  usuario_id:
+                    $ref: '#/components/schemas/Uuid'
+                  papel:
+                    $ref: '#/components/schemas/PapelMembro'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/remover_membro:
+    post:
+      tags: [Estabelecimento]
+      operationId: removerMembro
+      summary: Remover membro do estabelecimento
+      description: |
+        0.2.73. Remove membro da equipe do estabelecimento com proteção para o último administrador (RF21, US24).
+        Apenas o administrador do estabelecimento pode remover membros.
+
+        Recusas: `401 nao_autenticado` se sem sessão; `403 sem_permissao` se o chamador não for
+        administrador do estabelecimento; `404 nao_encontrado` se o membro não pertencer ao estabelecimento;
+        `422 ultimo_administrador` se tentar remover o único administrador restante.
+      x-requisitos: [RF21, US24]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estabelecimento_id, membro_id]
+              properties:
+                estabelecimento_id:
+                  $ref: '#/components/schemas/Uuid'
+                membro_id:
+                  $ref: '#/components/schemas/Uuid'
+                  description: Identificador do registro de membro ou do usuário.
+      responses:
+        '200':
+          description: Membro removido com sucesso.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: membro_removido
+                  removido:
+                    type: boolean
+                  estabelecimento_id:
+                    $ref: '#/components/schemas/Uuid'
+                  membro_id:
+                    $ref: '#/components/schemas/Uuid'
+                  usuario_id:
+                    $ref: '#/components/schemas/Uuid'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/transferir_administracao:
+    post:
+      tags: [Estabelecimento]
+      operationId: transferirAdministracao
+      summary: Promover membro do estabelecimento a administrador
+      description: |
+        0.2.73. Promove outro membro existente do estabelecimento para o papel de administrador (RF21, US24).
+        Apenas o administrador atual do estabelecimento pode promover membros.
+
+        Recusas: `401 nao_autenticado` se sem sessão; `403 sem_permissao` se o chamador não for
+        administrador do estabelecimento; `404 nao_encontrado` se o membro indicado não pertencer ao estabelecimento.
+      x-requisitos: [RF21, US24]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estabelecimento_id, novo_admin_id]
+              properties:
+                estabelecimento_id:
+                  $ref: '#/components/schemas/Uuid'
+                novo_admin_id:
+                  $ref: '#/components/schemas/Uuid'
+                  description: Identificador do membro ou usuário a ser promovido.
+      responses:
+        '200':
+          description: Administração transferida / membro promovido com sucesso.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: administracao_transferida
+                  estabelecimento_id:
+                    $ref: '#/components/schemas/Uuid'
+                  novo_admin_id:
+                    $ref: '#/components/schemas/Uuid'
+                  novo_admin_usuario_id:
+                    $ref: '#/components/schemas/Uuid'
+                  papel:
+                    $ref: '#/components/schemas/PapelMembro'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
   # ───────────────────────────────────────────── Catálogo
 
   /funcao:
@@ -4708,8 +4943,9 @@ paths:
         Recusas: campo obrigatório ausente (`campo_obrigatorio`, com o nome do campo em `details`:
         `alvo_tipo`, `alvo_id`, `motivo`, `relato` ou `chave`, RF26); valor recusado pela regra
         (`campo_invalido`, com o campo em `details`: `alvo_tipo` fora do enum, `alvo_id` não UUID,
-        `motivo` fora do enum `MotivoDenuncia`, `relato` com menos de 10 caracteres ou `chave` não UUID).
-      x-requisitos: [RF26, RN13, RN15, UC17]
+        `motivo` fora do enum `MotivoDenuncia`, `relato` com menos de 10 caracteres, `chave` não UUID,
+        `midia_id` que não seja foto de perfil do alvo, ou `chamada_id` inexistente ou de terceiros).
+      x-requisitos: [RF26, RN13, RN15, UC17, CD-S13]
       requestBody:
         required: true
         content:
@@ -4745,6 +4981,16 @@ paths:
                     dispara a reanálise automática; a mesma conta denunciando de novo não conta duas
                     vezes. Denúncia sem `midia_id` continua valendo como hoje, sobre o perfil.
                   $ref: '#/components/schemas/Uuid'
+                chamada_id:
+                  description: |
+                    0.2.71. Opcional: associa a denúncia à chamada direta (CD-S13, cartão AGkBFg9a).
+                    A chamada deve existir e envolver tanto o denunciante quanto o alvo (`alvo_tipo`
+                    + `alvo_id`); senão, `422 campo_invalido` com `details: chamada_id`. O servidor
+                    grava apenas a referência em `public.ocorrencia` (sigilo RN15). Denúncia sem
+                    `chamada_id` continua funcionando como antes.
+                  oneOf:
+                    - $ref: '#/components/schemas/Uuid'
+                    - type: 'null'
       responses:
         '200':
           description: Denúncia registrada.
