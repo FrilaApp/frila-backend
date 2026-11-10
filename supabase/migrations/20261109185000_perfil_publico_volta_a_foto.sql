@@ -64,7 +64,7 @@ begin
 end $$;
 
 comment on function public.perfil_publico(uuid) is
-  'Perfil público de profissional ou estabelecimento por id. Profissional ganha campos ricos da F2 se quem lê tem vínculo legítimo; foto_url e foto_id (0.2.54) só com vínculo de leitura, recurso ligado, foto aprovada e titular ativo. Devolve 404 para id inexistente e para bloqueio mútuo.';
+  'Perfil público de profissional ou estabelecimento por id. Profissional ganha campos ricos da F2 se quem lê tem vínculo legítimo. A reputação do profissional reflete o histórico vivo e a base histórica expurgada (R9). foto_url e foto_id (0.2.54) só com vínculo de leitura, recurso ligado, foto aprovada e titular ativo. Devolve 404 para id inexistente e para bloqueio mútuo.';
 
 revoke execute on function public.perfil_publico(uuid) from public, anon;
 grant  execute on function public.perfil_publico(uuid) to authenticated;
