@@ -20,7 +20,7 @@ Hoje, um `pg_cron` parado só aparece na checagem diária (`docs/ChecagemDiariaP
 1. **Independência:** o vigia não roda no `pg_cron`, no `pg_net` nem na fila de e-mail do banco. Ele vive fora do Supabase.
 2. **Canal próprio:** o aviso chega à equipe por um caminho que não passa pelo Frila: o e-mail do próprio serviço de monitoramento, para o endereço da equipe. Pela decisão do Cauê de 08/11, alertas da equipe não vão para o Gmail pessoal dele.
 3. **Sem superfície nova e sem dado pessoal:** reaproveitar a Edge Function pública `saude` (`verify_jwt = false`, que já responde 200 ou 503). A resposta pública não mostra números, nomes de job nem nada do registro de acessos.
-4. **Custo zero no piloto** e alerta em até ~15 min.
+4. **Custo zero no piloto** e alerta em até ~25 a 30 min depois de o `pg_cron` parar: 15 min de limiar da `verificar_saude`, mais até 5 min até a próxima checagem do monitor, mais os 10 min do "Alert only after" (pelo consumidor, ~20 a 25 min). Os limiares não mudaram: baixá-los é decisão do Cauê. O disco aguenta: sem o agendador, o slot leva ~2 h até 1 GB.
 
 ## 3. Desenho proposto
 
@@ -34,7 +34,7 @@ Hoje, um `pg_cron` parado só aparece na checagem diária (`docs/ChecagemDiariaP
 
 **(b) O vigia, fora do Supabase.**
 - O monitor de uptime **HetrixTools** (plano grátis, seção 6) faz `HEAD /functions/v1/saude` a cada 5 min.
-- Com "Alert only after 10 minutes", ele só avisa se o 503 durar 2 rodadas seguidas.
+- Com "Alert only after 10 minutes", ele só avisa se o 503 durar 10 minutos. **Inferência:** isso equivale a 2 rodadas seguidas do `HEAD` a cada 5 min (`retornos/B-alerta-monitor-escolha.md:26`); pode exigir 3 falhas (aos 0, 5 e 10 min), conforme o HetrixTools conte o início da queda. Confirma-se no teste do cartão 2.
 - O aviso vai por e-mail para a equipe, no `suporte@frilabr.com`.
 - Não há segunda linha no GitHub Actions (decisão 6.4).
 
@@ -70,7 +70,7 @@ Hoje, um `pg_cron` parado só aparece na checagem diária (`docs/ChecagemDiariaP
 **3. Limiares:**
 - 15 min para a `verificar_saude`;
 - 10 min para o `consumir_registro_acesso` (só com a coleta ligada) e para a `processar_fila_email`;
-- a carência de 2 falhas é a checagem `HEAD` a cada 5 min com "Alert only after 10 minutes".
+- a carência é a checagem `HEAD` a cada 5 min com "Alert only after 10 minutes" (**Inferência:** equivale a 2 falhas seguidas; confirma-se no teste do cartão 2).
 
 **4. Sem a segunda linha no GitHub Actions.**
 
