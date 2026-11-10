@@ -370,6 +370,17 @@ select pg_temp.guarda('removerDaEquipe', pg_temp.como('cc000000-0000-4000-8000-0
   (select casa_id from ids),
   (select p.id from public.profissional p where p.usuario_id = 'cc000000-0000-4000-8000-000000000002'))));
 
+-- Reinsere profissional na equipe para colher sair_da_equipe (0.2.72)
+insert into public.equipe_confianca (estabelecimento_id, profissional_id)
+select (select casa_id from ids), p.id
+  from public.profissional p
+ where p.usuario_id = 'cc000000-0000-4000-8000-000000000002'
+on conflict do nothing;
+
+select pg_temp.guarda('sair_da_equipe', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
+  $$ select public.sair_da_equipe(%L::uuid) $$,
+  (select casa_id from ids))));
+
 -- ── A configuração do app, sem sessão ─────────────────────────────────────────
 --
 -- É a única RPC que o app chama antes de entrar, então colhe como `anon`, e não pelo
@@ -1828,6 +1839,19 @@ select pg_temp.guarda('promete:solicitarUploadVerificacao:401',
 select pg_temp.guarda('promete:confirmarEnvioVerificacao:401',
   pg_temp.observado('cc000000-0000-4000-8000-000000000003',
     $$ select public.confirmar_envio_verificacao() $$));
+
+-- Vigias de sair_da_equipe (contrato 0.2.72)
+select pg_temp.guarda('promete:sair_da_equipe:401',
+  pg_temp.observado(null,
+    format($$ select public.sair_da_equipe(%L::uuid) $$, (select casa_id from ids))));
+
+select pg_temp.guarda('promete:sair_da_equipe:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    format($$ select public.sair_da_equipe(%L::uuid) $$, (select casa_id from ids))));
+
+select pg_temp.guarda('promete:sair_da_equipe:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.sair_da_equipe('c0000000-0000-4000-8000-000000000099'::uuid) $$));
 
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o

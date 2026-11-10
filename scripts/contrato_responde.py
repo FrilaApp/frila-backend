@@ -334,6 +334,10 @@ VIGIADAS = {
     ("publicarAPartirDaChamada", "404"): "nao_encontrado",
     ("publicarAPartirDaChamada", "409"): "vaga_encerrada",
     ("publicarAPartirDaChamada", "422"): "campo_obrigatorio",
+    # Sair da equipe de confiança (contrato 0.2.72; LGPD art. 18): vigiada desde o nascimento.
+    ("sair_da_equipe", "401"): "nao_autenticado",
+    ("sair_da_equipe", "403"): "sem_permissao",
+    ("sair_da_equipe", "422"): "campo_invalido",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
@@ -384,6 +388,10 @@ PENDENTES = {
     # PR7, porque a recusa dele responde por response.status e o harness precisa aprender a lê-lo.
     **{op: "check-in por código, ainda sem implementação" for op in (
         "gerarCodigoCheckin", "validarCodigoCheckin")},
+    # Múltiplos membros de estabelecimento (0.2.73): o espelho entra antes das RPCs, que chegam
+    # no PR #472. Cada uma sai daqui no PR que a implementa.
+    **{op: "múltiplos membros de estabelecimento, fatias seguintes" for op in (
+        "aceitarConviteMembro", "convidarMembro", "removerMembro", "transferirAdministracao")},
 }
 
 def recusas_declaradas(doc):
