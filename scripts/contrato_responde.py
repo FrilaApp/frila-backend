@@ -388,6 +388,10 @@ PENDENTES = {
     # PR7, porque a recusa dele responde por response.status e o harness precisa aprender a lê-lo.
     **{op: "check-in por código, ainda sem implementação" for op in (
         "gerarCodigoCheckin", "validarCodigoCheckin")},
+    # Múltiplos membros de estabelecimento (0.2.73): o espelho entra antes das RPCs, que chegam
+    # no PR #472. Cada uma sai daqui no PR que a implementa.
+    **{op: "múltiplos membros de estabelecimento, fatias seguintes" for op in (
+        "aceitarConviteMembro", "convidarMembro", "removerMembro", "transferirAdministracao")},
 }
 
 def recusas_declaradas(doc):
