@@ -130,6 +130,14 @@ info:
       confiança onde o último turno verificado/cumprido entre o profissional e o estabelecimento ocorreu há
       mais de 5 anos (ou onde a data de inclusão tem mais de 5 anos e não houve nenhum turno nos últimos 5 anos).
 
+    **Versão 0.2.71, de 09/11/2026.** Denúncia feita na chamada leva o `chamada_id` (CD-S13, cartão
+    AGkBFg9a):
+    - **`chamada_id` em `/rpc/denunciar` (opcional):** associa a denúncia à chamada direta. A chamada
+      deve existir e envolver tanto o denunciante quanto o alvo (`alvo_tipo` + `alvo_id`); caso
+      contrário, recusa com `422 campo_invalido` (`details: chamada_id`). O servidor grava apenas a
+      referência em `public.ocorrencia` (RN15, nenhum recado ou texto é duplicado). Denúncias sem
+      `chamada_id` continuam funcionando como antes.
+
     **Versão 0.2.70, de 08/11/2026.** Só descrição, no check-in por código. Nenhum campo, operação,
     status ou código de erro novo:
     - **A guarda dos registros do código em `MeusDados.checkins_por_codigo`:** os 90 dias contam do
@@ -4935,8 +4943,9 @@ paths:
         Recusas: campo obrigatório ausente (`campo_obrigatorio`, com o nome do campo em `details`:
         `alvo_tipo`, `alvo_id`, `motivo`, `relato` ou `chave`, RF26); valor recusado pela regra
         (`campo_invalido`, com o campo em `details`: `alvo_tipo` fora do enum, `alvo_id` não UUID,
-        `motivo` fora do enum `MotivoDenuncia`, `relato` com menos de 10 caracteres ou `chave` não UUID).
-      x-requisitos: [RF26, RN13, RN15, UC17]
+        `motivo` fora do enum `MotivoDenuncia`, `relato` com menos de 10 caracteres, `chave` não UUID,
+        `midia_id` que não seja foto de perfil do alvo, ou `chamada_id` inexistente ou de terceiros).
+      x-requisitos: [RF26, RN13, RN15, UC17, CD-S13]
       requestBody:
         required: true
         content:
@@ -4972,6 +4981,16 @@ paths:
                     dispara a reanálise automática; a mesma conta denunciando de novo não conta duas
                     vezes. Denúncia sem `midia_id` continua valendo como hoje, sobre o perfil.
                   $ref: '#/components/schemas/Uuid'
+                chamada_id:
+                  description: |
+                    0.2.71. Opcional: associa a denúncia à chamada direta (CD-S13, cartão AGkBFg9a).
+                    A chamada deve existir e envolver tanto o denunciante quanto o alvo (`alvo_tipo`
+                    + `alvo_id`); senão, `422 campo_invalido` com `details: chamada_id`. O servidor
+                    grava apenas a referência em `public.ocorrencia` (sigilo RN15). Denúncia sem
+                    `chamada_id` continua funcionando como antes.
+                  oneOf:
+                    - $ref: '#/components/schemas/Uuid'
+                    - type: 'null'
       responses:
         '200':
           description: Denúncia registrada.
