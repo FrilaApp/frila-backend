@@ -19,253 +19,38 @@ falhas=0
 # corpo de sucesso, que é o que este autoteste mede, e a recusa que o contrato promete,
 # que é do `teste-contrato-promete.sh`.
 #
-# Sem esta linha o validador reprova por promessa não medida, e os nove casos daqui
-# passariam a medir a direção errada: os quatro que esperam 0 sairiam 1, e os cinco que
-# esperam 1 sairiam 1 mesmo sem o defeito de corpo que cada um existe para provar — cinco
-# casos decorativos, verdes com e sem a validação que eles vigiam. Medido em 02/10, ao
-PROMESSA_OK=$(cat <<'EOF'
-{"op":"promete:perfilPublico:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:contatoDoTurno:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:contatoDoTurno:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:cancelarPosicao:409","corpo":{"status":409,"code":"posicao_nao_cancelavel"}}
-{"op":"promete:cancelarVaga:409","corpo":{"status":409,"code":"vaga_encerrada"}}
-{"op":"promete:excluirConta:409","corpo":{"status":409,"code":"administrador_unico"}}
-{"op":"promete:bloquear:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:bloquear:422","corpo":{"status":422,"code":"campo_invalido"}}
-{"op":"promete:denunciar:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:contestarSuspensao:409","corpo":{"status":409,"code":"contestacao_ja_aberta"}}
-{"op":"promete:contestarSuspensao:422","corpo":{"status":422,"code":"sem_suspensao_ativa"}}
-{"op":"promete:reabrirPorAtraso:409","corpo":{"status":409,"code":"posicao_nao_cancelavel"}}
-{"op":"promete:reabrirPorAtraso:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:confirmarCheckinManual:409","corpo":{"status":409,"code":"checkin_ja_confirmado"}}
-{"op":"promete:fazerCheckin:409","corpo":{"status":409,"code":"vaga_encerrada"}}
-{"op":"promete:fazerCheckout:409","corpo":{"status":409,"code":"checkin_pendente"}}
-{"op":"promete:cancelarPosicao:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:cancelarPosicao:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:cancelarVaga:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:cancelarVaga:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:publicarVaga:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:candidatar:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:candidatar:409","corpo":{"status":409,"code":"vaga_encerrada"}}
-{"op":"promete:retirarCandidatura:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:retirarCandidatura:409","corpo":{"status":409,"code":"candidatura_indisponivel"}}
-{"op":"promete:escolherCandidato:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:escolherCandidato:409","corpo":{"status":409,"code":"posicao_ja_preenchida"}}
-{"op":"promete:avaliar:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:avaliar:409","corpo":{"status":409,"code":"avaliacao_ja_registrada"}}
-{"op":"promete:cadastrarEstabelecimento:409","corpo":{"status":409,"code":"documento_ja_cadastrado"}}
-{"op":"promete:cadastrarEstabelecimento:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:bloquear:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:denunciar:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:denunciar:422","corpo":{"status":422,"code":"campo_invalido"}}
-{"op":"promete:avisarACaminho:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:configuracaoDoApp:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:confirmarCheckinManual:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:confirmarCheckinManual:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:fazerCheckin:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:fazerCheckin:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:fazerCheckout:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:fazerCheckout:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:republicarVaga:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:republicarVaga:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:detalheVaga:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:detalheVaga:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:candidatosDaVaga:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:candidatosDaVaga:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:incluirNaEquipe:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:incluirNaEquipe:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:removerDaEquipe:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:criarPerfilProfissional:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:atualizarPerfilProfissional:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:pedirRevisaoDespacho:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:meuEstabelecimento:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:equipeDeConfianca:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:vagasAbertas:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:retirarCandidatura:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:minhasCandidaturas:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:meusTurnos:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:painelEstabelecimento:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:minhaConta:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:meuPerfilProfissional:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:atualizarPerfilProfissional:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:criarConta:409","corpo":{"status":409,"code":"conta_existente"}}
-{"op":"promete:criarPerfilProfissional:409","corpo":{"status":409,"code":"perfil_ja_existe"}}
-{"op":"promete:pedirRevisaoDespacho:409","corpo":{"status":409,"code":"contestacao_ja_aberta"}}
-{"op":"promete:avaliar:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:criteriosDeNotificacao:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:criteriosDeNotificacao:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:meusEstabelecimentos:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:registrarDispositivo:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:pedirRevisaoDespacho:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:cadastrarEstabelecimento:422","corpo":{"status":422,"code":"perfil_incompativel"}}
-{"op":"promete:atualizarPerfilProfissional:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:publicarVaga:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:escolherCandidato:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:cancelarVaga:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:minhaIdentidadeStatus:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:minhaIdentidadeStatus:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:solicitarUploadVerificacao:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:solicitarUploadVerificacao:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:solicitarUploadVerificacao:409","corpo":{"status":409,"code":"verificacao_indisponivel"}}
-{"op":"promete:solicitarUploadVerificacao:422","corpo":{"status":422,"code":"campo_invalido"}}
-{"op":"promete:confirmarEnvioVerificacao:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:confirmarEnvioVerificacao:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:confirmarEnvioVerificacao:409","corpo":{"status":409,"code":"verificacao_indisponivel"}}
-{"op":"promete:confirmarEnvioVerificacao:422","corpo":{"status":422,"code":"evidencia_incompleta"}}
-{"op":"promete:listarBloqueios:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:listarBloqueios:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:desbloquear:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:desbloquear:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:desbloquear:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:desbloquear:422","corpo":{"status":422,"code":"campo_invalido"}}
-{"op":"promete:cancelarPosicao:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:fazerCheckin:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:fazerCheckout:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:publicarVaga:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:cancelarVaga:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:cancelarPosicao:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:candidatar:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:retirarCandidatura:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:fazerCheckin:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:fazerCheckout:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:confirmarCheckinManual:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:gerarCodigoCheckin:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:gerarCodigoCheckin:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:gerarCodigoCheckin:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:gerarCodigoCheckin:409","corpo":{"status":409,"code":"checkin_ja_confirmado"}}
-{"op":"promete:gerarCodigoCheckin:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:validarCodigoCheckin:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:validarCodigoCheckin:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:validarCodigoCheckin:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:validarCodigoCheckin:409","corpo":{"status":409,"code":"checkin_ja_confirmado"}}
-{"op":"promete:validarCodigoCheckin:422","corpo":{"status":422,"code":"codigo_invalido"}}
-{"op":"promete:reabrirPorAtraso:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:avaliar:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:bloquear:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:denunciar:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:contestarSuspensao:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:pedirRevisaoDespacho:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:candidatosDaVaga:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:painelEstabelecimento:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:candidatar:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:retirarCandidatura:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:reabrirPorAtraso:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:confirmarCheckinManual:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:contatoDoTurno:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:detalheVaga:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:candidatosDaVaga:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:republicarVaga:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:avisarACaminho:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:configuracaoDoApp:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:criarPerfilProfissional:422","corpo":{"status":422,"code":"perfil_incompativel"}}
-{"op":"promete:vagasAbertas:422","corpo":{"status":422,"code":"perfil_incompativel"}}
-{"op":"promete:minhasCandidaturas:422","corpo":{"status":422,"code":"perfil_incompativel"}}
-{"op":"promete:meusEstabelecimentos:422","corpo":{"status":422,"code":"perfil_incompativel"}}
-{"op":"promete:criarConta:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:registrarEvento:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:escolherCandidato:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:minhasCandidaturas:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:vagasAbertas:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:detalheVaga:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:republicarVaga:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:meusTurnos:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:contatoDoTurno:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:avisarACaminho:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:painelEstabelecimento:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:meusEstabelecimentos:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:meuEstabelecimento:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:equipeDeConfianca:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:situacaoDaConta:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:criteriosDeNotificacao:422","corpo":{"status":422,"code":"perfil_incompativel"}}
-{"op":"promete:incluirNaEquipe:422","corpo":{"status":422,"code":"perfil_incompativel"}}
-{"op":"promete:removerDaEquipe:422","corpo":{"status":422,"code":"perfil_incompativel"}}
-{"op":"promete:minhaConta:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:meuPerfilProfissional:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:atualizarPerfilProfissional:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:criarPerfilProfissional:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:cadastrarEstabelecimento:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:criteriosDeNotificacao:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:incluirNaEquipe:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:removerDaEquipe:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:perfilPublico:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:registrarDispositivo:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:removerDispositivo:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:registrarEvento:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:criarConta:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:abrirSuporte:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:abrirSuporte:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:abrirSuporte:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:abrirSuporte:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:abrirSuporte:429","corpo":{"status":429,"code":"limite_excedido"}}
-{"op":"promete:republicarPosicoesRestantes:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:republicarPosicoesRestantes:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:republicarPosicoesRestantes:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:republicarPosicoesRestantes:422","corpo":{"status":422,"code":"republicacao_indisponivel"}}
-{"op":"promete:definirServicos:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:definirServicos:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:definirServicos:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:definirServicos:422","corpo":{"status":422,"code":"campo_invalido"}}
-{"op":"promete:definirRegioesAtendidas:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:definirRegioesAtendidas:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:definirRegioesAtendidas:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:definirRegioesAtendidas:422","corpo":{"status":422,"code":"campo_invalido"}}
-{"op":"promete:atualizarApresentacaoProfissional:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:atualizarApresentacaoProfissional:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:atualizarApresentacaoProfissional:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:atualizarApresentacaoProfissional:422","corpo":{"status":422,"code":"campo_invalido"}}
-{"op":"promete:meuPerfilDetalhado:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:meuPerfilDetalhado:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:meuPerfilDetalhado:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:meuPerfilDetalhado:422","corpo":{"status":422,"code":"perfil_incompativel"}}
-{"op":"promete:resolverServico:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:resolverServico:422","corpo":{"status":422,"code":"campo_invalido"}}
-{"op":"promete:solicitarUploadMidia:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:solicitarUploadMidia:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:solicitarUploadMidia:422","corpo":{"status":422,"code":"midia_invalida"}}
-{"op":"promete:confirmarUploadMidia:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:confirmarUploadMidia:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:confirmarUploadMidia:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:confirmarUploadMidia:422","corpo":{"status":422,"code":"evidencia_incompleta"}}
-{"op":"promete:removerMidia:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:removerMidia:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:removerMidia:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:minhasMidias:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:minhasMidias:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:pedirNovaAnaliseMidia:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:pedirNovaAnaliseMidia:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:pedirNovaAnaliseMidia:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:pedirNovaAnaliseMidia:409","corpo":{"status":409,"code":"midia_indisponivel"}}
-{"op":"promete:chamarProfissional:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:chamarProfissional:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:chamarProfissional:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:chamarProfissional:409","corpo":{"status":409,"code":"chamada_ja_aberta"}}
-{"op":"promete:chamarProfissional:422","corpo":{"status":422,"code":"profissional_indisponivel"}}
-{"op":"promete:detalheChamada:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:detalheChamada:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:detalheChamada:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:minhasChamadas:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:minhasChamadas:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:minhasChamadas:422","corpo":{"status":422,"code":"campo_invalido"}}
-{"op":"promete:definirPreferenciaChamadas:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:definirPreferenciaChamadas:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:definirPreferenciaChamadas:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:definirPreferenciaChamadas:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-{"op":"promete:responderChamada:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:responderChamada:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:responderChamada:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:responderChamada:409","corpo":{"status":409,"code":"chamada_indisponivel"}}
-{"op":"promete:responderChamada:422","corpo":{"status":422,"code":"campo_invalido"}}
-{"op":"promete:cancelarChamada:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:cancelarChamada:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:cancelarChamada:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:cancelarChamada:409","corpo":{"status":409,"code":"chamada_indisponivel"}}
-{"op":"promete:publicarAPartirDaChamada:401","corpo":{"status":401,"code":"nao_autenticado"}}
-{"op":"promete:publicarAPartirDaChamada:403","corpo":{"status":403,"code":"sem_permissao"}}
-{"op":"promete:publicarAPartirDaChamada:404","corpo":{"status":404,"code":"nao_encontrado"}}
-{"op":"promete:publicarAPartirDaChamada:409","corpo":{"status":409,"code":"vaga_encerrada"}}
-{"op":"promete:publicarAPartirDaChamada:422","corpo":{"status":422,"code":"campo_obrigatorio"}}
-EOF
+# Sem estas linhas o validador reprova por promessa não medida, e os casos daqui passariam a
+# medir a direção errada: os que esperam 0 sairiam 1, e os que esperam 1 sairiam 1 mesmo sem
+# o defeito de corpo que cada um existe para provar — casos decorativos, verdes com e sem a
+# validação que eles vigiam. Medido em 02/10.
+#
+# As linhas NÃO são escritas à mão. Uma lista copiada de `VIGIADAS` envelhece no dia em que
+# o par seguinte entra lá, e quebra este autoteste e o seguinte sem que nada tenha mudado no
+# que eles medem (cartão X3ookIxj). Aqui elas saem do próprio `VIGIADAS`: par novo entra
+# sem tocar neste arquivo.
+PROMESSAS=$("$PY" -  <<'PYEOF'
+import json, sys
+
+sys.path.insert(0, "scripts")
+from contrato_responde import VIGIADAS
+
+exceto = set(sys.argv[1:])
+for (operacao, status), code in sorted(VIGIADAS.items()):
+    if f"{operacao}:{status}" in exceto:
+        continue
+    print(json.dumps(
+        {"op": f"promete:{operacao}:{status}", "corpo": {"status": int(status), "code": code}},
+        ensure_ascii=False, separators=(",", ":"),
+    ))
+PYEOF
 )
+codigo_gerador=$?
+if [ "$codigo_gerador" -ne 0 ] || [ -z "$PROMESSAS" ]; then
+  echo "✗ Não consegui gerar as promessas a partir de VIGIADAS em scripts/contrato_responde.py" >&2
+  echo "  (o módulo não importou, ou a lista saiu vazia; código $codigo_gerador). Nenhum caso rodou." >&2
+  exit 2
+fi
+PROMESSA_OK="$PROMESSAS"
 
 # Roda o validador com uma colheita de mentira na entrada. Guarda a saída em `saida` e o
 # código em `codigo`, as duas globais de propósito: `codigo=$(julga ...)` abriria subshell
