@@ -1831,8 +1831,8 @@ paths:
         '404':
           description: |
             `nao_encontrado` com `details: plataforma`: a plataforma existe no enum, mas ainda não
-            tem configuração (hoje, só `ios` e `android` têm). Bloquear quem não tem loja para onde
-            ir não ajudaria ninguém.
+            tem configuração (hoje, só `ios` tem). Bloquear quem não tem loja para onde ir não
+            ajudaria ninguém.
           content:
             application/json:
               schema:
