@@ -23,7 +23,7 @@ set local frila.agendador_secret = 'segredo-de-teste';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(272);
+select plan(276);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -31,8 +31,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  71::bigint,
-  'censo de RPCs: schema public contem exatamente 71 RPCs expostas'
+  72::bigint,
+  'censo de RPCs: schema public contem exatamente 72 RPCs expostas'
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -591,6 +591,17 @@ select is(pg_temp.testar_autorizacao('anon', null, 'select public.confirmar_chec
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.confirmar_checkin_manual(''78600000-0000-4000-8000-000000000301''::uuid)'), '403_SEM_PERMISSAO', 'confirmar_checkin_manual [profissional]: profissional toma 403 ao tentar confirmar proprio checkin');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.confirmar_checkin_manual(''78600000-0000-4000-8000-000000000301''::uuid)'), '403_SEM_PERMISSAO', 'confirmar_checkin_manual [outro contratante]: outro contratante toma 403 sem_permissao em turno alheio');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.confirmar_checkin_manual(''78600000-0000-4000-8000-000000000301''::uuid)'), 'REGRA:checkin_ja_confirmado', 'confirmar_checkin_manual [dono]: dono autorizado valida estado do checkin');
+
+-- --- gerar_codigo_checkin (0.2.68, PR5 do B-CHECKIN-BACK) ---
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.gerar_codigo_checkin(''78600000-0000-4000-8000-000000000301''::uuid)'), '42501_SEM_EXECUTE', 'gerar_codigo_checkin [anon]: anon nao possui EXECUTE em gerar_codigo_checkin');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.gerar_codigo_checkin(''78600000-0000-4000-8000-000000000301''::uuid)'), '403_SEM_PERMISSAO', 'gerar_codigo_checkin [profissional]: profissional toma 403 ao tentar gerar o proprio codigo');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.gerar_codigo_checkin(''78600000-0000-4000-8000-000000000301''::uuid)'), '403_SEM_PERMISSAO', 'gerar_codigo_checkin [outro contratante]: outro contratante toma 403 sem_permissao em turno alheio');
+-- Com a chave ligada para a casa do dono, ele passa da autorização e chega ao estado do turno.
+update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
+insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
+select 'checkin_por_codigo', privado.estabelecimento_da_posicao(t.posicao_id)
+  from public.turno t where t.id = '78600000-0000-4000-8000-000000000301';
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.gerar_codigo_checkin(''78600000-0000-4000-8000-000000000301''::uuid)'), 'REGRA:checkin_ja_confirmado', 'gerar_codigo_checkin [dono]: dono autorizado valida estado do checkin');
 
 -- --- meus_turnos ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.meus_turnos(''2026-11-01 00:00:00+00''::timestamptz, ''2026-11-30 23:59:59+00''::timestamptz, null)'), '42501_SEM_EXECUTE', 'meus_turnos [anon]: anon nao possui EXECUTE em meus_turnos');

@@ -332,6 +332,27 @@ select pg_temp.guarda('fazerCheckin', pg_temp.como('cc000000-0000-4000-8000-0000
 select pg_temp.guarda('painelEstabelecimento', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.painel_estabelecimento(%L::uuid, '2027-01-01T00:00:00Z'::timestamptz, '2027-12-31T00:00:00Z'::timestamptz) $$,
   (select casa_id from ids))));
+-- gerarCodigoCheckin (PR5): com o check-in da cand2 manual e pendente e a chave ligada para a casa, o
+-- membro gera o código; as recusas vigiadas saem do mesmo ponto, antes de a casa confirmar à mão.
+select pg_temp.guarda('gerarCodigoCheckin', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.gerar_codigo_checkin(%L::uuid) $$, ((select r from cand2)->>'turno_id')::uuid)));
+select pg_temp.guarda('promete:gerarCodigoCheckin:401',
+  pg_temp.observado(null, format(
+    $$ select public.gerar_codigo_checkin(%L::uuid) $$, ((select r from cand2)->>'turno_id')::uuid)));
+-- O profissional do turno não gera o próprio código.
+select pg_temp.guarda('promete:gerarCodigoCheckin:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003', format(
+    $$ select public.gerar_codigo_checkin(%L::uuid) $$, ((select r from cand2)->>'turno_id')::uuid)));
+select pg_temp.guarda('promete:gerarCodigoCheckin:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.gerar_codigo_checkin('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+-- O check-in da cand nasceu geolocalizado e verificado.
+select pg_temp.guarda('promete:gerarCodigoCheckin:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.gerar_codigo_checkin(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
+select pg_temp.guarda('promete:gerarCodigoCheckin:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.gerar_codigo_checkin(null) $$));
 select pg_temp.guarda('confirmarCheckinManual', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.confirmar_checkin_manual(%L::uuid) $$, ((select r from cand2)->>'turno_id')::uuid)));
 

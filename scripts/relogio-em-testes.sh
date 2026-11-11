@@ -24,7 +24,7 @@ import sys, os, glob, re
 # Funções do produto que consom privado.agora() e são sensíveis ao encerramento de vagas/turnos
 CLOCK_FUNCS = [
     'candidatar', 'publicar_vaga', 'fazer_checkin', 'fazer_checkout',
-    'fechar_turnos_e_vagas', 'fechar_turnos_passados', 'confirmar_checkin_manual',
+    'fechar_turnos_e_vagas', 'fechar_turnos_passados', 'confirmar_checkin_manual', 'gerar_codigo_checkin',
     'cancelar_uma_posicao', 'cancelamento_da_posicao', 'cancelar_posicao',
     'cancelar_vaga', 'despachar_vaga', 'avaliar', 'pode_avaliar',
     'avaliacao_permitida', 'reabrir_por_atraso', 'enviar_lembretes_turno',
