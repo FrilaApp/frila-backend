@@ -357,7 +357,7 @@ select throws_ok(
 
 -- ── 20. configuracaoDoApp: 404 nao_encontrado ──────────────────────────────────
 select throws_ok(
-  $$ select public.configuracao_do_app('android') $$,
+  $$ select public.configuracao_do_app('web') $$,
   'PGRST',
   pg_temp.erro('nao_encontrado', 'plataforma'),
   '20. configuracaoDoApp: plataforma sem linha devolve 404 nao_encontrado'
