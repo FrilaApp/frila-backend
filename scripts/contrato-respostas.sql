@@ -386,6 +386,11 @@ select pg_temp.guarda('validarCodigoCheckin', pg_temp.sem_rastro('cc000000-0000-
   (select codigo from codigo_cand2))));
 select pg_temp.guarda('confirmarCheckinManual', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.confirmar_checkin_manual(%L::uuid) $$, ((select r from cand2)->>'turno_id')::uuid)));
+-- exportarMeusDados (PR8): a exportação do profissional da cand2, colhida aqui e não na seção das
+-- Edge Functions, logo depois do caminho do código e antes de a posição dele ser cancelada, mais
+-- abaixo. Assim checkins_por_codigo sai com o código exigido e a tentativa errada, e o schema dos
+-- itens é exercitado (--falhar-vazias).
+select pg_temp.guarda('exportarMeusDados', privado.meus_dados('cc000000-0000-4000-8000-000000000003'));
 
 -- ── Avaliar e o perfil público ────────────────────────────────────────────────
 set local frila.agora = '2027-01-19 04:00:00+00';

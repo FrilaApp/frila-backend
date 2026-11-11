@@ -107,8 +107,8 @@ create temp table d as select privado.meus_dados((select ana from ids)) as j;
 
 select is(
   (select string_agg(k, ',' order by k) from jsonb_object_keys((select j from d)) k),
-  'avaliacoes_dadas,avaliacoes_recebidas,bloqueios,candidaturas,chamadas,conta,despachos,disponibilidade,dispositivos,equipe_confianca,estabelecimentos,eventos_app,gerado_em,midias,notificacoes,ocorrencias,pedido_de_exclusao,perfil_profissional,turnos',
-  'o corpo tem exatamente as dezenove chaves de MeusDados, e nenhuma a mais');
+  'avaliacoes_dadas,avaliacoes_recebidas,bloqueios,candidaturas,chamadas,checkins_por_codigo,conta,despachos,disponibilidade,dispositivos,equipe_confianca,estabelecimentos,eventos_app,gerado_em,midias,notificacoes,ocorrencias,pedido_de_exclusao,perfil_profissional,turnos',
+  'o corpo tem exatamente as vinte chaves de MeusDados, e nenhuma a mais (checkins_por_codigo desde a 0.2.68)');
 
 select is(
   (select jsonb_typeof(j->'eventos_app') from d), 'array',
