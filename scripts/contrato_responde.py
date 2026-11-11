@@ -390,9 +390,9 @@ PENDENTES = {
     **{op: "contratação direta, ainda sem implementação" for op in (
         "listarEspecialidades", "listarRegioesAdministrativas")},
     # Check-in por código (0.2.68): o espelho entrou antes das RPCs (PR4 do B-CHECKIN-BACK). O gerar
-    # saiu no PR5, com os pares em VIGIADAS; o validar sai no PR7, porque a recusa dele responde por
-    # response.status e o harness precisa aprender a lê-lo.
-    "validarCodigoCheckin": "check-in por código, ainda sem implementação",
+    # saiu no PR5, com os pares em VIGIADAS. O validar existe desde o PR6, mas sai daqui só no PR7: as
+    # recusas que gravam respondem por response.status, e o harness ainda as veria como sucesso.
+    "validarCodigoCheckin": "check-in por código: recusa por response.status, que o harness só lê no PR7",
     # Múltiplos membros de estabelecimento (0.2.73): o espelho entra antes das RPCs, que chegam
     # no PR #472. Cada uma sai daqui no PR que a implementa.
     **{op: "múltiplos membros de estabelecimento, fatias seguintes" for op in (
