@@ -7,8 +7,8 @@
 --
 --   200  a configuração da plataforma, com os cinco campos de ConfiguracaoDoApp
 --   422  plataforma ausente (campo_obrigatorio) ou fora do enum (campo_invalido)
---   404  plataforma do enum sem configuração gravada — hoje android e web, que ainda
---        não têm loja. Documentado no contrato 0.2.16.
+--   404  plataforma do enum sem configuração gravada — hoje web, que ainda não tem
+--        loja. Documentado no contrato 0.2.16.
 --
 -- A tabela fica em `privado`: nenhuma chave do app lê a linha direto, só pela função.
 
@@ -179,15 +179,15 @@ select is(
 -- ── 404: plataforma do enum, sem configuração ─────────────────────────────────
 
 select throws_ok(
-  $$ select pg_temp.anonimo($x$ select public.configuracao_do_app('android') $x$) $$,
+  $$ select pg_temp.anonimo($x$ select public.configuracao_do_app('web') $x$) $$,
   'PGRST',
   '{"code" : "nao_encontrado", "message" : "nao_encontrado", "details" : "plataforma", "hint" : null}',
-  'android ainda não tem loja: 404, e não uma URL inventada');
+  'web ainda não tem loja: 404, e não uma URL inventada');
 
 select is(
   pg_temp.status_de($$ select pg_temp.anonimo($x$ select public.configuracao_do_app('web') $x$) $$),
   404,
-  'web idem, com status 404');
+  'web sem configuração usa status 404');
 
 -- ── A tabela: fechada para as chaves do app ───────────────────────────────────
 
