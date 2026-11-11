@@ -832,7 +832,7 @@ select pg_temp.guarda('promete:avisarACaminho:403',
 -- 35. configuracaoDoApp: 404 nao_encontrado (plataforma sem linha de configuração)
 select pg_temp.guarda('promete:configuracaoDoApp:404',
   pg_temp.observado(null,
-    $$ select public.configuracao_do_app('android') $$));
+    $$ select public.configuracao_do_app('web') $$));
 
 delete from public.usuario where id = 'ee000000-0000-4000-8000-000000000099';
 
