@@ -7,7 +7,7 @@
 -- 3. Único administrador não sai sem transferir (422 ultimo_administrador).
 
 begin;
-select plan(31);
+select plan(33);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -190,6 +190,32 @@ select is(
   ))->>'code',
   'convite_invalido',
   'token expirado recusa 422 convite_invalido'
+);
+
+-- Restrições da tabela, violadas direto (portão de mutação estrutural: scripts/mutacao.sh)
+select throws_ok(
+  $$ insert into privado.convite_membro (estabelecimento_id, email, papel, convidado_por, token_hash, expira_em)
+     values ('84300000-0000-4000-8000-0000000000e1', 'sem-arroba', 'operador',
+             '84300000-0000-4000-8000-000000000001', encode(sha256('token_email_843'::bytea), 'hex'),
+             '2026-11-16 12:00:00+00') $$,
+  '23514',
+  'new row for relation "convite_membro" violates check constraint "convite_membro_email_check"',
+  'convite_membro_email_check: e-mail sem formato válido é recusado na tabela'
+);
+
+insert into privado.convite_membro (estabelecimento_id, email, papel, convidado_por, token_hash, expira_em)
+values ('84300000-0000-4000-8000-0000000000e1', 'primeiro@843.test', 'operador',
+        '84300000-0000-4000-8000-000000000001', encode(sha256('token_repetido_843'::bytea), 'hex'),
+        '2026-11-16 12:00:00+00');
+
+select throws_ok(
+  $$ insert into privado.convite_membro (estabelecimento_id, email, papel, convidado_por, token_hash, expira_em)
+     values ('84300000-0000-4000-8000-0000000000e1', 'segundo@843.test', 'operador',
+             '84300000-0000-4000-8000-000000000001', encode(sha256('token_repetido_843'::bytea), 'hex'),
+             '2026-11-16 12:00:00+00') $$,
+  '23505',
+  'duplicate key value violates unique constraint "convite_membro_token_hash_key"',
+  'convite_membro_token_hash_key: dois convites com o mesmo token_hash são recusados na tabela'
 );
 
 -- ── 5. Proteção do Último Administrador (Critério 3) ─────────────────────────
