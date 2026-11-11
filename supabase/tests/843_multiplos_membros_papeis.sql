@@ -7,7 +7,7 @@
 -- 3. Único administrador não sai sem transferir (422 ultimo_administrador).
 
 begin;
-select plan(33);
+select plan(38);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -290,6 +290,49 @@ select is(
   ))->>'code',
   'ultimo_administrador',
   'agora único admin restante recusa 422 ao tentar sair'
+);
+
+-- ── 7. Auto-rebaixamento e trava de concorrência ─────────────────────────────
+
+-- Neste ponto contratante2 é o ÚNICO administrador. Ele convida a si mesmo como operador e aceita:
+-- o ON CONFLICT trocaria o papel dele e a casa ficaria sem administrador.
+create temp table conv_rebaixa as
+  select pg_temp.como('84300000-0000-4000-8000-000000000002',
+    $$ select public.convidar_membro('84300000-0000-4000-8000-0000000000e1'::uuid, 'contratante2@843.test', 'operador') $$
+  ) as r;
+
+select is(
+  (pg_temp.erro('84300000-0000-4000-8000-000000000002', format(
+    $$ select public.aceitar_convite_membro(%L) $$, (select r->>'token' from conv_rebaixa)
+  )))->>'code',
+  'ultimo_administrador',
+  'único administrador aceitando convite de operador recusa 422 ultimo_administrador'
+);
+
+select is(
+  (select papel from public.membro_estabelecimento where estabelecimento_id = '84300000-0000-4000-8000-0000000000e1' and usuario_id = '84300000-0000-4000-8000-000000000002'),
+  'administrador'::public.papel_membro,
+  'recusa não rebaixa: o único administrador continua administrador'
+);
+
+select is(
+  (select usado_em is null from privado.convite_membro where id = ((select r from conv_rebaixa)->>'convite_id')::uuid),
+  true,
+  'recusa desfaz o consumo: o convite continua não usado'
+);
+
+-- pgTAP roda numa sessão só e não prova corrida (AGENTS.md, Testes): aqui confere-se que a trava
+-- está no corpo das duas funções que contam administradores. A prova de concorrência é de pgbench.
+select matches(
+  pg_get_functiondef('public.remover_membro(uuid, uuid)'::regprocedure),
+  'for no key update',
+  'remover_membro tranca o estabelecimento antes de contar administradores'
+);
+
+select matches(
+  pg_get_functiondef('public.aceitar_convite_membro(text)'::regprocedure),
+  'for no key update',
+  'aceitar_convite_membro tranca o estabelecimento antes de contar administradores'
 );
 
 rollback;

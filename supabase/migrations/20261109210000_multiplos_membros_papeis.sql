@@ -143,6 +143,28 @@ begin
     perform public.erro(422, 'convite_invalido');
   end if;
 
+  -- Serializa com remover_membro e com outro aceite no mesmo estabelecimento: a contagem de
+  -- administradores abaixo só vale com a linha trancada. FOR NO KEY UPDATE não bloqueia as
+  -- chaves estrangeiras que apontam para o estabelecimento (vaga, membro).
+  perform 1 from public.estabelecimento e where e.id = v_convite.estabelecimento_id for no key update;
+
+  -- Quem já é membro e aceita convite de outro papel troca de papel (ON CONFLICT abaixo). Se for
+  -- o único administrador, o rebaixamento deixaria a casa sem administrador: mesma regra e mesmo
+  -- código de remover_membro.
+  select * into v_membro
+    from public.membro_estabelecimento m
+   where m.estabelecimento_id = v_convite.estabelecimento_id
+     and m.usuario_id = v_uid;
+
+  if found and v_membro.papel = 'administrador' and v_convite.papel <> 'administrador' then
+    if not exists (select 1 from public.membro_estabelecimento m
+                    where m.estabelecimento_id = v_convite.estabelecimento_id
+                      and m.papel = 'administrador'
+                      and m.usuario_id <> v_uid) then
+      perform public.erro(422, 'ultimo_administrador');
+    end if;
+  end if;
+
   insert into public.membro_estabelecimento (
     usuario_id, perfil, estabelecimento_id, papel, criado_em
   ) values (
@@ -188,6 +210,11 @@ begin
   if not privado.eh_administrador(p_estabelecimento_id) then
     perform public.erro(403, 'sem_permissao');
   end if;
+
+  -- Dois administradores removendo um ao outro ao mesmo tempo passariam os dois pela contagem
+  -- abaixo e zerariam os administradores. A linha trancada serializa as chamadas; a contagem
+  -- que vem depois lê o que a primeira já gravou (READ COMMITTED, uma foto por comando).
+  perform 1 from public.estabelecimento e where e.id = p_estabelecimento_id for no key update;
 
   select * into v_membro
     from public.membro_estabelecimento m
