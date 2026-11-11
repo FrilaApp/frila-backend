@@ -512,14 +512,14 @@ select throws_ok(
   'PGRST', pg_temp.erro('posicao_nao_cancelavel', 'checkin_registrado'),
   'reabrir_por_atraso com check-in registrado é 409 posicao_nao_cancelavel, details checkin_registrado');
 
--- Uma hora depois do fim previsto: o check-out já não cabe na janela (RN22).
-select set_config('frila.agora', '2027-03-04 04:00:00+00', true);
+-- Mais de uma hora depois do fim previsto: o check-out já não cabe na janela estendida (RN22).
+select set_config('frila.agora', '2027-03-04 04:05:00+00', true);
 
 select throws_ok(
   pg_temp.por((select ana from ids),
-    format($$ select public.fazer_checkout(%L, 50, '2027-03-04 04:00:00+00') $$, (select turno from t))),
+    format($$ select public.fazer_checkout(%L, 50, '2027-03-04 04:01:00+00') $$, (select turno from t))),
   'PGRST', pg_temp.erro('fora_da_janela'),
-  'fazer_checkout depois do fim previsto é 422 fora_da_janela');
+  'fazer_checkout além de 60 min após o fim previsto é 422 fora_da_janela');
 
 -- ── Avaliação e equipe ────────────────────────────────────────────────────────
 select throws_ok(
