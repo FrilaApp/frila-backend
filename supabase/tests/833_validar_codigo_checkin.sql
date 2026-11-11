@@ -15,13 +15,14 @@
 --     422 codigo_invalido, 409 temporario na 3ª, 409 encerrado na 6ª (critérios 4 e 6); o raio de
 --     100 m, com a borda; o vencido pela validade e não pela presença do valor (D4), com a borda dos
 --     300 s; o raio da regra e o coalesce de 100 sem ela (R1);
---   · a posição cancelada não ganha presença; o código nunca sai num erro de restrição (R2).
+--   · a posição cancelada não ganha presença; o código nunca sai num erro de restrição (R2);
+--   · a confirmação manual depois do código recusa 409 checkin_ja_confirmado (0.2.69, PR7).
 -- Massa sintética; o arquivo desfaz tudo no rollback.
 
 begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
-select plan(77);
+select plan(78);
 
 -- A casa 833 (dono e operador) e um contratante de outra casa.
 create temp table ids as
@@ -230,6 +231,21 @@ select ok(not (pg_temp.painel()->'checkins_pendentes' ? pg_temp.t('a')::text), '
 select is(pg_temp.v('a', (select c from cod_a), 40), '409:checkin_ja_confirmado',
   'o código já usado: 409 checkin_ja_confirmado (leitura 7)');
 select is(pg_temp.erros('a') * 10 + pg_temp.tentativas('a'), 1, 'o código já usado não conta nem grava outra tentativa');
+-- 0.2.69: a confirmação manual de turno já verificado pelo código recusa 409 (a corrida é do PR7, em
+-- scripts/corrida-checkin-codigo.sh; aqui, a ordem simples).
+create function pg_temp.confirmar(turno uuid) returns text language plpgsql as $$
+declare v_det text;
+begin
+  perform pg_temp.como('c8330000-0000-4000-8000-000000000001', format('select public.confirmar_checkin_manual(%L::uuid)', turno));
+  return '200';
+exception when sqlstate 'PGRST' then
+  get stacked diagnostics v_det = pg_exception_detail;
+  reset role;
+  perform set_config('request.jwt.claims', '{}', true);
+  return ((v_det::jsonb)->>'status') || ':' || (sqlerrm::jsonb->>'code');
+end $$;
+select is(pg_temp.confirmar(pg_temp.t('a')), '409:checkin_ja_confirmado',
+  'a casa confirma à mão um turno já verificado pelo código: 409 checkin_ja_confirmado (0.2.69)');
 
 -- ── O acerto sem posição: confiança baixa, que só sai na exportação ──────────
 select is(pg_temp.v('sem_posicao', pg_temp.cod('sem_posicao'), null), '200:verificado',

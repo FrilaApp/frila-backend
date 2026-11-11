@@ -344,6 +344,12 @@ VIGIADAS = {
     ("gerarCodigoCheckin", "404"): "nao_encontrado",
     ("gerarCodigoCheckin", "409"): "checkin_ja_confirmado",
     ("gerarCodigoCheckin", "422"): "campo_obrigatorio",
+    # O profissional valida (PR7): o 422 sai por response.status, sem raise (D2), e o harness o lê.
+    ("validarCodigoCheckin", "401"): "nao_autenticado",
+    ("validarCodigoCheckin", "403"): "sem_permissao",
+    ("validarCodigoCheckin", "404"): "nao_encontrado",
+    ("validarCodigoCheckin", "409"): "checkin_ja_confirmado",
+    ("validarCodigoCheckin", "422"): "codigo_invalido",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
@@ -389,10 +395,6 @@ ISENTAS = {
 PENDENTES = {
     **{op: "contratação direta, ainda sem implementação" for op in (
         "listarEspecialidades", "listarRegioesAdministrativas")},
-    # Check-in por código (0.2.68): o espelho entrou antes das RPCs (PR4 do B-CHECKIN-BACK). O gerar
-    # saiu no PR5, com os pares em VIGIADAS. O validar existe desde o PR6, mas sai daqui só no PR7: as
-    # recusas que gravam respondem por response.status, e o harness ainda as veria como sucesso.
-    "validarCodigoCheckin": "check-in por código: recusa por response.status, que o harness só lê no PR7",
     # Múltiplos membros de estabelecimento (0.2.73): o espelho entra antes das RPCs, que chegam
     # no PR #472. Cada uma sai daqui no PR que a implementa.
     **{op: "múltiplos membros de estabelecimento, fatias seguintes" for op in (
