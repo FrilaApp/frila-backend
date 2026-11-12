@@ -1,18 +1,33 @@
 -- 847_confirmar_manual_trava_de_prazo.sql
 --
--- A trava de prazo de public.confirmar_checkin_manual, como a 20261111202000 (PR7 do B-CHECKIN-BACK) a
--- redefine: o corpo é o da confirmar_manual_so_ate_o_fim.sql do frila-backend #477 (do JP, head
--- 9074326), mais o `for update` do turno.
--- Os casos são os do 846 do #477, com dados próprios (c847...), para que a trava continue provada
--- qualquer que seja a ordem das mesclas, e mesmo que só um dos dois PRs entre.
+-- A trava de prazo de public.confirmar_checkin_manual com tolerância tardia de 24 horas
+-- (migração 20261112100000_confirmacao_tardia_24h.sql, decisão JP 12/11/2026).
 --
---   1. Estrutura, search_path e permissões de public.confirmar_checkin_manual(uuid).
---   2. Confirmar antes do fim aceita (privado.agora() <= fim_em), e a re-execução já confirmada segue aceita depois do fim.
---   3. Borda: exatamente em fim_em aceita; em fim_em + 1 s e + 1 h recusa 422 fora_da_janela, sem mudar a verificação.
---   4. Turno com verificacao = nao_verificado recusa 422 fora_da_janela, mesmo dentro do horário.
---   5. Com privado.fechar_turnos_passados(): o job marca nao_verificado e a confirmação depois dele recusa 422.
---   6. Posição cancelada depois do check-in manual (o caminho do 480, RN22): a recusa é 409 vaga_encerrada,
---      posicao_cancelada, dentro do horário e depois do fim. Ela vem antes da trava de prazo, que diria 422.
+-- Regras cobertas:
+--   1. Estrutura, search_path e permissões de public.confirmar_checkin_manual(uuid) e
+--      privado.prazo_da_confirmacao_tardia().
+--   2. Confirmar antes do fim aceita (privado.agora() <= fim_em), e a re-execução já confirmada
+--      segue aceita de forma idempotente depois do fim.
+--   3. Bordas da tolerância tardia (24 horas após fim_em):
+--      - exatamente em fim_em (22:00:00) aceita;
+--      - fim_em + 1 min (22:01:00) aceita (tolerância tardia);
+--      - fim_em + 24 h (dia seguinte 22:00:00) aceita;
+--      - fim_em + 24 h + 1 min (dia seguinte 22:01:00) recusa 422 fora_da_janela;
+--      - fim_em + 24 h + 1 hora (dia seguinte 23:00:00) recusa 422 fora_da_janela;
+--      - turno recusado por prazo não altera verificação (permanece pendente).
+--   4. Turno com verificacao = 'nao_verificado' recusa 422 fora_da_janela, mesmo dentro da janela.
+--   5. Integração com privado.fechar_turnos_passados():
+--      - no fim do turno (fim + 30 min): check-in manual pendente NÃO fecha, segue pendente,
+--        sem aviso turno_nao_verificado, e confirmação manual pela casa é aceita;
+--      - após fim + 24 h (fim + 24h30min): o job fecha como nao_verificado e emite o aviso
+--        turno_nao_verificado a ambos os lados;
+--      - confirmação após fechamento pelo job recusa 422 fora_da_janela.
+--   6. Posição cancelada vem antes da trava de prazo: recusa é 409 vaga_encerrada (posicao_cancelada),
+--      dentro do horário e após fim + 24 h.
+--   7. public.painel_estabelecimento: checkins_pendentes lista turno pendente de ontem (dentro de 24h),
+--      mas omite turno fechado como nao_verificado.
+--   8. Confirmação tardia libera avaliação (privado.pode_avaliar) para ambos os lados e recalcula
+--      o comparecimento do profissional.
 
 begin;
 
@@ -21,7 +36,7 @@ insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 set local frila.agora = '2030-07-01 12:00:00+00';
 set local frila.agendador_secret = 'segredo-de-teste-847';
 
-select plan(22);
+select plan(42);
 
 -- ── 1. Estrutura, permissões e search_path ───────────────────────────────────
 
@@ -62,6 +77,36 @@ select is(
   'authenticated pode executar confirmar_checkin_manual'
 );
 
+select has_function(
+  'privado', 'prazo_da_confirmacao_tardia',
+  array[]::text[],
+  'privado.prazo_da_confirmacao_tardia() existe'
+);
+
+select is(
+  privado.prazo_da_confirmacao_tardia(),
+  interval '24 hours',
+  'privado.prazo_da_confirmacao_tardia() retorna interval 24 hours'
+);
+
+select is(
+  has_function_privilege('anon', 'privado.prazo_da_confirmacao_tardia()', 'execute'),
+  false,
+  'anon não pode executar prazo_da_confirmacao_tardia'
+);
+
+select is(
+  has_function_privilege('authenticated', 'privado.prazo_da_confirmacao_tardia()', 'execute'),
+  false,
+  'authenticated não pode executar prazo_da_confirmacao_tardia'
+);
+
+select is(
+  has_function_privilege('service_role', 'privado.prazo_da_confirmacao_tardia()', 'execute'),
+  true,
+  'service_role pode executar prazo_da_confirmacao_tardia'
+);
+
 -- ── 2. Massa de dados isolada para testes ─────────────────────────────────────
 
 create temp table ids on commit drop as
@@ -93,8 +138,8 @@ create function pg_temp.criar_turno_manual(
   p_verificacao public.verificacao_turno default 'pendente'
 ) returns uuid language plpgsql as $$
 declare
-  v_inicio timestamptz := ('2030-07-0' || p_dia || ' 18:00:00+00')::timestamptz;
-  v_fim    timestamptz := ('2030-07-0' || p_dia || ' 22:00:00+00')::timestamptz;
+  v_inicio timestamptz := ('2030-07-' || lpad(p_dia::text, 2, '0') || ' 18:00:00+00')::timestamptz;
+  v_fim    timestamptz := ('2030-07-' || lpad(p_dia::text, 2, '0') || ' 22:00:00+00')::timestamptz;
   v_vaga   uuid := gen_random_uuid();
   v_pos    uuid := gen_random_uuid();
   v_t      uuid := gen_random_uuid();
@@ -159,10 +204,9 @@ select is(
   'checkin_confirmado_em original é preservado na re-execução idempotente'
 );
 
--- ── 4. Cenário 2: Borda e confirmação depois do fim recusa ────────────────────
+-- ── 4. Cenário 2: Bordas da confirmação tardia de 24 horas ───────────────────
 -- Turno no dia 2: das 18:00 às 22:00.
-
--- Borda exata: às 22:00:00 (exatamente fim_em) ainda não é > fim_em, então é aceito
+-- Borda exata fim_em: às 22:00:00 aceita.
 set local frila.agora = '2030-07-02 22:00:00+00';
 create temp table turno_borda on commit drop as
 select pg_temp.criar_turno_manual(2, 'pendente') as id;
@@ -174,38 +218,62 @@ select is(
 );
 
 -- Turno no dia 3: das 18:00 às 22:00.
--- Relógio em 22:00:01 (1 segundo após fim_em). Recusa 422 fora_da_janela.
-set local frila.agora = '2030-07-03 22:00:01+00';
-create temp table turno_depois_do_fim on commit drop as
+-- fim_em + 1 min (22:01:00): aceita pela confirmação tardia.
+set local frila.agora = '2030-07-03 22:01:00+00';
+create temp table turno_fim_mais_1min on commit drop as
 select pg_temp.criar_turno_manual(3, 'pendente') as id;
 
-select throws_ok(
-  format($$ select public.confirmar_checkin_manual(%L::uuid) $$, (select id from turno_depois_do_fim)),
-  'PGRST',
-  '{"code" : "fora_da_janela", "message" : "fora_da_janela", "details" : null, "hint" : null}',
-  'confirmar 1 segundo após fim_em (22:00:01) recusa 422 fora_da_janela'
+select is(
+  (select (public.confirmar_checkin_manual((select id from turno_fim_mais_1min)))->>'verificacao'),
+  'verificado',
+  'confirmação 1 minuto após fim_em (22:01:00) é aceita (tolerância tardia)'
 );
 
--- Relógio em 23:00 (1 hora após fim_em). Recusa 422 fora_da_janela.
-set local frila.agora = '2030-07-03 23:00:00+00';
+-- Turno no dia 4: das 18:00 às 22:00 (fim_em: 2030-07-04 22:00:00).
+-- Limite exato de 24 horas: 2030-07-05 22:00:00. Aceita.
+set local frila.agora = '2030-07-05 22:00:00+00';
+create temp table turno_limite_24h on commit drop as
+select pg_temp.criar_turno_manual(4, 'pendente') as id;
+
+select is(
+  (select (public.confirmar_checkin_manual((select id from turno_limite_24h)))->>'verificacao'),
+  'verificado',
+  'confirmação exatamente no limite de 24h pós-fim (dia seguinte 22:00:00) é aceita'
+);
+
+-- Turno no dia 5: das 18:00 às 22:00 (fim_em: 2030-07-05 22:00:00).
+-- Relógio em 2030-07-06 22:01:00 (fim_em + 24h + 1min). Recusa 422 fora_da_janela.
+set local frila.agora = '2030-07-06 22:01:00+00';
+create temp table turno_expirado_24h on commit drop as
+select pg_temp.criar_turno_manual(5, 'pendente') as id;
+
 select throws_ok(
-  format($$ select public.confirmar_checkin_manual(%L::uuid) $$, (select id from turno_depois_do_fim)),
+  format($$ select public.confirmar_checkin_manual(%L::uuid) $$, (select id from turno_expirado_24h)),
   'PGRST',
   '{"code" : "fora_da_janela", "message" : "fora_da_janela", "details" : null, "hint" : null}',
-  'confirmar 1 hora após fim_em (23:00:00) recusa 422 fora_da_janela'
+  'confirmar 1 minuto após fim_em + 24h (22:01:00) recusa 422 fora_da_janela'
+);
+
+-- Relógio em 2030-07-06 23:00:00 (fim_em + 25h). Recusa 422 fora_da_janela.
+set local frila.agora = '2030-07-06 23:00:00+00';
+select throws_ok(
+  format($$ select public.confirmar_checkin_manual(%L::uuid) $$, (select id from turno_expirado_24h)),
+  'PGRST',
+  '{"code" : "fora_da_janela", "message" : "fora_da_janela", "details" : null, "hint" : null}',
+  'confirmar 1 hora após fim_em + 24h (23:00:00) recusa 422 fora_da_janela'
 );
 
 select is(
-  (select verificacao from public.turno where id = (select id from turno_depois_do_fim)),
+  (select verificacao from public.turno where id = (select id from turno_expirado_24h)),
   'pendente',
-  'turno recusado após fim_em não teve verificação alterada (permanece pendente)'
+  'turno recusado após fim+24h não teve verificação alterada (permanece pendente)'
 );
 
 -- ── 5. Cenário 3: Confirmar turno com verificacao = 'nao_verificado' recusa ────
--- Turno no dia 4: com verificacao prévia 'nao_verificado', mesmo antes do fim (ex.: 20:00 de 22:00)
-set local frila.agora = '2030-07-04 20:00:00+00';
+-- Turno no dia 6: com verificacao prévia 'nao_verificado', mesmo dentro das 24h.
+set local frila.agora = '2030-07-06 20:00:00+00';
 create temp table turno_nao_verificado on commit drop as
-select pg_temp.criar_turno_manual(4, 'nao_verificado') as id;
+select pg_temp.criar_turno_manual(6, 'nao_verificado') as id;
 
 select throws_ok(
   format($$ select public.confirmar_checkin_manual(%L::uuid) $$, (select id from turno_nao_verificado)),
@@ -221,38 +289,84 @@ select is(
 );
 
 -- ── 6. Cenário 4: Integração com privado.fechar_turnos_passados() ──────────────
--- Turno no dia 5: das 18:00 às 22:00, inicialmente pendente.
--- Relógio avança para 22:30 (passou do fim).
-set local frila.agora = '2030-07-05 22:30:00+00';
-create temp table turno_fechamento on commit drop as
-select pg_temp.criar_turno_manual(5, 'pendente') as id;
+-- Turno no dia 7: das 18:00 às 22:00, inicialmente pendente.
+-- Relógio avança para 22:30 (fim + 30 min): DENTRO da tolerância de 24h.
+set local frila.agora = '2030-07-07 22:30:00+00';
+create temp table turno_job_dentro_prazo on commit drop as
+select pg_temp.criar_turno_manual(7, 'pendente') as id;
 
--- O job de fechamento roda e fecha turnos passados não confirmados
-select isnt(
-  (select privado.fechar_turnos_passados()),
-  0,
-  'privado.fechar_turnos_passados() executou e processou turnos'
+-- O job fechar_turnos_passados roda no fim do turno (fim + 30m).
+-- O turno manual pendente NÃO deve ser fechado como nao_verificado.
+select privado.fechar_turnos_passados();
+
+select is(
+  (select verificacao from public.turno where id = (select id from turno_job_dentro_prazo)),
+  'pendente',
+  'no fim do turno (fim + 30 min), check-in manual pendente NÃO vira nao_verificado (tolerância tardia 24h)'
 );
 
 select is(
-  (select verificacao from public.turno where id = (select id from turno_fechamento)),
+  (select count(*) from public.notificacao
+    where tipo = 'turno_nao_verificado'
+      and referencia_id = (select id from turno_job_dentro_prazo)),
+  0::bigint,
+  'nenhuma notificação turno_nao_verificado emitida enquanto o turno está na tolerância de 24h'
+);
+
+-- A casa confirma o turno pendente às 22:30 (fim + 30 min): DEVE ACEITAR com sucesso!
+select is(
+  (select (public.confirmar_checkin_manual((select id from turno_job_dentro_prazo)))->>'verificacao'),
+  'verificado',
+  'casa confirma com sucesso turno pendente em fim + 30 min (vira verificado)'
+);
+
+-- Turno no dia 8: das 18:00 às 22:00 (fim: 2030-07-08 22:00:00).
+-- Relógio avança para 2030-07-09 22:30:00 (fim + 24h30min): FORA da tolerância de 24h.
+create temp table turno_job_expirado on commit drop as
+select pg_temp.criar_turno_manual(8, 'pendente') as id;
+
+set local frila.agora = '2030-07-09 22:30:00+00';
+
+-- O job de fechamento roda e fecha o turno expirado após 24h
+select privado.fechar_turnos_passados();
+
+select is(
+  (select verificacao from public.turno where id = (select id from turno_job_expirado)),
   'nao_verificado',
-  'job fechar_turnos_passados marcou o turno como nao_verificado'
+  'job fechar_turnos_passados marcou o turno como nao_verificado após fim + 24h'
+);
+
+select is(
+  (select count(*) from public.notificacao
+    where tipo = 'turno_nao_verificado'
+      and referencia_id = (select id from turno_job_expirado)
+      and usuario_id = (select prof_user from ids)),
+  1::bigint,
+  'notificação turno_nao_verificado emitida para o profissional após fim + 24h'
+);
+
+select is(
+  (select count(*) from public.notificacao
+    where tipo = 'turno_nao_verificado'
+      and referencia_id = (select id from turno_job_expirado)
+      and usuario_id = (select contratante_user from ids)),
+  1::bigint,
+  'notificação turno_nao_verificado emitida para o contratante após fim + 24h'
 );
 
 -- A casa tenta confirmar o turno que o job acabou de fechar: DEVE RECUSAR com 422 fora_da_janela
 select throws_ok(
-  format($$ select public.confirmar_checkin_manual(%L::uuid) $$, (select id from turno_fechamento)),
+  format($$ select public.confirmar_checkin_manual(%L::uuid) $$, (select id from turno_job_expirado)),
   'PGRST',
   '{"code" : "fora_da_janela", "message" : "fora_da_janela", "details" : null, "hint" : null}',
   'após fechamento pelo job, confirmar_checkin_manual é barrado com 422 fora_da_janela'
 );
 
 -- ── 7. Cenário 5: Posição cancelada vem antes da trava de prazo ────────────────
--- Turno no dia 6: das 18:00 às 22:00, check-in manual às 18:05. O profissional desiste às 19:00.
-set local frila.agora = '2030-07-06 19:00:00+00';
+-- Turno no dia 9: das 18:00 às 22:00, check-in manual às 18:05. O profissional desiste às 19:00.
+set local frila.agora = '2030-07-09 19:00:00+00';
 create temp table turno_cancelado on commit drop as
-select pg_temp.criar_turno_manual(6, 'pendente') as id;
+select pg_temp.criar_turno_manual(9, 'pendente') as id;
 
 select set_config('request.jwt.claims',
   json_build_object('sub', 'c8470000-0000-4000-8000-000000000002', 'role', 'authenticated')::text, true);
@@ -274,13 +388,92 @@ select throws_ok(
   '{"code" : "vaga_encerrada", "message" : "vaga_encerrada", "details" : "posicao_cancelada", "hint" : null}',
   'posição cancelada, dentro do horário: 409 vaga_encerrada (posicao_cancelada), e não 422 fora_da_janela');
 
--- Depois do fim, a posição cancelada continua respondendo 409: ela vem antes da trava de prazo.
-set local frila.agora = '2030-07-06 23:00:00+00';
+-- Depois de fim + 24h, a posição cancelada continua respondendo 409: ela vem antes da trava de prazo.
+set local frila.agora = '2030-07-11 00:00:00+00';
 select throws_ok(
   format($$ select public.confirmar_checkin_manual(%L::uuid) $$, (select id from turno_cancelado)),
   'PGRST',
   '{"code" : "vaga_encerrada", "message" : "vaga_encerrada", "details" : "posicao_cancelada", "hint" : null}',
-  'posição cancelada, depois do fim: segue 409 vaga_encerrada, antes da trava de prazo');
+  'posição cancelada, depois de fim + 24h: segue 409 vaga_encerrada, antes da trava de prazo');
+
+-- ── 8. Cenário 6: public.painel_estabelecimento e checkins_pendentes ───────────
+-- Turno no dia 10: das 18:00 às 22:00 (fim: 2030-07-10 22:00:00).
+-- Relógio no dia 11 às 10:00 (2030-07-11 10:00:00, 12h após fim_em: dentro de 24h).
+set local frila.agora = '2030-07-11 10:00:00+00';
+create temp table turno_painel_pendente on commit drop as
+select pg_temp.criar_turno_manual(10, 'pendente') as id;
+
+select ok(
+  (select (public.painel_estabelecimento(
+            (select estab_id from ids),
+            '2030-07-10 00:00:00+00'::timestamptz,
+            '2030-07-12 00:00:00+00'::timestamptz
+          )->'checkins_pendentes') ? ((select id from turno_painel_pendente)::text)),
+  'painel: turno pendente de ontem (dentro de 24h) aparece em checkins_pendentes'
+);
+
+-- O turno expirado após 24h fechado como nao_verificado (turno_job_expirado) NÃO deve aparecer no painel.
+select ok(
+  not (select (public.painel_estabelecimento(
+                (select estab_id from ids),
+                '2030-07-07 00:00:00+00'::timestamptz,
+                '2030-07-10 00:00:00+00'::timestamptz
+              )->'checkins_pendentes') ? ((select id from turno_job_expirado)::text)),
+  'painel: turno fechado como nao_verificado (após 24h) NÃO aparece em checkins_pendentes'
+);
+
+-- ── 9. Cenário 7: Confirmação tardia libera avaliação e recalcula comparecimento
+-- Turno no dia 12: das 18:00 às 22:00 (fim: 2030-07-12 22:00:00).
+-- Relógio no dia 13 às 14:00 (16h após o fim, dentro das 24h).
+create temp table turno_tardia_aval on commit drop as
+select pg_temp.criar_turno_manual(12, 'pendente') as id;
+
+set local frila.agora = '2030-07-13 14:00:00+00';
+
+-- Antes da confirmação: mesmo com fim_em já passado, o turno está pendente, logo pode_avaliar é false.
+select is(
+  privado.pode_avaliar((select id from turno_tardia_aval), (select contratante_user from ids)),
+  false,
+  'antes da confirmação tardia, contratante não pode avaliar turno pendente (pode_avaliar = false)'
+);
+
+select is(
+  privado.pode_avaliar((select id from turno_tardia_aval), (select prof_user from ids)),
+  false,
+  'antes da confirmação tardia, profissional não pode avaliar turno pendente (pode_avaliar = false)'
+);
+
+select is(
+  (select turnos_realizados from public.profissional where id = (select prof_id from ids)),
+  5,
+  'antes da confirmação tardia, profissional possui 5 turnos_realizados'
+);
+
+-- Casa realiza confirmação tardia às 14:00 do dia seguinte.
+select is(
+  (select (public.confirmar_checkin_manual((select id from turno_tardia_aval)))->>'verificacao'),
+  'verificado',
+  'confirmação tardia no dia seguinte às 14:00 é aceita com sucesso (verificado)'
+);
+
+-- Após a confirmação tardia: pode_avaliar é liberado para contratante e profissional!
+select is(
+  privado.pode_avaliar((select id from turno_tardia_aval), (select contratante_user from ids)),
+  true,
+  'após confirmação tardia, contratante pode avaliar (pode_avaliar = true)'
+);
+
+select is(
+  privado.pode_avaliar((select id from turno_tardia_aval), (select prof_user from ids)),
+  true,
+  'após confirmação tardia, profissional pode avaliar (pode_avaliar = true)'
+);
+
+select is(
+  (select turnos_realizados from public.profissional where id = (select prof_id from ids)),
+  6,
+  'após confirmação tardia, comparecimento é recalculado e turnos_realizados sobe para 6'
+);
 
 select * from finish();
 
