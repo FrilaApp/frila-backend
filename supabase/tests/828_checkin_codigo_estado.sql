@@ -13,7 +13,7 @@
 begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
-select plan(60);
+select plan(64);
 
 create temp table ids as
 select
@@ -177,6 +177,15 @@ select throws_ok($$update privado.regra_checkin_codigo set raio_validacao_m = 0$
   '23514', pg_temp.violacao('regra_checkin_codigo', 'raio_ate_100_m'), 'raio_ate_100_m: raio zero é recusado');
 select throws_ok($$update privado.regra_checkin_codigo set precisao_ruim_m = 0$$,
   '23514', pg_temp.violacao('regra_checkin_codigo', 'precisao_ruim_positiva'), 'precisao_ruim_positiva: limiar zero é recusado');
+-- Etapa 1: restrições das colunas novas raio_proximidade_m e validade_proximidade_s
+select throws_ok($$update privado.regra_checkin_codigo set raio_proximidade_m = 19$$,
+  '23514', pg_temp.violacao('regra_checkin_codigo', 'raio_proximidade_entre_20_e_100'), 'raio_proximidade_entre_20_e_100: menos de 20 m é recusado');
+select throws_ok($$update privado.regra_checkin_codigo set raio_proximidade_m = 101$$,
+  '23514', pg_temp.violacao('regra_checkin_codigo', 'raio_proximidade_entre_20_e_100'), 'raio_proximidade_entre_20_e_100: mais de 100 m é recusado');
+select throws_ok($$update privado.regra_checkin_codigo set validade_proximidade_s = 59$$,
+  '23514', pg_temp.violacao('regra_checkin_codigo', 'validade_proximidade_entre_1_e_60_min'), 'validade_proximidade_entre_1_e_60_min: menos de 60 s é recusado');
+select throws_ok($$update privado.regra_checkin_codigo set validade_proximidade_s = 3601$$,
+  '23514', pg_temp.violacao('regra_checkin_codigo', 'validade_proximidade_entre_1_e_60_min'), 'validade_proximidade_entre_1_e_60_min: mais de 3600 s é recusado');
 select lives_ok($$update privado.regra_checkin_codigo set validade_s = 120, bloqueio_s = 120, raio_validacao_m = 1, precisao_ruim_m = 1$$,
   'as bordas aprovadas (2 min e 1 m) valem');
 update privado.regra_checkin_codigo set validade_s = 300, bloqueio_s = 300, raio_validacao_m = 100, precisao_ruim_m = 100;

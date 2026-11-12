@@ -22,7 +22,7 @@
 begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
-select plan(33);
+select plan(37);
 
 -- Massa: Casa 844 (piloto) e Casa Legado 844 (sem a chave).
 create temp table ids as
@@ -128,6 +128,14 @@ select is(raio_validacao_m, 50, '1.2 regra: raio_validacao_m configurado com 50 
   from privado.regra_checkin_codigo;
 select is(validade_proximidade_s, 900, '1.3 regra: validade_proximidade_s configurado com 900 s (15 min)')
   from privado.regra_checkin_codigo;
+select throws_ok($$update privado.regra_checkin_codigo set raio_proximidade_m = 19$$,
+  '23514', null, '1.4 regra: raio_proximidade_entre_20_e_100: menos de 20 m é recusado');
+select throws_ok($$update privado.regra_checkin_codigo set raio_proximidade_m = 101$$,
+  '23514', null, '1.5 regra: raio_proximidade_entre_20_e_100: mais de 100 m é recusado');
+select throws_ok($$update privado.regra_checkin_codigo set validade_proximidade_s = 59$$,
+  '23514', null, '1.6 regra: validade_proximidade_entre_1_e_60_min: menos de 60 s é recusado');
+select throws_ok($$update privado.regra_checkin_codigo set validade_proximidade_s = 3601$$,
+  '23514', null, '1.7 regra: validade_proximidade_entre_1_e_60_min: mais de 3600 s é recusado');
 
 -- ── 2. Fluxo Legado (casa fora do piloto) ─────────────────────────────────────
 
