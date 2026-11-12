@@ -1,8 +1,10 @@
+> **Histórico: não vale como regra.** O que vale está em [`produto/AGORA.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/AGORA.md) do frila-docs.
+
 # Auditoria de Idempotência, Tratamento de Erros e Resiliência das RPCs Públicas
 
 Este documento apresenta a auditoria técnica exaustiva do catálogo de **44 RPCs públicas** do Frila Backend (API v0.2.46, schema `public`), detalhando o padrão de tratamento de exceções PostgREST, o envelope padronizado de erro, as garantias de idempotência sob chamadas repetidas ou falhas de rede e as proteções contra corridas concorrentes (race conditions).
 
-Complementa a matriz formal de autorização e controle de acesso descrita em [`docs/MatrizAutorizacaoRPC.md`](./MatrizAutorizacaoRPC.md).
+Complementa a matriz formal de autorização e controle de acesso descrita em [`docs/historico/MatrizAutorizacaoRPC.md`](./MatrizAutorizacaoRPC.md).
 
 ---
 

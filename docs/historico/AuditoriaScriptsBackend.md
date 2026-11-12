@@ -1,3 +1,5 @@
+> **Histórico: não vale como regra.** O que vale está em [`produto/AGORA.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/AGORA.md) do frila-docs.
+
 # Auditoria de Segurança e Qualidade dos Scripts de Backend
 
 Este documento formaliza a metodologia, os critérios de auditoria defensiva e os procedimentos automatizados de verificação para todos os scripts de infraestrutura, CI e concorrência do `frila-backend`.
@@ -17,7 +19,7 @@ O diretório `scripts/` concentra 58 rotinas operacionais executadas em ambiente
 
 ## 2. Critérios de Conformidade Auditados
 
-O script [`scripts/auditar-scripts-backend.sh`](../scripts/auditar-scripts-backend.sh) executa 6 verificações estritas:
+O script [`scripts/auditar-scripts-backend.sh`](../../scripts/auditar-scripts-backend.sh) executa 6 verificações estritas:
 
 | Critério | O que valida | Justificativa de Segurança |
 |---|---|---|
@@ -32,7 +34,7 @@ O script [`scripts/auditar-scripts-backend.sh`](../scripts/auditar-scripts-backe
 
 ## 3. Autoteste Automatizado
 
-A ferramenta possui autoteste com mutações controladas em [`scripts/teste-auditar-scripts-backend.sh`](../scripts/teste-auditar-scripts-backend.sh):
+A ferramenta possui autoteste com mutações controladas em [`scripts/teste-auditar-scripts-backend.sh`](../../scripts/teste-auditar-scripts-backend.sh):
 - Caso nominal no acervo real do repositório (100% aprovado).
 - 5 casos negativos com fixtures sintéticas provando que qualquer regressão (falta de permissão, falta de `set -u`, caminhos fixos em `/tmp`, tokens hardcoded ou `rm -rf /`) reprova imediatamente com `exit 1`.
 

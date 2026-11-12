@@ -1,3 +1,5 @@
+> **Histórico: não vale como regra.** O que vale está em [`produto/AGORA.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/AGORA.md) do frila-docs.
+
 # Proposta de Desenho: Autenticação Segura de Disparos Assíncronos via HMAC Efêmero e Segregação de Chaves
 
 **Data:** 21/10/2026  

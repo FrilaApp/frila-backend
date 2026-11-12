@@ -1,3 +1,5 @@
+> **Histórico: não vale como regra.** O que vale está em [`produto/AGORA.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/AGORA.md) do frila-docs.
+
 # Desenho Técnico: Verificação Progressiva de Identidade (RN14)
 
 **Cartão Trello:** `GtWr3ZeJ` (v1.1 · Produto + Backend · Verificação progressiva de identidade (RN14): desenho)  

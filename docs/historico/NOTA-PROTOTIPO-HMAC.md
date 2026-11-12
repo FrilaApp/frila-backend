@@ -1,3 +1,5 @@
+> **Histórico: não vale como regra.** O que vale está em [`produto/AGORA.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/AGORA.md) do frila-docs.
+
 # Relatório do Protótipo de Assinatura HMAC Ponta a Ponta (Item 13)
 
 **Autor:** Faísca (Backend / Edge Functions / pgTAP)  
