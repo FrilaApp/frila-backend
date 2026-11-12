@@ -87,7 +87,7 @@ O repositório conta com mais de 180 PRs mergeados (183 em 16/10, ref develop `7
 9. **PR #181 (Fechamento de Vagas Expiradas sem Processo / D654gdGQ · merge em 15/10):**
    Correção em `privado.fechar_turnos_e_vagas()` para cancelar posições remanescentes que permaneceram em `estado = 'aberta'` após o término do turno (`fim_em <= privado.agora()`) e encerrar as vagas correspondentes (`estado = 'encerrada'`), eliminando resíduos perpétuos de vagas expiradas no índice GiST `vaga_ponto_publicada`. Migração `20261015100000_fechar_vagas_expiradas_sem_processo.sql` e teste pgTAP `650_fechamento_vaga_expirada_sem_processo.sql`.
 10. **PR #182 (Atualização de Estado e Proposta do Vault · merge em 15/10):**
-    Atualização de métricas e estado do backend em `docs/ESTADO.md` e formalização da proposta técnica em `docs/proposta-vault-agendador-secret.md` para migração do segredo `frila.agendador_secret` do GUC para o Supabase Vault, eliminando o erro de permissão 42501 no banco gerenciado.
+    Atualização de métricas e estado do backend em `docs/ESTADO.md` e formalização da proposta técnica em `docs/historico/proposta-vault-agendador-secret.md` para migração do segredo `frila.agendador_secret` do GUC para o Supabase Vault, eliminando o erro de permissão 42501 no banco gerenciado.
 11. **PR #183 (Otimização de Ciclo e Filtro de Despacho / Achados 2 e 3 · merge em 15/10):**
     Correção do laço de avaliação em `privado.fechar_turnos_e_vagas()` para evitar renotificação de `avaliacao_disponivel` com filtro de 7 dias e `not exists`, e filtro em `privado.verificar_saude()` para limitar a checagem de despachos retidos além do teto a vagas ativas e futuras (`publicada` com `inicio_em > agora`). Migração `20261015140000_correcao_ciclo_de_vida_achados_2_e_3.sql` e suíte pgTAP `660_ciclo_de_vida_achados.sql`.
 12. **PR #184 (Segurança, Bloqueio Mútuo e Restrição de Privilégios · merge em 15/10):**
@@ -211,7 +211,7 @@ O que custou caro descobrir na aplicação:
 > ```
 > Como consequência, as migrações não podem avançar no `frila-dev` enquanto o segredo depender de GUC.
 >
-> **Solução proposta:** Foi redigida a proposta técnica em [`docs/proposta-vault-agendador-secret.md`](proposta-vault-agendador-secret.md) para migrar a leitura do segredo compartilhado para a extensão nativa **Supabase Vault** (`vault.decrypted_secrets`), com fallback de compatibilidade para os testes locais. O item aguarda decisão/aprovação do dono (registrado em `DECISOES.md`).
+> **Solução proposta:** Foi redigida a proposta técnica em [`docs/historico/proposta-vault-agendador-secret.md`](historico/proposta-vault-agendador-secret.md) para migrar a leitura do segredo compartilhado para a extensão nativa **Supabase Vault** (`vault.decrypted_secrets`), com fallback de compatibilidade para os testes locais. O item aguarda decisão/aprovação do dono (registrado em `DECISOES.md`).
 > *(Nota de segurança: nenhum valor de segredo real é registrado em arquivos de documentação ou histórico).*
 
 ---
@@ -377,7 +377,7 @@ E alinhamentos consolidados de negócio:
 
 ## Pendências fora do código
 
-1. **Desbloqueio de Deploy no `frila-dev` (Decisão do dono):** Aval da proposta técnica em [`docs/proposta-vault-agendador-secret.md`](proposta-vault-agendador-secret.md) para migração da leitura do segredo de GUC para Supabase Vault (`vault.decrypted_secrets`), resolvendo o erro 42501 no Postgres hospedado e liberando a execução do script `scripts/aplicar-remoto.sh` (registrado em `DECISOES.md`).
+1. **Desbloqueio de Deploy no `frila-dev` (Decisão do dono):** Aval da proposta técnica em [`docs/historico/proposta-vault-agendador-secret.md`](historico/proposta-vault-agendador-secret.md) para migração da leitura do segredo de GUC para Supabase Vault (`vault.decrypted_secrets`), resolvendo o erro 42501 no Postgres hospedado e liberando a execução do script `scripts/aplicar-remoto.sh` (registrado em `DECISOES.md`).
 2. **Push com mutable-content no iOS (`h6RoObK6`):** O backend foi entregue e mergeado no PR #178 (`mutable-content: 1`). A conclusão depende da esteira de iOS (criação do target Notification Service Extension, App Group e aprovação de design para o texto neutro sem dados pessoais).
 3. **Credenciais para Deploy Remoto:** Execução no ambiente remoto `frila-dev` e `frila-prod` depende de `SUPABASE_ACCESS_TOKEN` válido configurado no ambiente.
 4. **Revisão da Júlia:** Revisão da lista de termos bloqueados do filtro de texto ofensivo (`ggEzge6h`).

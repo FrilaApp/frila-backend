@@ -4,7 +4,7 @@
 
 **Data:** 21/10/2026  
 **Autora:** Faísca (Backend / Edge Functions / pgTAP)  
-**Status:** Desenho Técnico Arquitetural (Aguardando Aprovação da Rainha Marika)  
+**Status:** proposta de segurança, não implementada (as chamadas ainda levam o segredo estático no cabeçalho)  
 **Contexto:** Pós-PR #187 (Vault em produção/develop) e pós-PR #284 (fechado após prova empírica de ineficácia de `REVOKE` na CI)
 
 ---

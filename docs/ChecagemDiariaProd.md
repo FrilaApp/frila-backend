@@ -1,8 +1,8 @@
-# Guia Operacional · Checagem Diária de Produção e Plantão do Piloto
+# Guia Operacional · Checagem Diária de Produção e Plantão
 
 Documentação e procedimentos do script de inspeção operacional diária do backend Frila.
 
-Cartão: `42` (S4 · Infra · Monitoramento de produção e plantão do piloto).
+Origem: cartão `42` (monitoramento de produção e plantão). O script ainda imprime "plantão do piloto" no cabeçalho: é só o rótulo antigo.
 
 ---
 
