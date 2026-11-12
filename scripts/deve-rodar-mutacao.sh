@@ -2,11 +2,12 @@
 # Decide se a etapa de mutação deve rodar ou se pode ser pulada com segurança.
 #
 # Em PRs que não alteram nada que a mutação mede (migrações, testes pgTAP,
-# configurações do banco, seed ou os próprios scripts e mapas de mutação),
+# configurações do banco, seed, cenarios.sql ou os próprios scripts e mapas de mutação),
 # a etapa é pulada para economizar tempo e cota de CI.
+# Edge functions (supabase/functions/) são testadas pelo job Deno e não ativam a mutação.
 #
 # Em push (develop, main) roda SEMPRE.
-# Falha segura: qualquer erro no diff, base ausente ou dúvida faz RODAR.
+# Falha segura: qualquer erro no diff, clone raso incompleto ou dúvida faz RODAR.
 #
 # Códigos de saída:
 #   0 - Deve rodar (em push, local, erro de diff ou arquivos relevantes alterados)
@@ -27,50 +28,72 @@ if [ "$evento" != "pull_request" ]; then
   exit 0
 fi
 
-# Determinar base de comparação
-base_informada="${1:-${GITHUB_BASE_REF:-develop}}"
-base=""
+diff_saida=""
+diff_codigo=1
 
-# Tentar origin/<base> (padrão em CI com checkout raso) e depois <base> direta
-if [[ "$base_informada" != origin/* ]] && [ "$base_informada" != "HEAD" ]; then
-  git fetch --quiet origin "$base_informada" 2>/dev/null || true
-  if git rev-parse --verify --quiet "origin/$base_informada" >/dev/null 2>&1; then
-    base="origin/$base_informada"
-  elif git rev-parse --verify --quiet "$base_informada" >/dev/null 2>&1; then
-    base="$base_informada"
-  fi
-else
-  if [[ "$base_informada" == origin/* ]]; then
-    git fetch --quiet origin "${base_informada#origin/}" 2>/dev/null || true
-  fi
-  if git rev-parse --verify --quiet "$base_informada" >/dev/null 2>&1; then
-    base="$base_informada"
-  elif git rev-parse --verify --quiet "${base_informada#origin/}" >/dev/null 2>&1; then
-    base="${base_informada#origin/}"
-  fi
+# Estratégia 1: em pull_request de CI com checkout raso (fetch-depth >= 2),
+# HEAD é o commit de merge sintético (refs/pull/X/merge). O primeiro pai (HEAD^1)
+# é a ponta da base e HEAD^2 é a ponta do PR. O diff entre HEAD^1 e HEAD lista
+# exatamente os arquivos alterados no PR sem precisar de merge-base ou histórico completo.
+if git rev-parse --verify --quiet HEAD^2 >/dev/null 2>&1 && \
+   git rev-parse --verify --quiet HEAD^1 >/dev/null 2>&1; then
+  diff_saida=$(git diff --name-only HEAD^1 HEAD 2>/dev/null)
+  diff_codigo=$?
 fi
 
-# Se a base não existir, falha segura: RODAR
-if [ -z "$base" ]; then
-  echo "Mutação vai rodar (falha segura): base '$base_informada' não encontrada no repositório."
-  exit 0
-fi
-
-# Calcular diff contra a base
-diff_saida=$(git diff --name-only "$base"...HEAD 2>&1)
-diff_codigo=$?
-
+# Estratégia 2: clone completo, branch local ou quando HEAD não é commit de merge sintético
 if [ "$diff_codigo" -ne 0 ]; then
-  echo "Mutação vai rodar (falha segura): erro ao calcular git diff contra '$base'."
+  # Se o repositório é raso e não temos HEAD^1 nem base completa, não arriscar: falha segura
+  if [ -f "$(git rev-parse --git-dir 2>/dev/null)/shallow" ] && \
+     ! git rev-parse --verify --quiet HEAD^1 >/dev/null 2>&1; then
+    echo "Mutação vai rodar (falha segura): clone raso sem histórico suficiente (HEAD^1 ausente)."
+    exit 0
+  fi
+
+  base_informada="${1:-${GITHUB_BASE_REF:-develop}}"
+  base=""
+
+  if [[ "$base_informada" != origin/* ]] && [ "$base_informada" != "HEAD" ]; then
+    git fetch --quiet origin "$base_informada" 2>/dev/null || true
+    if git rev-parse --verify --quiet "origin/$base_informada" >/dev/null 2>&1; then
+      base="origin/$base_informada"
+    elif git rev-parse --verify --quiet "$base_informada" >/dev/null 2>&1; then
+      base="$base_informada"
+    fi
+  else
+    if [[ "$base_informada" == origin/* ]]; then
+      git fetch --quiet origin "${base_informada#origin/}" 2>/dev/null || true
+    fi
+    if git rev-parse --verify --quiet "$base_informada" >/dev/null 2>&1; then
+      base="$base_informada"
+    elif git rev-parse --verify --quiet "${base_informada#origin/}" >/dev/null 2>&1; then
+      base="${base_informada#origin/}"
+    fi
+  fi
+
+  if [ -n "$base" ]; then
+    diff_saida=$(git diff --name-only "$base"...HEAD 2>/dev/null)
+    diff_codigo=$?
+  fi
+fi
+
+# Se não foi possível calcular o diff, falha segura: RODAR
+if [ "$diff_codigo" -ne 0 ]; then
+  echo "Mutação vai rodar (falha segura): não foi possível calcular git diff no ambiente atual."
   exit 0
 fi
 
-# Caminhos que influenciam o que a mutação mede
+# Analisar caminhos alterados.
+# Regra: qualquer arquivo em supabase/ (exceto supabase/functions/, que é Deno e a mutação não mede)
+# e os scripts de mutação (execução, mapas e testes). Na dúvida, roda.
 relevante=""
 while IFS= read -r arq; do
   [ -z "$arq" ] && continue
   case "$arq" in
-    supabase/migrations/*|supabase/tests/*|supabase/config*|supabase/seed.sql|scripts/mutacao.sh|scripts/mutacao-matadores.tsv|scripts/deve-rodar-mutacao.sh)
+    supabase/functions/*)
+      # Edge functions são testadas pelo job Deno, não pela mutação do banco
+      ;;
+    supabase/*|scripts/*mutacao*|.github/workflows/ci.yml)
       relevante="$arq"
       break
       ;;
@@ -82,5 +105,5 @@ if [ -n "$relevante" ]; then
   exit 0
 fi
 
-echo "Mutação pulada: PR não altera migrações, testes, configurações nem scripts de mutação."
+echo "Mutação pulada: PR não altera arquivos relevantes para o banco ou para a mutação."
 exit 1
