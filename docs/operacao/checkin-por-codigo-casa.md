@@ -1,6 +1,9 @@
 # Roteiro Operacional: Habilitação e Desativação do Check-in por Código por Casa (RN46)
 
 - **Princípio Arquitetural**: Conforme governança do projeto, regras da Bússola (08/11), LGPD (art. 6º, III) e documentação de modelagem (`banco-de-dados/Modelagem de Banco de Dados.md` § 661), **estabelecimentos entram e saem do piloto POR MIGRAÇÃO** (processo auditável via PR, revisão, CI e esteira automatizada), **nunca por SQL manual direto em Produção**.
+- **Separação Rígida de Decisões**:
+  1. **Versão mínima do app (`privado.recurso_versao_minima`)**: Decisão global de produto. Entra em migração única e separada quando o build 1.2.0 estiver aprovado na App Store e o Bloco H publicado.
+  2. **Habilitação de estabelecimento (`privado.recurso_estabelecimento`)**: Decisão operacional individual. Entra uma casa por vez, sem misturar ou reescrever a versão mínima global do aplicativo.
 - **Restrição de Tipo Jurídico**: Apenas casas **Pessoa Jurídica (não MEI)** com CNPJ societário ou **casas de teste da equipe** podem entrar por migração. Casas de pessoa física ou MEI são vedadas de inclusão no repositório público (seus dados qualificam como dados pessoais, exigindo nova análise de balanceamento LGPD).
 - **Isolamento Comprovado**: O pacote de Prod é entregue com a chave global ligada (`privado.recurso.ligado = true`) e a lista de casas vazia (`privado.recurso_estabelecimento` vazio). O teste pgTAP `supabase/tests/850_piloto_chave_casa_migracao.sql` comprova que com a lista vazia **nada muda para ninguém** (o fluxo legado permanece 100% ativo).
 
@@ -26,36 +29,42 @@ Antes de abrir o PR da migração que habilita a primeira casa piloto em Produç
 
 ---
 
-## 2. Passo a Passo de Habilitação (Ligar Casa)
+## 2. Modelos de Migração: Quando Usar Cada Um
 
-A habilitação é realizada através de uma **migração linear forward-only**:
-
-### Passo 1: Criar a migração a partir do template
-Copie o template [docs/operacao/templates/template_ligar_casa_checkin_codigo.sql](templates/template_ligar_casa_checkin_codigo.sql) para `supabase/migrations/`:
+### A. Versão Mínima Global do App (Uso Único Global)
+Quando o app 1.2.0 for liberado na loja e o Bloco H publicado, aplique a migração baseada em [docs/operacao/templates/template_versao_minima_checkin_codigo.sql](templates/template_versao_minima_checkin_codigo.sql):
 ```bash
-# Nome padrão: timestamp UTC + piloto_checkin_codigo_casa_<identificador>
-supabase migration new piloto_checkin_codigo_casa_<identificador>
+supabase migration new versao_minima_checkin_codigo
 ```
+Esta migração registra `1.2.0` em `privado.recurso_versao_minima` para iOS, permitindo que `public.configuracao_do_app` entregue a flag `checkin_por_codigo = true` para os aparelhos atualizados. **Não deve ser reaplicada a cada casa.**
 
-Preencha o UUID da casa no bloco `v_casa_id constant uuid := '...'::uuid;`. A migração valida automaticamente em tempo de execução:
-- Existência da casa em `public.estabelecimento`.
-- Sintaxe e formato do documento (CNPJ com 14 dígitos numéricos).
-- Inclusão da versão mínima `1.2.0` para iOS em `privado.recurso_versao_minima`.
-- Inserção atômica em `privado.recurso_estabelecimento`.
+### B. Habilitação de Casa Piloto (Uso Individual por Estabelecimento)
+Para cada casa piloto que for ingressar no programa:
 
-### Passo 2: Validar nos autotestes locais
-Execute o conjunto de validações do banco:
-```bash
-supabase test db supabase/tests/850_piloto_chave_casa_migracao.sql
-./scripts/checkin-por-codigo-casa.sh estado <uuid_da_casa>
-```
+1. **Criar a migração a partir do template**:
+   Copie o template [docs/operacao/templates/template_ligar_casa_checkin_codigo.sql](templates/template_ligar_casa_checkin_codigo.sql) para `supabase/migrations/`:
+   ```bash
+   # Nome padrão: timestamp UTC + piloto_checkin_codigo_casa_<identificador>
+   supabase migration new piloto_checkin_codigo_casa_<identificador>
+   ```
+2. **Preencher o UUID da casa**:
+   A migração valida automaticamente em tempo de execução:
+   - Existência da casa em `public.estabelecimento`.
+   - Sintaxe e formato do documento (CNPJ com 14 dígitos numéricos).
+   - Inserção atômica em `privado.recurso_estabelecimento` (sem tocar na versão mínima).
 
-### Passo 3: Submeter PR na `develop` utilizando o modelo obrigatório
-- Abra o PR na base `develop` preenchendo obrigatoriamente o modelo [docs/operacao/templates/TEMPLATE_PR_CASA_PILOTO.md](templates/TEMPLATE_PR_CASA_PILOTO.md).
-- O autor preenche e assina o checklist confirmando a consulta do Cartão CNPJ na Receita Federal e a Natureza Jurídica (não MEI).
-- O revisor independente (Bigorna / Sócios) confere o checklist e revalida a Natureza Jurídica na base pública da Receita Federal.
-- CI verde obrigatória em todos os jobs.
-- Após aprovação, a esteira `entrega.yml` aplica a migração automaticamente via `scripts/aplicar-remoto.sh`.
+3. **Validar nos autotestes locais**:
+   ```bash
+   supabase test db supabase/tests/850_piloto_chave_casa_migracao.sql
+   ./scripts/checkin-por-codigo-casa.sh estado <uuid_da_casa>
+   ```
+
+4. **Submeter PR na `develop` utilizando o modelo obrigatório**:
+   - Abra o PR na base `develop` preenchendo obrigatoriamente o modelo [docs/operacao/templates/TEMPLATE_PR_CASA_PILOTO.md](templates/TEMPLATE_PR_CASA_PILOTO.md).
+   - O autor preenche e assina o checklist confirmando a consulta do Cartão CNPJ na Receita Federal e a Natureza Jurídica (não MEI).
+   - O revisor independente (Bigorna / Sócios) confere o checklist e revalida a Natureza Jurídica na base pública da Receita Federal.
+   - CI verde obrigatória em todos os jobs.
+   - Após aprovação, a esteira `entrega.yml` aplica a migração automaticamente via `scripts/aplicar-remoto.sh`.
 
 ---
 

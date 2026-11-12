@@ -12,6 +12,9 @@
 --   3. Pré-requisito legal: Bloco H da Política de Privacidade publicado
 --      no site ANTES da aplicação desta migração.
 --   4. A migração valida a existência da casa e a sintaxe de CNPJ (14 dígitos).
+--   5. SEPARAÇÃO DE DECISÕES: Esta migração cuida EXCLUSIVAMENTE da inclusão
+--      da casa em privado.recurso_estabelecimento. A versão mínima do app é
+--      gerenciada em migração própria (template_versao_minima_checkin_codigo.sql).
 -- ============================================================================
 
 do $$
@@ -34,12 +37,7 @@ begin
     raise exception 'Estabelecimento % (%) possui documento com formato incompatível (exige CNPJ com 14 dígitos numéricos).', v_nome, v_casa_id;
   end if;
 
-  -- 1. Garante que a versão mínima do app para a chave está registrada:
-  insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima)
-  values ('checkin_por_codigo', 'ios', '1.2.0')
-  on conflict (recurso, plataforma) do update set versao_minima = excluded.versao_minima;
-
-  -- 2. Habilita a casa no piloto:
+  -- Habilita a casa no piloto (sem tocar na versão mínima do app):
   insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
   values ('checkin_por_codigo', v_casa_id)
   on conflict do nothing;

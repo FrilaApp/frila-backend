@@ -4,16 +4,19 @@
 --   1. Global ligado sem casa na lista: prova a afirmação de Cauê de que NADA muda
 --      para ninguém (legado segue 100% ativo, geração/validação respondem 403 recurso_desligado);
 --   2. Migração de ligar casa: casa PJ ou de teste entra em privado.recurso_estabelecimento,
---      ativando o fluxo novo (manual/pendente, código exigido, geração e validação ativas);
---   3. Migração de desligar casa: remoção de privado.recurso_estabelecimento volta imediatamente
---      ao fluxo legado, sem quebrar confirmações manuais em contingência.
+--      SEM TOCAR na versão mínima do app (decisões separadas), ativando o fluxo no backend
+--      (manual/pendente, código exigido, geração e validação ativas para a casa);
+--   3. Migração separada de versão mínima do app: insere em privado.recurso_versao_minima,
+--      liberando a chave no configuracao_do_app apenas para a versão homologada (1.2.0);
+--   4. Migração de desligar casa: remoção de privado.recurso_estabelecimento volta imediatamente
+--      ao fluxo legado para a casa, sem afetar outras casas nem a versão mínima.
 --
 -- Massa sintética; o arquivo desfaz tudo no rollback.
 
 begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
-select plan(24);
+select plan(28);
 
 -- Massa: Casa PJ 850 e Casa Legado 850
 create temp table ids as
@@ -117,6 +120,7 @@ end $$;
 
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
 delete from privado.recurso_estabelecimento where chave = 'checkin_por_codigo';
+delete from privado.recurso_versao_minima where recurso = 'checkin_por_codigo';
 
 select is((select ligado from privado.recurso where chave = 'checkin_por_codigo'), true,
   '1.1 chave global está ligada em privado.recurso');
@@ -145,34 +149,33 @@ select is(pg_temp.recusa_validar('sem_casa_pj', '123456', 30), 'recurso_desligad
   '1.9 validar_codigo_checkin responde 403 recurso_desligado quando casa não está na lista');
 
 -- Sem linha em privado.recurso_versao_minima, configuracao_do_app segue false mesmo com global ligado:
-delete from privado.recurso_versao_minima where recurso = 'checkin_por_codigo';
 select is((select public.configuracao_do_app('ios', '1.2.0')->'recursos'->>'checkin_por_codigo'), 'false',
   '1.10 configuracao_do_app segue false sem versão mínima, mesmo com global ligado (0.2.65)');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- CENÁRIO 2: Migração de LIGAR a casa piloto (PJ ou teste)
+-- Prova estrita: a migração insere APENAS em privado.recurso_estabelecimento,
+-- sem tocar em privado.recurso_versao_minima (decisões separadas).
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- Simula a execução da migração linear que inclui a casa piloto PJ:
-insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima)
-values ('checkin_por_codigo', 'ios', '1.2.0')
-on conflict (recurso, plataforma) do update set versao_minima = excluded.versao_minima;
-
+-- Simula fielmente a execução de template_ligar_casa_checkin_codigo.sql:
 insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
 select 'checkin_por_codigo', (select casa_pj from ids)
 on conflict do nothing;
 
+select is((select count(*)::int from privado.recurso_versao_minima where recurso = 'checkin_por_codigo'), 0,
+  '2.1 migração de ligar casa NÃO toca em privado.recurso_versao_minima (tabela segue vazia)');
+
 select is(privado.recurso_ligado_para('checkin_por_codigo', (select casa_pj from ids)), true,
-  '2.1 após migração de ligar, recurso_ligado_para responde true para a casa piloto');
+  '2.2 após migração de ligar, recurso_ligado_para responde true para a casa piloto');
 select is(privado.recurso_ligado_para('checkin_por_codigo', (select casa_legado from ids)), false,
-  '2.2 casa legado segue false (isolamento estrito do piloto)');
+  '2.3 casa legado segue false (isolamento estrito do piloto)');
 
-select is((select public.configuracao_do_app('ios', '1.2.0')->'recursos'->>'checkin_por_codigo'), 'true',
-  '2.3 com versão mínima cadastrada, configuracao_do_app libera checkin_por_codigo para iOS 1.2.0');
-select is((select public.configuracao_do_app('ios', '1.1.0')->'recursos'->>'checkin_por_codigo'), 'false',
-  '2.4 configuracao_do_app segue false para iOS 1.1.0 anterior ao piloto');
+-- Como a versão mínima do app ainda não foi aplicada, configuracao_do_app continua false:
+select is((select public.configuracao_do_app('ios', '1.2.0')->'recursos'->>'checkin_por_codigo'), 'false',
+  '2.4 configuracao_do_app continua false pois versão mínima é migração separada');
 
--- Turno na casa piloto agora adota a Etapa 1:
+-- Turno na casa piloto já adota a Etapa 1 no backend:
 select pg_temp.novo_turno('com_casa_piloto', (select casa_pj from ids));
 select is((pg_temp.checkin('com_casa_piloto', 30))->>'tipo', 'manual',
   '2.5 no piloto: chegada a 30 m não auto-verifica pelo GPS, vira tipo manual');
@@ -199,10 +202,26 @@ select is((pg_temp.como(pg_temp.u('com_casa_piloto'),
           '2.10 validação a 25 m confirma presença (verificado) no fluxo novo');
 
 -- ═══════════════════════════════════════════════════════════════════════════════
+-- CENÁRIO 2.B: Migração SEPARADA de Versão Mínima do App (Global)
+-- Simula fielmente a execução de template_versao_minima_checkin_codigo.sql:
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima)
+values ('checkin_por_codigo', 'ios', '1.2.0')
+on conflict (recurso, plataforma) do update set versao_minima = excluded.versao_minima;
+
+select is((select versao_minima from privado.recurso_versao_minima where recurso = 'checkin_por_codigo' and plataforma = 'ios'), '1.2.0',
+  '2.11 versão mínima 1.2.0 registrada em privado.recurso_versao_minima');
+select is((select public.configuracao_do_app('ios', '1.2.0')->'recursos'->>'checkin_por_codigo'), 'true',
+  '2.12 com versão mínima aplicada, configuracao_do_app libera checkin_por_codigo para iOS 1.2.0');
+select is((select public.configuracao_do_app('ios', '1.1.0')->'recursos'->>'checkin_por_codigo'), 'false',
+  '2.13 configuracao_do_app segue false para iOS 1.1.0 anterior ao piloto');
+
+-- ═══════════════════════════════════════════════════════════════════════════════
 -- CENÁRIO 3: Migração de DESLIGAR a casa piloto (Rollback forward-only)
 -- ═══════════════════════════════════════════════════════════════════════════════
 
--- Simula a execução da migração compensatória que remove a casa do piloto:
+-- Simula fielmente template_desligar_casa_checkin_codigo.sql:
 delete from privado.recurso_estabelecimento
  where chave = 'checkin_por_codigo'
    and estabelecimento_id = (select casa_pj from ids);
@@ -210,14 +229,18 @@ delete from privado.recurso_estabelecimento
 select is(privado.recurso_ligado_para('checkin_por_codigo', (select casa_pj from ids)), false,
   '3.1 após migração de desligar, recurso_ligado_para volta imediatamente a false');
 
+-- Versão mínima do app permanece intocada na remoção da casa:
+select is((select versao_minima from privado.recurso_versao_minima where recurso = 'checkin_por_codigo' and plataforma = 'ios'), '1.2.0',
+  '3.2 desativação da casa não altera a versão mínima do app em privado.recurso_versao_minima');
+
 -- Novo turno na casa desativada volta na hora ao fluxo legado:
 select pg_temp.novo_turno('pos_desligar', (select casa_pj from ids));
 select is((pg_temp.checkin('pos_desligar', 35))->>'tipo', 'geolocalizado',
-  '3.2 novo toque volta a ser geolocalizado na hora (fluxo legado restabelecido)');
+  '3.3 novo toque volta a ser geolocalizado na hora (fluxo legado restabelecido)');
 select is((pg_temp.checkin('pos_desligar', 35))->>'verificacao', 'verificado',
-  '3.3 presença auto-verifica na hora pelo GPS a <= 200 m após desligar');
+  '3.4 presença auto-verifica na hora pelo GPS a <= 200 m após desligar');
 select is(pg_temp.recusa_gerar((select dono_pj from ids), pg_temp.t('pos_desligar')), 'recurso_desligado',
-  '3.4 gerar_codigo_checkin volta a responder 403 recurso_desligado');
+  '3.5 gerar_codigo_checkin volta a responder 403 recurso_desligado');
 
 select * from finish();
 rollback;
