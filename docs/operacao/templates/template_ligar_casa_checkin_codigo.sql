@@ -6,10 +6,12 @@
 --      da equipe podem entrar por migração no repositório.
 --   2. Casas MEI ou de pessoa física NÃO entram por migração (exigiriam nova
 --      análise de balanceamento e rastro público no git).
+--      ATENÇÃO: A distinção de MEI NÃO sai dos dígitos do CNPJ (ambos têm 14
+--      dígitos). A verificação da Natureza Jurídica é passo processual
+--      obrigatório no Cartão CNPJ da Receita Federal antes de abrir o PR.
 --   3. Pré-requisito legal: Bloco H da Política de Privacidade publicado
 --      no site ANTES da aplicação desta migração.
---   4. A migração valida estritamente a existência e o tipo do estabelecimento
---      antes de persistir a inclusão.
+--   4. A migração valida a existência da casa e a sintaxe de CNPJ (14 dígitos).
 -- ============================================================================
 
 do $$
@@ -27,9 +29,9 @@ begin
     raise exception 'Estabelecimento % não encontrado em public.estabelecimento.', v_casa_id;
   end if;
 
-  -- Validação de Pessoa Jurídica não-MEI (CNPJ de 14 dígitos):
+  -- Validação de formato de documento (CNPJ com 14 dígitos numéricos):
   if length(coalesce(v_doc, '')) <> 14 then
-    raise exception 'Estabelecimento % (%) possui documento incompatível (exige CNPJ de 14 dígitos de PJ não-MEI).', v_nome, v_casa_id;
+    raise exception 'Estabelecimento % (%) possui documento com formato incompatível (exige CNPJ com 14 dígitos numéricos).', v_nome, v_casa_id;
   end if;
 
   -- 1. Garante que a versão mínima do app para a chave está registrada:

@@ -27,10 +27,10 @@ select u, 'contratante'::public.perfil_conta, 'Casa 850 ' || n, '+556199999850' 
        '1985-01-01'::date, '1.0', '2026-09-20 12:00:00-03'::timestamptz
   from ids, lateral (values (dono_pj, 1), (dono_legado, 2)) v (u, n);
 
--- Casa PJ: food_service, CNPJ de 14 dígitos (não MEI)
+-- Casa PJ sintética de teste: food_service, CNPJ sintético de 14 dígitos
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto)
-select casa_pj, 'Restaurante Piloto PJ LTDA', '12345678000199', 'food_service'::public.tipo_estabelecimento,
-       'Endereço Piloto PJ', 'POINT(-47.8800 -15.7700)'::extensions.geography
+select casa_pj, 'Restaurante Ficticio PJ LTDA', '12345678000199', 'food_service'::public.tipo_estabelecimento,
+       'Endereço Fictício de Teste', 'POINT(-47.8800 -15.7700)'::extensions.geography
   from ids;
 
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto)

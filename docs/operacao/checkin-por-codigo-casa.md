@@ -11,10 +11,18 @@
 Antes de abrir o PR da migração que habilita a primeira casa piloto em Produção:
 
 1. **Publicação Prévia do Bloco H da Política**: O Bloco H da Política de Privacidade v1.1 (descrevendo a mecânica de check-in semiautomático por código, descarte de sinais de GPS e ausência de auto-verificação) deve ser publicado no site oficial (`frilabr.com/privacidade`) **ANTES** da primeira casa entrar e antes da inserção da linha de versão mínima do app.
-2. **Pacote no Prod Aplicado**: A tag `backend-v1.2.0` (ou posterior) deve estar aplicada em Produção, contendo as migrações da Etapa 1 (`20261111210000`) e a chave global `checkin_por_codigo` ligada em `privado.recurso`.
-3. **App iOS Homologado**: Build 1.2.0 aprovado no App Store Review e instalado nos aparelhos da gerência da casa piloto e dos profissionais confirmados para os turnos.
-4. **Elegibilidade da Casa Piloto**: A casa escolhida deve ter cadastro ativo em `public.estabelecimento`, comprovar natureza de Pessoa Jurídica (não MEI) e estar ciente da dinâmica de exibição do código de 6 dígitos.
-5. **Janela Operacional**: O deploy da migração deve ser agendado preferencialmente **FORA de turnos em andamento** (intervalo entre o fim do turno anterior e o início do próximo).
+2. **Conferência da Natureza Jurídica no Cartão CNPJ (Passo Obrigatório e Assinado)**:
+   > [!WARNING]
+   > O MEI (Microempreendedor Individual) possui CNPJ com 14 dígitos numéricos, idêntico ao de uma sociedade empresária. A validação de formato no SQL apenas garante que o documento tem 14 dígitos e **NÃO separa MEI**.
+   - O autor do PR deve obrigatoriamente emitir e verificar o **Cartão CNPJ** da casa na Receita Federal (ou consulta Redesim).
+   - **Campo a conferir**: `Código e Descrição da Natureza Jurídica`.
+   - **Regra de aceite**: Deve ser sociedade empresarial (ex.: `206-2 Sociedade Empresária Limitada`, `205-4 Sociedade Anônima Fechada`, etc.) ou casa de teste própria da equipe.
+   - **Regra de recusa**: Se a Natureza Jurídica for `213-5 Empresário (Individual)` com opção de MEI (SIMEI), a casa **NÃO pode entrar no piloto** (seus dados qualificam como dados de pessoa física, exigindo nova análise de balanceamento da LGPD).
+   - O sócio responsável (`@jotape12-Dev` ou `@cauecarneiro`) deve atestar e assinar formalmente esta conferência no corpo do PR.
+3. **Pacote no Prod Aplicado**: A tag `backend-v1.2.0` (ou posterior) deve estar aplicada em Produção, contendo as migrações da Etapa 1 (`20261111210000`) e a chave global `checkin_por_codigo` ligada em `privado.recurso`.
+4. **App iOS Homologado**: Build 1.2.0 aprovado no App Store Review e instalado nos aparelhos da gerência da casa piloto e dos profissionais confirmados para os turnos.
+5. **Elegibilidade da Casa Piloto**: A casa escolhida deve ter cadastro ativo em `public.estabelecimento`, comprovar natureza societária conforme o item 2 e estar ciente da dinâmica de exibição do código de 6 dígitos.
+6. **Janela Operacional**: O deploy da migração deve ser agendado preferencialmente **FORA de turnos em andamento** (intervalo entre o fim do turno anterior e o início do próximo).
 
 ---
 
@@ -31,7 +39,7 @@ supabase migration new piloto_checkin_codigo_casa_<identificador>
 
 Preencha o UUID da casa no bloco `v_casa_id constant uuid := '...'::uuid;`. A migração valida automaticamente em tempo de execução:
 - Existência da casa em `public.estabelecimento`.
-- Documento compatível com PJ não-MEI (CNPJ de 14 dígitos).
+- Sintaxe e formato do documento (CNPJ com 14 dígitos numéricos).
 - Inclusão da versão mínima `1.2.0` para iOS em `privado.recurso_versao_minima`.
 - Inserção atômica em `privado.recurso_estabelecimento`.
 
@@ -42,8 +50,10 @@ supabase test db supabase/tests/850_piloto_chave_casa_migracao.sql
 ./scripts/checkin-por-codigo-casa.sh estado <uuid_da_casa>
 ```
 
-### Passo 3: Submeter PR na `develop`
-- Submeta o PR para revisão de código dos sócios.
+### Passo 3: Submeter PR na `develop` utilizando o modelo obrigatório
+- Abra o PR na base `develop` preenchendo obrigatoriamente o modelo [docs/operacao/templates/TEMPLATE_PR_CASA_PILOTO.md](templates/TEMPLATE_PR_CASA_PILOTO.md).
+- O autor preenche e assina o checklist confirmando a consulta do Cartão CNPJ na Receita Federal e a Natureza Jurídica (não MEI).
+- O revisor independente (Bigorna / Sócios) confere o checklist e revalida a Natureza Jurídica na base pública da Receita Federal.
 - CI verde obrigatória em todos os jobs.
 - Após aprovação, a esteira `entrega.yml` aplica a migração automaticamente via `scripts/aplicar-remoto.sh`.
 
