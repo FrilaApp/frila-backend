@@ -23,15 +23,15 @@ Aqui entra o que falta em torno dele: a janela, a tag e o pico.
 
 | Decisão | Quem | Fonte |
 |---|---|---|
-| Declarar hotfix e publicar em Prod | Os sócios têm comando total; quem leva o hotfix até a tag responde por ele | `AGENTS.md`, "Quem é quem" |
-| Aprovar o PR do hotfix | Qualquer um dos quatro sócios, menos quem abriu o PR, lendo o diff inteiro (migração e push são faixa vermelha) | `AGENTS.md`, "Aprovar e mesclar" |
-| Mesclar com a CI ainda rodando ou vermelha | Só em emergência, registrada no PR | `AGENTS.md`, "Aprovar e mesclar" |
+| Declarar hotfix e publicar em Prod | Os sócios têm comando total; quem leva o hotfix até a tag responde por ele | `AGENTS.md`, "Regras do time" |
+| Aprovar o PR do hotfix | Qualquer um dos quatro sócios, menos quem abriu o PR, lendo o diff inteiro (migração e push são faixa vermelha) | `AGENTS.md`, "Regras do time" (Revisão) |
+| Mesclar com a CI ainda rodando ou vermelha | Só em emergência, registrada no PR | `AGENTS.md`, "Branch e PR" |
 | Aprovar o job de Prod no Environment | Revisor do Environment `frila-prod`. O Environment possui 4 revisores cadastrados (`cauecarneiro`, `fbtostadev`, `jotape12-Dev`, `silvaaszx`) com auto-aprovação prevenida (`prevent_self_review: true`) e bypass de admin ativo (fonte: medido via GitHub API em 30/10) | `entrega.yml:126-127`; GitHub API |
 | Aplicar patch à mão em Prod | `[DONO]`, termo de `docs/RUNBOOK-INCIDENTES.md` (por exemplo, linha 224) que o documento não define | `RUNBOOK-INCIDENTES.md` |
-| Exceção à janela proibida | Proposta, a confirmar: `[DONO]`, com motivo e hora registrados no PR ou no cartão | não existe regra escrita |
+| Exceção à janela proibida | Proposta, a confirmar: `[DONO]`, com motivo e hora registrados no PR | não existe regra escrita |
 
 O agente de IA prepara, testa e abre o PR. Ele nunca aprova nem mescla, e não empurra a tag
-de Prod (`AGENTS.md`, "Limites").
+de Prod (`AGENTS.md`, "Regras do time").
 
 ---
 
@@ -88,17 +88,17 @@ visível em PR).
    antes de planejar o prazo.
 2. **Decidir** (seção 1): quem leva o hotfix e quem aprova o PR.
 3. **Reproduzir e escrever o teste que falha.** pgTAP vermelho primeiro (`AGENTS.md`,
-   "Testes"). Sem teste que reproduza, o hotfix é palpite.
+   "Rodar e testar"). Sem teste que reproduza, o hotfix é palpite.
 4. **Branch a partir da `develop`:**
    `git fetch origin develop && git switch -c sX/<assunto> origin/develop`.
    Não existe branch de hotfix saindo da `main`: o job de Prod recusa tag fora da
    `develop` (`entrega.yml:143-148`).
-5. **Gate local** (`AGENTS.md`, "Comandos e gate local"): `supabase db reset`,
+5. **Gate local** (`AGENTS.md`, "Rodar e testar"): `supabase db reset`,
    `supabase test db`, `./scripts/ciclo-completo.sh`, `./scripts/mutacao.sh`,
    `./scripts/lint-conhecido.sh`, `./scripts/advisor-conhecido.sh`. Se tocou Edge Function,
    `deno test --allow-all --no-check`.
 6. **PR para `develop`** (`gh pr create --base develop`), com o que foi e o que não foi
-   executado. A CI leva ~50 min (`AGENTS.md`); um hotfix real mede o prazo contando com isso,
+   executado. A CI leva de 1 a 2 h (medido em 11/11/2026); um hotfix real mede o prazo contando com isso,
    ou com a exceção de emergência registrada no PR.
 7. **Aprovação e merge** por outro sócio (seção 1).
 8. **Acompanhar o `frila-dev`.** O merge dispara a entrega para o `frila-dev`
@@ -110,8 +110,7 @@ visível em PR).
    de numeração é proposta, a confirmar.
 10. **Aprovar o job de Prod** se o Environment tiver revisor (`entrega.yml:126-127`).
     Acompanhe os passos da seção 2 até o `desvio.sh` terminar verde.
-11. **Registrar** no PR e no cartão: SHA, tag, hora, resultado do `desvio.sh`. (A ponte da
-    Bancada foi descontinuada em 04/11/2026; o registro vive no PR e no Trello.)
+11. **Registrar** no PR: SHA, tag, hora, resultado do `desvio.sh`.
 
 Smoke depois da publicação: `GET` na função `saude` do Prod só lê no caminho de sucesso
 (`select 1`, `supabase/functions/saude/index.ts`); no de falha, grava uma linha em
@@ -137,7 +136,7 @@ na CI: `scripts/migracoes-imutaveis.sh:12` lista os arquivos modificados ou remo
    (recuperável com `git show <commit-anterior>:supabase/migrations/<arquivo>.sql`),
    mantendo `set search_path = ''` e os `grant`/`revoke`.
 4. **Dado não volta.** `drop column` apaga o conteúdo. Mudança destrutiva em duas fases
-   (acrescenta e escreve nos dois; só depois remove), por `AGENTS.md`, "Migrações". Backup
+   (acrescenta e escreve nos dois; só depois remove), por `AGENTS.md`, "Banco e migrações". Backup
    do Prod: ver seção 7, ainda não configurado.
 5. **pgTAP** que prova o estado revertido e as regras de negócio intactas;
    `supabase db reset` e `supabase test db` verdes.
@@ -173,7 +172,7 @@ janela, reprova antes de qualquer migração ou deploy.
 4. **Reexecute o job** na aba Actions depois das 2h. Ele usa o mesmo commit da tag. Se o
    hotfix mudou, é tag nova, em commit da `develop`. Não mova nem apague tag.
 5. **Se o dano de esperar for maior que o de publicar** (proposta, a confirmar): o `[DONO]`
-   decide a exceção e registra no PR ou no cartão o motivo, a hora e o que será aplicado.
+   decide a exceção e registra no PR o motivo, a hora e o que será aplicado.
    O workflow não tem exceção. O caminho que existe é à mão, com
    `./scripts/aplicar-remoto.sh <ref-prod>` e `supabase functions deploy --project-ref <ref>`,
    que não passam pela janela nem pela checagem da tag na `develop`. Depois rode
