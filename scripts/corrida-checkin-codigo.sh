@@ -133,7 +133,8 @@ sql_confirmar() { echo "select public.confirmar_checkin_manual('$(id "$1" 40)'::
 sql_gerar()     { echo "select public.gerar_codigo_checkin('$(id "$1" 40)'::uuid)"; }
 
 # montar_mundo <m> [sem_codigo]: casa, profissional, vaga de agora, posição confirmada, check-in
-# manual a 500 m e, sem o segundo argumento, o código gerado pela casa.
+# manual a 40 m (Etapa 1: a casa só gera com chegada elegível <= raio_proximidade_m 50 m provisório)
+# e, sem o segundo argumento, o código gerado pela casa.
 montar_mundo() {
   local m=$1 casa prof estab vaga pos turno
   MUNDOS+=("$m")
@@ -162,7 +163,8 @@ insert into public.posicao (id, vaga_id, estado, profissional_id, confirmado_em,
 select '$pos', '$vaga', 'confirmada', p.id, now() - interval '32 hours', v.inicio_em, v.fim_em
   from public.profissional p, public.vaga v where p.usuario_id = '$prof' and v.id = '$vaga';
 insert into public.turno (id, posicao_id, valor_acordado_centavos) values ('$turno', '$pos', 15000);
-select pg_temp.tentar('$prof', \$q\$ select public.fazer_checkin('$turno'::uuid, 500, now()) \$q\$);
+-- Etapa 1: a casa só gera com chegada elegível a até raio_proximidade_m (50 m provisório); usa 40 m
+select pg_temp.tentar('$prof', \$q\$ select public.fazer_checkin('$turno'::uuid, 40, now()) \$q\$);
 SQL
   if [ "${2:-}" != sem_codigo ]; then
     psql >/dev/null <<SQL

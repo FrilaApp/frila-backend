@@ -174,7 +174,8 @@ select pg_temp.checkin((select ana from ids), 'exigido', 40,
 select pg_temp.como((select dono from ids), format('select public.confirmar_checkin_manual(%L::uuid)', pg_temp.t('exigido')));
 -- leitura: errada a 150 m aos 5 s, certa a 30 m aos 10 s.
 select pg_temp.na_noite('leitura');
-select pg_temp.checkin((select ana from ids), 'leitura', 500);
+-- Etapa 1: chegada elegível a 40 m (<= raio_proximidade_m 50 m provisório)
+select pg_temp.checkin((select ana from ids), 'leitura', 40);
 select pg_temp.gerar('leitura');
 create temp table gerado_leitura as select pg_temp.gerado_em('leitura') as em, pg_temp.cod('leitura') as cod;
 select pg_temp.na_noite('leitura', 5);
@@ -183,32 +184,39 @@ select pg_temp.na_noite('leitura', 10);
 select pg_temp.validar((select ana from ids), 'leitura', (select cod from gerado_leitura), 30);
 -- sem_posicao: certa sem posição (confiança baixa).
 select pg_temp.na_noite('sem_posicao');
-select pg_temp.checkin((select ana from ids), 'sem_posicao', 500);
+-- Etapa 1: chegada elegível a 40 m (<= raio_proximidade_m 50 m provisório)
+select pg_temp.checkin((select ana from ids), 'sem_posicao', 40);
 select pg_temp.gerar('sem_posicao');
 select pg_temp.validar((select ana from ids), 'sem_posicao', pg_temp.cod('sem_posicao'), null);
 -- so_gerado: a casa gera e ninguém lê. O valor fica em vigor, e é fixado para a busca no texto.
 select pg_temp.na_noite('so_gerado');
-select pg_temp.checkin((select ana from ids), 'so_gerado', 500);
+-- Etapa 1: chegada elegível a 40 m (<= raio_proximidade_m 50 m provisório)
+select pg_temp.checkin((select ana from ids), 'so_gerado', 40);
 select pg_temp.gerar('so_gerado');
-update privado.checkin_codigo set codigo = '864209' where turno_id = pg_temp.t('so_gerado');
+-- Etapa 1: preserva o cenário de teste de turno sem codigo_exigido nem tentativas
+update privado.checkin_codigo set codigo = '864209', codigo_exigido = false where turno_id = pg_temp.t('so_gerado');
 -- vencido: lê o código depois da validade (301 s): conta, sem código em vigor.
 select pg_temp.na_noite('vencido');
-select pg_temp.checkin((select ana from ids), 'vencido', 500);
+-- Etapa 1: chegada elegível a 40 m (<= raio_proximidade_m 50 m provisório)
+select pg_temp.checkin((select ana from ids), 'vencido', 40);
 select pg_temp.gerar('vencido');
 create temp table cod_vencido as select pg_temp.cod('vencido') as cod;
 select pg_temp.na_noite('vencido', 301);
 select pg_temp.validar((select ana from ids), 'vencido', (select cod from cod_vencido), 40);
 -- da_bia: uma errada.
 select pg_temp.na_noite('da_bia');
-select pg_temp.checkin((select bia from ids), 'da_bia', 500);
+-- Etapa 1: chegada elegível a 40 m (<= raio_proximidade_m 50 m provisório)
+select pg_temp.checkin((select bia from ids), 'da_bia', 40);
 select pg_temp.gerar('da_bia');
 select pg_temp.validar((select bia from ids), 'da_bia', pg_temp.errado('da_bia'), 40);
 
+-- Etapa 1: codigo_exigido é gravado true nas chegadas sob chave ligada;
+-- sem_posicao falha na validação (recusada), portanto confianca_baixa permanece false.
 select is((select string_agg(c.codigo_exigido::text || '/' || c.confianca_baixa::text || '/' ||
                              (select count(*) from privado.checkin_codigo_tentativa k where k.turno_id = c.turno_id),
                              ',' order by x.inicio, x.nome)
              from privado.checkin_codigo c join turnos x on x.turno = c.turno_id),
-  'false/false/1,true/false/0,false/false/2,false/true/1,false/false/0,false/false/1',
+  'true/false/1,true/false/0,true/false/2,true/false/1,false/false/0,true/false/1',
   'premissa: as RPCs gravaram o caminho do código dos seis turnos (da_bia, exigido, leitura, sem_posicao, so_gerado, vencido)');
 
 -- ── 3. MeusDados.checkins_por_codigo ──────────────────────────────────────────
@@ -234,11 +242,12 @@ select is((select v->'tentativas' from exp_ana, jsonb_array_elements(j) v where 
     jsonb_build_object('em', '2027-01-12 21:30:10+00'::timestamptz, 'resultado', 'aceita', 'faixa', 'ate_100_m',
                        'codigo_gerado_em', (select em from gerado_leitura))),
   'as tentativas em ordem, com a hora, o resultado, a faixa e a hora do código em vigor');
+-- Etapa 1: tentativa sem posição é recusada (422) e codigo_exigido=true; confianca_baixa permanece false
 select is((select v - 'turno_id' from exp_ana, jsonb_array_elements(j) v where (v->>'turno_id')::uuid = pg_temp.t('sem_posicao')),
-  jsonb_build_object('codigo_exigido', false, 'confianca_baixa', true, 'tentativas', jsonb_build_array(
-    jsonb_build_object('em', '2027-01-13 21:30:00+00'::timestamptz, 'resultado', 'aceita', 'faixa', 'sem_posicao',
+  jsonb_build_object('codigo_exigido', true, 'confianca_baixa', false, 'tentativas', jsonb_build_array(
+    jsonb_build_object('em', '2027-01-13 21:30:00+00'::timestamptz, 'resultado', 'recusada', 'faixa', 'sem_posicao',
                        'codigo_gerado_em', '2027-01-13 21:30:00+00'::timestamptz))),
-  'validado sem posição: a marca de confiança baixa vai para o próprio profissional (regra (d))');
+  'validado sem posição: na Etapa 1 tentativa é recusada, histórico preservado em MeusDados');
 select is((select v->'tentativas'->0 from exp_ana, jsonb_array_elements(j) v where (v->>'turno_id')::uuid = pg_temp.t('vencido')),
   jsonb_build_object('em', '2027-01-15 21:35:01+00'::timestamptz, 'resultado', 'recusada', 'faixa', 'ate_100_m',
                      'codigo_gerado_em', null),

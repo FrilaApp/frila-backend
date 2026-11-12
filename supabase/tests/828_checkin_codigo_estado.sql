@@ -13,7 +13,7 @@
 begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
-select plan(60);
+select plan(64);
 
 create temp table ids as
 select
@@ -157,8 +157,9 @@ select is(privado.recurso_ligado_para('chamada_direta', (select casa from ids)),
   'a lista é por chave: a casa do piloto do código não ganha outra chave, mesmo ligada');
 
 -- ── 3. Os números ajustáveis ──────────────────────────────────────────────────
+-- Etapa 1: raio_validacao_m padrão atualizado de 100 para 50 m provisório
 select is((select row(validade_s, bloqueio_s, raio_validacao_m, precisao_ruim_m)::text from privado.regra_checkin_codigo),
-  '(300,300,100,100)', 'regra nasce com 5 min de validade e de bloqueio, raio de 100 m e precisão ruim a partir de 100 m');
+  '(300,300,50,100)', 'regra nasce com 5 min de validade e de bloqueio, raio de 50 m (Etapa 1) e precisão ruim a partir de 100 m');
 
 select throws_ok($$insert into privado.regra_checkin_codigo (unica) values (false)$$,
   '23514', pg_temp.violacao('regra_checkin_codigo', 'regra_uma_linha'), 'regra_uma_linha: a regra tem uma linha só');
@@ -176,6 +177,15 @@ select throws_ok($$update privado.regra_checkin_codigo set raio_validacao_m = 0$
   '23514', pg_temp.violacao('regra_checkin_codigo', 'raio_ate_100_m'), 'raio_ate_100_m: raio zero é recusado');
 select throws_ok($$update privado.regra_checkin_codigo set precisao_ruim_m = 0$$,
   '23514', pg_temp.violacao('regra_checkin_codigo', 'precisao_ruim_positiva'), 'precisao_ruim_positiva: limiar zero é recusado');
+-- Etapa 1: restrições das colunas novas raio_proximidade_m e validade_proximidade_s
+select throws_ok($$update privado.regra_checkin_codigo set raio_proximidade_m = 19$$,
+  '23514', pg_temp.violacao('regra_checkin_codigo', 'raio_proximidade_entre_20_e_100'), 'raio_proximidade_entre_20_e_100: menos de 20 m é recusado');
+select throws_ok($$update privado.regra_checkin_codigo set raio_proximidade_m = 101$$,
+  '23514', pg_temp.violacao('regra_checkin_codigo', 'raio_proximidade_entre_20_e_100'), 'raio_proximidade_entre_20_e_100: mais de 100 m é recusado');
+select throws_ok($$update privado.regra_checkin_codigo set validade_proximidade_s = 59$$,
+  '23514', pg_temp.violacao('regra_checkin_codigo', 'validade_proximidade_entre_1_e_60_min'), 'validade_proximidade_entre_1_e_60_min: menos de 60 s é recusado');
+select throws_ok($$update privado.regra_checkin_codigo set validade_proximidade_s = 3601$$,
+  '23514', pg_temp.violacao('regra_checkin_codigo', 'validade_proximidade_entre_1_e_60_min'), 'validade_proximidade_entre_1_e_60_min: mais de 3600 s é recusado');
 select lives_ok($$update privado.regra_checkin_codigo set validade_s = 120, bloqueio_s = 120, raio_validacao_m = 1, precisao_ruim_m = 1$$,
   'as bordas aprovadas (2 min e 1 m) valem');
 update privado.regra_checkin_codigo set validade_s = 300, bloqueio_s = 300, raio_validacao_m = 100, precisao_ruim_m = 100;
