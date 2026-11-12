@@ -56,13 +56,13 @@ O script `scripts/gerar-painel.sh` lê as 7 views do schema `metrica.*` via `psq
 ./scripts/gerar-painel.sh
 
 # Salva diretamente em arquivo temporário
-./scripts/gerar-painel.sh -o /tmp/painel-piloto.html
+./scripts/gerar-painel.sh -o /tmp/painel.html
 
 # Validação contratual de schema e colunas (usado na CI)
-./scripts/gerar-painel.sh --teste -o /tmp/painel-piloto.html
+./scripts/gerar-painel.sh --teste -o /tmp/painel.html
 ```
 
-> **Atenção:** Arquivos HTML gerados para inspeção ou teste devem ser salvos em diretórios efêmeros como `/tmp/painel-piloto.html`, nunca comitados na pasta `docs/`.
+> **Atenção:** Arquivos HTML gerados para inspeção ou teste devem ser salvos em diretórios efêmeros como `/tmp/painel.html`, nunca comitados na pasta `docs/`.
 
 O script respeita a variável de ambiente `DATABASE_URL` se estiver definida; caso contrário, conecta-se automaticamente ao contêiner local `supabase_db_frila-backend` ou à porta padrão `54322`.
 
