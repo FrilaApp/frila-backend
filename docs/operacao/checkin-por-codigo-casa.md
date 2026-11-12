@@ -110,8 +110,8 @@ Caso seja necessário desativar a casa do piloto:
 
 ---
 
-## 6. Ferramental de Diagnóstico Local
+## 6. Ferramental de Diagnóstico e Auditoria (Somente Leitura)
 
-O script [scripts/checkin-por-codigo-casa.sh](../../scripts/checkin-por-codigo-casa.sh) permanece versionado no repositório como ferramenta de diagnóstico e auditoria rápida para os ambientes de desenvolvimento (`local` e `dev`):
-- `checkin-por-codigo-casa.sh estado <uuid>`: Auditoria de leitura das tabelas de controle.
-- `checkin-por-codigo-casa.sh ligar/desligar <uuid> --sim`: Facilitador de testes rápidos em bancos locais efêmeros.
+O script [scripts/checkin-por-codigo-casa.sh](../../scripts/checkin-por-codigo-casa.sh) permanece versionado no repositório como ferramenta de diagnóstico e auditoria estritamente de **leitura** para todos os ambientes (`local`, `dev` e `prod`):
+- `checkin-por-codigo-casa.sh estado <uuid>`: Inspeciona e consolida o estado das tabelas `privado.recurso`, `privado.recurso_versao_minima`, `privado.recurso_estabelecimento` e o retorno de `privado.recurso_ligado_para`.
+- **Escrita vedada no script**: O script recusa os subcomandos `ligar` e `desligar`. Todas as alterações de estado ocorrem exclusivamente via migrações versionadas com PR, revisão de código e aprovação em CI.
