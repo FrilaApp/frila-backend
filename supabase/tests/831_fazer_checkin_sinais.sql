@@ -119,20 +119,21 @@ select is(pg_temp.resumo(pg_temp.checkin('fora', 50, '{"localizacao_simulada": t
 
 insert into privado.recurso_estabelecimento (chave, estabelecimento_id) select 'checkin_por_codigo', casa from ids;
 
--- ── 2. Chave ligada, sem sinal suspeito: o caminho A não muda (critério 9; leitura 4) ──
+-- ── 2. Chave ligada, sem sinal suspeito: na Etapa 1 o toque nunca verifica sozinho (manual pendente) ──
 select is(pg_temp.resumo(pg_temp.checkin('sem_sinais', 50)),
-  'geolocalizado verificado exigido=false disponivel=false', 'sem sinais (app 1.0 e 1.1, três argumentos): os 50 m verificam na hora');
+  'manual pendente exigido=true disponivel=true', 'sem sinais (app 1.0 e 1.1, três argumentos): na Etapa 1 fica manual/pendente com código exigido e disponível a 50 m');
 select is(pg_temp.resumo(pg_temp.checkin('sem_sinais_180', 180)),
-  'geolocalizado verificado exigido=false disponivel=false', 'leitura 4: sem sinais, a faixa de 150 a 200 m não pesa');
+  'manual pendente exigido=true disponivel=false', 'leitura 4: a 180 m (> 50 m provisório), código fica exigido mas indisponível');
 select is(pg_temp.resumo(pg_temp.checkin('normal', 50, '{"localizacao_simulada": false, "precisao_m": 20, "salto_de_posicao": false}')),
-  'geolocalizado verificado exigido=false disponivel=false', 'sinais normais: quem está normal não sente atrito');
+  'manual pendente exigido=true disponivel=true', 'sinais normais: na Etapa 1 fica manual/pendente com código exigido e disponível a 50 m');
 
 -- ── 3. Sinal suspeito: a casa atesta (seção 6; leitura 5) ─────────────────────
 select is(pg_temp.resumo(pg_temp.checkin('simulada', 50, '{"localizacao_simulada": true, "precisao_m": 5, "salto_de_posicao": false}')),
   'manual pendente exigido=true disponivel=true', 'localização simulada: a 50 m, o check-in fica manual e pendente, com o código exigido');
-select ok((select checkin_distancia_m is null from public.turno where id = pg_temp.t('simulada'))
+-- Etapa 1: checkin_distancia_m da chegada elegível permanece gravado no turno para auditoria
+select ok((select checkin_distancia_m = 50 from public.turno where id = pg_temp.t('simulada'))
           and (select codigo_exigido from privado.checkin_codigo where turno_id = pg_temp.t('simulada')),
-  'o servidor grava só codigo_exigido; a distância do manual não é gravada, e os sinais nunca');
+  'o servidor grava codigo_exigido e preserva a distância informada (50 m) no turno; sinais nunca gravados');
 select is((select count(*)::int from public.notificacao
             where tipo = 'checkin_manual_pendente' and referencia_id = pg_temp.t('simulada')
               and usuario_id = (select casa_user from ids)), 1,
@@ -142,11 +143,11 @@ select is(pg_temp.resumo(pg_temp.checkin('salto', 50, '{"localizacao_simulada": 
 select is(pg_temp.resumo(pg_temp.checkin('precisao_100', 50, '{"localizacao_simulada": false, "precisao_m": 100, "salto_de_posicao": false}')),
   'manual pendente exigido=true disponivel=true', 'leitura 5: precisão ruim a partir de 100 m');
 select is(pg_temp.resumo(pg_temp.checkin('precisao_99', 50, '{"localizacao_simulada": false, "precisao_m": 99, "salto_de_posicao": false}')),
-  'geolocalizado verificado exigido=false disponivel=false', 'leitura 5: 99 m de imprecisão ainda não é precisão ruim');
+  'manual pendente exigido=true disponivel=true', 'leitura 5: 99 m ainda não é precisão ruim, código exigido e disponível a 50 m');
 -- A precisão é inteira pelo valor (contrato: type integer, metros inteiros): 20.0, como o Kotlin
 -- serializa um Double, passa e é avaliada, sem erro cru (bloqueio do Lince AG 2 no #464).
 select is(pg_temp.resumo(pg_temp.checkin('precisao_20_0', 50, '{"localizacao_simulada": false, "precisao_m": 20.0, "salto_de_posicao": false}')),
-  'geolocalizado verificado exigido=false disponivel=false', 'precisao_m 20.0: passa e é avaliada como 20, sem erro cru (#464)');
+  'manual pendente exigido=true disponivel=true', 'precisao_m 20.0: passa e é avaliada como 20, código disponível a 50 m (#464)');
 select is(pg_temp.resumo(pg_temp.checkin('precisao_100_0', 50, '{"localizacao_simulada": false, "precisao_m": 100.0, "salto_de_posicao": false}')),
   'manual pendente exigido=true disponivel=true', 'precisao_m 100.0: avaliada como 100, precisão ruim (#464)');
 select lives_ok($$ select privado.sinal_suspeito(v.s, 50)
@@ -158,15 +159,15 @@ select lives_ok($$ select privado.sinal_suspeito(v.s, 50)
                     where privado.sinais_validos(v.s) $$,
   'todo sinal que passa no sinais_validos é avaliado sem erro cru: 0, 20.0, 1e2, 2147483647.0 e nulo (#464)');
 select is(pg_temp.resumo(pg_temp.checkin('precisao_nula', 50, '{"localizacao_simulada": false, "precisao_m": null, "salto_de_posicao": false}')),
-  'geolocalizado verificado exigido=false disponivel=false', 'D5 PENDENTE do JP: provisoriamente, precisão nula não conta como ruim (muda só em privado.precisao_ruim)');
+  'manual pendente exigido=true disponivel=true', 'D5 PENDENTE do JP: precisão nula não conta como ruim, código disponível a 50 m');
 select is(pg_temp.resumo(pg_temp.checkin('faixa_150', 150, '{"localizacao_simulada": false, "precisao_m": 5, "salto_de_posicao": false}')),
-  'manual pendente exigido=true disponivel=true', 'com sinais, a faixa começa em 150 m');
+  'manual pendente exigido=true disponivel=false', 'com sinais, 150 m é > raio_proximidade_m (50 m): código indisponível');
 select is(pg_temp.resumo(pg_temp.checkin('faixa_149', 149, '{"localizacao_simulada": false, "precisao_m": 5, "salto_de_posicao": false}')),
-  'geolocalizado verificado exigido=false disponivel=false', 'com sinais, 149 m está fora da faixa');
+  'manual pendente exigido=true disponivel=false', 'com sinais, 149 m é > raio_proximidade_m (50 m): código indisponível');
 select is(pg_temp.resumo(pg_temp.checkin('faixa_200', 200, '{"localizacao_simulada": false, "precisao_m": 5, "salto_de_posicao": false}')),
-  'manual pendente exigido=true disponivel=true', 'com sinais, a faixa vai até 200 m');
+  'manual pendente exigido=true disponivel=false', 'com sinais, 200 m é > raio_proximidade_m (50 m): código indisponível');
 select is(pg_temp.resumo(pg_temp.checkin('acima_201', 201, '{"localizacao_simulada": false, "precisao_m": 5, "salto_de_posicao": false}')),
-  'manual pendente exigido=false disponivel=true', 'acima de 200 m é o manual de sempre: o código fica disponível, mas não exigido');
+  'manual pendente exigido=true disponivel=false', 'acima de 200 m: na Etapa 1 código exigido=true, mas indisponível (> 50 m)');
 select is((select array_agg(k order by k) from jsonb_object_keys(
             privado.resposta_do_checkin((select t from public.turno t where t.id = pg_temp.t('simulada')), true)) k),
   array['codigo_disponivel', 'codigo_exigido', 'distancia_m', 'registrado_em', 'tipo', 'turno_id', 'verificacao'],
@@ -196,7 +197,7 @@ select is(pg_temp.resumo(pg_temp.como((select casa_user from ids),
             format('select public.confirmar_checkin_manual(%L::uuid)', pg_temp.t('simulada')))),
   'manual verificado exigido=- disponivel=-', 'leitura 8: com o código exigido, a casa ainda confirma à mão');
 select is(pg_temp.resumo(pg_temp.checkin('sem_distancia', null, '{"localizacao_simulada": false, "precisao_m": 5, "salto_de_posicao": false}')),
-  'manual pendente exigido=false disponivel=true', 'sem localização, o check-in é o manual de sempre');
+  'manual pendente exigido=true disponivel=false', 'sem localização: na Etapa 1 código é exigido, mas indisponível para geração');
 
 select set_config('frila.agora', '2027-01-12 02:10:00+00', true);
 select privado.fechar_turnos_passados();

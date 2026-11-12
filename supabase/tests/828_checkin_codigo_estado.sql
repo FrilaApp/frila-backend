@@ -157,8 +157,9 @@ select is(privado.recurso_ligado_para('chamada_direta', (select casa from ids)),
   'a lista é por chave: a casa do piloto do código não ganha outra chave, mesmo ligada');
 
 -- ── 3. Os números ajustáveis ──────────────────────────────────────────────────
+-- Etapa 1: raio_validacao_m padrão atualizado de 100 para 50 m provisório
 select is((select row(validade_s, bloqueio_s, raio_validacao_m, precisao_ruim_m)::text from privado.regra_checkin_codigo),
-  '(300,300,100,100)', 'regra nasce com 5 min de validade e de bloqueio, raio de 100 m e precisão ruim a partir de 100 m');
+  '(300,300,50,100)', 'regra nasce com 5 min de validade e de bloqueio, raio de 50 m (Etapa 1) e precisão ruim a partir de 100 m');
 
 select throws_ok($$insert into privado.regra_checkin_codigo (unica) values (false)$$,
   '23514', pg_temp.violacao('regra_checkin_codigo', 'regra_uma_linha'), 'regra_uma_linha: a regra tem uma linha só');
