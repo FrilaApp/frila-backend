@@ -34,13 +34,19 @@ begin
 end $$;
 
 -- Colhe a recusa em vez da resposta: o envelope de `public.erro` sai em `MESSAGE`, que é
--- exatamente o corpo que o PostgREST devolve ao cliente.
+-- exatamente o corpo que o PostgREST devolve ao cliente. A recusa que grava (0.2.68, D2:
+-- `validar_codigo_checkin`) não dá raise: põe `response.status` e devolve o envelope no corpo, e é
+-- assim que o PostgREST a responde. Por isso o status lido aqui é também o do `response.status`.
 create function pg_temp.recusa(conta uuid, sql text) returns jsonb
 language plpgsql as $$
-declare msg text;
+declare msg text; r jsonb;
 begin
   begin
-    perform pg_temp.como(conta, sql);
+    perform set_config('response.status', '', true);
+    r := pg_temp.como(conta, sql);
+    if coalesce(nullif(current_setting('response.status', true), ''), '200')::int >= 400 then
+      return r;
+    end if;
     return null;
   exception when others then
     get stacked diagnostics msg = message_text;
@@ -59,14 +65,19 @@ language plpgsql as $$
 declare
   det text;
   msg text;
+  r   jsonb;
+  st  int;
 begin
   begin
+    -- A recusa que grava responde por response.status, sem raise (0.2.68, D2); o resto, pelo raise.
+    perform set_config('response.status', '', true);
     if conta is null then
       execute sql;
     else
-      perform pg_temp.como(conta, sql);
+      r := pg_temp.como(conta, sql);
     end if;
-    return jsonb_build_object('status', 200, 'code', null);
+    st := coalesce(nullif(current_setting('response.status', true), ''), '200')::int;
+    return jsonb_build_object('status', st, 'code', case when st >= 400 then r->>'code' end);
   exception when others then
     get stacked diagnostics det = pg_exception_detail, msg = message_text;
     reset role;
@@ -86,8 +97,9 @@ create function pg_temp.guarda(op text, corpo jsonb) returns void
 language sql as $$ insert into colhido (op, corpo) values (op, corpo) $$;
 
 -- Colhe a resposta e desfaz o que a chamada escreveu: o bloco termina numa exceção própria,
--- e só a resposta sobrevive. Serve à chamada que mudaria o cenário de quem vem depois (o manual
--- clássico colhido no turno que, logo abaixo, recebe o check-in com sinais). Qualquer outro erro
+-- e só a resposta sobrevive. Serve à chamada que mudaria o cenário de quem vem depois: o manual
+-- clássico colhido no turno que, logo abaixo, recebe o check-in com sinais (PR4), e o acerto do
+-- código, que tiraria da casa a confirmação manual do mesmo turno (PR7). Qualquer outro erro
 -- passa adiante.
 create function pg_temp.sem_rastro(conta uuid, sql text) returns jsonb
 language plpgsql as $$
@@ -332,8 +344,53 @@ select pg_temp.guarda('fazerCheckin', pg_temp.como('cc000000-0000-4000-8000-0000
 select pg_temp.guarda('painelEstabelecimento', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.painel_estabelecimento(%L::uuid, '2027-01-01T00:00:00Z'::timestamptz, '2027-12-31T00:00:00Z'::timestamptz) $$,
   (select casa_id from ids))));
+-- gerarCodigoCheckin (PR5): com o check-in da cand2 manual e pendente e a chave ligada para a casa, o
+-- membro gera o código; as recusas vigiadas saem do mesmo ponto, antes de a casa confirmar à mão.
+select pg_temp.guarda('gerarCodigoCheckin', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.gerar_codigo_checkin(%L::uuid) $$, ((select r from cand2)->>'turno_id')::uuid)));
+select pg_temp.guarda('promete:gerarCodigoCheckin:401',
+  pg_temp.observado(null, format(
+    $$ select public.gerar_codigo_checkin(%L::uuid) $$, ((select r from cand2)->>'turno_id')::uuid)));
+-- O profissional do turno não gera o próprio código.
+select pg_temp.guarda('promete:gerarCodigoCheckin:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000003', format(
+    $$ select public.gerar_codigo_checkin(%L::uuid) $$, ((select r from cand2)->>'turno_id')::uuid)));
+select pg_temp.guarda('promete:gerarCodigoCheckin:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.gerar_codigo_checkin('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+-- O check-in da cand nasceu geolocalizado e verificado.
+select pg_temp.guarda('promete:gerarCodigoCheckin:409',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.gerar_codigo_checkin(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
+select pg_temp.guarda('promete:gerarCodigoCheckin:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001',
+    $$ select public.gerar_codigo_checkin(null) $$));
+-- validarCodigoCheckin (PR7): o profissional da cand2 lê o código que a casa acabou de gerar. A
+-- errada conta, grava e responde 422 por response.status (D2). O acerto é colhido sem rastro, para a
+-- casa ainda confirmar à mão logo abaixo. O 403 (conta suspensa) sai no bloco da conta suspensa.
+create temp table codigo_cand2 as
+  select c.codigo from privado.checkin_codigo c where c.turno_id = ((select r from cand2)->>'turno_id')::uuid;
+select pg_temp.guarda('promete:validarCodigoCheckin:401', pg_temp.observado(null, format(
+  $$ select public.validar_codigo_checkin(%L::uuid, '123456', 40) $$, ((select r from cand2)->>'turno_id')::uuid)));
+-- O turno da cand2 não é do Pê.
+select pg_temp.guarda('promete:validarCodigoCheckin:404', pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+  $$ select public.validar_codigo_checkin(%L::uuid, '123456', 40) $$, ((select r from cand2)->>'turno_id')::uuid)));
+-- O check-in da cand nasceu geolocalizado e verificado.
+select pg_temp.guarda('promete:validarCodigoCheckin:409', pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+  $$ select public.validar_codigo_checkin(%L::uuid, '123456', 40) $$, ((select r from cand)->>'turno_id')::uuid)));
+select pg_temp.guarda('promete:validarCodigoCheckin:422', pg_temp.observado('cc000000-0000-4000-8000-000000000003', format(
+  $$ select public.validar_codigo_checkin(%L::uuid, %L, 40) $$, ((select r from cand2)->>'turno_id')::uuid,
+  lpad((((select codigo from codigo_cand2)::int + 1) % 1000000)::text, 6, '0'))));
+select pg_temp.guarda('validarCodigoCheckin', pg_temp.sem_rastro('cc000000-0000-4000-8000-000000000003', format(
+  $$ select public.validar_codigo_checkin(%L::uuid, %L, 40) $$, ((select r from cand2)->>'turno_id')::uuid,
+  (select codigo from codigo_cand2))));
 select pg_temp.guarda('confirmarCheckinManual', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.confirmar_checkin_manual(%L::uuid) $$, ((select r from cand2)->>'turno_id')::uuid)));
+-- exportarMeusDados (PR8): a exportação do profissional da cand2, colhida aqui e não na seção das
+-- Edge Functions, logo depois do caminho do código e antes de a posição dele ser cancelada, mais
+-- abaixo. Assim checkins_por_codigo sai com o código exigido e a tentativa errada, e o schema dos
+-- itens é exercitado (--falhar-vazias).
+select pg_temp.guarda('exportarMeusDados', privado.meus_dados('cc000000-0000-4000-8000-000000000003'));
 
 -- ── Avaliar e o perfil público ────────────────────────────────────────────────
 set local frila.agora = '2027-01-19 04:00:00+00';
@@ -599,6 +656,9 @@ select pg_temp.guarda('promete:' || op || ':403', pg_temp.observado('cc000000-00
   ('responderChamada', $$select public.responder_chamada(gen_random_uuid(), 'aceitar')$$),
   ('cancelarChamada', $$select public.cancelar_chamada(gen_random_uuid())$$),
   ('publicarAPartirDaChamada', $$select public.publicar_a_partir_da_chamada(gen_random_uuid(), gen_random_uuid())$$)) t(op, sql);
+-- validarCodigoCheckin (PR7): a conta suspensa recebe 403 conta_suspensa antes de qualquer leitura.
+select pg_temp.guarda('promete:validarCodigoCheckin:403', pg_temp.observado('cc000000-0000-4000-8000-000000000004', format(
+  $$ select public.validar_codigo_checkin(%L::uuid, '123456', 40) $$, ((select r from cand2)->>'turno_id')::uuid)));
 select pg_temp.guarda('promete:' || op || ':404', pg_temp.observado('cc000000-0000-4000-8000-000000000001', sql)) from (values
   ('cancelarChamada', $$select public.cancelar_chamada(gen_random_uuid())$$),
   ('publicarAPartirDaChamada', $$select public.publicar_a_partir_da_chamada(gen_random_uuid(), gen_random_uuid())$$)) t(op, sql);

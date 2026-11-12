@@ -1,3 +1,5 @@
+> **Histórico: não vale como regra.** O que vale está em [`produto/AGORA.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/AGORA.md) do frila-docs.
+
 # Proposta Arquitetural: Escala de Evento em Lote (v1.2)
 
 **Cartão Trello:** `6mi66YDp` (v1.2 · Backend + Web · Escala de evento em lote)  

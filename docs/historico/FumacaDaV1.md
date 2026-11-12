@@ -1,3 +1,5 @@
+> **Histórico: não vale como regra.** O que vale está em [`produto/AGORA.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/AGORA.md) do frila-docs.
+
 # Paridade develop vs main e Teste de Fumaça da v1.0
 
 Relatório gerado em atendimento ao **Brief B-002** (cartão `6ace0f26`: "Levar a develop à main e à produção antes de 06/11").

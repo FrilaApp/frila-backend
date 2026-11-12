@@ -21,10 +21,10 @@ create function pg_temp.recursos() returns jsonb language sql as $$
 select is((select ligado from privado.recurso where chave = 'perfil_rico'), false, 'perfil_rico nasce desligada');
 select is((select ligado from privado.recurso where chave = 'chamada_direta'), false, 'chamada_direta segue desligada');
 
--- 2. Tudo desligado: os três chegam, e chegam false.
+-- 2. Tudo desligado: os quatro chegam, e chegam false.
 update privado.configuracao_app set foto_de_perfil = false;
-select is(pg_temp.recursos(), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false}'::jsonb,
-  'tudo desligado: os três vêm false');
+select is(pg_temp.recursos(), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false}'::jsonb,
+  'tudo desligado: os quatro vêm false (checkin_por_codigo desde a 0.2.68)');
 
 -- 3. Cada chave, sozinha, chega ao app; as outras continuam false.
 update privado.recurso set ligado = true where chave = 'perfil_rico';
@@ -50,7 +50,7 @@ update privado.configuracao_app set foto_de_perfil = false;
 -- 4. Desligar de novo volta a false (nada fica em cache).
 update privado.recurso set ligado = true where chave in ('perfil_rico', 'chamada_direta');
 update privado.recurso set ligado = false where chave in ('perfil_rico', 'chamada_direta');
-select is(pg_temp.recursos(), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false}'::jsonb,
+select is(pg_temp.recursos(), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false}'::jsonb,
   'religar e desligar volta a false');
 
 -- 5. Sem a linha da chave, o app recebe false, e não erro.

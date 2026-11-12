@@ -1,8 +1,10 @@
+> **Histórico: não vale como regra.** O que vale está em [`produto/AGORA.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/AGORA.md) do frila-docs.
+
 # Matriz de Autorização: Papel × RPC
 
 Fonte de verdade e especificação formal da matriz de controle de acesso e autorização das **44 RPCs públicas** do Frila, implementadas no schema `public` e expostas no contrato da API (`contrato/openapi.yaml`).
 
-Esta matriz é comprovada de ponta a ponta pela suíte automatizada pgTAP em [`supabase/tests/786_matriz_autorizacao_papeis_rpc.sql`](../supabase/tests/786_matriz_autorizacao_papeis_rpc.sql) (184 asserções verdes, incluindo testes anti-regressão e mutação de falso positivo).
+Esta matriz é comprovada de ponta a ponta pela suíte automatizada pgTAP em [`supabase/tests/786_matriz_autorizacao_papeis_rpc.sql`](../../supabase/tests/786_matriz_autorizacao_papeis_rpc.sql) (184 asserções verdes, incluindo testes anti-regressão e mutação de falso positivo).
 
 ---
 
