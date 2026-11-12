@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.74
+  version: 0.2.75
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -102,7 +102,7 @@ info:
     | 422 | `inelegivel` | `details`: `turno_sobreposto` (RN21), `perfil_suspenso` (RN13) ou `funcao_incompativel` (RN05) |
     | 422 | `avaliacao_indisponivel` | `details`: `antes_do_fim` ou `sem_presenca_verificada` (RN07) |
     | 422 | `fora_da_janela` | Check-in ou check-out fora da janela que a regra permite para o turno (RN22) |
-    | 422 | `codigo_invalido` | Código de check-in recusado (0.2.68): errado, vencido, de outro turno ou lido a mais de 100 m. Um código só, sem `details`, para não dizer a quem tenta qual foi o motivo |
+    | 422 | `codigo_invalido` | Código de check-in recusado (0.2.68): errado, vencido, de outro turno, sem localização ou lido a mais de 50 m (raio provisório de validação). Um código só, sem `details`, para não dizer a quem tenta qual foi o motivo |
     | 422 | `a_caminho_fora_da_janela` | Chamada de `avisar_a_caminho` fora da janela permitida (de 3 h antes até 15 min depois do início do turno) (US14, RF12) |
     | 422 | `registro_no_futuro` | Instante de check-in ou check-out adiante do relógio do servidor. O relógio que vale é o do servidor, nunca o do aparelho |
     | 422 | `reabertura_antes_da_tolerancia` | Reabrir por atraso antes dos 15 minutos (D06) |
@@ -111,6 +111,27 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.75, de 12/11/2026.** Check-in por código com a chave ligada — Etapa 1 (direção JP 10/11/2026, RF13, RN22, RN46).
+    - **Fim da auto-verificação unilateral com chave ligada:** com `checkin_por_codigo = true` para o
+      estabelecimento do turno, o toque do profissional nunca confirma presença sozinho pelo GPS.
+      `fazer_checkin` registra a chegada com `tipo = 'manual'`, `verificacao = 'pendente'` e
+      `codigo_exigido = true`, mesmo a até 200 m, com ou sem `sinais`, incluindo apps legados 1.0/1.1 e
+      Android. A presença depende exclusivamente da confirmação da casa (`validar_codigo_checkin` ou
+      `confirmar_checkin_manual`).
+    - **Elegibilidade de proximidade e frescor para geração do código:** `gerar_codigo_checkin` exige que
+      o profissional tenha registrado chegada a até 50 m (raio provisório de proximidade) recebida nos
+      últimos 900 s (15 minutos provisórios) pelo relógio do servidor (`checkin_recebido_em`). Sem
+      check-in elegível dentro desse raio e frescor, responde `409 checkin_pendente`. `fazer_checkin`
+      devolve `codigo_disponivel = true` apenas quando essa condição de elegibilidade é atendida.
+    - **Validação de proximidade estrita:** `validar_codigo_checkin` exige distância informada e a até
+      50 m (raio provisório de validação). Leitura sem posição (`distancia_m` nulo) ou com distância
+      acima de 50 m recusa com `422 codigo_invalido` (ou `409 codigo_bloqueado` no 3º/6º erro) e grava
+      tentativa recusada com a faixa correspondente (`sem_posicao`, `ate_100_m` para leituras de 51 a
+      100 m, ou `acima_de_100_m`). A distância registrada na chegada elegível (`checkin_distancia_m`) é
+      preservada no turno e retornada em `distancia_m`.
+    - **Preservação do fluxo legado:** com a chave `checkin_por_codigo` desligada para o estabelecimento,
+      o check-in segue o fluxo legado inalterado (toque a até 200 m verifica na hora por geolocalização).
 
     **Versão 0.2.74, de 12/11/2026.** Confirmação tardia de presença pela casa (decisão JP 12/11/2026, RF20, RN22).
     - **Tolerância de 24 horas em `confirmar_checkin_manual`**: a casa pode confirmar o check-in manual
@@ -182,9 +203,11 @@ info:
     - **`TipoRegistro` ganha `codigo`:** presença verificada pela leitura do código da casa. Com
       `codigo`, `checkin_confirmado_em` é a hora da validação, pelo relógio do servidor.
     - **`fazer_checkin` aceita `sinais` e devolve `codigo_exigido` e `codigo_disponivel`, os três
-      opcionais.** Com sinal suspeito, a presença não é verificada pelo GPS, mesmo a até 200 m, e
-      espera a casa: código ou confirmação manual. Sem `sinais`, como mandam o app 1.0 e o 1.1, o
-      check-in segue exatamente como hoje.
+      opcionais.** Com a chave `checkin_por_codigo` ligada (Etapa 1), todo check-in fica `manual` e
+      `pendente` (mesmo a até 200 m, com ou sem `sinais`, inclusive apps legados 1.0/1.1 e Android),
+      esperando a casa: código ou confirmação manual. A geração do código pela casa exige chegada
+      elegível a até 50 m (raio provisório de proximidade) recebida nos últimos 900 s (15 min
+      provisórios). Com a chave desligada, o check-in segue o fluxo legado inalterado.
     - **`RecursosDoApp` ganha `checkin_por_codigo`**, com a regra da 0.2.65 (chave e versão mínima
       por plataforma).
     - **Erros novos:** `422 codigo_invalido` e `409 codigo_bloqueado` (`temporario` ou `encerrado`).
@@ -195,9 +218,10 @@ info:
     - **Por que não é `_v2`:** nenhum campo existente muda de forma, e o valor novo em resposta
       (`codigo`) já é tolerado pelo app publicado: o iOS 1.0 e o 1.1 leem tipo desconhecido como
       `manual` ou nulo, e o Android compara texto (evidência no desenho).
-    - **Não muda:** o check-in a até 200 m sem sinal suspeito, `confirmar_checkin_manual`, o
-      check-out, a janela de 60 minutos, o aviso `turno_nao_verificado` e os textos dos avisos
-      `checkin` e `checkin_manual_pendente`, que continuam sem dado pessoal. Nenhum tipo de aviso novo.
+    - **Não muda:** com a chave desligada, o check-in a até 200 m verifica na hora por geolocalização;
+      `confirmar_checkin_manual`, o check-out, a janela de 60 minutos, o aviso `turno_nao_verificado`
+      e os textos dos avisos `checkin` e `checkin_manual_pendente`, que continuam sem dado pessoal.
+      Nenhum tipo de aviso novo.
     - **Fica para depois:** a migração e as RPCs no backend, com o pgTAP dos critérios de aceite e o
       espelho deste contrato (as duas operações ficam em `PENDENTES` do `contrato_responde.py` até
       existirem); a tela da casa e a leitura no iOS; o Android, antes de qualquer casa com Android
@@ -4431,15 +4455,17 @@ paths:
         de `fora_da_janela` para permitir inspeção assíncrona da diretriz 2.1, mas mantém a trava de
         `registro_no_futuro`.
 
-        **Check-in por código (0.2.68).** O app 1.2 manda também `sinais`, o que o aparelho diz
-        sobre a leitura de localização. Com a chave `checkin_por_codigo` ligada para o
-        estabelecimento do turno e um sinal suspeito (localização simulada, precisão ruim, salto de
-        posição, ou distância entre 150 e 200 m), o servidor não verifica pelo GPS: o check-in fica
-        `manual`, a presença fica `pendente` e a resposta traz `codigo_exigido: true`. A casa recebe o
-        mesmo aviso `checkin_manual_pendente` e atesta a chegada pelo código
-        (`gerar_codigo_checkin` e `validar_codigo_checkin`) ou pela confirmação manual. O limiar de
-        precisão fica no servidor, e a resposta não diz qual sinal pesou. Sem `sinais`, ou com a
-        chave desligada, nada muda: a distância de até 200 m verifica na hora, como acima.
+        **Check-in por código (0.2.68, Etapa 1).** O app 1.2 manda também `sinais`, o que o aparelho
+        diz sobre a leitura de localização. Com a chave `checkin_por_codigo` ligada para o
+        estabelecimento do turno, o toque nunca verifica sozinho pelo GPS: o check-in fica `manual`,
+        a presença fica `pendente`, a resposta traz `codigo_exigido: true`, e `codigo_disponivel: true`
+        se a chegada ocorreu a até 50 m (raio provisório de proximidade) recebida nos últimos 900 s
+        (15 minutos provisórios) pelo relógio do servidor. Isso vale com ou sem `sinais`, incluindo
+        apps legados 1.0, 1.1 e Android na casa participante. A casa recebe o aviso
+        `checkin_manual_pendente` e atesta a presença pelo código (`gerar_codigo_checkin` e
+        `validar_codigo_checkin`) ou por confirmação manual (`confirmar_checkin_manual`). Com a chave
+        desligada para o estabelecimento, nada muda: o toque a até 200 m verifica na hora por
+        geolocalização (`tipo: geolocalizado`, `verificacao: verificado`), exatamente como acima.
       x-requisitos: [RF13, RN11, RN22, RN46, UC05]
       requestBody:
         required: true
@@ -4538,8 +4564,9 @@ paths:
         desligada para o estabelecimento: `403 sem_permissao` (`recurso_desligado`), sem tocar em
         dado. Conta excluída (token de conta já anonimizada, RF25): `401 nao_autenticado`. Conta
         suspensa: `403 sem_permissao` (`conta_suspensa`). Turno que não existe, ou com bloqueio
-        entre as partes: `404 nao_encontrado`. Sem check-in: `409 checkin_pendente`.
-        Presença já verificada: `409 checkin_ja_confirmado`. Caminho do código encerrado no turno
+        entre as partes: `404 nao_encontrado`. Sem check-in, com chegada a mais de 50 m (raio
+        provisório de proximidade) ou toque recebido há mais de 900 s (15 minutos provisórios) pelo
+        relógio do servidor: `409 checkin_pendente`. Presença já verificada: `409 checkin_ja_confirmado`. Caminho do código encerrado no turno
         (2 bloqueios): `409 codigo_bloqueado` (`encerrado`), e vale a confirmação manual. Fora da
         janela do check-in: `422 fora_da_janela`.
       x-requisitos: [RF13, RF20, RN22, RN46, UC05, UC07]
@@ -4577,25 +4604,27 @@ paths:
       operationId: validarCodigoCheckin
       summary: Profissional valida o código de check-in da casa
       description: |
-        0.2.68. O profissional lê o QR ou digita os 6 dígitos que a casa mostra, depois de um
-        `fazer_checkin` que ficou `pendente`. O app lê a localização no toque, como no check-in, e
+        0.2.68 (Etapa 1). O profissional lê o QR ou digita os 6 dígitos que a casa mostra, depois de
+        um `fazer_checkin` que ficou `pendente`. O app lê a localização no toque, como no check-in, e
         manda só a distância até o endereço da vaga, nunca a coordenada. A hora que vale é a do
         servidor.
 
-        - Código certo, em vigor, deste turno, com `distancia_m` de até 100 m: presença
-          `verificado`, `tipo: codigo`, e `checkin_confirmado_em` é a hora da validação. O código não
-          serve de novo. Os membros da casa recebem o aviso `checkin`.
-        - Código certo sem posição (`distancia_m` nulo: permissão negada ou GPS desligado): valida
-          do mesmo jeito, e o servidor marca o turno como de confiança baixa. A marca não sai nas
-          respostas operacionais; sai só na exportação do próprio profissional
-          (`MeusDados.checkins_por_codigo`, LGPD, art. 18).
+        - Código certo, em vigor, deste turno, com `distancia_m` informada de até 50 m (raio
+          provisório de validação): presença `verificado`, `tipo: codigo`, e `checkin_confirmado_em`
+          é a hora da validação. O código não serve de novo. Os membros da casa recebem o aviso
+          `checkin`. A distância registrada na chegada elegível (`checkin_distancia_m`) é preservada no
+          turno e retornada em `distancia_m`.
+        - Leitura sem posição (`distancia_m` nulo) ou a mais de 50 m: não confirma presença. É
+          recusada com `422 codigo_invalido` (ou `409 codigo_bloqueado` no 3º/6º erro) e grava
+          tentativa recusada com a faixa correspondente (`sem_posicao`, `ate_100_m` para leituras
+          entre 51 e 100 m, ou `acima_de_100_m`).
         - Qualquer outro caso: `422 codigo_invalido`, um código só, sem dizer se o código estava
-          errado, vencido, era de outro turno ou se a distância passou de 100 m. Cada recusa conta
-          como tentativa errada. O código já usado não chega aqui: com a presença verificada, a
-          resposta é `409 checkin_ja_confirmado`.
+          errado, vencido, era de outro turno, sem posição ou se a distância passou de 50 m. Cada
+          recusa conta como tentativa errada. O código já usado não chega aqui: com a presença
+          verificada, a resposta é `409 checkin_ja_confirmado`.
 
         A resposta é o registro do check-in: `registrado_em` é a hora do toque em `fazer_checkin`, e
-        `distancia_m` vem nulo, porque a distância da leitura não é gravada.
+        `distancia_m` traz a distância registrada na chegada elegível (preservada no turno).
 
         Tentativas: 3 erradas no turno bloqueiam a leitura pelo tempo configurado (hoje 5 minutos;
         faixa de 2 a 5), e a terceira já responde `409 codigo_bloqueado` (`temporario`). A sexta
@@ -4635,9 +4664,12 @@ paths:
                   example: '482913'
                 distancia_m:
                   description: |
-                    Distância até o endereço da vaga, medida no aparelho no momento da leitura. Nulo
-                    sem localização. Não é gravada: o servidor guarda só se veio até 100 m, acima
-                    disso ou sem posição.
+                    Distância em metros até o endereço da vaga, medida no aparelho no momento da
+                    leitura. Exige distância informada e a até 50 m (raio provisório de validação) para
+                    confirmar o check-in; nulo (sem localização) ou acima de 50 m recusa com 422
+                    codigo_invalido e grava tentativa recusada com a faixa correspondente (sem_posicao,
+                    ate_100_m para distâncias entre 51 e 100 m, ou acima_de_100_m). A distância da
+                    leitura em si não substitui a distância da chegada gravada no turno.
                   oneOf:
                     - type: integer
                       minimum: 0
@@ -7552,18 +7584,22 @@ components:
             - type: 'null'
         codigo_exigido:
           description: |
-            0.2.68. Só em `fazer_checkin`. `true` quando o servidor recusou a verificação pelo GPS
-            por sinal suspeito: a presença fica `pendente`, e a casa precisa atestar a chegada, pelo
-            código ou pela confirmação manual. A tela não diz qual sinal pesou. Ausente vale
-            `false`. O reenvio devolve o mesmo valor.
+            0.2.68 (Etapa 1). Só em `fazer_checkin`. Com a chave `checkin_por_codigo` ligada para o
+            estabelecimento, é `true` em todo toque: o check-in nunca verifica sozinho pelo GPS, a
+            presença fica `pendente` e exige confirmação da casa (por código ou manual). Com a chave
+            desligada, o campo vem ausente (valendo `false`), e o toque segue a verificação por GPS
+            legado (verificado a até 200 m). Em `validar_codigo_checkin`, vem ausente. O reenvio
+            devolve o mesmo valor.
           type: boolean
         codigo_disponivel:
           description: |
-            0.2.68. Só em `fazer_checkin`. `true` quando a presença está `pendente` e o caminho do
-            código está aberto para o turno: chave ligada para o estabelecimento e caminho não
-            encerrado por bloqueios. O app só oferece a leitura do código com `true`; sem ele, mostra
-            a espera da confirmação manual, como hoje. Ausente vale `false`. No reenvio, vale o
-            estado do momento.
+            0.2.68 (Etapa 1). Só em `fazer_checkin`. `true` quando a presença está `pendente`, o
+            caminho do código não está encerrado por bloqueios e o profissional cumpre a elegibilidade
+            de proximidade: chegada a até 50 m (raio provisório de proximidade) recebida nos últimos
+            900 s (15 minutos provisórios) pelo relógio do servidor (`checkin_recebido_em`). Sem
+            proximidade elegível, com a chave desligada ou em `validar_codigo_checkin`, vem ausente ou
+            `false`. O app só oferece o fluxo do código com `true`; sem ele, aguarda confirmação
+            manual ou reaproximação. No reenvio, vale o estado do momento.
           type: boolean
     CodigoDeCheckin:
       type: object
@@ -8354,14 +8390,14 @@ components:
             $ref: '#/components/schemas/Chamada'
         checkins_por_codigo:
           description: |
-            0.2.68, revisto na 0.2.70. O que o check-in por código registrou sobre o titular como
-            profissional (LGPD, art. 18, II, e art. 19): por turno, se a confirmação da casa foi
-            exigida, a marca de confiança baixa e as tentativas de leitura. Não diz qual sinal pesou
-            para exigir o código, não traz os metros da leitura nem quem da casa gerou o código, que
-            o servidor não grava. Entra só o turno com algum desses registros, e só enquanto eles
-            existem: o servidor os apaga 90 dias depois do mais tarde entre o fim do turno e o fim da
-            contestação. Conta a contestação do turno, quando existir, e a de suspensão do
-            profissional, valendo a mais tarde; qualquer uma aberta segura os registros.
+            0.2.68, revisto na 0.2.70 e 0.2.75. O que o check-in por código registrou sobre o titular
+            como profissional (LGPD, art. 18, II, e art. 19): por turno, se a confirmação da casa foi
+            exigida, a marca de confiança baixa e as tentativas de leitura. Não traz os metros exatos
+            da leitura nem quem da casa gerou o código, que o servidor não grava. Entra só o turno com
+            algum desses registros, e só enquanto eles existem: o servidor os apaga 90 dias depois do
+            mais tarde entre o fim do turno e o fim da contestação. Conta a contestação do turno,
+            quando existir, e a de suspensão do profissional, valendo a mais tarde; qualquer uma
+            aberta segura os registros.
 
             Só na exportação do próprio profissional: na de quem opera a casa vem `[]`, porque a
             marca e as tentativas não saem para a casa. Fora daqui, a marca não sai em resposta
@@ -8376,10 +8412,10 @@ components:
               turno_id:
                 $ref: '#/components/schemas/Uuid'
               codigo_exigido:
-                description: O servidor pediu a confirmação da casa por sinal suspeito no check-in. Não diz qual sinal.
+                description: 'O servidor exigiu a confirmação da casa no check-in sob a chave ligada (Etapa 1: todo toque nasce manual e pendente, com código exigido).'
                 type: boolean
               confianca_baixa:
-                description: O código foi validado sem posição. Até uma decisão registrada, só alimenta a medição do piloto.
+                description: 'O código foi validado sem posição. Na Etapa 1 a validação sem posição é recusada com 422 codigo_invalido, mantendo este campo como false.'
                 type: boolean
               tentativas:
                 description: As leituras que contaram como tentativa, em ordem. Sem o motivo da recusa.
@@ -8394,7 +8430,7 @@ components:
                       type: string
                       enum: [aceita, recusada]
                     faixa:
-                      description: A faixa da distância medida na leitura, nunca os metros.
+                      description: A faixa da distância medida na leitura (sem_posicao para leitura sem localização, ate_100_m para até 100 m inclusive recusadas de 51 a 100 m, ou acima_de_100_m), nunca os metros.
                       type: string
                       enum: [ate_100_m, acima_de_100_m, sem_posicao]
                     codigo_gerado_em:
