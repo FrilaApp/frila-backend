@@ -1,3 +1,5 @@
+> **Histórico: não vale como regra.** O que vale está em [`produto/AGORA.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/AGORA.md) do frila-docs.
+
 # Relatório de Desempenho e Planos de Execução com Carga em Escala 10x do DF
 
 **Data:** 15 de outubro de 2026  

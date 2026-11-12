@@ -1,3 +1,5 @@
+> **Histórico: não vale como regra.** O que vale está em [`produto/AGORA.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/AGORA.md) do frila-docs.
+
 # Proposta: Leitura de `agendador_secret` via Supabase Vault
 
 **Data:** 15/10/2026  

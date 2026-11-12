@@ -137,12 +137,12 @@ Versão base do backend consolidada a partir do tronco `develop` para a release 
 - **Medição de triggers e decisão sobre índices parciais em `fechar_turnos_e_vagas` (P3, carga 2x):**
   - Aferição empírica com `EXPLAIN (ANALYZE, BUFFERS)` dos comandos `UPDATE public.posicao` e `UPDATE public.vaga` na carga 2x do DF (40.000 vagas/posições, 2.000 expiradas): medição a 2x demonstra que 79% a 88% do tempo total decorre de gatilhos por linha (`audita_ciclo`, `vaga_fechada_expira_candidaturas`, `posicao_recalcula_comparecimento` e FKs), sendo consistente com a hipótese para o resíduo a 10x (26,6 µs/posição a 2x contra 28,7 µs a 10x).
   - Avaliação experimental indicando que índices parciais em `fim_em` reduzem a leitura mas não justificam o acréscimo no schema (ganho ≤ 3,1 ms por rodada; custo de escrita não medido; diferenças no tempo total não distinguíveis entre execuções únicas).
-  - Seção 3.4 e Recomendação 3 atualizadas em `docs/carga-10x.md`.
+  - Seção 3.4 e Recomendação 3 atualizadas em `docs/historico/carga-10x.md`.
 - **Relatório de desempenho e planos sob carga em escala 10x do DF (RNF11, RNF12):**
   - Aferição do comportamento sob volume de 1,3 milhão de usuários, 1 milhão de profissionais, 200 mil vagas e 2 milhões de disponibilidades no DF.
   - Parametrização dinâmica do gerador de carga (`supabase/tests/carga/gerar_df.sql` via `frila.carga_escala`) e do portão (`scripts/planos-com-carga.sh --escala <N>`), preservando o padrão 1x da CI.
   - Mapeamento detalhado de planos `EXPLAIN (ANALYZE, BUFFERS)` e identificação de gargalos de escalabilidade em `privado.elegiveis` (varredura de 1,3M de linhas em `usuario`), `public.vagas_abertas` (filtro de data pós-GiST) e `privado.fechar_turnos_e_vagas` (ausência de índices em `fim_em` para posições e vagas expiradas).
-  - Recomendações técnicas documentadas em `docs/carga-10x.md` para futuros PRs dedicados de otimização e índices com pgTAP.
+  - Recomendações técnicas documentadas em `docs/historico/carga-10x.md` para futuros PRs dedicados de otimização e índices com pgTAP.
 
 ### Testes
 - **Cobertura de ativação automática de RLS (`ensure_rls` e `public.rls_auto_enable`, RNF11, PR #202):**
