@@ -36,7 +36,8 @@ select is(
     'recursos',           jsonb_build_object(
       'foto_de_perfil', false,
       'chamada_direta', false,
-      'perfil_rico', false)),
+      'perfil_rico', false,
+      'checkin_por_codigo', false)),
   '200: anon recebe a configuração inicial completa do Android');
 
 delete from privado.configuracao_app where plataforma = 'android';
