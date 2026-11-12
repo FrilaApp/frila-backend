@@ -247,8 +247,9 @@ select is(
   'check-in manual nasce pendente'
 );
 
--- O turno 2 termina e a casa NÃO confirmou. O relógio avança além do fim do turno 2.
-select set_config('frila.agora', (select (t2_fim + interval '10 minutes')::text from horarios), true);
+-- O turno 2 termina e a casa NÃO confirmou. Com a confirmação tardia de 24h (20261112100000),
+-- o turno permanece pendente durante as 24h após fim_em. O relógio avança além da tolerância de 24h.
+select set_config('frila.agora', (select (t2_fim + interval '24 hours 10 minutes')::text from horarios), true);
 
 -- Executa o job de fechamento de turnos passados
 select ok(
@@ -259,7 +260,7 @@ select ok(
 select is(
   (select t.verificacao::text from public.turno t where t.id = (select turno2 from turnos_teste)),
   'nao_verificado',
-  'Critério 1: check-in manual não confirmado até o fim vira nao_verificado'
+  'Critério 1: check-in manual não confirmado após fim + 24h vira nao_verificado'
 );
 
 select is(

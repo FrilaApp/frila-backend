@@ -199,10 +199,12 @@ select is(pg_temp.resumo(pg_temp.como((select casa_user from ids),
 select is(pg_temp.resumo(pg_temp.checkin('sem_distancia', null, '{"localizacao_simulada": false, "precisao_m": 5, "salto_de_posicao": false}')),
   'manual pendente exigido=true disponivel=false', 'sem localização: na Etapa 1 código é exigido, mas indisponível para geração');
 
-select set_config('frila.agora', '2027-01-12 02:10:00+00', true);
+-- 20261112100000_confirmacao_tardia_24h: o fechamento de check-in manual sem confirmação
+-- aguarda a tolerância da confirmação tardia (fim_em + 24h). Avança para além de 24h após fim_em (02:00 + 24h = 02:00 do dia seguinte).
+select set_config('frila.agora', '2027-01-13 02:10:00+00', true);
 select privado.fechar_turnos_passados();
 select is((select verificacao::text from public.turno where id = pg_temp.t('sem_distancia')), 'nao_verificado',
-  'critério 10: o manual sem confirmação fecha nao_verificado no fim do turno');
+  'critério 10: o manual sem confirmação fecha nao_verificado após fim + 24h (tolerância tardia)');
 select is((select count(*)::int from public.notificacao where tipo = 'turno_nao_verificado' and referencia_id = pg_temp.t('sem_distancia')), 2,
   'critério 10: os dois lados recebem o aviso turno_nao_verificado');
 
