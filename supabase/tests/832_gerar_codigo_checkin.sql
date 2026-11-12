@@ -15,7 +15,7 @@
 begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
-select plan(34);
+select plan(35);
 
 -- A casa 832 (dono), outra casa (outro contratante) e um membro suspenso da casa 832.
 create temp table ids as
@@ -113,7 +113,8 @@ select pg_temp.checkin('verificado', 50);       -- geolocalizado e verificado
 select pg_temp.checkin('encerrado', 500);
 select pg_temp.checkin('bloqueado', 500);
 -- O check-in do turno de amanhã, gravado à mão: a janela do check-in também o recusaria.
-update public.turno set checkin_em = '2027-01-11 21:30:00+00', checkin_tipo = 'manual', checkin_distancia_m = 500
+-- Etapa 1: chegada elegível a 40 m no servidor para testar janela com demonstração
+update public.turno set checkin_em = '2027-01-11 21:44:00+00', checkin_recebido_em = '2027-01-11 21:44:00+00', checkin_tipo = 'manual', checkin_distancia_m = 40
  where id = pg_temp.t('fora');
 insert into public.bloqueio (autor_id, bloqueado_id)
 select dono, (select usuario from turnos where nome = 'bloqueado') from ids;
@@ -141,6 +142,12 @@ select is(pg_temp.recusa((select dono from ids), pg_temp.t('a')), 'sem_permissao
 select is((select count(*)::int from privado.checkin_codigo c where c.turno_id = pg_temp.t('a') and c.codigo is not null), 0,
   'chave desligada para a casa: nenhum código foi escrito');
 select pg_temp.ligar();
+
+-- Etapa 1: com a chave ligada, profissional a 500 m recusa com 409 checkin_pendente
+select is(pg_temp.recusa((select dono from ids), pg_temp.t('a')), 'checkin_pendente',
+  'Etapa 1: profissional a 500 m (> raio_proximidade_m): 409 checkin_pendente');
+-- Etapa 1: profissional aproxima e renova a 40 m (<= raio_proximidade_m 50 m provisório)
+select pg_temp.checkin('a', 40);
 
 -- ── As recusas do estado ─────────────────────────────────────────────────────
 select is(pg_temp.recusa((select dono from ids), pg_temp.t('sem_checkin')), 'checkin_pendente',
@@ -214,6 +221,8 @@ exception when others then
   return array[v_estado, v_msg, coalesce(v_det, '')];
 end $$;
 select set_config('frila.agora', '2027-01-11 21:50:00+00', true);
+-- Etapa 1: renova frescor da chegada pelo relógio do servidor (<= 15 min)
+select pg_temp.checkin('a', 40);
 -- check_violation na escrita do código novo: o DETAIL do Postgres traria a linha com os 6 dígitos.
 alter table privado.checkin_codigo add constraint zz_832_sem_codigo check (codigo is null) not valid;
 create temp table e1 as select pg_temp.erro_cru(pg_temp.t('a')) as e;
