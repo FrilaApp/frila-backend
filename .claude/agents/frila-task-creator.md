@@ -48,7 +48,7 @@ Na checklist **Critérios de aceite** deste cartão. Quem fez confere e marca ca
 com a prova num comentário; o cartão só vai para Concluído com todos marcados.
 
 ### Referências
-- Contrato da API vigente (frila-docs · api/openapi.yaml), /rpc/<nome>
+- Contrato da API vigente (frila-documentacao · api/openapi.yaml), /rpc/<nome>
 - Modelagem de Banco de Dados (vault, 07 - Arquitetura), seção <qual>
 ```
 

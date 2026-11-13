@@ -12,7 +12,7 @@ publicar → notificar → candidatar → confirmar → executar → avaliar
 ```
 
 Loja em 13/11/2026. O que entra em cada versão está em
-[`05-ESCOPO-DO-MVP.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/05-ESCOPO-DO-MVP.md);
+[`05-ESCOPO-DO-MVP.md`](https://github.com/FrilaApp/frila-documentacao/blob/main/historico/produto/05-ESCOPO-DO-MVP.md);
 o plano de trabalho, no [quadro do Trello](https://trello.com/b/0eyqvbRJ/frila).
 
 ## Rodar
@@ -218,7 +218,7 @@ Environment `frila-backup`: `BACKUP_DB_URL`, `BACKUP_PUBLIC_KEY`, `BACKUP_S3_END
 | O quê | Onde |
 |---|---|
 | Histórico formal de versões (1.0.0+) | [`CHANGELOG.md`](CHANGELOG.md) |
-| Documentos de produto, contrato da API, requisitos | [`FrilaApp/frila-docs`](https://github.com/FrilaApp/frila-docs) |
+| Documentos de produto, contrato da API, requisitos | [`FrilaApp/frila-documentacao`](https://github.com/FrilaApp/frila-documentacao) |
 | App iOS | [`FrilaApp/frila-frontend`](https://github.com/FrilaApp/frila-frontend) · `iOS/` |
 
 > A ponte da Bancada (vault de registros e `bancada-sync`) foi descontinuada em 04/11/2026.

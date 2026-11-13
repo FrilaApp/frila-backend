@@ -1,6 +1,6 @@
 # Roteiro Operacional: Habilitação e Desativação da Chave Global de Check-in por Código (RN22, RN46, Contrato 0.2.78)
 
-- **Princípio Arquitetural e Decisão de Escopo**: Conforme decisão de produto aprovada em 12/11/2026 e formalizada no contrato OpenAPI 0.2.78 (`frila-docs#235`), o check-in por código passa a valer para **todos os estabelecimentos** do Frila de forma unificada.
+- **Princípio Arquitetural e Decisão de Escopo**: Conforme decisão de produto aprovada em 12/11/2026 e formalizada no contrato OpenAPI 0.2.78 (`frila-documentacao#235`), o check-in por código passa a valer para **todos os estabelecimentos** do Frila de forma unificada.
 - **Fim da Lista de Casas**: A tabela `privado.recurso_estabelecimento` deixou de ser lida a partir da migração `20261112230000_checkin_codigo_vale_para_todos.sql` (PR `frila-backend#488`). A função `privado.recurso_ligado_para('checkin_por_codigo', ...)` reflete diretamente o estado da chave global `checkin_por_codigo` em `privado.recurso`. Não há pilotos locais, casas âncoras ou listas manuais por estabelecimento.
 - **Governança Estrita**: Intervenções na chave ocorrem exclusivamente por migrações auditadas (com PR, revisão e CI) ou via procedimentos operacionais rastreados, nunca por intervenção direta manual e silenciosa em banco.
 

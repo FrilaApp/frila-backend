@@ -2,7 +2,7 @@
 
 Guia operacional do que a migração `20261104110000_verificacao_identidade.sql` criou.
 Cartão `aEqry9vB` · RN14, RN13 · requisitos em
-`frila-docs/requisitos/verificacao-progressiva-rn14.md`.
+`frila-documentacao/historico/requisitos/verificacao-progressiva-rn14.md`.
 
 > **O que existe e o que não existe.** Existem a tabela, o enum, o selo, a função de HMAC,
 > a fila e as duas funções do expurgo. **Não existem** RPC de upload, política de `INSERT`
@@ -123,7 +123,7 @@ fases, incluindo a prova de que **enfileirar não anula o caminho**.
 ## 6. O que falta, e em que ordem
 
 1. Parecer jurídico sobre conservar `documento_hmac` após pedido de eliminação (LGPD art. 18, VI) — **antes** de qualquer envio real.
-2. RPCs do contrato (`minha_identidade_status`, `iniciar_verificacao_identidade`, `confirmar_envio_verificacao`), que nascem no `frila-docs`.
+2. RPCs do contrato (`minha_identidade_status`, `iniciar_verificacao_identidade`, `confirmar_envio_verificacao`), que nascem no `frila-documentacao`.
 3. Política de `INSERT` no bucket por `auth.uid()`, junto com a RPC de upload.
 4. Edge Function de remoção no Storage, que fecha o ciclo do expurgo.
 5. Telas de captura e selo no iOS e Android.
