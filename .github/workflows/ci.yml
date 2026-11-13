@@ -8,6 +8,10 @@ on:
   push:
     branches: [main, develop]
   pull_request:
+  schedule:
+    # Mutação completa semanal (domingo às 03:00 UTC)
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -173,7 +177,12 @@ jobs:
         run: ./scripts/teste-mutacao-matadores.sh
 
       - name: Os testes cobrem as regras
-        run: ./scripts/mutacao.sh
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ] || ([ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]); then
+            ./scripts/mutacao.sh --completo
+          else
+            ./scripts/mutacao.sh
+          fi
 
       # O lint tem um achado conhecido e falso positivo. Fixado por nome: achado novo
       # reprova, e o conhecido que sumir também avisa.

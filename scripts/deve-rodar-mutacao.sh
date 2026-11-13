@@ -37,7 +37,7 @@ diff_codigo=1
 # exatamente os arquivos alterados no PR sem precisar de merge-base ou histórico completo.
 if git rev-parse --verify --quiet HEAD^2 >/dev/null 2>&1 && \
    git rev-parse --verify --quiet HEAD^1 >/dev/null 2>&1; then
-  diff_saida=$(git diff --name-only HEAD^1 HEAD 2>/dev/null)
+  diff_saida=$(git -c core.quotePath=false diff --no-renames --name-only HEAD^1 HEAD 2>/dev/null)
   diff_codigo=$?
 fi
 
@@ -72,7 +72,7 @@ if [ "$diff_codigo" -ne 0 ]; then
   fi
 
   if [ -n "$base" ]; then
-    diff_saida=$(git diff --name-only "$base"...HEAD 2>/dev/null)
+    diff_saida=$(git -c core.quotePath=false diff --no-renames --name-only "$base"...HEAD 2>/dev/null)
     diff_codigo=$?
   fi
 fi

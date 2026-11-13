@@ -15,8 +15,10 @@
 #   9. CI com clone raso (depth 2) e PR com supabase/functions/ PULA a mutação (exit 1).
 #  10. CI com clone raso insuficiente (depth 1) cai na falha segura e RODA (exit 0).
 #  11. Erro no diff ou base inexistente roda por falha segura (exit 0).
-#  12. Evento push roda sempre (exit 0).
-#  13. Execução local fora de CI roda (exit 0).
+#  12. PR com git mv de teste para fora roda (--no-renames) (exit 0).
+#  13. PR com caminho acentuado em migrações roda (core.quotePath=false) (exit 0).
+#  14. Evento push roda sempre (exit 0).
+#  15. Execução local fora de CI roda (exit 0).
 #
 #   ./scripts/teste-mutacao-pular.sh
 set -uo pipefail
@@ -199,6 +201,14 @@ testar_clone_raso_merge "CI com clone raso insuficiente (depth 1) cai na falha s
 testar_caso "Erro no diff ou base inexistente roda por falha segura" \
   "pull_request" "base_inexistente_xyz" 0 "falha segura" \
   "echo 'touch' > contrato/openapi.yaml && git add . && git commit --quiet -m 'mod'"
+
+testar_caso "PR com git mv de teste para fora roda a mutação (--no-renames)" \
+  "pull_request" "develop" 0 "Mutação vai rodar" \
+  "mkdir -p docs/historico && git mv supabase/tests/010_base.sql docs/historico/010_base.sql && git commit --quiet -m 'move teste para fora'"
+
+testar_caso "PR com caminho acentuado em migrações roda a mutação (core.quotePath=false)" \
+  "pull_request" "develop" 0 "Mutação vai rodar" \
+  "touch 'supabase/migrations/20261112000000_função.sql' && git add . && git commit --quiet -m 'migracao acentuada'"
 
 testar_caso "Evento push roda sempre" \
   "push" "develop" 0 "evento 'push'" \

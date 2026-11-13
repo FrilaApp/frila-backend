@@ -10,6 +10,9 @@
 #   4. Candidato que falha sozinho na linha de base (descartado, cai na suíte inteira).
 #   5. Alvo sem cobertura continua reprovando (exit 1).
 #   6. Candidato que mata o alvo direto (não cai na suíte inteira).
+#   7. Contraexemplo de Cauê: candidatos avaliados individualmente nos dois lados.
+#   8. Modo completo avisa quando mapa de matadores está desatualizado.
+#   9. Decisor com saída inesperada (!= 0 e != 1) emite aviso e roda por segurança.
 #
 #   ./scripts/teste-mutacao-matadores.sh
 set -uo pipefail
@@ -210,6 +213,230 @@ executar_caso \
   1 1 1 0 \
   0 "morreu ✓  (cand_teste)" \
   "Alvos que caíram na suíte inteira"
+
+# 7. Contraexemplo do Cauê: candidatos avaliados individualmente nos dois lados
+testar_contraexemplo_caue() {
+  local nome="contraexemplo do Cauê: 2 candidatos verdes sozinhos que falhariam juntos são avaliados individualmente (exit 1 SOBREVIVEU)"
+  casos=$((casos + 1))
+  local dir="$TMP/caso$casos"
+  mkdir -p "$dir/scripts" "$dir/bin" "$dir/supabase/tests"
+  cp "$PORTAO" "$dir/scripts/mutacao.sh"
+
+  printf 'restrição\talvo_teste\tcand_a cand_b\n' > "$dir/scripts/mutacao-matadores.tsv"
+  touch "$dir/supabase/tests/cand_a.sql" "$dir/supabase/tests/cand_b.sql"
+
+  cat > "$dir/estado.env" <<EOF
+MUTANTE_DERRUBADO=0
+EOF
+
+  cat > "$dir/bin/psql" <<'EOF'
+#!/usr/bin/env bash
+args="$*"
+if [[ "$args" == *"contype in ('c','x')"* ]]; then
+  echo "restrição|alvo_teste|alter table t drop constraint c|alter table t add constraint c check (true)"
+  echo "restrição|usuario_id_perfil|alter table t drop constraint c|alter table t add constraint c check (true)"
+  echo "restrição|avaliacao_turno_id_autor_id_key|alter table t drop constraint c|alter table t add constraint c check (true)"
+  exit 0
+fi
+exit 0
+EOF
+  chmod +x "$dir/bin/psql"
+
+  # Dublê de supabase: se receber múltiplos arquivos juntos (comportamento antigo com bug), falha.
+  # Sozinho, cada candidato passa (não mata o mutante).
+  cat > "$dir/bin/supabase" <<'EOF'
+#!/usr/bin/env bash
+set -e
+DIR_ESTADO="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$DIR_ESTADO/estado.env"
+
+if [ $# -gt 2 ] && [ "$1" = "test" ] && [ "$2" = "db" ] && [ -n "${3:-}" ]; then
+  if [ $# -gt 3 ]; then
+    echo "FALHA: múltiplos candidatos executados juntos ($*)"
+    echo "Failed 1/1 subtests"
+    exit 1
+  fi
+  echo "$3 .. ok"
+  exit 0
+fi
+
+if [ "$MUTANTE_DERRUBADO" -eq 0 ]; then
+  echo "All tests successful."
+  exit 0
+else
+  # Suíte inteira também não mata o mutante neste teste
+  echo "All tests successful."
+  exit 0
+fi
+EOF
+  chmod +x "$dir/bin/supabase"
+
+  cat > "$dir/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+args="$*"
+DIR_ESTADO="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ "$args" == *"drop constraint"* ]]; then
+  sed -i '' 's/MUTANTE_DERRUBADO=0/MUTANTE_DERRUBADO=1/' "$DIR_ESTADO/estado.env" 2>/dev/null || \
+  sed -i 's/MUTANTE_DERRUBADO=0/MUTANTE_DERRUBADO=1/' "$DIR_ESTADO/estado.env"
+elif [[ "$args" == *"add constraint"* ]]; then
+  sed -i '' 's/MUTANTE_DERRUBADO=1/MUTANTE_DERRUBADO=0/' "$DIR_ESTADO/estado.env" 2>/dev/null || \
+  sed -i 's/MUTANTE_DERRUBADO=1/MUTANTE_DERRUBADO=0/' "$DIR_ESTADO/estado.env"
+fi
+exec psql "$@"
+EOF
+  chmod +x "$dir/bin/docker"
+
+  local saida
+  local codigo=0
+  saida=$(
+    cd "$dir"
+    PATH="$dir/bin:$PATH" ./scripts/mutacao.sh --forcar alvo_teste 2>&1
+  ) || codigo=$?
+
+  if [ "$codigo" -eq 1 ] && printf '%s\n' "$saida" | grep -qF "SOBREVIVEU — nenhum teste reclamou" && ! printf '%s\n' "$saida" | grep -qF "múltiplos candidatos executados juntos"; then
+    echo "  ✓ $nome"
+  else
+    echo "  ✗ $nome — esperado exit 1 contendo 'SOBREVIVEU', veio exit $codigo:"
+    printf '%s\n' "$saida" | sed 's/^/      /'
+    falhas=$((falhas + 1))
+  fi
+}
+testar_contraexemplo_caue
+
+# 8. Modo completo avisa quando mapa de matadores está desatualizado
+testar_aviso_mapa_desatualizado_completo() {
+  local nome="modo completo avisa quando mapa de matadores está desatualizado"
+  casos=$((casos + 1))
+  local dir="$TMP/caso$casos"
+  mkdir -p "$dir/scripts" "$dir/bin" "$dir/supabase/tests"
+  cp "$PORTAO" "$dir/scripts/mutacao.sh"
+
+  printf 'restrição\talvo_teste\tcand_antigo\n' > "$dir/scripts/mutacao-matadores.tsv"
+  touch "$dir/supabase/tests/cand_antigo.sql"
+
+  cat > "$dir/estado.env" <<EOF
+MUTANTE_DERRUBADO=0
+EOF
+
+  cat > "$dir/bin/psql" <<'EOF'
+#!/usr/bin/env bash
+args="$*"
+if [[ "$args" == *"contype in ('c','x')"* ]]; then
+  echo "restrição|alvo_teste|alter table t drop constraint c|alter table t add constraint c check (true)"
+  echo "restrição|usuario_id_perfil|alter table t drop constraint c|alter table t add constraint c check (true)"
+  echo "restrição|avaliacao_turno_id_autor_id_key|alter table t drop constraint c|alter table t add constraint c check (true)"
+  exit 0
+fi
+exit 0
+EOF
+  chmod +x "$dir/bin/psql"
+
+  cat > "$dir/bin/supabase" <<'EOF'
+#!/usr/bin/env bash
+set -e
+DIR_ESTADO="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$DIR_ESTADO/estado.env"
+
+if [ "$MUTANTE_DERRUBADO" -eq 0 ]; then
+  echo "All tests successful."
+  exit 0
+else
+  echo "/app/supabase/tests/999_novo_matador.sql .. Dubious, test returned 3"
+  echo "Failed 1/1 subtests"
+  exit 1
+fi
+EOF
+  chmod +x "$dir/bin/supabase"
+
+  cat > "$dir/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+args="$*"
+DIR_ESTADO="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ "$args" == *"drop constraint"* ]]; then
+  sed -i '' 's/MUTANTE_DERRUBADO=0/MUTANTE_DERRUBADO=1/' "$DIR_ESTADO/estado.env" 2>/dev/null || \
+  sed -i 's/MUTANTE_DERRUBADO=0/MUTANTE_DERRUBADO=1/' "$DIR_ESTADO/estado.env"
+elif [[ "$args" == *"add constraint"* ]]; then
+  sed -i '' 's/MUTANTE_DERRUBADO=1/MUTANTE_DERRUBADO=0/' "$DIR_ESTADO/estado.env" 2>/dev/null || \
+  sed -i 's/MUTANTE_DERRUBADO=1/MUTANTE_DERRUBADO=0/' "$DIR_ESTADO/estado.env"
+fi
+exec psql "$@"
+EOF
+  chmod +x "$dir/bin/docker"
+
+  local saida
+  local codigo=0
+  saida=$(
+    cd "$dir"
+    PATH="$dir/bin:$PATH" ./scripts/mutacao.sh --completo --forcar alvo_teste 2>&1
+  ) || codigo=$?
+
+  if [ "$codigo" -eq 0 ] && printf '%s\n' "$saida" | grep -qF "AVISO: O mapa de matadores" && printf '%s\n' "$saida" | grep -qF "gravado (cand_antigo), mas morreu por (999_novo_matador)"; then
+    echo "  ✓ $nome"
+  else
+    echo "  ✗ $nome — esperado aviso de mapa desatualizado, veio exit $codigo:"
+    printf '%s\n' "$saida" | sed 's/^/      /'
+    falhas=$((falhas + 1))
+  fi
+}
+testar_aviso_mapa_desatualizado_completo
+
+# 9. Decisor com saída inesperada (!= 0 e != 1) emite aviso e roda por segurança
+testar_decisor_codigo_erro_roda_mutacao() {
+  local nome="decisor com saída inesperada (!= 0 e != 1) emite aviso e roda mutação por segurança"
+  casos=$((casos + 1))
+  local dir="$TMP/caso$casos"
+  mkdir -p "$dir/scripts" "$dir/bin" "$dir/supabase/tests"
+  cp "$PORTAO" "$dir/scripts/mutacao.sh"
+
+  cat > "$dir/scripts/deve-rodar-mutacao.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "erro de sintaxe simulado no decisor" >&2
+exit 2
+EOF
+  chmod +x "$dir/scripts/deve-rodar-mutacao.sh"
+
+  cat > "$dir/estado.env" <<EOF
+MUTANTE_DERRUBADO=0
+EOF
+
+  cat > "$dir/bin/psql" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$dir/bin/psql"
+
+  cat > "$dir/bin/supabase" <<'EOF'
+#!/usr/bin/env bash
+set -e
+echo "All tests successful."
+exit 0
+EOF
+  chmod +x "$dir/bin/supabase"
+
+  cat > "$dir/bin/docker" <<'EOF'
+#!/usr/bin/env bash
+exec psql "$@"
+EOF
+  chmod +x "$dir/bin/docker"
+
+  local saida
+  local codigo=0
+  saida=$(
+    cd "$dir"
+    PATH="$dir/bin:$PATH" ./scripts/mutacao.sh 2>&1
+  ) || codigo=$?
+
+  if printf '%s\n' "$saida" | grep -qF "Aviso: decisor de mutação retornou código inesperado (2). Rodando mutação por segurança."; then
+    echo "  ✓ $nome"
+  else
+    echo "  ✗ $nome — esperado aviso de código inesperado, veio exit $codigo:"
+    printf '%s\n' "$saida" | sed 's/^/      /'
+    falhas=$((falhas + 1))
+  fi
+}
+testar_decisor_codigo_erro_roda_mutacao
 
 echo
 if [ "$falhas" -ne 0 ]; then

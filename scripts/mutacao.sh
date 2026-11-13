@@ -85,8 +85,12 @@ done
 # ── Mudança 1: pular a mutação se o PR não tocar no que ela mede ──────────────
 if [ "$modo_completo" -eq 0 ] && [ "$forcar_mutacao" -eq 0 ] && [ "$regravar_mapa" -eq 0 ] && [ -z "$filtro" ]; then
   if [ -x "./scripts/deve-rodar-mutacao.sh" ]; then
-    if ! ./scripts/deve-rodar-mutacao.sh; then
+    decisao_codigo=0
+    ./scripts/deve-rodar-mutacao.sh || decisao_codigo=$?
+    if [ "$decisao_codigo" -eq 1 ]; then
       exit 0
+    elif [ "$decisao_codigo" -ne 0 ]; then
+      echo "Aviso: decisor de mutação retornou código inesperado ($decisao_codigo). Rodando mutação por segurança." >&2
     fi
   fi
 fi
@@ -144,17 +148,15 @@ echo
 
 # ── Carregar mapa de matadores (Mudança 2) ──────────────────────────────────────
 mapa_linhas=()
-if [ "$modo_completo" -eq 0 ]; then
-  if [ -f "$MAPA" ]; then
-    while IFS= read -r l || [ -n "$l" ]; do
-      case "$l" in
-        "#"*|"") continue ;;
-        *) mapa_linhas+=("$l") ;;
-      esac
-    done < "$MAPA"
-  else
-    echo "Aviso: mapa de matadores '$MAPA' não encontrado. Executando suíte inteira por alvo." >&2
-  fi
+if [ -f "$MAPA" ]; then
+  while IFS= read -r l || [ -n "$l" ]; do
+    case "$l" in
+      "#"*|"") continue ;;
+      *) mapa_linhas+=("$l") ;;
+    esac
+  done < "$MAPA"
+elif [ "$modo_completo" -eq 0 ]; then
+  echo "Aviso: mapa de matadores '$MAPA' não encontrado. Executando suíte inteira por alvo." >&2
 fi
 
 obter_candidatos() {
@@ -450,6 +452,7 @@ estrutura=()
 pulados=()
 caiu_na_suite_inteira=()
 novos_matadores=()
+mapa_desatualizado=()
 mortos=0
 
 # ── Defesa 4: a janela entre derrubar e restaurar ──────────────────────────────
@@ -467,6 +470,7 @@ mortos=0
 restaurar_pendente=''
 restaurar_nome=''
 
+# shellcheck disable=SC2329
 devolver() {
   [ -z "$restaurar_pendente" ] && return 0
   local comando="$restaurar_pendente"
@@ -511,8 +515,28 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
 
   if [ "$modo_completo" -eq 1 ]; then
     quem=$(falhas)
+    if [ -n "$quem" ] && [ "$regravar_mapa" -eq 0 ]; then
+      gravados=$(obter_candidatos "$tipo" "$nome")
+      if [ -z "$gravados" ]; then
+        mapa_desatualizado+=("$tipo $nome: não consta no mapa de matadores")
+      else
+        casou=0
+        for g in $gravados; do
+          for q in $quem; do
+            if [ "$g" = "$q" ]; then
+              casou=1
+              break 2
+            fi
+          done
+        done
+        if [ "$casou" -eq 0 ]; then
+          matou_txt=$(echo "$quem" | tr '\n' ' ' | sed 's/ $//')
+          mapa_desatualizado+=("$tipo $nome: gravado ($gravados), mas morreu por ($matou_txt)")
+        fi
+      fi
+    fi
   else
-    # Modo rápido: tentar primeiro os candidatos válidos do mapa
+    # Modo rápido: tentar individualmente os candidatos válidos do mapa (um a um nos dois lados)
     candidatos_nomes=$(obter_candidatos "$tipo" "$nome")
     candidatos_validos=()
     for cand in $candidatos_nomes; do
@@ -524,9 +548,14 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
     done
 
     if [ "${#candidatos_validos[@]}" -gt 0 ]; then
-      quem=$(falhas_candidatos "${candidatos_validos[@]}")
+      for cand_arq in "${candidatos_validos[@]}"; do
+        quem=$(falhas_candidatos "$cand_arq")
+        if [ -n "$quem" ]; then
+          break
+        fi
+      done
       if [ -z "$quem" ]; then
-        # Candidatos não mataram a mutação — cai na suíte inteira
+        # Candidatos individuais não mataram a mutação — cai na suíte inteira
         usou_suite_inteira=1
         quem=$(falhas)
       fi
@@ -596,6 +625,13 @@ if [ "${#caiu_na_suite_inteira[@]}" -gt 0 ]; then
   echo "Alvos que caíram na suíte inteira (fora do mapa ou mapa desatualizado):"
   printf '  %s\n' "${caiu_na_suite_inteira[@]}"
   echo "Para atualizar o mapa: ./scripts/mutacao.sh --regravar-mapa"
+fi
+
+if [ "$modo_completo" -eq 1 ] && [ "${#mapa_desatualizado[@]}" -gt 0 ]; then
+  echo
+  echo "AVISO: O mapa de matadores ('$MAPA') está desatualizado para ${#mapa_desatualizado[@]} alvo(s):"
+  printf '  - %s\n' "${mapa_desatualizado[@]}"
+  echo "Execute './scripts/mutacao.sh --completo --regravar-mapa' para atualizar."
 fi
 
 falta=0
