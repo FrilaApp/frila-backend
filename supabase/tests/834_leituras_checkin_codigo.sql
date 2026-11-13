@@ -239,17 +239,17 @@ select is((select v from exp_ana, jsonb_array_elements(j) v where (v->>'turno_id
   'código exigido e confirmado à mão: a marca de exigido, sem tentativas');
 select is((select v->'tentativas' from exp_ana, jsonb_array_elements(j) v where (v->>'turno_id')::uuid = pg_temp.t('leitura')),
   jsonb_build_array(
-    jsonb_build_object('em', '2027-01-12 21:30:05+00'::timestamptz, 'resultado', 'recusada', 'faixa', 'acima_de_100_m',
+    jsonb_build_object('em', '2027-01-12 21:30:05+00'::timestamptz, 'resultado', 'recusada_sem_conferir', 'faixa', 'acima_de_100_m',
                        'codigo_gerado_em', (select em from gerado_leitura)),
     jsonb_build_object('em', '2027-01-12 21:30:10+00'::timestamptz, 'resultado', 'aceita', 'faixa', 'ate_100_m',
                        'codigo_gerado_em', (select em from gerado_leitura))),
   'as tentativas em ordem, com a hora, o resultado, a faixa e a hora do código em vigor');
--- Etapa 1: tentativa sem posição é recusada (422) e codigo_exigido=true; confianca_baixa permanece false
+-- 0.2.76: tentativa sem posição é recusada_sem_conferir (422) e codigo_exigido=true; confianca_baixa permanece false
 select is((select v - 'turno_id' from exp_ana, jsonb_array_elements(j) v where (v->>'turno_id')::uuid = pg_temp.t('sem_posicao')),
   jsonb_build_object('codigo_exigido', true, 'confianca_baixa', false, 'tentativas', jsonb_build_array(
-    jsonb_build_object('em', '2027-01-13 21:30:00+00'::timestamptz, 'resultado', 'recusada', 'faixa', 'sem_posicao',
+    jsonb_build_object('em', '2027-01-13 21:30:00+00'::timestamptz, 'resultado', 'recusada_sem_conferir', 'faixa', 'sem_posicao',
                        'codigo_gerado_em', '2027-01-13 21:30:00+00'::timestamptz))),
-  'validado sem posição: na Etapa 1 tentativa é recusada, histórico preservado em MeusDados');
+  'validado sem posição: na 0.2.76 tentativa é recusada_sem_conferir, histórico preservado em MeusDados');
 select is((select v->'tentativas'->0 from exp_ana, jsonb_array_elements(j) v where (v->>'turno_id')::uuid = pg_temp.t('vencido')),
   jsonb_build_object('em', '2027-01-15 21:35:01+00'::timestamptz, 'resultado', 'recusada', 'faixa', 'ate_100_m',
                      'codigo_gerado_em', null),

@@ -232,13 +232,13 @@ select (pg_temp.gerar((select dono_piloto from ids), pg_temp.t('piloto_chegada')
 
 -- Tentativa de validar SEM LOCALIZAÇÃO (distancia_m nula) com código correto
 select is((pg_temp.validar('piloto_chegada', (select cod from codigo_piloto), null))->>'code',
-          'codigo_invalido',
-          '8.1 validação sem posição: leitura com distancia_m nula é RECUSADA (422 codigo_invalido)');
+          'sem_localizacao',
+          '8.1 validação sem posição: leitura com distancia_m nula é RECUSADA (422 sem_localizacao)');
 
 -- Validação com distância excessiva (70 m > 50 m)
 select is((pg_temp.validar('piloto_chegada', (select cod from codigo_piloto), 70))->>'code',
-          'codigo_invalido',
-          '8.2 validação longe: leitura a 70 m (> 50 m) é RECUSADA (422 codigo_invalido)');
+          'fora_do_raio',
+          '8.2 validação longe: leitura a 70 m (> 50 m) é RECUSADA (422 fora_do_raio)');
 
 -- Validação com sucesso a 30 m (<= 50 m)
 select is((pg_temp.validar('piloto_chegada', (select cod from codigo_piloto), 30))->>'verificacao',
