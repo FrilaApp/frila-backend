@@ -23,6 +23,11 @@ begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
 select plan(78);
+-- Isolamento (20261112210000): a chave nasce ligada para todas as casas, então as corridas e o ciclo
+-- que a CI roda antes da mutação deixam estado de código gravado de turnos de fora. Este arquivo conta
+-- linhas destas tabelas (e a limpeza dos 90 dias devolve um total global), então começa sem as de fora.
+-- A transação deste arquivo desfaz tudo no fim; as tentativas saem em cascata.
+delete from privado.checkin_codigo;
 
 -- A casa 833 (dono e operador) e um contratante de outra casa.
 create temp table ids as
