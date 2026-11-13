@@ -8,9 +8,13 @@ on:
   push:
     branches: [main, develop]
   pull_request:
+  schedule:
+    # Mutação completa semanal (domingo às 03:00 UTC)
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'completo' || 'rapido' }}
   cancel-in-progress: true
 
 permissions:
@@ -22,6 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # Profundidade 2 traz o commit de merge e seu primeiro pai (HEAD^1 = ponta da base),
+          # permitindo ao decisor de mutação comparar o PR sem baixar o histórico inteiro.
+          fetch-depth: 2
 
       - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1.7.3
         with:
@@ -158,14 +166,23 @@ jobs:
       # fique vermelho em cada caso. Escrito depois de duas revisões medirem que 11 de
       # 31 restrições e 6 de 19 políticas passavam sem nenhum teste reclamar.
       # Mesmo motivo dos dois jobs baratos no fim deste arquivo: o portão é testado antes de
-      # julgar o PR. Aqui o alvo é estreito — só a linha de base, que é a parte do
-      # `mutacao.sh` que reprova e precisa dizer **onde**. Roda sem Postgres, com o
-      # `supabase` dublado, e leva menos de um segundo.
+      # julgar o PR. Autotestes rodam sem Postgres, com dublês rápidos (< 1s cada).
       - name: A linha de base da mutação nomeia o vermelho
         run: ./scripts/teste-mutacao-linha-de-base.sh
 
+      - name: O decisor de mutação pula e roda nos casos certos
+        run: ./scripts/teste-mutacao-pular.sh
+
+      - name: Os matadores da mutação fecham nos casos conhecidos
+        run: ./scripts/teste-mutacao-matadores.sh
+
       - name: Os testes cobrem as regras
-        run: ./scripts/mutacao.sh
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ] || ([ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]); then
+            ./scripts/mutacao.sh --completo
+          else
+            ./scripts/mutacao.sh
+          fi
 
       # O lint tem um achado conhecido e falso positivo. Fixado por nome: achado novo
       # reprova, e o conhecido que sumir também avisa.

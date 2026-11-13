@@ -15,7 +15,8 @@
 #      suíte quebrada por motivo alheio faz tudo parecer coberto.
 #   2. **Identidade, não código de saída.** Não basta a suíte ficar vermelha: o
 #      arquivo de teste que falha tem que ser diferente dos que já falhavam. Um
-#      `exit 1` por qualquer motivo não conta como detecção.
+#      `exit 1` por qualquer motivo não conta como detecção. No modo rápido, o teste
+#      candidato só é aceito se passar sozinho sem mutação (linha de base individual).
 #   3. **Restauração obrigatória.** Se a regra não voltar, o script aborta em vez de
 #      seguir mutando um banco já mutilado — modo de falha observado em revisão.
 #   4. **Devolução no caminho interrompido.** Entre derrubar e restaurar há uma suíte
@@ -34,13 +35,65 @@
 # varre só se denuncia por um total que não sobe, e um total que não se lê não denuncia
 # nada.
 #
-# Uso:  ./scripts/mutacao.sh              tudo
-#       ./scripts/mutacao.sh sem_turno    só o que casa com o texto
+# Uso:  ./scripts/mutacao.sh                      modo rápido (mapa de matadores)
+#       ./scripts/mutacao.sh --completo           modo completo (suíte inteira por alvo)
+#       ./scripts/mutacao.sh --regravar-mapa      grava scripts/mutacao-matadores.tsv
+#       ./scripts/mutacao.sh --forcar             roda mesmo se o decisor mandar pular
+#       ./scripts/mutacao.sh checkin_no_raio      só o alvo cujo nome casa com o filtro
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
-filtro="${1:-}"
+MAPA="$PWD/scripts/mutacao-matadores.tsv"
+
+modo_completo=0
+regravar_mapa=0
+forcar_mutacao=0
+filtro=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --completo)
+      modo_completo=1
+      shift
+      ;;
+    --regravar-mapa)
+      regravar_mapa=1
+      modo_completo=1
+      shift
+      ;;
+    --forcar)
+      forcar_mutacao=1
+      shift
+      ;;
+    -*)
+      echo "Opção desconhecida: $1" >&2
+      exit 1
+      ;;
+    *)
+      if [ -z "$filtro" ]; then
+        filtro="$1"
+      else
+        echo "Argumento extra inesperado: $1" >&2
+        exit 1
+      fi
+      shift
+      ;;
+  esac
+done
+
+# ── Mudança 1: pular a mutação se o PR não tocar no que ela mede ──────────────
+if [ "$modo_completo" -eq 0 ] && [ "$forcar_mutacao" -eq 0 ] && [ "$regravar_mapa" -eq 0 ] && [ -z "$filtro" ]; then
+  if [ -x "./scripts/deve-rodar-mutacao.sh" ]; then
+    decisao_codigo=0
+    ./scripts/deve-rodar-mutacao.sh || decisao_codigo=$?
+    if [ "$decisao_codigo" -eq 10 ]; then
+      exit 0
+    elif [ "$decisao_codigo" -ne 0 ]; then
+      echo "Aviso: decisor de mutação retornou código inesperado ($decisao_codigo). Rodando mutação por segurança." >&2
+    fi
+  fi
+fi
 
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"; }
 
@@ -57,6 +110,9 @@ nomes_falhados() { sed -n 's|.*/supabase/tests/\([0-9a-z_]*\)\.sql.*Failed.*|\1|
 
 # Nomes dos arquivos de teste que falharam nesta rodada, um por linha.
 falhas() { supabase test db 2>&1 | nomes_falhados; }
+
+# Nomes dos arquivos de teste candidatos que falharam nesta rodada.
+falhas_candidatos() { supabase test db "$@" 2>&1 | nomes_falhados; }
 
 # ── Defesa 1: a linha de base ──────────────────────────────────────────────────
 #
@@ -89,6 +145,77 @@ if ! base=$(supabase test db 2>&1); then
 fi
 echo "verde ✓"
 echo
+
+# ── Carregar mapa de matadores (Mudança 2) ──────────────────────────────────────
+mapa_linhas=()
+if [ -f "$MAPA" ]; then
+  while IFS= read -r l || [ -n "$l" ]; do
+    case "$l" in
+      "#"*|"") continue ;;
+      *) mapa_linhas+=("$l") ;;
+    esac
+  done < "$MAPA"
+elif [ "$modo_completo" -eq 0 ]; then
+  echo "Aviso: mapa de matadores '$MAPA' não encontrado. Executando suíte inteira por alvo." >&2
+fi
+
+obter_candidatos() {
+  local prefixo="$1	$2	"
+  local l
+  for l in ${mapa_linhas[@]+"${mapa_linhas[@]}"}; do
+    case "$l" in
+      "$prefixo"*)
+        echo "${l#"$prefixo"}"
+        return 0
+        ;;
+    esac
+  done
+}
+
+# ── Defesa 2 (candidatos): validação da linha de base individual ───────────────
+# O candidato só conta como matador se passa SOZINHO sem a mutação.
+# Testes que dependem de ordem ou de fixture anterior são descartados antes de qualquer
+# mutação e caem na suíte inteira.
+candidatos_validos_lista=""
+candidatos_invalidos_lista=""
+
+if [ "$modo_completo" -eq 0 ] && [ "${#mapa_linhas[@]}" -gt 0 ]; then
+  todos_candidatos=()
+  for l in "${mapa_linhas[@]}"; do
+    IFS=$'\t' read -r _ m_nome m_testes <<< "$l"
+    if [ -z "$filtro" ] || [[ "$m_nome" == *"$filtro"* ]]; then
+      for t in $m_testes; do
+        case " ${todos_candidatos[*]:-} " in
+          *" $t "*) ;;
+          *) todos_candidatos+=("$t") ;;
+        esac
+      done
+    fi
+  done
+
+  if [ "${#todos_candidatos[@]}" -gt 0 ]; then
+    printf '▸ Linha de base individual dos candidatos (%d)... ' "${#todos_candidatos[@]}"
+    descartados=0
+    for cand in "${todos_candidatos[@]}"; do
+      arq="supabase/tests/$cand.sql"
+      if [ ! -f "$arq" ]; then
+        candidatos_invalidos_lista="$candidatos_invalidos_lista $cand"
+        descartados=$((descartados + 1))
+      elif supabase test db "$arq" >/dev/null 2>&1; then
+        candidatos_validos_lista="$candidatos_validos_lista $cand"
+      else
+        candidatos_invalidos_lista="$candidatos_invalidos_lista $cand"
+        descartados=$((descartados + 1))
+      fi
+    done
+    if [ "$descartados" -gt 0 ]; then
+      echo "verde ✓ ($descartados descartados por falharem sozinhos)"
+    else
+      echo "verde ✓"
+    fi
+    echo
+  fi
+fi
 
 # ── Os alvos: restrições e triggers ────────────────────────────────────────────
 alvos=()
@@ -167,7 +294,7 @@ adicionar < <(psql -tAc "
        where p.refobjid = c.conindid
          and p.refclassid = 'pg_class'::regclass
          and p.deptype = 'n') d on true
-   where n.nspname in ('public','privado') and c.contype = 'u'
+   where n.nspname in ('public','privado') and c.contype in ('u'::char)
    order by c.conname")
 
 # Índice único, que **não** é constraint: não tem `contype`, não está em `pg_constraint` e
@@ -245,14 +372,14 @@ adicionar < <(psql -tAc "
                                     when 'w' then 'update' when 'd' then 'delete'
                                     else 'all' end ||
            ' to ' || coalesce((select string_agg(quote_ident(r.rolname), ', ')
-                                 from pg_roles r where r.oid = any (p.polroles)), 'public') ||
+                                  from pg_roles r where r.oid = any (p.polroles)), 'public') ||
            coalesce(' using (' || pg_get_expr(p.polqual, p.polrelid) || ')', '') ||
            coalesce(' with check (' || pg_get_expr(p.polwithcheck, p.polrelid) || ')', '')
-    from pg_policy p
-    join pg_class c on c.oid = p.polrelid
-    join pg_namespace n on n.oid = c.relnamespace
-   where n.nspname = 'public'
-   order by p.polname")
+     from pg_policy p
+     join pg_class c on c.oid = p.polrelid
+     join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+    order by p.polname")
 
 # ── O total, por categoria ─────────────────────────────────────────────────────
 #
@@ -266,6 +393,11 @@ printf '%s\n' ${alvos[@]+"${alvos[@]}"} | cut -d'|' -f1 | sort | uniq -c |
 if [ -n "$filtro" ]; then
   echo
   echo "Filtro '$filtro': só os alvos cujo nome o contém são mutados."
+fi
+if [ "$modo_completo" -eq 1 ]; then
+  echo "Modo completo ativo: executando suíte inteira por alvo."
+else
+  echo "Modo rápido ativo: testando candidato matador primeiro."
 fi
 echo
 
@@ -318,6 +450,9 @@ e_estrutural() {
 sobreviventes=()
 estrutura=()
 pulados=()
+caiu_na_suite_inteira=()
+novos_matadores=()
+mapa_desatualizado=()
 mortos=0
 
 # ── Defesa 4: a janela entre derrubar e restaurar ──────────────────────────────
@@ -335,6 +470,7 @@ mortos=0
 restaurar_pendente=''
 restaurar_nome=''
 
+# shellcheck disable=SC2329
 devolver() {
   [ -z "$restaurar_pendente" ] && return 0
   local comando="$restaurar_pendente"
@@ -374,7 +510,65 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
   restaurar_pendente="$restaurar"
   restaurar_nome="$nome"
 
-  quem=$(falhas)
+  quem=''
+  usou_suite_inteira=0
+
+  if [ "$modo_completo" -eq 1 ]; then
+    quem=$(falhas)
+    if [ -n "$quem" ] && [ "$regravar_mapa" -eq 0 ]; then
+      gravados=$(obter_candidatos "$tipo" "$nome")
+      if [ -z "$gravados" ]; then
+        mapa_desatualizado+=("$tipo $nome: não consta no mapa de matadores")
+      else
+        casou=0
+        for g in $gravados; do
+          for q in $quem; do
+            if [ "$g" = "$q" ]; then
+              casou=1
+              break 2
+            fi
+          done
+        done
+        if [ "$casou" -eq 0 ]; then
+          matou_txt=$(echo "$quem" | tr '\n' ' ' | sed 's/ $//')
+          mapa_desatualizado+=("$tipo $nome: gravado ($gravados), mas morreu por ($matou_txt)")
+        fi
+      fi
+    fi
+  else
+    # Modo rápido: tentar individualmente os candidatos válidos do mapa (um a um nos dois lados)
+    candidatos_nomes=$(obter_candidatos "$tipo" "$nome")
+    candidatos_validos=()
+    for cand in $candidatos_nomes; do
+      case " $candidatos_validos_lista " in
+        *" $cand "*)
+          candidatos_validos+=("supabase/tests/$cand.sql")
+          ;;
+      esac
+    done
+
+    if [ "${#candidatos_validos[@]}" -gt 0 ]; then
+      for cand_arq in "${candidatos_validos[@]}"; do
+        quem=$(falhas_candidatos "$cand_arq")
+        if [ -n "$quem" ]; then
+          break
+        fi
+      done
+      if [ -z "$quem" ]; then
+        # Candidatos individuais não mataram a mutação — cai na suíte inteira
+        usou_suite_inteira=1
+        quem=$(falhas)
+      fi
+    else
+      # Alvo sem candidatos válidos no mapa — cai na suíte inteira
+      usou_suite_inteira=1
+      quem=$(falhas)
+    fi
+  fi
+
+  if [ "$usou_suite_inteira" -eq 1 ]; then
+    caiu_na_suite_inteira+=("$tipo $nome")
+  fi
 
   # ── Defesa 3: a restauração é obrigatória ────────────────────────────────────
   if ! psql -q -c "$restaurar" >/dev/null 2>&1; then
@@ -389,6 +583,10 @@ for alvo in ${alvos[@]+"${alvos[@]}"}; do
     exit 1
   fi
   restaurar_pendente=''
+
+  if [ "$regravar_mapa" -eq 1 ] && [ -n "$quem" ]; then
+    novos_matadores+=("$tipo"$'\t'"$nome"$'\t'"$(echo "$quem" | tr '\n' ' ' | sed 's/ $//')")
+  fi
 
   # ── Defesa 2: identidade do que falhou ───────────────────────────────────────
   if [ -z "$quem" ]; then
@@ -409,6 +607,32 @@ echo
 echo "comportamento: $mortos · estrutura: ${#estrutura[@]}" \
      "· sem cobertura: ${#sobreviventes[@]} · não medidas: ${#pulados[@]}" \
      "· de ${#alvos[@]} alvos"
+
+if [ "$regravar_mapa" -eq 1 ] && [ "${#novos_matadores[@]}" -gt 0 ]; then
+  echo
+  printf 'Regravando mapa em %s... ' "$MAPA"
+  {
+    echo '# tipo	nome	matadores'
+    for item in "${novos_matadores[@]}"; do
+      echo "$item"
+    done
+  } > "$MAPA"
+  echo "concluído ✓ (${#novos_matadores[@]} entradas)"
+fi
+
+if [ "${#caiu_na_suite_inteira[@]}" -gt 0 ]; then
+  echo
+  echo "Alvos que caíram na suíte inteira (fora do mapa ou mapa desatualizado):"
+  printf '  %s\n' "${caiu_na_suite_inteira[@]}"
+  echo "Para atualizar o mapa: ./scripts/mutacao.sh --regravar-mapa"
+fi
+
+if [ "$modo_completo" -eq 1 ] && [ "${#mapa_desatualizado[@]}" -gt 0 ]; then
+  echo
+  echo "AVISO: O mapa de matadores ('$MAPA') está desatualizado para ${#mapa_desatualizado[@]} alvo(s):"
+  printf '  - %s\n' "${mapa_desatualizado[@]}"
+  echo "Execute './scripts/mutacao.sh --completo --regravar-mapa' para atualizar."
+fi
 
 falta=0
 
