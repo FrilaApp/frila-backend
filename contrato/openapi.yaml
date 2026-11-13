@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.76
+  version: 0.2.77
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -113,6 +113,26 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.77, de 12/11/2026.** Lembretes à casa sobre chegada não confirmada (decisão JP 12/11/2026, RF20, RN15, RN22).
+    - **Dois momentos de lembrete por vaga:** quando há vaga com chegada registrada (`checkin` manual)
+      ainda pendente de confirmação pela casa (`verificacao = 'pendente'`), o sistema dispara avisos
+      aos membros do estabelecimento (administradores e operadores):
+      1. `lembrete_30min_fim_turno`: 30 minutos antes do término previsto do turno (janela `[fim_em - 30 min, fim_em)`).
+         Corpo: "Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos."
+      2. `lembrete_fim_turno`: no encerramento previsto do turno (janela curta `[fim_em, fim_em + 1 h)`).
+         Corpo: "O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas."
+    - **Agrupamento por vaga (`referencia_id = vaga_id`):** o aviso sai uma única vez por vaga e membro da
+      casa (payload com `vaga_id`), mesmo em vagas com múltiplas posições ou profissionais.
+    - **Condições negativas estritas:** os lembretes não são enviados se não houver check-in registrado,
+      se a presença já foi confirmada (`verificado`), se o turno já foi encerrado como `nao_verificado` ou se
+      a posição ou vaga estiver cancelada.
+    - **Disparo em `fechar_turnos_passados`:** ambos os lembretes são avaliados pelo job periódico
+      `privado.fechar_turnos_passados`. A janela curta de 1 hora no término evita o envio indevido para
+      turnos finalizados há mais tempo após reinicializações do agendador ou deploys.
+    - **Compatibilidade com apps antigos:** iOS e Android mostram o push com título e corpo do servidor.
+      No iOS o toque abre a tela inicial (`AvisoDePush` não reconhece o tipo); no Android cai no canal do
+      sistema e abre o app sem destino; não há lista de notificações nos apps.
 
     **Versão 0.2.76, de 12/11/2026.** Recusa própria por distância na validação do check-in por código (decisão JP 12/11/2026, achado A2, RF13, RN22, RN46).
     - **Bloqueio vigente vence antes da distância:** se o código já estiver bloqueado (temporário por 3
@@ -634,6 +654,8 @@ info:
       | `fim_sem_checkout` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Alerta de turno finalizado sem check-out |
       | `checkin` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Confirmação de check-in efetuado |
       | `checkin_manual_pendente` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Solicitação de check-in manual pendente |
+      | `lembrete_30min_fim_turno` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Lembrete de chegada pendente a 30 minutos do fim |
+      | `lembrete_fim_turno` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Lembrete de chegada pendente no término do turno |
       | `cancelamento` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Cancelamento de candidatura ou turno |
       | `avaliacao_disponivel` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Liberação de avaliação mútua |
       | `vaga_vazia` | `canal_sistema` | Padrão (`IMPORTANCE_DEFAULT`) | Vaga expirada sem candidatos |
@@ -6319,6 +6341,20 @@ components:
         |---|---|---|---|
         | `turno_nao_verificado` | Ambos os lados | Turno não verificado | A presença no turno não foi confirmada dentro do prazo. O turno foi encerrado como não verificado. |
 
+        **Lembretes de confirmação de presença à casa (0.2.77, RF20, RN15, RN22).** Disparados aos
+        membros do estabelecimento (administradores e operadores) quando há vaga com chegada
+        registrada e presença ainda pendente de confirmação. Enviados uma única vez por vaga e membro
+        (`referencia_id = vaga_id`, payload com `vaga_id`).
+
+        | Tipo | Quem recebe | Título | Corpo |
+        |---|---|---|---|
+        | `lembrete_30min_fim_turno` | Membros da casa | Chegada a confirmar | Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos. |
+        | `lembrete_fim_turno` | Membros da casa | Turno encerrado | O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas. |
+
+        Em versões antigas dos apps: iOS e Android mostram o push com título e corpo do servidor; no
+        iOS o toque abre a tela inicial (`AvisoDePush` não reconhece o tipo); no Android cai no canal
+        do sistema e abre o app sem destino; não há lista de notificações nos apps.
+
         **Check-in por código (0.2.68).** Nenhum tipo novo, e os textos não mudam. No app 1.2,
         `checkin_manual_pendente` abre a tela da casa já com o código; `checkin` também avisa os
         membros da presença verificada pelo código.
@@ -6332,7 +6368,8 @@ components:
              checkin_manual_pendente, cancelamento, avaliacao_disponivel, suspensao, reativacao,
              candidatura_recusada, selecao_encerrada, selecao_lembrete, midia_recusada,
              chamada_recebida, chamada_lembrete, chamada_aceita, chamada_recusada,
-             chamada_expirada, chamada_cancelada, chamada_encerrada, turno_nao_verificado]
+             chamada_expirada, chamada_cancelada, chamada_encerrada, turno_nao_verificado,
+             lembrete_30min_fim_turno, lembrete_fim_turno]
     EventoDeTelemetria:
       description: |
         Dicionário fechado. Acrescentar evento é mudança de contrato, com versão subindo — é o
