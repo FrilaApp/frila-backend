@@ -10,6 +10,9 @@
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
 select plan(53);
+-- Fluxo legado do check-in (geolocalizado a até 200 m, verificado na hora): desde 20261112210000 a chave
+-- checkin_por_codigo nasce ligada para todas as casas; este teste prova o fluxo sem o código, então a desliga aqui.
+update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$

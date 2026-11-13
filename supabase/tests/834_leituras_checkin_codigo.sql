@@ -33,10 +33,14 @@ create function pg_temp.r(plataforma text, versao text) returns text language sq
 select is((select string_agg(k, ',' order by k) from jsonb_object_keys(public.configuracao_do_app('ios')->'recursos') k),
   'chamada_direta,checkin_por_codigo,foto_de_perfil,perfil_rico',
   'RecursosDoApp tem exatamente os quatro recursos do contrato, com checkin_por_codigo (0.2.68)');
-select is(pg_temp.r('ios', '9.9'), 'false', 'como nasce (chave desligada, sem mínimo): false');
-select is((select count(*)::int from privado.recurso_versao_minima where recurso = 'checkin_por_codigo'), 0,
-  'nenhuma migração põe mínimo para checkin_por_codigo: o calendário da 1.2 é do JP (FORA)');
+-- Desde 20261112210000 o recurso nasce como o "vale para todos": chave ligada e mínimo de 1.2.0 só no iOS.
+select is(pg_temp.r('ios', '9.9'), 'true', 'como nasce (chave ligada, mínimo 1.2.0 no iOS, 20261112210000): "9.9" é true');
+select is((select string_agg(plataforma::text || ':' || versao_minima, ',' order by plataforma::text)
+             from privado.recurso_versao_minima where recurso = 'checkin_por_codigo'), 'ios:1.2.0',
+  'a migração põe o mínimo só no iOS (1.2.0); o Android fica fora até ordem nova');
 
+-- A mecânica da versão mínima abaixo parte do zero: sem mínimo, com a chave ligada.
+delete from privado.recurso_versao_minima where recurso = 'checkin_por_codigo';
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
 select ok((select bool_and(pg_temp.r(p, v) is not distinct from 'false')
              from unnest(array['ios', 'android']) p, unnest(array['1', '1.2', '99.0.0.1', null]) v),
@@ -46,7 +50,7 @@ select lives_ok($$ insert into privado.recurso_versao_minima (recurso, plataform
                    values ('checkin_por_codigo', 'ios', '1.2.0') $$,
   'recurso_versao_minima_recurso aceita checkin_por_codigo');
 select is((select count(*)::int from privado.recurso_estabelecimento where chave = 'checkin_por_codigo'), 0,
-  'premissa: nenhuma casa na lista do piloto');
+  'premissa: nenhuma casa na lista por casa (que não é mais lida, 20261112210000)');
 select is(pg_temp.r('ios', '1.2'), 'true',
   'com a chave e o mínimo "1.2.0", "1.2" alcança: true, sem depender da lista de casas (que vale por turno)');
 select is(pg_temp.r('ios', '1.1.9'), 'false', 'abaixo do mínimo: false');
@@ -83,8 +87,6 @@ insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel
 select dono, casa, 'administrador'::public.papel_membro from ids;
 
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
-insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
-select 'checkin_por_codigo', casa from ids on conflict do nothing;
 
 -- Um turno confirmado, das 21h às 2h, para o profissional da conta dada.
 create temp table turnos (nome text primary key, turno uuid, inicio timestamptz);

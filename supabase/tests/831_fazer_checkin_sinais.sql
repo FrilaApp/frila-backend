@@ -1,7 +1,7 @@
 -- 831_fazer_checkin_sinais.sql
 --
 -- fazer_checkin com os sinais do aparelho (contrato 0.2.68; migração 20261109103000). Cobre:
---   · critério 7: com a chave desligada para a casa (global, ou casa fora da lista), os sinais
+--   · critério 7: com a chave desligada, os sinais
 --     são ignorados, até no formato, e a resposta é a de hoje;
 --   · critério 9 e leitura 4: sem sinais, o caminho A não muda, faixa de 150 a 200 m inclusive;
 --   · a proteção por risco (seção 6; leitura 5): localização simulada, salto, precisão a partir de
@@ -103,6 +103,8 @@ select pg_temp.novo(n) from unnest(array[
   'precisao_99', 'precisao_20_0', 'precisao_100_0', 'precisao_nula', 'faixa_150', 'faixa_149', 'faixa_200', 'acima_201', 'mal', 'sem_distancia']) n;
 
 -- ── 1. Chave desligada: nada muda (critério 7) ────────────────────────────────
+-- Desde 20261112210000 a chave nasce ligada para todas as casas: a seção 1 a desliga para provar a volta.
+update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 select is(pg_temp.resumo(pg_temp.checkin('off', 50, '{"localizacao_simulada": true, "precisao_m": 5, "salto_de_posicao": false}')),
   'geolocalizado verificado exigido=- disponivel=-', 'chave desligada: o sinal suspeito é ignorado e os 50 m verificam na hora');
 select is((select array_agg(k order by k) from jsonb_object_keys(
@@ -115,9 +117,7 @@ select is((select count(*)::int from privado.checkin_codigo where turno_id in (p
 
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
 select is(pg_temp.resumo(pg_temp.checkin('fora', 50, '{"localizacao_simulada": true, "precisao_m": 5, "salto_de_posicao": false}')),
-  'geolocalizado verificado exigido=- disponivel=-', 'chave global ligada e casa fora do piloto: igual à chave desligada');
-
-insert into privado.recurso_estabelecimento (chave, estabelecimento_id) select 'checkin_por_codigo', casa from ids;
+  'manual pendente exigido=true disponivel=true', 'chave global ligada e casa fora da lista: vale para todas as casas (20261112210000), sem a lista por casa');
 
 -- ── 2. Chave ligada, sem sinal suspeito: na Etapa 1 o toque nunca verifica sozinho (manual pendente) ──
 select is(pg_temp.resumo(pg_temp.checkin('sem_sinais', 50)),

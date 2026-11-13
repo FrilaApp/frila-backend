@@ -7,6 +7,10 @@
 begin;
 select plan(14);
 
+-- Este arquivo mede as outras três chaves. O check-in por código nasce ligado desde 20261112210000 (vale
+-- para todos; a prova é o 852 e o 819), então aqui se desliga para ele ficar false como nas asserções.
+update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
+
 -- Desde 0.2.65 (20261108150000), um recurso só liga com a chave e um mínimo por plataforma, para
 -- a versao_app que o app manda. Este arquivo mede as chaves com o mínimo alcançado (1.2.0 nas
 -- duas plataformas); sem versão, malformada ou sem mínimo é o 819.

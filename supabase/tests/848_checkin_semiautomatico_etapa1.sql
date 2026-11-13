@@ -22,7 +22,7 @@
 begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
-select plan(37);
+select plan(38);
 
 -- Massa: Casa 844 (piloto) e Casa Legado 844 (sem a chave).
 create temp table ids as
@@ -115,10 +115,8 @@ create function pg_temp.confirmar_manual(dono uuid, turno uuid) returns jsonb la
   select pg_temp.como(dono, format('select public.confirmar_checkin_manual(%L::uuid)', turno))
 $$;
 
--- Liga o recurso checkin_por_codigo exclusivamente para a casa_piloto
+-- A chave checkin_por_codigo vale para todas as casas (20261112210000); nenhuma casa entra na lista por casa.
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
-insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
-values ('checkin_por_codigo', 'c8440000-0000-4000-8000-000000000021') on conflict do nothing;
 
 -- ── 1. Parâmetros configuráveis ───────────────────────────────────────────────
 
@@ -137,15 +135,23 @@ select throws_ok($$update privado.regra_checkin_codigo set validade_proximidade_
 select throws_ok($$update privado.regra_checkin_codigo set validade_proximidade_s = 3601$$,
   '23514', null, '1.7 regra: validade_proximidade_entre_1_e_60_min: mais de 3600 s é recusado');
 
--- ── 2. Fluxo Legado (casa fora do piloto) ─────────────────────────────────────
+-- ── 2. Fluxo Legado (chave desligada) ─────────────────────────────────────────
+-- Desde 20261112210000 não há casa "fora do piloto": o fluxo legado só existe com a chave desligada (a volta).
+update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
 select pg_temp.novo_turno('legado_200m', (select casa_legado from ids));
 select is((pg_temp.checkin('legado_200m', 45))->>'tipo', 'geolocalizado',
-          '2.1 legado: toque a 45 m em casa fora do piloto é geolocalizado');
+          '2.1 legado: toque a 45 m com a chave desligada é geolocalizado');
 select is((pg_temp.checkin('legado_200m', 45))->>'verificacao', 'verificado',
           '2.2 legado: presença verificada na hora (sem intervenção de código)');
 select is((pg_temp.checkin('legado_200m', 45))->>'codigo_exigido', null,
-          '2.3 legado: resposta não traz campos de código para casa fora do piloto');
+          '2.3 legado: resposta não traz campos de código com a chave desligada');
+
+-- A chave volta a ligar: vale para as duas casas, nenhuma está na lista por casa.
+update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
+select pg_temp.novo_turno('casa_fora_da_lista', (select casa_legado from ids));
+select is((pg_temp.checkin('casa_fora_da_lista', 45))->>'verificacao', 'pendente',
+          '2.4 chave ligada: casa fora da lista por casa também fica manual e pendente (vale para todos)');
 
 -- ── 3. Cliente legado em casa do piloto (sinais nil jamais auto-verificam) ────
 
