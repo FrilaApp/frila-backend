@@ -1,11 +1,9 @@
-# Runbook de hotfix e rollback no pico do piloto
+# Runbook de hotfix e rollback
 
-Como publicar uma correção no `frila-prod` e como desfazer uma migração enquanto o piloto
-roda, sem cair na janela proibida da RNF12 (quinta a domingo, das 16h às 2h, horário de São
-Paulo). Escrito em 28/10/2026 a partir do que existe em `.github/workflows/entrega.yml` e em
+Como publicar uma correção no `frila-prod` e como desfazer uma migração. Escrito em 28/10/2026 a partir do que existe em `.github/workflows/entrega.yml` e em
 `scripts/`; o que mede o estado real do repositório no GitHub vem marcado com a data.
 
-**A janela de pico da RNF12 (quinta a domingo, das 16h às 2h) vale a partir de 10 mil usuários ativos (decisão do Cauê, 08/11/2026); a meta de 99,5% segue.** Até lá, `scripts/janela-de-manutencao.sh` não confere a janela: sai 0 com o
+**A janela de pico da RNF12 (quinta a domingo, das 16h às 2h, horário de São Paulo) só volta com 10 mil usuários ativos (decisão do Cauê, 08/11/2026); a meta de 99,5% segue.** Até lá, o passo `Fora da janela proibida (RNF12)` do workflow Entrega não roda (só roda com a variável do repositório `RNF12_ATIVA=1`), e `scripts/janela-de-manutencao.sh` não confere a janela: sai 0 com o
 aviso "Janela de pico da RNF12 suspensa". Os comandos de medir a janela deste runbook só medem com `RNF12_ATIVA=1`
 na frente (por exemplo, `RNF12_ATIVA=1 ./scripts/janela-de-manutencao.sh`), e qualquer valor
 além de vazio, `0` e `1` sai 2.
@@ -28,7 +26,7 @@ Aqui entra o que falta em torno dele: a janela, a tag e o pico.
 | Mesclar com a CI ainda rodando ou vermelha | Só em emergência, registrada no PR | `AGENTS.md`, "Branch e PR" |
 | Aprovar o job de Prod no Environment | Revisor do Environment `frila-prod`. O Environment possui 4 revisores cadastrados (`cauecarneiro`, `fbtostadev`, `jotape12-Dev`, `silvaaszx`) com auto-aprovação prevenida (`prevent_self_review: true`) e bypass de admin ativo (fonte: medido via GitHub API em 30/10) | `entrega.yml:126-127`; GitHub API |
 | Aplicar patch à mão em Prod | `[DONO]`, termo de `docs/RUNBOOK-INCIDENTES.md` (por exemplo, linha 224) que o documento não define | `RUNBOOK-INCIDENTES.md` |
-| Exceção à janela proibida | Proposta, a confirmar: `[DONO]`, com motivo e hora registrados no PR | não existe regra escrita |
+| Exceção à janela proibida (só com a RNF12 ativa) | Proposta, a confirmar: `[DONO]`, com motivo e hora registrados no PR | não existe regra escrita |
 
 O agente de IA prepara, testa e abre o PR. Ele nunca aprova nem mescla, e não empurra a tag
 de Prod (`AGENTS.md`, "Regras do time").
@@ -158,6 +156,8 @@ Para o procedimento e padrões de reversão de migrações que já foram aplicad
 ---
 
 ## 5. Tag em horário proibido
+
+> Só vale com a RNF12 ativa (variável do repositório `RNF12_ATIVA=1`). Hoje o passo da janela não roda e não há horário proibido.
 
 O que acontece (fatos da seção 2): a tag dispara o workflow; o job de Prod espera o
 Environment; quando começa, o passo da janela mede o relógio de São Paulo e, dentro da

@@ -107,7 +107,7 @@ Ninguém aplica migração nem publica Edge Function à mão. O workflow `Entreg
 | Tag `backend-v*` num commit da `develop` | Pede aprovação no Environment `frila-prod`, confere a janela abaixo e faz o mesmo no `frila-prod` |
 
 Para publicar em produção: `git tag backend-v0.3.0 origin/develop && git push origin
-backend-v0.3.0`, e um revisor aprova em *Actions*. Dentro da janela proibida o job recusa;
+backend-v0.3.0`, e um revisor aprova em *Actions*. Dentro da janela proibida, quando a RNF12 está ativa (`RNF12_ATIVA=1`), o job recusa;
 rode de novo depois das 2h.
 
 **Desvio.** `scripts/desvio.sh <project_ref>` compara o remoto com o banco que as
@@ -127,6 +127,8 @@ sem o segredo do agendador, porque sem ele `publicar_vaga` falha.
 público: nenhum segredo vai para o workflow.
 
 ### Janela de migração (RNF12)
+
+**Hoje desligada:** a janela só volta com 10 mil usuários ativos (decisão do Cauê, 08/11/2026). Até lá, o workflow Entrega não confere o horário (o passo só roda com a variável do repositório `RNF12_ATIVA=1`). Quando voltar, vale a regra abaixo.
 
 Migração em `frila-prod` **nunca** de quinta a domingo entre 16h e 2h, horário de
 Brasília (19h às 5h UTC). É o pico do food service, e um turno que não abre porque o
