@@ -12,7 +12,8 @@
 #   6. Candidato que mata o alvo direto (não cai na suíte inteira).
 #   7. Contraexemplo de Cauê: candidatos avaliados individualmente nos dois lados.
 #   8. Modo completo avisa quando mapa de matadores está desatualizado.
-#   9. Decisor com saída inesperada (!= 0 e != 1) emite aviso e roda por segurança.
+#   9. Decisor com saída inesperada (!= 0 e != 10, ex: exit 1 de erro bash) emite aviso e roda por segurança.
+#  10. Decisor com código 10 (pode pular) encerra a mutação sem executar suíte.
 #
 #   ./scripts/teste-mutacao-matadores.sh
 set -uo pipefail
@@ -253,7 +254,9 @@ source "$DIR_ESTADO/estado.env"
 
 if [ $# -gt 2 ] && [ "$1" = "test" ] && [ "$2" = "db" ] && [ -n "${3:-}" ]; then
   if [ $# -gt 3 ]; then
-    echo "FALHA: múltiplos candidatos executados juntos ($*)"
+    # Se múltiplos arquivos forem passados juntos (regressão), simula o contraexemplo:
+    # a execução conjunta acusa falha atribuída a cand_a (o que faria o alvo parecer morto)
+    echo "supabase/tests/cand_a.sql .. Dubious"
     echo "Failed 1/1 subtests"
     exit 1
   fi
@@ -294,7 +297,7 @@ EOF
     PATH="$dir/bin:$PATH" ./scripts/mutacao.sh --forcar alvo_teste 2>&1
   ) || codigo=$?
 
-  if [ "$codigo" -eq 1 ] && printf '%s\n' "$saida" | grep -qF "SOBREVIVEU — nenhum teste reclamou" && ! printf '%s\n' "$saida" | grep -qF "múltiplos candidatos executados juntos"; then
+  if [ "$codigo" -eq 1 ] && printf '%s\n' "$saida" | grep -qF "SOBREVIVEU — nenhum teste reclamou" && ! printf '%s\n' "$saida" | grep -qF "morreu ✓  (cand_a)"; then
     echo "  ✓ $nome"
   else
     echo "  ✗ $nome — esperado exit 1 contendo 'SOBREVIVEU', veio exit $codigo:"
@@ -382,9 +385,9 @@ EOF
 }
 testar_aviso_mapa_desatualizado_completo
 
-# 9. Decisor com saída inesperada (!= 0 e != 1) emite aviso e roda por segurança
+# 9. Decisor com saída inesperada (!= 0 e != 10, inclusive exit 1 de erro do bash) emite aviso e roda por segurança
 testar_decisor_codigo_erro_roda_mutacao() {
-  local nome="decisor com saída inesperada (!= 0 e != 1) emite aviso e roda mutação por segurança"
+  local nome="decisor com saída inesperada (exit 1 de erro do bash) emite aviso e roda mutação por segurança"
   casos=$((casos + 1))
   local dir="$TMP/caso$casos"
   mkdir -p "$dir/scripts" "$dir/bin" "$dir/supabase/tests"
@@ -392,8 +395,8 @@ testar_decisor_codigo_erro_roda_mutacao() {
 
   cat > "$dir/scripts/deve-rodar-mutacao.sh" <<'EOF'
 #!/usr/bin/env bash
-echo "erro de sintaxe simulado no decisor" >&2
-exit 2
+echo "erro simulado no decisor (ex: set -u)" >&2
+exit 1
 EOF
   chmod +x "$dir/scripts/deve-rodar-mutacao.sh"
 
@@ -428,7 +431,7 @@ EOF
     PATH="$dir/bin:$PATH" ./scripts/mutacao.sh 2>&1
   ) || codigo=$?
 
-  if printf '%s\n' "$saida" | grep -qF "Aviso: decisor de mutação retornou código inesperado (2). Rodando mutação por segurança."; then
+  if printf '%s\n' "$saida" | grep -qF "Aviso: decisor de mutação retornou código inesperado (1). Rodando mutação por segurança."; then
     echo "  ✓ $nome"
   else
     echo "  ✗ $nome — esperado aviso de código inesperado, veio exit $codigo:"
@@ -437,6 +440,46 @@ EOF
   fi
 }
 testar_decisor_codigo_erro_roda_mutacao
+
+# 10. Decisor com saída 10 (pode pular) encerra a mutação imediatamente sem rodar
+testar_decisor_codigo_10_pula_mutacao() {
+  local nome="decisor com código 10 (pode pular) encerra a mutação sem executar suíte"
+  casos=$((casos + 1))
+  local dir="$TMP/caso$casos"
+  mkdir -p "$dir/scripts" "$dir/bin" "$dir/supabase/tests"
+  cp "$PORTAO" "$dir/scripts/mutacao.sh"
+
+  cat > "$dir/scripts/deve-rodar-mutacao.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "Mutação pulada: PR não altera arquivos relevantes para o banco ou para a mutação."
+exit 10
+EOF
+  chmod +x "$dir/scripts/deve-rodar-mutacao.sh"
+
+  # Se tentar chamar supabase ou docker/psql, falha alto
+  cat > "$dir/bin/supabase" <<'EOF'
+#!/usr/bin/env bash
+echo "ERRO: supabase não deveria ser chamado quando o decisor pula!" >&2
+exit 99
+EOF
+  chmod +x "$dir/bin/supabase"
+
+  local saida
+  local codigo=0
+  saida=$(
+    cd "$dir"
+    PATH="$dir/bin:$PATH" ./scripts/mutacao.sh 2>&1
+  ) || codigo=$?
+
+  if [ "$codigo" -eq 0 ] && ! printf '%s\n' "$saida" | grep -qF "ERRO: supabase não deveria ser chamado" && ! printf '%s\n' "$saida" | grep -qF "Aviso: decisor"; then
+    echo "  ✓ $nome"
+  else
+    echo "  ✗ $nome — esperado exit 0 sem chamar supabase nem aviso, veio exit $codigo:"
+    printf '%s\n' "$saida" | sed 's/^/      /'
+    falhas=$((falhas + 1))
+  fi
+}
+testar_decisor_codigo_10_pula_mutacao
 
 echo
 if [ "$falhas" -ne 0 ]; then

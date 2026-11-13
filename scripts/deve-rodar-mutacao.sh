@@ -10,8 +10,9 @@
 # Falha segura: qualquer erro no diff, clone raso incompleto ou dúvida faz RODAR.
 #
 # Códigos de saída:
-#   0 - Deve rodar (em push, local, erro de diff ou arquivos relevantes alterados)
-#   1 - Pode pular (somente em pull_request sem arquivos relevantes)
+#   0  - Deve rodar (em push, local, erro de diff ou arquivos relevantes alterados)
+#   10 - Pode pular (somente em pull_request sem arquivos relevantes; código próprio
+#        para não colidir com saída 1 de erros do bash como set -u ou sintaxe)
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 0
 
@@ -106,4 +107,4 @@ if [ -n "$relevante" ]; then
 fi
 
 echo "Mutação pulada: PR não altera arquivos relevantes para o banco ou para a mutação."
-exit 1
+exit 10

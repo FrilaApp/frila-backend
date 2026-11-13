@@ -87,7 +87,7 @@ if [ "$modo_completo" -eq 0 ] && [ "$forcar_mutacao" -eq 0 ] && [ "$regravar_map
   if [ -x "./scripts/deve-rodar-mutacao.sh" ]; then
     decisao_codigo=0
     ./scripts/deve-rodar-mutacao.sh || decisao_codigo=$?
-    if [ "$decisao_codigo" -eq 1 ]; then
+    if [ "$decisao_codigo" -eq 10 ]; then
       exit 0
     elif [ "$decisao_codigo" -ne 0 ]; then
       echo "Aviso: decisor de mutação retornou código inesperado ($decisao_codigo). Rodando mutação por segurança." >&2

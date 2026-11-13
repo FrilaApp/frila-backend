@@ -4,15 +4,15 @@
 # Roda sem Postgres e sem rede, usando repositórios git temporários isolados.
 #
 # Casos cobertos:
-#   1. PR que só toca no contrato pula (exit 1).
+#   1. PR que só toca no contrato pula (exit 10).
 #   2. PR com migração roda (exit 0).
 #   3. PR com teste pgTAP roda (exit 0).
 #   4. PR com supabase/cenarios.sql roda (exit 0).
-#   5. PR só com supabase/functions/ pula (exit 1).
+#   5. PR só com supabase/functions/ pula (exit 10).
 #   6. PR com script de teste de mutação roda (exit 0).
-#   7. CI com clone raso (depth 2) e PR só de contrato PULA a mutação (exit 1).
+#   7. CI com clone raso (depth 2) e PR só de contrato PULA a mutação (exit 10).
 #   8. CI com clone raso (depth 2) e PR com cenarios.sql RODA a mutação (exit 0).
-#   9. CI com clone raso (depth 2) e PR com supabase/functions/ PULA a mutação (exit 1).
+#   9. CI com clone raso (depth 2) e PR com supabase/functions/ PULA a mutação (exit 10).
 #  10. CI com clone raso insuficiente (depth 1) cai na falha segura e RODA (exit 0).
 #  11. Erro no diff ou base inexistente roda por falha segura (exit 0).
 #  12. PR com git mv de teste para fora roda (--no-renames) (exit 0).
@@ -163,7 +163,7 @@ testar_clone_raso_merge() {
 echo "▸ Decisor de mutação: pula ou roda nos casos certos"
 
 testar_caso "PR só de contrato pula a mutação" \
-  "pull_request" "develop" 1 "Mutação pulada" \
+  "pull_request" "develop" 10 "Mutação pulada" \
   "echo 'novo: 1' >> contrato/openapi.yaml && git add . && git commit --quiet -m 'so contrato'"
 
 testar_caso "PR com migração roda a mutação" \
@@ -179,7 +179,7 @@ testar_caso "PR com supabase/cenarios.sql roda a mutação" \
   "echo '-- fixtures' >> supabase/cenarios.sql && git add . && git commit --quiet -m 'com cenarios'"
 
 testar_caso "PR só com supabase/functions/ pula a mutação" \
-  "pull_request" "develop" 1 "Mutação pulada" \
+  "pull_request" "develop" 10 "Mutação pulada" \
   "mkdir -p supabase/functions/push && echo 'console.log(1);' > supabase/functions/push/index.ts && git add . && git commit --quiet -m 'com functions'"
 
 testar_caso "PR com script de teste de mutação roda a mutação" \
@@ -187,13 +187,13 @@ testar_caso "PR com script de teste de mutação roda a mutação" \
   "echo '# test' >> scripts/teste-mutacao-pular.sh && git add . && git commit --quiet -m 'com script teste'"
 
 testar_clone_raso_merge "CI com clone raso (depth 2) e PR só de contrato PULA a mutação" \
-  2 "echo 'novo' >> contrato/openapi.yaml" 1 "Mutação pulada"
+  2 "echo 'novo' >> contrato/openapi.yaml" 10 "Mutação pulada"
 
 testar_clone_raso_merge "CI com clone raso (depth 2) e PR com cenarios.sql RODA a mutação" \
   2 "echo '-- massa' >> supabase/cenarios.sql" 0 "Mutação vai rodar: PR altera arquivos relevantes"
 
 testar_clone_raso_merge "CI com clone raso (depth 2) e PR com supabase/functions/ PULA a mutação" \
-  2 "mkdir -p supabase/functions/auth && echo 'deno' > supabase/functions/auth/index.ts" 1 "Mutação pulada"
+  2 "mkdir -p supabase/functions/auth && echo 'deno' > supabase/functions/auth/index.ts" 10 "Mutação pulada"
 
 testar_clone_raso_merge "CI com clone raso insuficiente (depth 1) cai na falha segura e RODA" \
   1 "echo 'novo' >> contrato/openapi.yaml" 0 "falha segura"
