@@ -152,15 +152,15 @@ select is(privado.notificacao_expirada(pg_temp.aviso('fim_sem_checkout', 'fd2000
   false,
   'F-031 7.4: o fim_sem_checkout da casa NÃO expira');
 
-select pg_temp.relogio(interval '5 hours 59 minutes');
+select pg_temp.relogio(interval '59 minutes');
 select is(privado.notificacao_expirada(pg_temp.aviso('fim_sem_checkout', 'fd200000-0000-4000-8000-0000000000e1')),
   false,
-  'fim_sem_checkout ainda vale dentro da janela (fim + 5 h 59)');
+  'fim_sem_checkout ainda vale dentro da janela (fim + 59 min)');
 
-select pg_temp.relogio(interval '6 hours 1 minute');
+select pg_temp.relogio(interval '61 minutes');
 select is(privado.notificacao_expirada(pg_temp.aviso('fim_sem_checkout', 'fd200000-0000-4000-8000-0000000000e1')),
   true,
-  'fim_sem_checkout expira fora da janela fim_sem_checkout_janela (6 h)');
+  'B-019: fim_sem_checkout expira depois de fim + 60 min, a janela do check-out (antes: 6 h)');
 
 -- com o check-out feito, o aviso de check-out pendente não serve mais
 select pg_temp.relogio(interval '2 minutes');
