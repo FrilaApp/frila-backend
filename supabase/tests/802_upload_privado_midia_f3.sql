@@ -1,5 +1,10 @@
 -- RN37/CD-M01: bucket privado, upload, isolamento e ciclo de vida; somente dados sintéticos.
 begin;
+-- 20261113220000 liga foto, chamada direta e perfil rico para todos; este teste parte das chaves
+-- desligadas, como nasceram, e liga o que precisar.
+update privado.recurso set ligado = false where chave in ('chamada_direta', 'perfil_rico');
+update privado.configuracao_app set foto_de_perfil = false;
+delete from privado.recurso_versao_minima where recurso in ('foto_de_perfil', 'chamada_direta', 'perfil_rico');
 select no_plan();
 create function pg_temp.erro(sql text) returns jsonb language plpgsql as $$
 declare msg text; det text;

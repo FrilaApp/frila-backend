@@ -10,6 +10,11 @@
 --   E: equipe, sem aparelho (sem permissão)       F: equipe, aparelho iOS "1.2" (zeros)
 --   G: equipe, aparelho ok, usado só quando o mínimo some   H: equipe, aparelho ok, pausado
 begin;
+-- 20261113220000 liga foto, chamada direta e perfil rico para todos; este teste parte das chaves
+-- desligadas, como nasceram, e liga o que precisar.
+update privado.recurso set ligado = false where chave in ('chamada_direta', 'perfil_rico');
+update privado.configuracao_app set foto_de_perfil = false;
+delete from privado.recurso_versao_minima where recurso in ('foto_de_perfil', 'chamada_direta', 'perfil_rico');
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-07 15:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-830';
