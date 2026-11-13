@@ -1,14 +1,14 @@
-# Guia Operacional · Checagem Diária de Produção e Plantão do Piloto
+# Guia Operacional · Checagem Diária de Produção e Plantão
 
 Documentação e procedimentos do script de inspeção operacional diária do backend Frila.
 
-Cartão: `42` (S4 · Infra · Monitoramento de produção e plantão do piloto).
+Origem: cartão `42` (monitoramento de produção e plantão). O script ainda imprime "plantão do piloto" no cabeçalho: é só o rótulo antigo.
 
 ---
 
 ## 1. Visão Geral e Princípios
 
-O script `scripts/checagem-diaria.sh` foi desenvolvido para fornecer ao operador humano de plantão (Cauê Carneiro / Equipe Operacional) um diagnóstico completo do estado do banco de produção em **menos de 10 minutos** durante a operação do piloto.
+O script `scripts/checagem-diaria.sh` foi desenvolvido para fornecer ao operador humano de plantão (Cauê Carneiro / Equipe Operacional) um diagnóstico completo do estado do banco de produção em **menos de 10 minutos** durante a operação.
 
 ### Princípios de Segurança e Operação
 1. **100% Só Leitura (Zero Mutação):** Todas as consultas são executadas sob `SET default_transaction_read_only = on;`. O script é estritamente não-invasivo e bloqueia qualquer tentativa de escrita no banco de dados.
