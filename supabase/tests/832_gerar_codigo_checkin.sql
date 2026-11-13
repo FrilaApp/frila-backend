@@ -100,7 +100,7 @@ create function pg_temp.ligar() returns void language sql as $$
   update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
 $$;
 
--- Desde 20261112210000 a chave nasce ligada para todas as casas. A massa abaixo nasce no fluxo legado (a
+-- Desde 20261112230000 a chave nasce ligada para todas as casas. A massa abaixo nasce no fluxo legado (a
 -- chave desligada: 'verificado' fecha geolocalizado e verificado na hora) e a chave liga adiante, como antes.
 update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
@@ -140,7 +140,7 @@ select is(pg_temp.recusa((select dono from ids), pg_temp.t('a')), 'sem_permissao
   'chave desligada no global: 403 recurso_desligado');
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
 select is(pg_temp.recusa((select dono from ids), pg_temp.t('a')), 'checkin_pendente',
-  'chave ligada e casa fora da lista: vale para todas (20261112210000), sem 403 recurso_desligado; o profissional segue a 500 m');
+  'chave ligada e casa fora da lista: vale para todas (20261112230000), sem 403 recurso_desligado; o profissional segue a 500 m');
 select is((select count(*)::int from privado.checkin_codigo c where c.turno_id = pg_temp.t('a') and c.codigo is not null), 0,
   'as recusas anteriores não escreveram código nenhum');
 select pg_temp.ligar();

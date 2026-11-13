@@ -312,7 +312,7 @@ select pg_temp.guarda('avisarACaminho', pg_temp.como('cc000000-0000-4000-8000-00
 
 -- ── A presença, com o relógio no turno ────────────────────────────────────────
 set local frila.agora = '2027-01-18 21:05:00+00';
--- Desde 20261112210000 a chave checkin_por_codigo nasce ligada (vale para todas as casas). O primeiro
+-- Desde 20261112230000 a chave checkin_por_codigo nasce ligada (vale para todas as casas). O primeiro
 -- check-in abaixo colhe o caminho clássico (geolocalizado, verificado na hora), então a chave desliga aqui
 -- e liga adiante, no check-in com sinais.
 update privado.recurso set ligado = false where chave = 'checkin_por_codigo';

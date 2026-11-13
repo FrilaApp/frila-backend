@@ -23,7 +23,7 @@ begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
 select plan(78);
--- Isolamento (20261112210000): a chave nasce ligada para todas as casas, então as corridas e o ciclo
+-- Isolamento (20261112230000): a chave nasce ligada para todas as casas, então as corridas e o ciclo
 -- que a CI roda antes da mutação deixam estado de código gravado de turnos de fora. Este arquivo conta
 -- linhas destas tabelas (e a limpeza dos 90 dias devolve um total global), então começa sem as de fora.
 -- A transação deste arquivo desfaz tudo no fim; as tentativas saem em cascata.
@@ -143,7 +143,7 @@ create function pg_temp.painel() returns jsonb language sql as $$
     'c8330000-0000-4000-8000-000000000021', '2027-01-11 00:00:00+00', '2027-01-13 00:00:00+00'))
 $$;
 
--- Desde 20261112210000 a chave nasce ligada para todas as casas. A massa abaixo nasce no fluxo legado (a
+-- Desde 20261112230000 a chave nasce ligada para todas as casas. A massa abaixo nasce no fluxo legado (a
 -- chave desligada: 'verificado' fecha geolocalizado e verificado na hora) e a chave liga adiante, como antes.
 update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
@@ -179,7 +179,7 @@ select is(pg_temp.validar(pg_temp.u('sem_posicao'), pg_temp.t('a'), '123456', 40
 select is(pg_temp.v('bloqueado', '123456', 40), '404:nao_encontrado', 'bloqueio entre o profissional e a casa: 404');
 select is(pg_temp.v('a', '123456', 40), '403:sem_permissao:recurso_desligado', 'chave desligada no global: 403 recurso_desligado');
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
--- Ligada, a casa fora da lista passa pela chave (vale para todas, 20261112210000). Não se chama validar aqui:
+-- Ligada, a casa fora da lista passa pela chave (vale para todas, 20261112230000). Não se chama validar aqui:
 -- com a chave ligada o código errado grava tentativa, e esta seção prova só o que NÃO grava nada.
 select lives_ok($$select privado.exigir_recurso_para('checkin_por_codigo', 'c8330000-0000-4000-8000-000000000021')$$,
   'chave ligada e casa fora da lista: exigir_recurso_para não recusa (vale para todas, sem 403 recurso_desligado)');

@@ -1,6 +1,6 @@
 -- 852_checkin_codigo_vale_para_todos.sql
 --
--- O check-in por código vale para TODOS os estabelecimentos (migração 20261112210000; decisão do Cauê,
+-- O check-in por código vale para TODOS os estabelecimentos (migração 20261112230000; decisão do Cauê,
 -- 12/11/2026). A chave global manda; a lista por casa (privado.recurso_estabelecimento) não é mais lida.
 -- Este teste NÃO liga a chave nem insere casa na lista: o estado de partida é o que a migração deixou.
 -- Cobre:
@@ -208,7 +208,7 @@ select is((pg_temp.checkin('volta_150m', 150))->>'verificacao', 'verificado',
 
 select has_table('privado', 'recurso_estabelecimento', '7.1 a tabela da lista por casa continua lá (nada destrutivo)');
 select matches(obj_description('privado.recurso_estabelecimento'::regclass, 'pg_class'),
-               'Não é mais lida desde 20261112210000', '7.2 a tabela diz que não é mais lida');
+               'Não é mais lida desde 20261112230000', '7.2 a tabela diz que não é mais lida');
 
 select * from finish();
 rollback;

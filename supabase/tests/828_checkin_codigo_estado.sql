@@ -131,10 +131,10 @@ select is((select provolatile::text from pg_proc where oid = 'privado.exigir_rec
   'v', 'exigir_recurso_para é VOLATILE, porque chama public.erro (#455)');
 
 -- ── 2. A chave: só a global manda, e vale para todas as casas (critério 7; leitura 6) ──────
--- Desde 20261112210000 (decisão do Cauê, 12/11/2026) a lista por casa não é mais lida: a chave global
+-- Desde 20261112230000 (decisão do Cauê, 12/11/2026) a lista por casa não é mais lida: a chave global
 -- ligada vale para qualquer estabelecimento. A tabela privado.recurso_estabelecimento fica, sem uso.
 select is((select ligado from privado.recurso where chave = 'checkin_por_codigo'), true,
-  'checkin_por_codigo nasce ligada (vale para todos, 20261112210000)');
+  'checkin_por_codigo nasce ligada (vale para todos, 20261112230000)');
 
 update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 

@@ -103,7 +103,7 @@ select pg_temp.novo(n) from unnest(array[
   'precisao_99', 'precisao_20_0', 'precisao_100_0', 'precisao_nula', 'faixa_150', 'faixa_149', 'faixa_200', 'acima_201', 'mal', 'sem_distancia']) n;
 
 -- ── 1. Chave desligada: nada muda (critério 7) ────────────────────────────────
--- Desde 20261112210000 a chave nasce ligada para todas as casas: a seção 1 a desliga para provar a volta.
+-- Desde 20261112230000 a chave nasce ligada para todas as casas: a seção 1 a desliga para provar a volta.
 update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 select is(pg_temp.resumo(pg_temp.checkin('off', 50, '{"localizacao_simulada": true, "precisao_m": 5, "salto_de_posicao": false}')),
   'geolocalizado verificado exigido=- disponivel=-', 'chave desligada: o sinal suspeito é ignorado e os 50 m verificam na hora');
@@ -117,7 +117,7 @@ select is((select count(*)::int from privado.checkin_codigo where turno_id in (p
 
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
 select is(pg_temp.resumo(pg_temp.checkin('fora', 50, '{"localizacao_simulada": true, "precisao_m": 5, "salto_de_posicao": false}')),
-  'manual pendente exigido=true disponivel=true', 'chave global ligada e casa fora da lista: vale para todas as casas (20261112210000), sem a lista por casa');
+  'manual pendente exigido=true disponivel=true', 'chave global ligada e casa fora da lista: vale para todas as casas (20261112230000), sem a lista por casa');
 
 -- ── 2. Chave ligada, sem sinal suspeito: na Etapa 1 o toque nunca verifica sozinho (manual pendente) ──
 select is(pg_temp.resumo(pg_temp.checkin('sem_sinais', 50)),

@@ -32,7 +32,7 @@ language sql stable security definer set search_path = '' as $$
   select privado.recurso_ligado(p_chave)
 $$;
 comment on function privado.recurso_ligado_para(text, uuid) is
-  'Se a chave vale para o estabelecimento: desde 20261112210000 vale a chave global ligada em privado.recurso, para todas as casas (decisão do Cauê, 12/11/2026). p_estabelecimento fica na assinatura, sem uso, para não quebrar quem chama; a lista por casa (privado.recurso_estabelecimento) deixou de ser lida (RN46).';
+  'Se a chave vale para o estabelecimento: desde 20261112230000 vale a chave global ligada em privado.recurso, para todas as casas (decisão do Cauê, 12/11/2026). p_estabelecimento fica na assinatura, sem uso, para não quebrar quem chama; a lista por casa (privado.recurso_estabelecimento) deixou de ser lida (RN46).';
 
 -- ── 2. Liga a chave ───────────────────────────────────────────────────────────
 
@@ -54,4 +54,4 @@ on conflict (recurso, plataforma)
 -- ── 4. A lista por casa deixa de valer ────────────────────────────────────────
 
 comment on table privado.recurso_estabelecimento is
-  'Não é mais lida desde 20261112210000 (o check-in por código vale para todos, decisão do Cauê, 12/11/2026); fica até uma 2ª fase decidir se sai.';
+  'Não é mais lida desde 20261112230000 (o check-in por código vale para todos, decisão do Cauê, 12/11/2026); fica até uma 2ª fase decidir se sai.';

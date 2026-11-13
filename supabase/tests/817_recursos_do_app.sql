@@ -7,7 +7,7 @@
 begin;
 select plan(14);
 
--- Este arquivo mede as outras três chaves. O check-in por código nasce ligado desde 20261112210000 (vale
+-- Este arquivo mede as outras três chaves. O check-in por código nasce ligado desde 20261112230000 (vale
 -- para todos; a prova é o 852 e o 819), então aqui se desliga para ele ficar false como nas asserções.
 update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 

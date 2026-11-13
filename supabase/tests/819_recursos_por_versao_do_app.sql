@@ -36,10 +36,10 @@ update privado.configuracao_app set foto_de_perfil = true;
 select pg_temp.minimo(r, p, '1.2.0') from unnest(array['foto_de_perfil','chamada_direta','perfil_rico']) r,
   unnest(array['ios','android']) p;
 
--- Desde 20261112210000 o check-in por código nasce com a chave ligada e o mínimo do iOS em 1.2.0
+-- Desde 20261112230000 o check-in por código nasce com a chave ligada e o mínimo do iOS em 1.2.0
 -- (vale para todos): o quarto recurso também vem true quando a versão alcança 1.2.0.
 select is(pg_temp.r('ios', '1.2'), '{"foto_de_perfil": true, "chamada_direta": true, "perfil_rico": true, "checkin_por_codigo": true}'::jsonb,
-  '"1.2" alcança o mínimo "1.2.0": os três vêm true; checkin_por_codigo também (chave ligada e mínimo do iOS, 20261112210000)');
+  '"1.2" alcança o mínimo "1.2.0": os três vêm true; checkin_por_codigo também (chave ligada e mínimo do iOS, 20261112230000)');
 select is(pg_temp.r('ios', '1.10.0'), '{"foto_de_perfil": true, "chamada_direta": true, "perfil_rico": true, "checkin_por_codigo": true}'::jsonb,
   '"1.10.0" passa do mínimo "1.2.0"');
 select is(pg_temp.r('ios', '1.1.9'), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false}'::jsonb,

@@ -115,7 +115,7 @@ create function pg_temp.confirmar_manual(dono uuid, turno uuid) returns jsonb la
   select pg_temp.como(dono, format('select public.confirmar_checkin_manual(%L::uuid)', turno))
 $$;
 
--- A chave checkin_por_codigo vale para todas as casas (20261112210000); nenhuma casa entra na lista por casa.
+-- A chave checkin_por_codigo vale para todas as casas (20261112230000); nenhuma casa entra na lista por casa.
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
 
 -- ── 1. Parâmetros configuráveis ───────────────────────────────────────────────
@@ -136,7 +136,7 @@ select throws_ok($$update privado.regra_checkin_codigo set validade_proximidade_
   '23514', null, '1.7 regra: validade_proximidade_entre_1_e_60_min: mais de 3600 s é recusado');
 
 -- ── 2. Fluxo Legado (chave desligada) ─────────────────────────────────────────
--- Desde 20261112210000 não há casa "fora do piloto": o fluxo legado só existe com a chave desligada (a volta).
+-- Desde 20261112230000 não há casa "fora do piloto": o fluxo legado só existe com a chave desligada (a volta).
 update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
 select pg_temp.novo_turno('legado_200m', (select casa_legado from ids));
