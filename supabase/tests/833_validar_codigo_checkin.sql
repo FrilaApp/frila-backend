@@ -252,13 +252,13 @@ select is(pg_temp.confirmar(pg_temp.t('a')), '409:checkin_ja_confirmado',
   'a casa confirma à mão um turno já verificado pelo código: 409 checkin_ja_confirmado (0.2.69)');
 
 -- ── O acerto sem posição: confiança baixa, que só sai na exportação ──────────
--- Etapa 1: sem localização (distancia_m nula) JAMAIS confirma presença no novo fluxo (recusa 422)
-select is(pg_temp.v('sem_posicao', pg_temp.cod('sem_posicao'), null), '422:codigo_invalido',
-  'Etapa 1: código certo sem posição: recusado com 422 codigo_invalido');
+-- 0.2.76: sem localização (distancia_m nula) recusa com 422 sem_localizacao, sem contar erro 3/6
+select is(pg_temp.v('sem_posicao', pg_temp.cod('sem_posicao'), null), '422:sem_localizacao',
+  '0.2.76: código certo sem posição: recusado com 422 sem_localizacao');
 select results_eq(
-  $$ select c.confianca_baixa, k.faixa, k.resultado from privado.checkin_codigo c
+  $$ select c.confianca_baixa, k.faixa, k.resultado, c.erros from privado.checkin_codigo c
        join privado.checkin_codigo_tentativa k on k.turno_id = c.turno_id where c.turno_id = pg_temp.t('sem_posicao') $$,
-  $$ values (false, 'sem_posicao', 'recusada') $$, 'Etapa 1: sem posição: tentativa recusada na faixa sem_posicao e confianca_baixa permanece false');
+  $$ values (false, 'sem_posicao', 'recusada_sem_conferir', 0) $$, '0.2.76: sem posição: tentativa recusada_sem_conferir na faixa sem_posicao, erros em 0');
 select ok(pg_temp.painel()::text !~ 'confianca', 'a confiança baixa não sai no painel da casa (critério 11)');
 select ok(pg_temp.como(pg_temp.u('sem_posicao'), $$ select public.meus_turnos('2027-01-11 00:00:00+00', '2027-01-13 00:00:00+00', null) $$)::text
           !~ 'confianca', 'nem em meus_turnos do profissional');
@@ -266,28 +266,28 @@ select is((select count(*)::int from information_schema.columns
             where table_schema = 'public' and table_name = 'turno' and column_name ~ 'confianca'), 0,
   'nem no turno, que não tem coluna para ela');
 
--- ── O raio: lido a mais de 100 m, conta; a 100 m, vale ───────────────────────
+-- ── O raio: lido a mais de 50 m, recusa fora_do_raio sem contar erro; a 50 m, vale ───
 create temp table r_raio as select pg_temp.chamar(pg_temp.u('raio'), pg_temp.t('raio'), pg_temp.cod('raio'), 101) as r;
-select is((select (r->>'status')::int || ':' || (r->'corpo'->>'code') from r_raio), '422:codigo_invalido',
-  'código certo lido a 101 m: 422 codigo_invalido (leitura 3)');
+select is((select (r->>'status')::int || ':' || (r->'corpo'->>'code') from r_raio), '422:fora_do_raio',
+  'código certo lido a 101 m: 422 fora_do_raio (leitura 3)');
 select is((select r->'corpo' from r_raio),
-  '{"code": "codigo_invalido", "message": "codigo_invalido", "details": null, "hint": null}'::jsonb,
+  '{"code": "fora_do_raio", "message": "fora_do_raio", "details": null, "hint": null}'::jsonb,
   'o envelope é o de public.erro, sem details: a recusa não diz o motivo');
 select results_eq(
   $$ select k.resultado, k.faixa, k.codigo_gerado_em = c.gerado_em, c.erros, c.codigo is not null
        from privado.checkin_codigo_tentativa k join privado.checkin_codigo c on c.turno_id = k.turno_id
       where k.turno_id = pg_temp.t('raio') $$,
-  $$ values ('recusada', 'acima_de_100_m', true, 1, true) $$,
-  'a recusa grava: a tentativa recusada acima de 100 m, o contador em 1, e o código segue em vigor (D2)');
+  $$ values ('recusada_sem_conferir', 'acima_de_100_m', true, 0, true) $$,
+  'a recusa grava: tentativa recusada_sem_conferir acima de 100 m, contador em 0 (sem erro), código segue em vigor');
 select is((select verificacao::text from public.turno where id = pg_temp.t('raio')), 'pendente', 'a recusa não verifica o turno');
 -- Etapa 1: raio_validacao_m provisório é 50 m; leitura a 50 m valida (a borda do raio)
 select is(pg_temp.v('raio', pg_temp.cod('raio'), 50), '200:verificado', 'Etapa 1: o mesmo código lido a 50 m: vale (a borda do raio provisório)');
 
 -- ── O raio da regra, e o padrão de 100 m sem ela (R1) ────────────────────────
 update privado.regra_checkin_codigo set raio_validacao_m = 50;
-select is(pg_temp.v('regra', pg_temp.cod('regra'), 60), '422:codigo_invalido', 'com o raio da regra em 50 m, a leitura a 60 m conta');
+select is(pg_temp.v('regra', pg_temp.cod('regra'), 60), '422:fora_do_raio', 'com o raio da regra em 50 m, a leitura a 60 m recusa 422 fora_do_raio');
 select is((select faixa || ':' || resultado from privado.checkin_codigo_tentativa where turno_id = pg_temp.t('regra')),
-  'ate_100_m:recusada', 'a faixa é a do contrato (até 100 m), e a tentativa, recusada');
+  'ate_100_m:recusada_sem_conferir', 'a faixa é a do contrato (até 100 m), e a tentativa, recusada_sem_conferir');
 delete from privado.regra_checkin_codigo;
 -- Etapa 1: sem a linha da regra, o raio fallback é 50 m provisório (coalesce)
 select is(pg_temp.v('regra', pg_temp.cod('regra'), 50), '200:verificado', 'Etapa 1: sem a linha da regra, o raio é 50 m (coalesce provisório)');
