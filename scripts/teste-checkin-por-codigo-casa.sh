@@ -70,6 +70,8 @@ TEST_USER_ID="a8440000-0000-4000-8000-000000000999"
 
 limpar_dados() {
   psql_q -c "
+    update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
+    delete from privado.recurso_versao_minima where recurso = 'checkin_por_codigo';
     delete from privado.recurso_estabelecimento where estabelecimento_id = '$TEST_ESTAB_ID';
     delete from public.membro_estabelecimento where estabelecimento_id = '$TEST_ESTAB_ID';
     delete from public.estabelecimento where id = '$TEST_ESTAB_ID';
@@ -99,7 +101,16 @@ else
   falhou "estado inicial deveria ser INATIVO: $saida"
 fi
 
-# 6. Simular aplicação da migração (chave ligada, versão mínima e estabelecimento cadastrado)
+# 6. Estado global sem argumentos
+saida=$( "$SCRIPT" estado )
+if printf '%s\n' "$saida" | grep -q "Estado consolidado: INATIVO" && \
+   printf '%s\n' "$saida" | grep -q "Abrangência:.*todos os estabelecimentos"; then
+  passou "estado global sem argumentos mostra INATIVO e abrangência geral"
+else
+  falhou "estado global deveria ser INATIVO: $saida"
+fi
+
+# 7. Simular aplicação da migração (chave ligada e versão mínima)
 psql_q -c "
   insert into privado.recurso (chave, ligado) values ('checkin_por_codigo', true)
     on conflict (chave) do update set ligado = true;
@@ -114,22 +125,23 @@ psql_q -c "
 saida=$( "$SCRIPT" estado "$TEST_ESTAB_ID" )
 if printf '%s\n' "$saida" | grep -q "Estado consolidado: ATIVO" && \
    printf '%s\n' "$saida" | grep -q "Versão mínima iOS.*1.2.0" && \
-   printf '%s\n' "$saida" | grep -q "Casa no piloto.*cadastrada (true)"; then
-  passou "estado reflete corretamente casa cadastrada (ATIVO)"
+   printf '%s\n' "$saida" | grep -q "Abrangência:.*todos os estabelecimentos"; then
+  passou "estado reflete chave ligada (ATIVO) e versão mínima 1.2.0"
 else
   falhou "estado após migração simulada deveria ser ATIVO: $saida"
 fi
 
-# 7. Simular migração de desativação (delete de recurso_estabelecimento)
+# 8. Simular desativação da chave global (rollback de contingência)
 psql_q -c "
-  delete from privado.recurso_estabelecimento
-   where chave = 'checkin_por_codigo' and estabelecimento_id = '$TEST_ESTAB_ID';
+  update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
+  delete from privado.recurso_versao_minima where recurso = 'checkin_por_codigo' and plataforma = 'ios';
+  delete from privado.recurso_estabelecimento where estabelecimento_id = '$TEST_ESTAB_ID';
 " >/dev/null
 
 saida=$( "$SCRIPT" estado "$TEST_ESTAB_ID" )
 if printf '%s\n' "$saida" | grep -q "Estado consolidado: INATIVO" && \
-   printf '%s\n' "$saida" | grep -q "não cadastrada (false)"; then
-  passou "estado reflete corretamente casa desativada (INATIVO)"
+   printf '%s\n' "$saida" | grep -q "desligada (false)"; then
+  passou "estado reflete contingência de desligamento (INATIVO)"
 else
   falhou "estado após rollback simulado deveria ser INATIVO: $saida"
 fi

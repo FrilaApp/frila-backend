@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Consulta o estado do check-in por código para um estabelecimento específico (RN46).
+# Consulta o estado do check-in por código (RN22, RN46, Contrato 0.2.78).
 #
 # Ferramenta estritamente de leitura (auditoria operacional).
-# Inclusão e remoção de estabelecimentos no piloto ocorrem exclusivamente via migração
-# linear forward-only (com PR, revisão e CI), conforme modelos em docs/operacao/templates/.
+# A chave checkin_por_codigo opera de forma global para todos os estabelecimentos.
+# Alterações de estado ocorrem exclusivamente por migrações com PR, revisão e CI
+# ou procedimentos operacionais auditados fora de turnos em andamento.
 #
 # Uso:
+#   ./scripts/checkin-por-codigo-casa.sh estado
 #   ./scripts/checkin-por-codigo-casa.sh estado <estabelecimento_id>
 #
 # Alvo do banco:
@@ -18,16 +20,18 @@ DB_CONTAINER="${DB_CONTAINER:-supabase_db_frila-backend}"
 
 uso() {
   cat >&2 <<'TXT'
-uso: checkin-por-codigo-casa.sh estado <estabelecimento_id>
+uso: checkin-por-codigo-casa.sh estado [<estabelecimento_id>]
 
 Comandos:
+  estado             consulta o estado global da chave e versão mínima (somente leitura)
   estado <uuid>      consulta o estado do recurso para o estabelecimento (somente leitura)
 
 Opções:
   -h, --help         mostra esta ajuda
 
-Nota: Por governança e LGPD, casas entram e saem do check-in por código
-exclusivamente via migração linear forward-only no repositório.
+Nota: A chave checkin_por_codigo opera de forma global para todos os estabelecimentos
+(contrato 0.2.78). Alterações de estado ocorrem exclusivamente via migração ou
+procedimento operacional auditável fora de turnos em andamento.
 Consulte o roteiro completo em docs/operacao/checkin-por-codigo-casa.md.
 TXT
   exit 1
@@ -77,17 +81,39 @@ verificar_tabelas() {
   local res
   res="$(psql_q -c "
     select (to_regclass('privado.recurso') is not null
-            and to_regclass('privado.recurso_estabelecimento') is not null
             and to_regclass('privado.recurso_versao_minima') is not null)::text
   ")"
   if [ "$res" != "true" ]; then
     printf '✗ Tabelas de controle de recurso não encontradas neste banco.\n' >&2
-    printf '  Aplique as migrações 20261108150000, 20261109101000 e 20261111203000 antes.\n' >&2
+    printf '  Aplique as migrações 20261108150000 e 20261111203000 antes.\n' >&2
     exit 1
   fi
 }
 
-ler_estado() {
+ler_estado_global() {
+  psql_q -c "
+    select coalesce((select ligado::text from privado.recurso where chave = 'checkin_por_codigo'), 'false')
+           || '|' ||
+           coalesce((select versao_minima from privado.recurso_versao_minima where recurso = 'checkin_por_codigo' and plataforma = 'ios'), 'ausente')
+  "
+}
+
+exibir_estado_global() {
+  local raw="$1"
+  local global v_ios
+  IFS='|' read -r global v_ios <<< "$raw"
+
+  if [ "$global" = "true" ]; then
+    printf '  Estado consolidado: ATIVO (check-in por código em vigor para todos os estabelecimentos)\n'
+  else
+    printf '  Estado consolidado: INATIVO (fluxo legado em vigor para todos os estabelecimentos)\n'
+  fi
+  printf '    • Chave global (privado.recurso):                  %s\n' "$([ "$global" = "true" ] && echo "ligada (true)" || echo "desligada ($global)")"
+  printf '    • Versão mínima iOS (privado.recurso_versao_minima): %s\n' "$v_ios"
+  printf '    • Abrangência:                                     todos os estabelecimentos (contrato 0.2.78, sem lista)\n'
+}
+
+ler_estado_estabelecimento() {
   local id="$1"
   local id_escapado
   id_escapado="$(printf '%s' "$id" | sed "s/'/''/g")"
@@ -96,16 +122,14 @@ ler_estado() {
            || '|' ||
            coalesce((select versao_minima from privado.recurso_versao_minima where recurso = 'checkin_por_codigo' and plataforma = 'ios'), 'ausente')
            || '|' ||
-           exists(select 1 from privado.recurso_estabelecimento where chave = 'checkin_por_codigo' and estabelecimento_id = '$id_escapado')::text
-           || '|' ||
            privado.recurso_ligado_para('checkin_por_codigo', '$id_escapado')::text
   "
 }
 
-exibir_estado_formatado() {
+exibir_estado_estabelecimento() {
   local raw="$1"
-  local global v_ios na_casa consolidado
-  IFS='|' read -r global v_ios na_casa consolidado <<< "$raw"
+  local global v_ios consolidado
+  IFS='|' read -r global v_ios consolidado <<< "$raw"
 
   if [ "$consolidado" = "true" ]; then
     printf '  Estado consolidado: ATIVO (check-in por código em vigor para esta casa)\n'
@@ -114,7 +138,7 @@ exibir_estado_formatado() {
   fi
   printf '    • Chave global (privado.recurso):                  %s\n' "$([ "$global" = "true" ] && echo "ligada (true)" || echo "desligada ($global)")"
   printf '    • Versão mínima iOS (privado.recurso_versao_minima): %s\n' "$v_ios"
-  printf '    • Casa no piloto (privado.recurso_estabelecimento):  %s\n' "$([ "$na_casa" = "true" ] && echo "cadastrada (true)" || echo "não cadastrada (false)")"
+  printf '    • Abrangência:                                     todos os estabelecimentos (contrato 0.2.78, sem lista)\n'
 }
 
 # ── Parse de Argumentos ────────────────────────────────────────────────────────
@@ -126,9 +150,9 @@ case "$1" in
     uso
     ;;
   ligar|desligar)
-    printf '✗ O comando '\''%s'\'' não é permitido via script: casas entram e saem do piloto\n' "$1" >&2
-    printf '  exclusivamente por migração com PR, revisão e CI.\n' >&2
-    printf '  Consulte os templates em docs/operacao/templates/ e o roteiro em docs/operacao/checkin-por-codigo-casa.md.\n' >&2
+    printf '✗ O comando '\''%s'\'' não é permitido via script: a chave global é ligada e desligada\n' "$1" >&2
+    printf '  exclusivamente por migração com PR, revisão e CI ou procedimento auditado fora de turnos.\n' >&2
+    printf '  Consulte o roteiro em docs/operacao/checkin-por-codigo-casa.md.\n' >&2
     exit 1
     ;;
   estado)
@@ -139,21 +163,28 @@ case "$1" in
     ;;
 esac
 
-[ $# -eq 2 ] || uso
-estab_id="$2"
-
-validar_uuid "$estab_id"
 verificar_tabelas
 
-estab_nome="$(obter_nome_estabelecimento "$estab_id")"
-if [ -z "$estab_nome" ]; then
-  printf '✗ Estabelecimento não encontrado: %s\n' "$estab_id" >&2
-  printf '  Verifique o ID em public.estabelecimento em %s.\n' "$(alvo)" >&2
-  exit 1
-fi
+if [ $# -eq 1 ]; then
+  printf 'Alvo: %s\n' "$(alvo)"
+  raw_estado="$(ler_estado_global)"
+  exibir_estado_global "$raw_estado"
+  exit 0
+elif [ $# -eq 2 ]; then
+  estab_id="$2"
+  validar_uuid "$estab_id"
+  estab_nome="$(obter_nome_estabelecimento "$estab_id")"
+  if [ -z "$estab_nome" ]; then
+    printf '✗ Estabelecimento não encontrado: %s\n' "$estab_id" >&2
+    printf '  Verifique o ID em public.estabelecimento em %s.\n' "$(alvo)" >&2
+    exit 1
+  fi
 
-printf 'Estabelecimento: %s (%s)\n' "$estab_nome" "$estab_id"
-printf 'Alvo: %s\n' "$(alvo)"
-raw_estado="$(ler_estado "$estab_id")"
-exibir_estado_formatado "$raw_estado"
-exit 0
+  printf 'Estabelecimento: %s (%s)\n' "$estab_nome" "$estab_id"
+  printf 'Alvo: %s\n' "$(alvo)"
+  raw_estado="$(ler_estado_estabelecimento "$estab_id")"
+  exibir_estado_estabelecimento "$raw_estado"
+  exit 0
+else
+  uso
+fi
