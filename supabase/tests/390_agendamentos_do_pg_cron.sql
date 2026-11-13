@@ -136,9 +136,11 @@ select set_eq(
     -- Limpa a trilha do Auth e as sessões paradas há mais de 6 meses (LGPD-J6 T2b, 20261108120000).
     'limpar_trilha_e_sessoes_auth',
     -- Apaga o valor do código de check-in vencido, a cada minuto (check-in por código, LGPD).
-    'apagar_codigos_checkin_vencidos'
+    'apagar_codigos_checkin_vencidos',
+    -- Apaga o convite de membro 30 dias depois de vencer ou ser aceito, uma vez por dia (LGPD, 20261112200000).
+    'apagar_convites_membro_vencidos'
   ],
-  'Os jobs agendados são exatamente os vinte e quatro conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os vinte e cinco conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;
