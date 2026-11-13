@@ -16,6 +16,8 @@
 --
 -- Volta: migração corretiva que recria o corpo de 20260928220000:275 com o nome notificacao_expirada_pelo_relogio.
 
+select set_config('lock_timeout', '2s', true);
+
 create or replace function privado.notificacao_expirada_pelo_relogio(p_notificacao_id uuid)
 returns boolean
 language plpgsql
