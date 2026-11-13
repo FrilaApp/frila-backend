@@ -192,7 +192,7 @@ Antes de submeter o PR e aplicar a migração corretiva, siga rigorosamente este
 - [ ] PR revisado e aprovado por sócio (conforme `AGENTS.md`).
 
 ### Fase 4: Execução em Homologação / Produção
-- [ ] Horário verificado com `./scripts/janela-de-manutencao.sh` (respeito à janela RNF12; a janela de pico da RNF12, quinta a domingo, das 16h às 2h, vale a partir de 10 mil usuários ativos, por decisão do Cauê em 08/11/2026, e a meta de 99,5% segue; para conferir de fato, `RNF12_ATIVA=1`).
+- [ ] Horário: só com a RNF12 ativa. A janela de pico (quinta a domingo, 16h às 2h) volta com 10 mil usuários ativos (decisão do Cauê, 08/11/2026); até lá não há horário proibido. Quando voltar: `RNF12_ATIVA=1 ./scripts/janela-de-manutencao.sh`.
 - [ ] Simulação prévia executada: `./scripts/aplicar-remoto.sh <project_ref> --seco`.
 - [ ] Aplicação efetiva executada pelo `[DONO]`: `./scripts/aplicar-remoto.sh <project_ref>`.
 - [ ] Confirmação de registro: `select version from supabase_migrations.schema_migrations order by version desc limit 3;`.

@@ -136,7 +136,14 @@ jobs:
 
       # A aprovação pode chegar horas depois da tag, então a janela é conferida aqui, quando
       # o job de fato começa, e não na hora da tag.
+      # RNF12 DESLIGADA: a janela de pico (quinta a domingo, 16h às 2h) volta com 10 mil usuários
+      # ativos (decisão do Cauê, 08/11/2026). Até lá este passo não roda. Para religar, crie a
+      # variável do repositório RNF12_ATIVA=1 (`gh variable set RNF12_ATIVA --body 1`). O script
+      # e o teste dele (`scripts/teste-entrega.sh`) ficam como estão.
       - name: Fora da janela proibida (RNF12)
+        if: vars.RNF12_ATIVA == '1'
+        env:
+          RNF12_ATIVA: ${{ vars.RNF12_ATIVA }}
         run: ./scripts/janela-de-manutencao.sh
 
       # Produção só recebe o que já passou por PR e pelo frila-dev.

@@ -128,6 +128,8 @@ público: nenhum segredo vai para o workflow.
 
 ### Janela de migração (RNF12)
 
+**Hoje desligada:** a janela só volta com 10 mil usuários ativos (decisão do Cauê, 08/11/2026). Até lá, o workflow Entrega não confere o horário (o passo só roda com a variável do repositório `RNF12_ATIVA=1`). Quando voltar, vale a regra abaixo.
+
 Migração em `frila-prod` **nunca** de quinta a domingo entre 16h e 2h, horário de
 Brasília (19h às 5h UTC). É o pico do food service, e um turno que não abre porque o
 banco está em manutenção é um turno perdido para as duas partes.
