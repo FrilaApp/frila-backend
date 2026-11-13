@@ -82,13 +82,13 @@ select is(
   pg_temp.anonimo($$ select public.configuracao_do_app('ios') $$),
   jsonb_build_object(
     'plataforma',         'ios',
-    'versao_minima',      '0.1.0',
-    'versao_recomendada', '0.1.0',
+    'versao_minima',      '1.1.0',
+    'versao_recomendada', '1.1.0',
     'url_da_loja',        'https://apps.apple.com/app/id6815311991',
     'mensagem',           null,
     'recursos',           jsonb_build_object('foto_de_perfil', false, 'chamada_direta', false, 'perfil_rico', false,
                                              'checkin_por_codigo', false)),
-  'anon lê a configuração do iOS: a mínima inicial é a versão do build de hoje, e não bloqueia ninguém');
+  'anon lê a configuração do iOS: a mínima em vigor é a versão 1.1.0 (Política v1.1)');
 
 select is(
   (select array_agg(k order by k)
@@ -103,7 +103,7 @@ select is(
 
 select is(
   pg_temp.logado($$ select public.configuracao_do_app('ios') $$) ->> 'versao_minima',
-  '0.1.0',
+  '1.1.0',
   'com sessão, a resposta é a mesma');
 
 -- A função lê a tabela, e não um literal: subir a versão aparece na resposta.
