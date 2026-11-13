@@ -24,7 +24,7 @@ Os números abaixo foram consolidados e remedidos em 01/11/2026 (commit de refer
 | Edge Functions | **10** (inclui `limpar-contas-orfas` e `_compartilhado`) | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
 | Testes unitários em `exportar-turnos` | **44**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
 | Scripts em `scripts/` | **56** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
-| Contrato espelhado | **0.2.63** (igual ao canônico do frila-docs#180; a 0.2.65 chega com o #450 e a 0.2.66 com o #451) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
+| Contrato espelhado | **0.2.63** (igual ao canônico do frila-documentacao#180; a 0.2.65 chega com o #450 e a 0.2.66 com o #451) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
 Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **197** arquivos de teste de regras,
 e alcança **198** com `supabase/tests/carga/gerar_df.sql`, que é gerador de carga e não teste de regra.
@@ -32,16 +32,16 @@ e alcança **198** com `supabase/tests/carga/gerar_df.sql`, que é gerador de ca
 > ## 🟡 O espelho do contrato está em 0.2.63, três versões atrás do canônico (0.2.66)
 >
 > O contrato espelhado em `contrato/openapi.yaml` na `develop` está na versão **0.2.63**, byte a byte
-> igual ao canônico do frila-docs#180 (commit `1ef4533`), que entrou com o #435. O canônico já está
-> em **0.2.66** (frila-docs#193, commit `1cf0ff4f`). A 0.2.64 (frila-docs#185) é só descrição; a
+> igual ao canônico do frila-documentacao#180 (commit `1ef4533`), que entrou com o #435. O canônico já está
+> em **0.2.66** (frila-documentacao#193, commit `1cf0ff4f`). A 0.2.64 (frila-documentacao#185) é só descrição; a
 > 0.2.65 (recursos por versão do app) chega ao backend com o #450, e a 0.2.66 (a chamada e o push
 > pelo mínimo de versão) com o #451. Conferido em 08/11/2026.
 >
 > | | Versão | Origem | SHA-256 |
 > |---|---|---|---|
 > | espelho, `contrato/openapi.yaml` na `develop` | **0.2.63** | `frila-backend` | `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4` |
-> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` em `1ef4533` | **0.2.63** | `frila-docs#180` | `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4` |
-> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` na `main` (`1cf0ff4f`) | **0.2.66** | `frila-docs#193` | `6cb4854e71c5c473d905fd7189d138d062139d639f6c6d2508fec5b4b2defeed` |
+> | canônico, `FrilaApp/frila-documentacao · api/openapi.yaml` em `1ef4533` | **0.2.63** | `frila-documentacao#180` | `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4` |
+> | canônico, `FrilaApp/frila-documentacao · api/openapi.yaml` na `main` (`1cf0ff4f`) | **0.2.66** | `frila-documentacao#193` | `6cb4854e71c5c473d905fd7189d138d062139d639f6c6d2508fec5b4b2defeed` |
 
 > ## 🟢 Instabilidades de concorrência em `Corridas do ciclo` sanadas na raiz
 >
@@ -114,7 +114,7 @@ O repositório conta com mais de 180 PRs mergeados (183 em 16/10, ref develop `7
 2. **PR #339 (E-mail Operacional da Equipe Frila · merge em 31/10):**
    Unificação do endereço de contato operacional para `suporte@frilabr.com` e saneamento das referências documentais e operacionais.
 3. **PR #342 (Espelho do Contrato 0.2.46 · merge em 31/10):**
-   Espelhamento do contrato canônico 0.2.46 do `frila-docs` em `contrato/openapi.yaml` (SHA-256 `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10`), cobrindo push FCM data-only para Android e canais por tipo (RN15).
+   Espelhamento do contrato canônico 0.2.46 do `frila-documentacao` em `contrato/openapi.yaml` (SHA-256 `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10`), cobrindo push FCM data-only para Android e canais por tipo (RN15).
 4. **PR #350 (Expansão pgTAP para Funções Auxiliares do Schema Privado · merge em 31/10):**
    Novas suítes cobrindo preservação de dígito 9 na normalização alfanumérica, rejeição de documento cercado por espaços, máscara de valor em reais e validação de status HTTP 422 em campos obrigatórios.
 5. **PR #351 (CI de Autenticação Remota · merge em 31/10):**
@@ -218,7 +218,7 @@ O que custou caro descobrir na aplicação:
 
 ## O contrato em detalhes
 
-Versão espelhada: **0.2.63** em `contrato/openapi.yaml` (igual ao canônico em `FrilaApp/frila-docs · api/openapi.yaml` no frila-docs#180 / commit `1ef4533`, SHA-256 `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4`). O canônico já está em 0.2.66 (frila-docs#193); a 0.2.65 chega com o #450 e a 0.2.66 com o #451.
+Versão espelhada: **0.2.63** em `contrato/openapi.yaml` (igual ao canônico em `FrilaApp/frila-documentacao · api/openapi.yaml` no frila-documentacao#180 / commit `1ef4533`, SHA-256 `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4`). O canônico já está em 0.2.66 (frila-documentacao#193); a 0.2.65 chega com o #450 e a 0.2.66 com o #451.
 
 Histórico das versões recentes integradas no backend:
 

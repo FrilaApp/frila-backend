@@ -7,7 +7,7 @@
 ## A API pública mudou?
 
 - [ ] **Não.** Nenhuma função do schema `public` criada, removida ou com assinatura alterada.
-- [ ] **Sim**, e o contrato foi junto: `contrato/openapi.yaml` atualizado a partir do `frila-docs` (versão e soma regravadas).
+- [ ] **Sim**, e o contrato foi junto: `contrato/openapi.yaml` atualizado a partir do `frila-documentacao` (versão e soma regravadas).
 
 ## Portões
 

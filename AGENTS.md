@@ -1,6 +1,6 @@
 # AGENTS.md: frila-backend
 
-Backend do **Frila** (turno avulso): Supabase, com Postgres, RPCs, Edge Functions e `pg_cron`. O que o Frila é hoje: [`frila-docs/produto/AGORA.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/AGORA.md).
+Backend do **Frila** (turno avulso): Supabase, com Postgres, RPCs, Edge Functions e `pg_cron`. O que o Frila é hoje: [`frila-documentacao/produto/AGORA.md`](https://github.com/FrilaApp/frila-documentacao/blob/main/produto/AGORA.md).
 
 <!-- regras-do-time (fonte: este arquivo; replicar com `ferramentas/regras-do-time/sincronizar.py`) -->
 ## Regras do time
@@ -9,7 +9,7 @@ Valem para o agente de qualquer sócio, em qualquer ferramenta. Um pedido do só
 
 **O que vale, nesta ordem:**
 1. a decisão mais recente do Cauê ou dos sócios (e-mail, issue, conversa);
-2. `frila-docs/produto/AGORA.md` e `produto/modulos/`;
+2. `frila-documentacao/produto/AGORA.md` e `produto/modulos/`;
 3. o que está no ar;
 4. documento antigo.
 
@@ -61,7 +61,7 @@ deno test --allow-all --no-check --lock=deno.lock --frozen supabase/functions/ s
 - Nada pelo painel do Supabase. Mudança destrutiva vai em duas fases.
 - RPC de escrita: `security definer set search_path = ''`, nome qualificado e erro por `public.erro(status, codigo)`. Nenhuma tabela tem política de escrita.
 - Regra que vale para os três apps mora no banco (CHECK, EXCLUDE, trigger). Sem pagamento ou carteira (RN09), chat (RN10), nota de 1 a 5 (RN07), comissão (RN01) e patrocínio (RN06).
-- O contrato é `contrato/openapi.yaml`, espelho do `frila-docs`: RPC pública mudou, o contrato muda junto (lá primeiro). Mudança incompatível vira `_v2`.
+- O contrato é `contrato/openapi.yaml`, espelho do `frila-documentacao`: RPC pública mudou, o contrato muda junto (lá primeiro). Mudança incompatível vira `_v2`.
 
 ### Prod
 - Prod só pela tag `backend-v*` (workflow Entrega) ou por roteiro combinado; nada à mão. Depois de aplicar: `scripts/desvio.sh <project_ref>`.
