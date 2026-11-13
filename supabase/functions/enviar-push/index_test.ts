@@ -1292,6 +1292,62 @@ Deno.test("Ciclo do token: depois de sair da conta, nenhuma notificação sai pa
   assertEquals(enviados, [], "Aparelho que saiu da conta não recebe push");
 });
 
+// ── D-19: a leitura dos aparelhos falhou não é "sem aparelho" ─────────────────
+//
+// No frila-dev (13/11, 01:30), o avaliacao_disponivel da casa falhou como sem_dispositivo,
+// permanente, com 1 aparelho registrado: a leitura de `dispositivo` falhou e a função seguiu com a
+// lista vazia. Falha da leitura é erro passageiro: nada sai agora e o aviso volta com backoff.
+
+function mockLeituraDeAparelhoFalha(
+  modo: "http_503" | "rede",
+  enviados: string[],
+): typeof fetch {
+  const base = mockCicloDoToken(
+    [{ usuario_id: CONTA_A, token_fcm: TOKEN_COMPARTILHADO }],
+    { "a3000000-0000-4000-8000-0000000000d1": CONTA_A },
+    enviados,
+  );
+  return (input: RequestInfo | URL, init?: RequestInit) => {
+    if (input.toString().includes("/rest/v1/dispositivo?")) {
+      return modo === "rede"
+        ? Promise.reject(new TypeError("error sending request: connection reset"))
+        : Promise.resolve(new Response('{"message":"upstream"}', { status: 503 }));
+    }
+    return base(input, init);
+  };
+}
+
+for (const modo of ["http_503", "rede"] as const) {
+  Deno.test(`D-19: leitura de aparelhos falhou (${modo}): nada sai e o aviso volta como erro transitório`, async () => {
+    const enviados: string[] = [];
+    const chamadasFalha: GravarFalhaPushParams[] = [];
+    const item = await enviarNotificacao(
+      "a3000000-0000-4000-8000-0000000000d1",
+      mockLeituraDeAparelhoFalha(modo, enviados),
+      criarMockSqlClient({ chamadasFalha }),
+    );
+    assertEquals(item.status, "pendente");
+    assertEquals(item.detalhe, "erro_transitorio: leitura_de_aparelho");
+    assertEquals(enviados, []);
+    assertEquals(chamadasFalha.length, 1);
+    assertEquals(chamadasFalha[0].permanente, false, "não vira sem_dispositivo permanente");
+    assertEquals(chamadasFalha[0].motivo, "erro_transitorio: leitura_de_aparelho");
+    assert(typeof chamadasFalha[0].proximaTentativaEm === "string", "volta com backoff");
+  });
+}
+
+Deno.test("D-19: a leitura que responde lista vazia continua sendo sem_dispositivo permanente", async () => {
+  const enviados: string[] = [];
+  const chamadasFalha: GravarFalhaPushParams[] = [];
+  const item = await enviarNotificacao(
+    "a3000000-0000-4000-8000-0000000000d2",
+    mockCicloDoToken([], { "a3000000-0000-4000-8000-0000000000d2": CONTA_B }, enviados),
+    criarMockSqlClient({ chamadasFalha }),
+  );
+  assertEquals(item.detalhe, "sem_dispositivo");
+  assertEquals(chamadasFalha[0]?.permanente, true);
+});
+
 // ── Textos de vaga e teto da RN23 (cartão ee3MT3fH) ───────────────────────────
 //
 // Os textos saem da planilha de notificações do design (proposta aprovada em 28/09):

@@ -833,14 +833,38 @@ export async function processarEnvioPush(
       continue;
     }
 
-    // 2. Busca todos os aparelhos registrados da conta destinatária
-    const dispRes = await fetchFn(
-      `${supabaseUrl}/rest/v1/dispositivo?usuario_id=eq.${n.usuario_id}&select=id,token_fcm,plataforma,vinculo_id,versao_app`,
-      { headers: dbHeaders },
-    );
-
-    let aparelhos: Array<{ id: string; token_fcm: string; plataforma: string; vinculo_id?: string; versao_app?: string | null }> =
-      dispRes.ok ? await dispRes.json() : [];
+    // 2. Busca todos os aparelhos registrados da conta destinatária. Se a LEITURA falha (rede, 5xx),
+    // não se sabe se há aparelho: é erro passageiro, com backoff, e não "sem_dispositivo" permanente
+    // (D-19: no frila-dev o aviso da casa falhou assim com 1 aparelho registrado).
+    let aparelhos: Array<{ id: string; token_fcm: string; plataforma: string; vinculo_id?: string; versao_app?: string | null }>;
+    try {
+      const dispRes = await fetchFn(
+        `${supabaseUrl}/rest/v1/dispositivo?usuario_id=eq.${n.usuario_id}&select=id,token_fcm,plataforma,vinculo_id,versao_app`,
+        { headers: dbHeaders },
+      );
+      if (!dispRes.ok) throw new Error(`dispositivo_http_${dispRes.status}`);
+      const lidos = await dispRes.json();
+      if (!Array.isArray(lidos)) throw new Error("dispositivo_resposta_invalida");
+      aparelhos = lidos;
+    } catch (_e) {
+      const novaTentativa = n.tentativas + 1;
+      const teto = 5;
+      const atingiuTeto = novaTentativa >= teto;
+      const proximaTentativa = atingiuTeto ? null : calcularProximaTentativa(novaTentativa);
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: "erro_transitorio: leitura_de_aparelho",
+        permanente: false,
+        teto: teto,
+        proximaTentativaEm: proximaTentativa ? proximaTentativa.toISOString() : null,
+      });
+      relatorio.push({
+        notificacao_id: n.id,
+        status: atingiuTeto ? "falhou" : "pendente",
+        detalhe: "erro_transitorio: leitura_de_aparelho",
+      });
+      continue;
+    }
 
     // B5e / CD-RF13, revisto na 0.2.66 (portão (c) do corte por versão): o aviso de chamada direta só
     // sai para aparelho cuja versao_app alcança o mínimo de chamada_direta da plataforma, o mesmo que
