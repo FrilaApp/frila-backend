@@ -10,5 +10,5 @@ select set_config('lock_timeout', '2s', true);
 update privado.configuracao_app
    set versao_minima      = '1.1.0',
        versao_recomendada = '1.1.0',
-       atualizado_em      = now()
+       atualizado_em      = privado.agora()
  where plataforma = 'ios';
