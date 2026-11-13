@@ -84,7 +84,7 @@ scripts/                ciclo-completo e demais scripts de operação
 |---|---|
 | local | Cada dev, com `supabase start`. Migração destrutiva e teste de corrida moram aqui |
 | `frila-dev` | Compartilhado: integração com o iOS e o TestFlight |
-| `frila-prod` | Produção (`hbjkkcenbudiezmamiak` · `sa-east-1`): em uso pelo app 0.5.5 no TestFlight e 9 Edge Functions ativas desde 27/10 (fonte: issue #352). Deploy via tag `backend-v*` com aprovação de revisor |
+| `frila-prod` | Produção (`hbjkkcenbudiezmamiak` · `sa-east-1`), usada pelo app da App Store. Deploy via tag `backend-v*` com aprovação de revisor |
 
 A chave de serviço fica fora do app e fora do git: só o agendador e a CI a usam.
 
@@ -107,7 +107,7 @@ Ninguém aplica migração nem publica Edge Function à mão. O workflow `Entreg
 | Tag `backend-v*` num commit da `develop` | Pede aprovação no Environment `frila-prod`, confere a janela abaixo e faz o mesmo no `frila-prod` |
 
 Para publicar em produção: `git tag backend-v0.3.0 origin/develop && git push origin
-backend-v0.3.0`, e um revisor aprova em *Actions*. Dentro da janela proibida o job recusa;
+backend-v0.3.0`, e um revisor aprova em *Actions*. Dentro da janela proibida, quando a RNF12 está ativa (`RNF12_ATIVA=1`), o job recusa;
 rode de novo depois das 2h.
 
 **Desvio.** `scripts/desvio.sh <project_ref>` compara o remoto com o banco que as
@@ -127,6 +127,8 @@ sem o segredo do agendador, porque sem ele `publicar_vaga` falha.
 público: nenhum segredo vai para o workflow.
 
 ### Janela de migração (RNF12)
+
+**Hoje desligada:** a janela só volta com 10 mil usuários ativos (decisão do Cauê, 08/11/2026). Até lá, o workflow Entrega não confere o horário (o passo só roda com a variável do repositório `RNF12_ATIVA=1`). Quando voltar, vale a regra abaixo.
 
 Migração em `frila-prod` **nunca** de quinta a domingo entre 16h e 2h, horário de
 Brasília (19h às 5h UTC). É o pico do food service, e um turno que não abre porque o
@@ -159,9 +161,9 @@ select setconfig from pg_db_role_setting s join pg_roles r on r.oid = s.setrole
  where r.rolname = 'authenticator';   -- traz pgrst.db_pre_request=requisicao.conferir_limite
 ```
 
-### Painel de métricas do piloto e contas da equipe
+### Painel de métricas e contas da equipe
 
-As views de métricas do funil do piloto residem no schema `metrica` (`metrica.funil_geral`, `metrica.funil_por_estabelecimento`, `metrica.funil_por_dia`), com acesso restrito a `service_role`. Podem ser consultadas diretamente pelo terminal:
+As views de métricas do funil residem no schema `metrica` (`metrica.funil_geral`, `metrica.funil_por_estabelecimento`, `metrica.funil_por_dia`), com acesso restrito a `service_role`. Podem ser consultadas diretamente pelo terminal:
 
 ```bash
 ./scripts/funil.sh
@@ -235,4 +237,4 @@ Um cartão do Trello por vez, do quadro ao merge.
 ## Time
 
 Cauê Carneiro · Fabrício Tosta · João Paulo Albuquerque · Júlia Clovandi · Matheus Silva
-— FrilaApp (antes BlendOps), Challenge 18 do Apple Developer Academy.
+— FrilaApp (antes BlendOps).

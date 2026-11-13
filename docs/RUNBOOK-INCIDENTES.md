@@ -57,7 +57,7 @@ O gatilho `trg_despacho_enfileirado` em `pgmq.q_despacho` executa `privado.trg_d
    ```
 2. **Em homologação (`frila-dev`) e produção (`frila-prod`):**
    - **Atenção:** Em instâncias gerenciadas do Supabase (AWS), executar `alter database postgres set frila.agendador_secret = '...'` **falha com erro 42501** (`ERROR: 42501: permission denied to set parameter "frila.agendador_secret"`), pois o usuário `postgres` não possui privilégios de superusuário.
-   - A solução arquitetural definitiva é a adoção do **Supabase Vault** (`vault.decrypted_secrets`, proposta detalhada em `docs/proposta-vault-agendador-secret.md` e PR #187), que permite ler o segredo via catálogo criptografado sem exigir permissões de superusuário nem GUCs globais.
+   - A solução arquitetural definitiva é a adoção do **Supabase Vault** (`vault.decrypted_secrets`, proposta detalhada em `docs/historico/proposta-vault-agendador-secret.md` e PR #187), que permite ler o segredo via catálogo criptografado sem exigir permissões de superusuário nem GUCs globais.
    - Enquanto o Vault aguarda deliberação em produção, a parametrização de GUC em ambientes remotos depende de intervenção administrativa de infraestrutura pelo provedor.
 
 ### Quem Decide / Quem Age

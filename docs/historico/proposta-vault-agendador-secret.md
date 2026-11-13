@@ -4,7 +4,7 @@
 
 **Data:** 15/10/2026  
 **Autor:** Faísca (Backend)  
-**Status:** Proposta técnica (aguarda aprovação do dono do produto)
+**Status:** IMPLEMENTADA em `supabase/migrations/20261018200000_vault_agendador_secret.sql` (PR #187), com as URLs no Vault desde `20261103120000_vault_urls_edge_functions.sql`. Fica aqui como registro do porquê.
 
 ---
 

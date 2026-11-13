@@ -1,8 +1,8 @@
-# Painel de Métricas do Piloto
+# Painel de Métricas
 
-Documentação dos scripts de medição de requisitos não-funcionais de despacho e push (RNF02 e RNF03) e do gerador da página estática para a leitura semanal do piloto do Frila.
+Documentação dos scripts de medição de requisitos não-funcionais de despacho e push (RNF02 e RNF03) e do gerador da página estática para a leitura semanal das métricas do Frila. A página gerada ainda diz "Piloto" no título: é só o rótulo antigo do `scripts/gerar-painel.sh`.
 
-Cartões: `6ab26a53` (Brief B-005, T-0017, T-0020).
+Origem: cartão `6ab26a53`.
 
 ---
 
@@ -56,13 +56,13 @@ O script `scripts/gerar-painel.sh` lê as 7 views do schema `metrica.*` via `psq
 ./scripts/gerar-painel.sh
 
 # Salva diretamente em arquivo temporário
-./scripts/gerar-painel.sh -o /tmp/painel-piloto.html
+./scripts/gerar-painel.sh -o /tmp/painel.html
 
 # Validação contratual de schema e colunas (usado na CI)
-./scripts/gerar-painel.sh --teste -o /tmp/painel-piloto.html
+./scripts/gerar-painel.sh --teste -o /tmp/painel.html
 ```
 
-> **Atenção:** Arquivos HTML gerados para inspeção ou teste devem ser salvos em diretórios efêmeros como `/tmp/painel-piloto.html`, nunca comitados na pasta `docs/`.
+> **Atenção:** Arquivos HTML gerados para inspeção ou teste devem ser salvos em diretórios efêmeros como `/tmp/painel.html`, nunca comitados na pasta `docs/`.
 
 O script respeita a variável de ambiente `DATABASE_URL` se estiver definida; caso contrário, conecta-se automaticamente ao contêiner local `supabase_db_frila-backend` ou à porta padrão `54322`.
 
@@ -88,9 +88,9 @@ Todas as métricas são lidas estritamente do schema isolado `metrica.*` (com pr
 | View | Descrição | Colunas |
 |---|---|---|
 | `metrica.north_star_semanal` | Turnos concluídos (`posicao.estado = 'cumprida'`) com presença verificada (`turno.verificacao = 'verificado'`) agrupados por semana (início na segunda-feira). | `semana_inicio`, `turnos_concluidos_com_presenca_verificada` |
-| `metrica.funil_geral` | Resumo consolidado do piloto com o ciclo completo `publicar → notificar → candidatar → confirmar → check-in → avaliar` e tempo mediano de confirmação. | `vagas_publicadas`, `notificacoes_enviadas`, `candidaturas`, `confirmacoes`, `checkins`, `avaliacoes`, `tempo_mediano_confirmacao`, `tempo_mediano_confirmacao_segundos` |
+| `metrica.funil_geral` | Resumo consolidado do uso com o ciclo completo `publicar → notificar → candidatar → confirmar → check-in → avaliar` e tempo mediano de confirmação. | `vagas_publicadas`, `notificacoes_enviadas`, `candidaturas`, `confirmacoes`, `checkins`, `avaliacoes`, `tempo_mediano_confirmacao`, `tempo_mediano_confirmacao_segundos` |
 | `metrica.funil_por_dia` | Volume diário de vagas, notificações, candidaturas, confirmações, check-ins, avaliações e tempo mediano agrupados pela data da publicação. | `dia`, `vagas_publicadas`, `notificacoes_enviadas`, `candidaturas`, `confirmacoes`, `checkins`, `avaliacoes`, `tempo_mediano_confirmacao`, `tempo_mediano_confirmacao_segundos` |
-| `metrica.funil_por_estabelecimento` | Conversão e tempos medianos segmentados por cada estabelecimento parceiro do piloto. | `estabelecimento_id`, `estabelecimento_nome`, `vagas_publicadas`, `notificacoes_enviadas`, `candidaturas`, `confirmacoes`, `checkins`, `avaliacoes`, `tempo_mediano_confirmacao`, `tempo_mediano_confirmacao_segundos` |
+| `metrica.funil_por_estabelecimento` | Conversão e tempos medianos segmentados por estabelecimento. | `estabelecimento_id`, `estabelecimento_nome`, `vagas_publicadas`, `notificacoes_enviadas`, `candidaturas`, `confirmacoes`, `checkins`, `avaliacoes`, `tempo_mediano_confirmacao`, `tempo_mediano_confirmacao_segundos` |
 | `metrica.funil_por_vaga` | Detalhamento no nível de vaga individual, com posições ofertadas e contagens em cada estágio do funil. | `vaga_id`, `estabelecimento_id`, `estabelecimento_nome`, `dia`, `publicado_em`, `posicoes_ofertadas`, `notificacoes_enviadas`, `candidaturas`, `confirmacoes`, `checkins`, `avaliacoes` |
 | `metrica.funil_confirmacoes` | Registros de posições confirmadas com a duração exata em segundos entre publicação e confirmação. | `posicao_id`, `vaga_id`, `estabelecimento_id`, `dia`, `publicado_em`, `confirmado_em`, `duracao_confirmacao_segundos` |
 | `metrica.eventos_app_por_dia` | Agrupamento diário da telemetria de eventos operacionais emitidos pelos clientes do aplicativo. | `dia`, `evento`, `total` |
