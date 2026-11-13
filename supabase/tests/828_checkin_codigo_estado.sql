@@ -130,31 +130,32 @@ select ok(
 select is((select provolatile::text from pg_proc where oid = 'privado.exigir_recurso_para(text, uuid)'::regprocedure),
   'v', 'exigir_recurso_para é VOLATILE, porque chama public.erro (#455)');
 
--- ── 2. A chave, global e por estabelecimento (critério 7; leitura 6) ──────────
-select is((select ligado from privado.recurso where chave = 'checkin_por_codigo'), false,
-  'checkin_por_codigo nasce desligada');
+-- ── 2. A chave: só a global manda, e vale para todas as casas (critério 7; leitura 6) ──────
+-- Desde 20261112230000 (decisão do Cauê, 12/11/2026) a lista por casa não é mais lida: a chave global
+-- ligada vale para qualquer estabelecimento. A tabela privado.recurso_estabelecimento fica, sem uso.
+select is((select ligado from privado.recurso where chave = 'checkin_por_codigo'), true,
+  'checkin_por_codigo nasce ligada (vale para todos, 20261112230000)');
 
-insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
-select 'checkin_por_codigo', casa from ids;
+update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
 select is(privado.recurso_ligado_para('checkin_por_codigo', (select casa from ids)), false,
-  'chave global desligada: a casa da lista fica desligada');
+  'chave global desligada: a casa fica desligada');
 select is(pg_temp.recusa(format('select privado.exigir_recurso_para(%L, %L)', 'checkin_por_codigo', (select casa from ids))),
   '403 sem_permissao recurso_desligado', 'chave desligada: exigir_recurso_para responde 403 recurso_desligado');
 
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
 
 select is(privado.recurso_ligado_para('checkin_por_codigo', (select casa from ids)), true,
-  'chave ligada e casa na lista: o recurso vale para a casa');
-select is(privado.recurso_ligado_para('checkin_por_codigo', (select outra_casa from ids)), false,
-  'chave ligada e casa fora da lista: fechado por padrão');
+  'chave ligada e casa fora da lista: o recurso vale para a casa (a lista não é mais lida)');
+select is(privado.recurso_ligado_para('checkin_por_codigo', (select outra_casa from ids)), true,
+  'chave ligada: vale também para a outra casa, que não está na lista');
 select is(pg_temp.recusa(format('select privado.exigir_recurso_para(%L, %L)', 'checkin_por_codigo', (select outra_casa from ids))),
-  '403 sem_permissao recurso_desligado', 'casa fora do piloto recebe 403 recurso_desligado mesmo com a chave ligada');
+  null, 'a outra casa, fora da lista, passa com a chave ligada (sem 403 recurso_desligado)');
 select is(pg_temp.recusa(format('select privado.exigir_recurso_para(%L, %L)', 'checkin_por_codigo', (select casa from ids))),
-  null, 'casa do piloto com a chave ligada passa');
+  null, 'a casa, fora da lista, com a chave ligada passa');
 update privado.recurso set ligado = true where chave = 'chamada_direta';
-select is(privado.recurso_ligado_para('chamada_direta', (select casa from ids)), false,
-  'a lista é por chave: a casa do piloto do código não ganha outra chave, mesmo ligada');
+select is(privado.recurso_ligado_para('chamada_direta', (select casa from ids)), true,
+  'sem lista por casa, recurso_ligado_para segue a chave global de qualquer recurso');
 
 -- ── 3. Os números ajustáveis ──────────────────────────────────────────────────
 -- Etapa 1: raio_validacao_m padrão atualizado de 100 para 50 m provisório

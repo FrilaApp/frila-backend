@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.77
+  version: 0.2.78
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -113,6 +113,21 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.78, de 12/11/2026.** O check-in por código vale para todos os estabelecimentos (decisão do Cauê, 12/11/2026, RN22, RN46).
+    - **A chave `checkin_por_codigo` passa a ser só global:** ligada, vale para o turno de qualquer
+      estabelecimento; desligada, para nenhum. Acaba a lista de casas: `fazer_checkin`,
+      `gerar_codigo_checkin` e `validar_codigo_checkin` não olham mais o estabelecimento do turno
+      para decidir.
+    - **`403 sem_permissao` (`recurso_desligado`) nas duas operações do código só com a chave
+      desligada.** O código e o `details` não mudam.
+    - **`RecursosDoApp.checkin_por_codigo`** segue a regra da 0.2.65 (chave e versão mínima por
+      plataforma), sem a ressalva de casa fora da lista.
+    - **Efeito no app publicado (aceito na decisão):** com a chave ligada, o check-in do iOS 1.0 e
+      do 1.1 e do Android fica `manual` e `pendente` em qualquer casa, mesmo a até 200 m, e a casa
+      confirma (`confirmar_checkin_manual`). O fluxo do código só aparece no app que recebe
+      `checkin_por_codigo: true`.
+    - **Não muda:** nenhum campo, operação, status ou código de erro novo; o resto da 0.2.68 a 0.2.77.
 
     **Versão 0.2.77, de 12/11/2026.** Lembretes à casa sobre chegada não confirmada (decisão JP 12/11/2026, RF20, RN15, RN22).
     - **Dois momentos de lembrete por vaga:** quando há vaga com chegada registrada (`checkin` manual)
@@ -4502,15 +4517,15 @@ paths:
         `registro_no_futuro`.
 
         **Check-in por código (0.2.68, Etapa 1).** O app 1.2 manda também `sinais`, o que o aparelho
-        diz sobre a leitura de localização. Com a chave `checkin_por_codigo` ligada para o
-        estabelecimento do turno, o toque nunca verifica sozinho pelo GPS: o check-in fica `manual`,
+        diz sobre a leitura de localização. Com a chave `checkin_por_codigo` ligada (global,
+        para todos os estabelecimentos, 0.2.78), o toque nunca verifica sozinho pelo GPS: o check-in fica `manual`,
         a presença fica `pendente`, a resposta traz `codigo_exigido: true`, e `codigo_disponivel: true`
         se a chegada ocorreu a até 50 m (raio provisório de proximidade) recebida nos últimos 900 s
         (15 minutos provisórios) pelo relógio do servidor. Isso vale com ou sem `sinais`, incluindo
-        apps legados 1.0, 1.1 e Android na casa participante. A casa recebe o aviso
+        apps legados 1.0, 1.1 e Android. A casa recebe o aviso
         `checkin_manual_pendente` e atesta a presença pelo código (`gerar_codigo_checkin` e
         `validar_codigo_checkin`) ou por confirmação manual (`confirmar_checkin_manual`). Com a chave
-        desligada para o estabelecimento, nada muda: o toque a até 200 m verifica na hora por
+        desligada, nada muda: o toque a até 200 m verifica na hora por
         geolocalização (`tipo: geolocalizado`, `verificacao: verificado`), exatamente como acima.
       x-requisitos: [RF13, RN11, RN22, RN46, UC05]
       requestBody:
@@ -4607,7 +4622,7 @@ paths:
 
         Só membro do estabelecimento dono do turno gera: o profissional do turno recebe
         `403 sem_permissao`, como em `confirmar_checkin_manual`. Chave `checkin_por_codigo`
-        desligada para o estabelecimento: `403 sem_permissao` (`recurso_desligado`), sem tocar em
+        desligada (global, 0.2.78): `403 sem_permissao` (`recurso_desligado`), sem tocar em
         dado. Conta excluída (token de conta já anonimizada, RF25): `401 nao_autenticado`. Conta
         suspensa: `403 sem_permissao` (`conta_suspensa`). Turno que não existe, ou com bloqueio
         entre as partes: `404 nao_encontrado`. Sem check-in, com chegada a mais de 50 m (raio
@@ -4691,7 +4706,7 @@ paths:
         qualquer caminho; o app trata como presença verificada e relê o turno. Sem check-in:
         `409 checkin_pendente`. Fora da janela do check-in: `422 fora_da_janela`. Turno que não
         existe, que não é de quem chama ou com bloqueio entre as partes: `404 nao_encontrado`. Chave
-        desligada para o estabelecimento do turno: `403 sem_permissao` (`recurso_desligado`), sem
+        desligada (global, 0.2.78): `403 sem_permissao` (`recurso_desligado`), sem
         tocar em dado nem no contador. Conta excluída (token de conta já anonimizada, RF25):
         `401 nao_autenticado`. Conta suspensa: `403 sem_permissao` (`conta_suspensa`). Conta de
         contratante: `422 perfil_incompativel` (RN25). `codigo` fora do formato de 6 dígitos é
@@ -6735,10 +6750,9 @@ components:
         checkin_por_codigo:
           description: |
             0.2.68. Check-in por código: a tela da casa com o código e a leitura no app do
-            profissional. Segue a regra da 0.2.65 (chave e versão mínima por plataforma). Mesmo com
-            `true`, o estabelecimento de um turno pode estar fora do piloto: aí as duas operações
-            respondem `403 sem_permissao` (`recurso_desligado`) e `fazer_checkin` devolve
-            `codigo_disponivel: false`. Ausente vale `false`.
+            profissional. Segue a regra da 0.2.65 (chave e versão mínima por plataforma). Desde a
+            0.2.78 a chave é só global: com `true`, vale para o turno de qualquer estabelecimento.
+            Ausente vale `false`.
           type: boolean
     TipoMidia:
       type: string
@@ -7665,8 +7679,8 @@ components:
             - type: 'null'
         codigo_exigido:
           description: |
-            0.2.68 (Etapa 1). Só em `fazer_checkin`. Com a chave `checkin_por_codigo` ligada para o
-            estabelecimento, é `true` em todo toque: o check-in nunca verifica sozinho pelo GPS, a
+            0.2.68 (Etapa 1). Só em `fazer_checkin`. Com a chave `checkin_por_codigo` ligada (global,
+            0.2.78), é `true` em todo toque: o check-in nunca verifica sozinho pelo GPS, a
             presença fica `pendente` e exige confirmação da casa (por código ou manual). Com a chave
             desligada, o campo vem ausente (valendo `false`), e o toque segue a verificação por GPS
             legado (verificado a até 200 m). Em `validar_codigo_checkin`, vem ausente. O reenvio

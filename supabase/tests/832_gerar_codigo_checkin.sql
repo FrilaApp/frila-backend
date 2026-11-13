@@ -98,9 +98,11 @@ create function pg_temp.checkin(nome text, distancia integer) returns jsonb lang
 $$;
 create function pg_temp.ligar() returns void language sql as $$
   update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
-  insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
-  values ('checkin_por_codigo', 'c8320000-0000-4000-8000-000000000021') on conflict do nothing;
 $$;
+
+-- Desde 20261112230000 a chave nasce ligada para todas as casas. A massa abaixo nasce no fluxo legado (a
+-- chave desligada: 'verificado' fecha geolocalizado e verificado na hora) e a chave liga adiante, como antes.
+update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
 select pg_temp.novo('a');                       -- o caminho feliz
 select pg_temp.novo('sem_checkin');             -- sem check-in ainda
@@ -137,10 +139,10 @@ select is(pg_temp.recusa((select outro from ids), pg_temp.t('a')), 'sem_permissa
 select is(pg_temp.recusa((select dono from ids), pg_temp.t('a')), 'sem_permissao:recurso_desligado',
   'chave desligada no global: 403 recurso_desligado');
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
-select is(pg_temp.recusa((select dono from ids), pg_temp.t('a')), 'sem_permissao:recurso_desligado',
-  'chave ligada, mas a casa fora da lista: 403 recurso_desligado');
+select is(pg_temp.recusa((select dono from ids), pg_temp.t('a')), 'checkin_pendente',
+  'chave ligada e casa fora da lista: vale para todas (20261112230000), sem 403 recurso_desligado; o profissional segue a 500 m');
 select is((select count(*)::int from privado.checkin_codigo c where c.turno_id = pg_temp.t('a') and c.codigo is not null), 0,
-  'chave desligada para a casa: nenhum código foi escrito');
+  'as recusas anteriores não escreveram código nenhum');
 select pg_temp.ligar();
 
 -- Etapa 1: com a chave ligada, profissional a 500 m recusa com 409 checkin_pendente

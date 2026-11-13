@@ -23,6 +23,11 @@ begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-01-11 21:30:00+00', true);
 select plan(78);
+-- Isolamento (20261112230000): a chave nasce ligada para todas as casas, então as corridas e o ciclo
+-- que a CI roda antes da mutação deixam estado de código gravado de turnos de fora. Este arquivo conta
+-- linhas destas tabelas (e a limpeza dos 90 dias devolve um total global), então começa sem as de fora.
+-- A transação deste arquivo desfaz tudo no fim; as tentativas saem em cascata.
+delete from privado.checkin_codigo;
 
 -- A casa 833 (dono e operador) e um contratante de outra casa.
 create temp table ids as
@@ -131,14 +136,16 @@ create function pg_temp.tentativas(nome text) returns integer language sql as $$
 $$;
 create function pg_temp.ligar() returns void language sql as $$
   update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
-  insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
-  values ('checkin_por_codigo', 'c8330000-0000-4000-8000-000000000021') on conflict do nothing;
 $$;
 create function pg_temp.painel() returns jsonb language sql as $$
   select pg_temp.como('c8330000-0000-4000-8000-000000000001', format(
     'select public.painel_estabelecimento(%L::uuid, %L::timestamptz, %L::timestamptz)',
     'c8330000-0000-4000-8000-000000000021', '2027-01-11 00:00:00+00', '2027-01-13 00:00:00+00'))
 $$;
+
+-- Desde 20261112230000 a chave nasce ligada para todas as casas. A massa abaixo nasce no fluxo legado (a
+-- chave desligada: 'verificado' fecha geolocalizado e verificado na hora) e a chave liga adiante, como antes.
+update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
 select pg_temp.novo(n) from unnest(array['a', 'sem_posicao', 'raio', 'erros', 'vencido', 'regra', 'cancelada',
                                          'r2', 'sem_codigo', 'sem_checkin', 'verificado', 'bloqueado', 'suspenso']) n;
@@ -172,8 +179,10 @@ select is(pg_temp.validar(pg_temp.u('sem_posicao'), pg_temp.t('a'), '123456', 40
 select is(pg_temp.v('bloqueado', '123456', 40), '404:nao_encontrado', 'bloqueio entre o profissional e a casa: 404');
 select is(pg_temp.v('a', '123456', 40), '403:sem_permissao:recurso_desligado', 'chave desligada no global: 403 recurso_desligado');
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
-select is(pg_temp.v('a', '123456', 40), '403:sem_permissao:recurso_desligado',
-  'chave ligada, mas a casa fora da lista: 403 recurso_desligado');
+-- Ligada, a casa fora da lista passa pela chave (vale para todas, 20261112230000). Não se chama validar aqui:
+-- com a chave ligada o código errado grava tentativa, e esta seção prova só o que NÃO grava nada.
+select lives_ok($$select privado.exigir_recurso_para('checkin_por_codigo', 'c8330000-0000-4000-8000-000000000021')$$,
+  'chave ligada e casa fora da lista: exigir_recurso_para não recusa (vale para todas, sem 403 recurso_desligado)');
 select is((select count(*)::int from privado.checkin_codigo) + (select count(*)::int from privado.checkin_codigo_tentativa), 0,
   'as recusas antes do estado não gravam nada: nem contador, nem tentativa');
 select pg_temp.ligar();
