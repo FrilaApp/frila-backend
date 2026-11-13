@@ -312,6 +312,10 @@ select pg_temp.guarda('avisarACaminho', pg_temp.como('cc000000-0000-4000-8000-00
 
 -- ── A presença, com o relógio no turno ────────────────────────────────────────
 set local frila.agora = '2027-01-18 21:05:00+00';
+-- Desde 20261112210000 a chave checkin_por_codigo nasce ligada (vale para todas as casas). O primeiro
+-- check-in abaixo colhe o caminho clássico (geolocalizado, verificado na hora), então a chave desliga aqui
+-- e liga adiante, no check-in com sinais.
+update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
 select pg_temp.guarda('fazerCheckin', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
   $$ select public.fazer_checkin(%L::uuid, 40, '2027-01-18 21:05:00+00'::timestamptz) $$,
@@ -335,8 +339,6 @@ select pg_temp.guarda('fazerCheckin', pg_temp.sem_rastro('cc000000-0000-4000-800
   $$ select public.fazer_checkin(%L::uuid, null, '2027-01-25 21:05:00+00'::timestamptz) $$,
   ((select r from cand2)->>'turno_id')::uuid)));
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
-insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
-select 'checkin_por_codigo', casa_id from ids;
 select pg_temp.guarda('fazerCheckin', pg_temp.como('cc000000-0000-4000-8000-000000000003', format(
   $$ select public.fazer_checkin(%L::uuid, 40, '2027-01-25 21:05:00+00'::timestamptz,
        '{"localizacao_simulada": true, "precisao_m": 12, "salto_de_posicao": false}'::jsonb) $$,
