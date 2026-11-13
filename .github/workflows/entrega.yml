@@ -1,7 +1,8 @@
 name: Entrega
 
 # O que chega à `develop` vai para o frila-dev sem passo manual, e a tag `backend-v*` leva ao
-# frila-prod com aprovação e fora da janela proibida da RNF12 (cartão dke9K3yV, #207).
+# frila-prod com aprovação e, quando a RNF12 está ativa (variável RNF12_ATIVA=1), fora da janela
+# proibida dela (cartão dke9K3yV, #207).
 #
 # Por que não esperar a CI da `develop`: ela leva perto de meia hora, e o critério é o
 # frila-dev em dia em menos de dez minutos. O PR só entra verde, e o que a entrega aplica é
@@ -141,7 +142,8 @@ jobs:
       # variável do repositório RNF12_ATIVA=1 (`gh variable set RNF12_ATIVA --body 1`). O script
       # e o teste dele (`scripts/teste-entrega.sh`) ficam como estão.
       - name: Fora da janela proibida (RNF12)
-        if: vars.RNF12_ATIVA == '1'
+        # Vazia ou 0: pula. Qualquer outro valor roda o script, que recusa o que não for 1 (sai 2).
+        if: vars.RNF12_ATIVA != '' && vars.RNF12_ATIVA != '0'
         env:
           RNF12_ATIVA: ${{ vars.RNF12_ATIVA }}
         run: ./scripts/janela-de-manutencao.sh

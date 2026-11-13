@@ -107,7 +107,7 @@ Ninguém aplica migração nem publica Edge Function à mão. O workflow `Entreg
 | Tag `backend-v*` num commit da `develop` | Pede aprovação no Environment `frila-prod`, confere a janela abaixo e faz o mesmo no `frila-prod` |
 
 Para publicar em produção: `git tag backend-v0.3.0 origin/develop && git push origin
-backend-v0.3.0`, e um revisor aprova em *Actions*. Dentro da janela proibida o job recusa;
+backend-v0.3.0`, e um revisor aprova em *Actions*. Dentro da janela proibida, quando a RNF12 está ativa (`RNF12_ATIVA=1`), o job recusa;
 rode de novo depois das 2h.
 
 **Desvio.** `scripts/desvio.sh <project_ref>` compara o remoto com o banco que as
