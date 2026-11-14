@@ -2093,6 +2093,29 @@ Deno.test("0.2.62: turno_nao_verificado tem titulo e corpo conforme contrato e c
   assert(!notif.body.includes("+55"), "não contém telefone");
 });
 
+// Contrato 0.2.77 / RN15, RN22: Lembretes à casa sobre chegada não confirmada (30min antes e no fim)
+Deno.test("0.2.77: lembrete_30min_fim_turno e lembrete_fim_turno tem titulo e corpo conforme contrato e cabem na tela bloqueada", () => {
+  const lembrete30 = titulosECorposPorTipo("lembrete_30min_fim_turno", {});
+  assertEquals(lembrete30, {
+    title: "Chegada a confirmar",
+    body: "Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos.",
+  });
+  assert(lembrete30.title.length <= 40, "título de lembrete_30min_fim_turno cabe no iPhone SE");
+  assert(lembrete30.body.length <= 110, "corpo de lembrete_30min_fim_turno cabe no iPhone SE");
+  assert(!lembrete30.body.includes("@"), "não contém e-mail");
+  assert(!lembrete30.body.includes("+55"), "não contém telefone");
+
+  const lembreteFim = titulosECorposPorTipo("lembrete_fim_turno", {});
+  assertEquals(lembreteFim, {
+    title: "Turno encerrado",
+    body: "O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas.",
+  });
+  assert(lembreteFim.title.length <= 40, "título de lembrete_fim_turno cabe no iPhone SE");
+  assert(lembreteFim.body.length <= 110, "corpo de lembrete_fim_turno cabe no iPhone SE");
+  assert(!lembreteFim.body.includes("@"), "não contém e-mail");
+  assert(!lembreteFim.body.includes("+55"), "não contém telefone");
+});
+
 // Hardening de Produção (cartão kT7NhMGV): B7, B5, B4, B3
 Deno.test("kT7NhMGV / B7: processarEnvioPush recusa notificacao_id invalido com 422 campo_invalido", async () => {
   const req = new Request("http://localhost/functions/v1/enviar-push", {
@@ -2520,6 +2543,8 @@ Deno.test("RN15 / LGPD: nenhum título ou corpo vaza dados pessoais mesmo com va
     "suspensao",
     "reativacao",
     "turno_nao_verificado",
+    "lembrete_30min_fim_turno",
+    "lembrete_fim_turno",
     "tipo_desconhecido_fallback",
   ];
 

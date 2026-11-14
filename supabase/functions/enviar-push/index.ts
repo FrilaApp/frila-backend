@@ -490,6 +490,17 @@ export function titulosECorposPorTipo(
         title: "Turno não verificado",
         body: "A presença no turno não foi confirmada dentro do prazo. O turno foi encerrado como não verificado.",
       };
+    // 0.2.77: Lembretes à casa sobre chegada não confirmada (RN15, RN22)
+    case "lembrete_30min_fim_turno":
+      return {
+        title: "Chegada a confirmar",
+        body: "Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos.",
+      };
+    case "lembrete_fim_turno":
+      return {
+        title: "Turno encerrado",
+        body: "O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas.",
+      };
     default:
       return {
         title: "Notificação Frila",
