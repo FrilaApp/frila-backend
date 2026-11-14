@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.78
+  version: 0.2.82
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -22,7 +22,8 @@ info:
       parte (perfil público, contato) também sai por função, só com as colunas permitidas. As políticas
       estão na Modelagem de Banco de Dados.
     - **Três portas.** `rest/v1` (tabelas e RPC), `auth/v1` (Supabase Auth, pelo SDK) e `functions/v1`
-      (Edge Functions, só onde o Postgres não basta: arquivos de exportação e exclusão de conta).
+      (Edge Functions, só onde o Postgres não basta: arquivos de exportação, exclusão de conta e os
+      bytes da foto de perfil, que entram por `enviar-midia` e saem por `ler-midia`).
     - **O despacho não aparece aqui.** Notificar os elegíveis, agrupar, respeitar o teto, lembrar,
       alertar e fechar o modo seleção é trabalho do agendador (`pg_cron` + fila `pgmq` + Edge
       Function), fora da requisição (B15). Os clientes só registram o dispositivo e recebem o push.
@@ -101,7 +102,7 @@ info:
     | 422 | `horario_invalido` | Fim antes do início, ou turno no passado |
     | 422 | `inelegivel` | `details`: `turno_sobreposto` (RN21), `perfil_suspenso` (RN13) ou `funcao_incompativel` (RN05) |
     | 422 | `avaliacao_indisponivel` | `details`: `antes_do_fim` ou `sem_presenca_verificada` (RN07) |
-    | 422 | `fora_da_janela` | Check-in ou check-out fora da janela que a regra permite para o turno (RN22) |
+    | 422 | `fora_da_janela` | Check-in ou check-out fora da janela que a regra permite para o turno (RN22); desde a 0.2.80, inclui check-in que chega ao servidor depois do fim previsto |
     | 422 | `fora_do_raio` | Leitura do código de check-in com distância superior ao raio de validação (50 m provisório). Não conta como tentativa errada (0.2.76) |
     | 422 | `sem_localizacao` | Leitura do código de check-in sem posição do aparelho (`distancia_m` nulo). Não conta como tentativa errada; orienta confirmação manual (0.2.76) |
     | 422 | `codigo_invalido` | Código de check-in recusado (0.2.68): errado, vencido ou de outro turno lido dentro do raio de validação (0.2.76). Um código só, sem `details`. Conta como tentativa errada |
@@ -113,6 +114,40 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.82, de 14/11/2026.** A foto de perfil passa a ser lida por um link da Edge Function
+    `ler-midia`, e não mais por uma URL assinada pelo Storage. Nenhum campo, operação ou código muda, e
+    o app 1.2 não precisa mudar: `foto_url` e `Midia.url` continuam uma URL que devolve a imagem.
+    - **Por quê:** a URL assinada era montada no banco com o segredo JWT legado do Storage, que não
+      existe nos ambientes e cuja cópia foi vetada (parecer do Lince Codex, 08/11/2026). Por isso a
+      foto aprovada nunca aparecia.
+    - **`PerfilPublico.foto_url` e `Midia.url`:** `…/functions/v1/ler-midia?midia_id=…&token=…`, com
+      token opaco de 1 h, cunhado na leitura depois de conferir o vínculo. O `GET` dessa URL devolve
+      os bytes (`image/jpeg`, `Cache-Control: private, no-store`), sem redirecionar; qualquer recusa é
+      `404 nao_encontrado`. A cada `GET` o servidor confere de novo o vínculo, o bloqueio, a foto, os
+      titulares e o recurso. O link aceita no máximo 120 `GET`.
+    - **`minhas_midias`:** passa a trazer `url` para a foto `aprovada`, como a 0.2.54 já declarava.
+    - **Leitura em `GET`:** o PostgREST roda `GET` numa transação só-leitura, e ali o link não pode
+      ser gravado. Por isso `foto_url`/`foto_id` (de `perfil_publico`, `candidatos_da_vaga` e
+      `detalhe_chamada`) e `Midia.url` só vêm quando a RPC é chamada por `POST`. Por `GET`, ficam
+      ausentes, e o resto da resposta não muda.
+
+    **Versão 0.2.81, de 13/11/2026.** Só texto, sem mudança de comportamento, de RPC ou de esquema.
+    - **`POST /rpc/fazer_checkout`:** passa a dizer os números da janela que o servidor já aplica desde
+      a migração 20261111180000 (`privado.exigir_janela_checkout`): de 60 minutos antes do início
+      previsto até 60 minutos depois do fim previsto (`fim_em`), pelo `registrado_em`. Fora disso,
+      `422 fora_da_janela`. O app usa a mesma conta para esconder "Fazer check-out" depois de
+      `fim_em + 60 min`; a conta de demonstração continua isenta.
+
+    **Versão 0.2.80, de 13/11/2026.** Check-in recebido depois do fim previsto do turno é recusado com tolerância zero (RN22).
+    - **`POST /rpc/fazer_checkin`:** além da janela aferida pelo relógio do aparelho (`registrado_em`), o servidor recusa com `422 fora_da_janela` qualquer toque que ele **receber** após o término previsto do turno (`fim_em`), sem tolerância, inclusive toques enfileirados offline e enviados após a volta da conectividade.
+    - **Demonstração:** a conta de demonstração/revisão da App Store (`usuario.demonstracao`) continua atravessando a janela de turno sem recusa de `fora_da_janela` (recebe 200 mesmo após o fim).
+
+    **Versão 0.2.79, de 13/11/2026.** Só texto, sem mudança de comportamento, de RPC ou de esquema.
+    - Saem as menções ao "piloto" que já não descrevem o Frila (`MeusDados`, Android, e-mail SMTP, canal
+      de versão e limite diário). "Plano Piloto", o nome da Região Administrativa, fica.
+    - `SinaisDoCheckin` deixa de dizer que o servidor usa os sinais na decisão: desde a 0.2.75 o toque
+      fica pendente com ou sem `sinais` (ver a 0.2.75). O servidor confere só o formato dos três.
 
     **Versão 0.2.78, de 12/11/2026.** O check-in por código vale para todos os estabelecimentos (decisão do Cauê, 12/11/2026, RN22, RN46).
     - **A chave `checkin_por_codigo` passa a ser só global:** ligada, vale para o turno de qualquer
@@ -164,7 +199,7 @@ info:
       ocorre apenas quando a leitura está dentro do raio de validação (até 50 m), mas o código digitado é
       divergente, expirado ou de outro turno. Cada ocorrência avança o contador de tentativas erradas
       (3 bloqueiam por 5 min, 6 encerram o código).
-    - **Registro de recusas em `MeusDados` com limite contra abuso:** para fins de medição do piloto e
+    - **Registro de recusas em `MeusDados` com limite contra abuso:** para fins de medição e
       transparência (LGPD), as recusas por distância ou sem localização são gravadas no histórico de
       tentativas com o resultado `recusada_sem_conferir` e a respectiva `faixa` (`sem_posicao`, `ate_100_m` ou
       `acima_de_100_m`). Como essa recusa não bloqueia a leitura, a gravação de nova linha
@@ -283,8 +318,7 @@ info:
       Nenhum tipo de aviso novo.
     - **Fica para depois:** a migração e as RPCs no backend, com o pgTAP dos critérios de aceite e o
       espelho deste contrato (as duas operações ficam em `PENDENTES` do `contrato_responde.py` até
-      existirem); a tela da casa e a leitura no iOS; o Android, antes de qualquer casa com Android
-      no piloto.
+      existirem); a tela da casa e a leitura no iOS; o Android, antes de qualquer casa usar Android.
 
     **Versão 0.2.67, de 08/11/2026.** Só formato e descrição. Nenhum campo, operação, status ou
     código de erro novo:
@@ -1761,7 +1795,7 @@ paths:
         Envia um código de uso único ao e-mail. Os apps chamam pelo SDK do Supabase (`signInWithOtp`
         com `email`); a rota está aqui para o contrato ficar completo. Cria a conta de autenticação se
         ela ainda não existir. O modelo de e-mail do Supabase leva o código (`{{ .Token }}`), e não o
-        link. O envio de e-mail embutido do Supabase serve só para teste; o piloto usa um provedor de
+        link. O envio de e-mail embutido do Supabase serve só para teste; o Prod usa um provedor de
         e-mail próprio (SMTP).
       security:
         - chaveDoProjeto: []
@@ -1883,7 +1917,7 @@ paths:
         Abaixo dela, a tela de bloqueio substitui o app inteiro e leva à loja; a partir de
         `versao_recomendada`, o aviso é dispensável e aparece uma vez por versão.
 
-        Existe porque a v1.1 sai com o piloto rodando e o app antigo continua nos aparelhos. Sem
+        Existe porque a v1.1 sai com o Frila em uso e o app antigo continua nos aparelhos. Sem
         este canal, um defeito grave não sai de circulação e o backend fica preso à compatibilidade
         com ele para sempre.
 
@@ -2518,6 +2552,8 @@ paths:
       description: |
         0.2.54. Todas as mídias do chamador, em qualquer estado, com o motivo genérico de recusa.
         Nunca traz o código fino da análise, o caminho no Storage nem o registro interno da decisão.
+        Desde a 0.2.82, a foto `aprovada` vem com `url` (link da `ler-midia`) quando a chamada é por
+        `POST`. Por `GET` (transação só-leitura), `url` fica ausente.
       x-requisitos: [RN37, RN46]
       responses:
         '200':
@@ -4511,7 +4547,10 @@ paths:
 
         Toque com `registrado_em` adiantado em mais de 2 minutos em relação ao relógio do servidor é
         recusado com `422 registro_no_futuro`. Toque fora da janela permitida (de 60 minutos antes do
-        início até o fim previsto do turno) é recusado com `422 fora_da_janela` (RN22). A conta de
+        início até o fim previsto do turno) é recusado com `422 fora_da_janela` (RN22). Além da conferência
+        da janela pelo instante informado pelo aparelho (`registrado_em`), o servidor recusa com `422 fora_da_janela`
+        qualquer toque que ele receber após o término previsto do turno (`fim_em`), sem tolerância
+        (tolerância zero, 0.2.80), inclusive toques guardados offline e sincronizados após o fim. A conta de
         demonstração/revisão da App Store (`usuario.demonstracao`) atravessa a janela de turno sem recusa
         de `fora_da_janela` para permitir inspeção assíncrona da diretriz 2.1, mas mantém a trava de
         `registro_no_futuro`.
@@ -4774,8 +4813,12 @@ paths:
         Check-out de um turno que ainda não teve check-in registrado é recusado com `409 checkin_pendente`
         (indica o passo que falta para a tela direcionar a pessoa). Toque com `registrado_em` adiantado
         em mais de 2 minutos em relação ao relógio do servidor recusa `422 registro_no_futuro`, e fora da
-        janela permitida do turno recusa `422 fora_da_janela` (RN22). A conta de demonstração/revisão
-        da App Store é isenta da janela de turno, mantendo a trava de `registro_no_futuro`.
+        janela permitida do turno recusa `422 fora_da_janela` (RN22). A janela do check-out vai de
+        **60 minutos antes do início previsto até 60 minutos depois do fim previsto** (`fim_em`),
+        conferida pelo `registrado_em` (0.2.81). Ela é mais larga que a do check-in, que termina no fim
+        previsto. Para a tela, "Fazer check-out" só faz sentido até `fim_em + 60 min`; depois disso o
+        servidor recusa. A conta de demonstração/revisão da App Store é isenta da janela de turno,
+        mantendo a trava de `registro_no_futuro`.
       x-requisitos: [RF13, RN11, RN22, UC05]
       requestBody:
         required: true
@@ -5150,7 +5193,7 @@ paths:
 
         **Limite diário (0.2.40):** no máximo 5 chamados novos por conta por dia (dia de
         America/Sao_Paulo). O 5 é um valor inicial, ajustável sem mudar o contrato, a reavaliar com
-        dados do piloto. O seguinte recebe `429 limite_excedido`. O limite por minuto de toda
+        dados de uso. O seguinte recebe `429 limite_excedido`. O limite por minuto de toda
         escrita (RNF07) continua valendo à parte.
 
         Recusas: `campo_obrigatorio` com o campo em `details` (`turno_id`, `categoria` ou `chave`);
@@ -5810,6 +5853,68 @@ paths:
           $ref: '#/components/responses/NaoEncontrado'
         '405':
           $ref: '#/components/responses/MetodoNaoPermitido'
+
+  /ler-midia:
+    servers:
+      - url: https://{projeto}.supabase.co/functions/v1
+        variables:
+          projeto:
+            default: frila
+    get:
+      tags: [Cadastro e perfil]
+      operationId: lerMidia
+      summary: Abrir a foto de perfil por um link de leitura
+      description: |
+        0.2.82. É a URL que `PerfilPublico.foto_url` e `Midia.url` já trazem prontas. O app não monta
+        esta URL: abre a que recebeu, sem sessão e sem cabeçalho (`AsyncImage`). Quem autoriza é o
+        token opaco de 1 h, cunhado na leitura depois de conferir o vínculo.
+
+        A cada `GET`, o servidor confere de novo o token (preso àquela mídia, dentro da hora e com
+        no máximo 120 usos), quem recebeu o link (conta ativa, na casa e com vínculo, sem bloqueio,
+        RF26), a foto (`aprovada`, com o titular ativo) e `recursos.foto_de_perfil`. Se tudo vale,
+        responde com os bytes da miniatura. Sem redirecionar: nem o caminho no Storage nem uma URL
+        assinada saem (RN15). Qualquer recusa é o mesmo `404 nao_encontrado`: token errado, vencido
+        ou esgotado, foto removida, vínculo perdido. Toda resposta vem com
+        `Cache-Control: private, no-store`.
+
+        O token é portador: quem o tiver vê a miniatura até vencer, como acontecia com a URL
+        assinada. Ele vai na query, e os registros de requisição do provedor podem guardá-lo.
+      security: []
+      x-requisitos: [RN15, RF26]
+      parameters:
+        - name: midia_id
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: token
+          in: query
+          required: true
+          description: Token opaco de 64 caracteres hexadecimais, vindo da leitura.
+          schema:
+            type: string
+            pattern: '^[0-9a-f]{64}$'
+      responses:
+        '200':
+          description: A miniatura da foto.
+          headers:
+            Cache-Control:
+              description: Sempre `private, no-store`.
+              schema:
+                type: string
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '405':
+          $ref: '#/components/responses/MetodoNaoPermitido'
+        '502':
+          description: O Storage não respondeu ou devolveu um arquivo inválido. O app mostra o marcador de foto.
+        '503':
+          description: O banco não respondeu. O app mostra o marcador de foto.
 
   /entrar-demonstracao:
     servers:
@@ -6797,7 +6902,9 @@ components:
           type: boolean
           description: "`true` quando a mídia está `recusada` ou `nao_publicada`, a nova análise ainda não foi pedida e o arquivo ainda não foi expurgado; `false` depois do expurgo (o app oferece enviar outra foto)."
         url:
-          description: URL assinada por 1 h, só quando `aprovada`.
+          description: |
+            Link de leitura de 1 h da miniatura (`GET /ler-midia`, 0.2.82), só quando `aprovada` e
+            com `recursos.foto_de_perfil` ligado, e só quando `minhas_midias` é chamada por `POST`.
           type: string
           format: uri
         estabelecimento_id:
@@ -7245,7 +7352,9 @@ components:
           type: boolean
         foto_url:
           description: |
-            0.2.54. URL assinada por 1 h da foto `aprovada` (miniatura de 320 px). Só vem para
+            0.2.54; link da `ler-midia` desde a 0.2.82. Link de leitura de 1 h da foto `aprovada`
+            (miniatura de 320 px): o `GET` devolve a imagem (`GET /ler-midia`). Só vem quando a RPC
+            é chamada por `POST`, e para
             leitor com **vínculo de leitura**: foto de profissional, para contratante com
             candidatura numa vaga da casa, turno entre eles ou equipe de confiança; foto de
             estabelecimento, para profissional com candidatura, chamada ou turno com a casa. Sem
@@ -7632,7 +7741,9 @@ components:
     RegistroDeCheckin:
       description: |
         0.2.68. O corpo de `fazer_checkin`: `RegistroDePresenca` mais os `sinais` opcionais. O
-        check-out continua com `RegistroDePresenca` e não aceita `sinais`.
+        check-out continua com `RegistroDePresenca` e não aceita `sinais`. Desde a 0.2.80, toques
+        recebidos pelo servidor após o fim previsto do turno são recusados com `422 fora_da_janela`
+        mesmo que `registrado_em` esteja dentro da janela.
       allOf:
         - $ref: '#/components/schemas/RegistroDePresenca'
         - type: object
@@ -7644,9 +7755,9 @@ components:
       required: [localizacao_simulada, precisao_m, salto_de_posicao]
       description: |
         0.2.68. O que o aparelho diz da leitura de localização do toque, para a proteção por risco.
-        Nenhuma coordenada. O servidor usa os sinais na decisão e não os grava: guarda só se o código
-        foi exigido. O app que manda `sinais` manda os três; sem `sinais`, o servidor entende app sem
-        a proteção (1.0 e 1.1) e segue a regra de antes da 0.2.68.
+        Nenhuma coordenada. Desde a 0.2.75 os sinais não mudam a decisão: o toque fica pendente com ou
+        sem `sinais`, inclusive nos apps 1.0 e 1.1. O servidor confere só o formato (`422 campo_invalido`)
+        e não os grava: guarda só se o código foi exigido. O app que manda `sinais` manda os três.
       properties:
         localizacao_simulada:
           description: A leitura veio de fonte simulada por software (iOS `CLLocationSourceInformation.isSimulatedBySoftware`, Android `Location.isMock`).

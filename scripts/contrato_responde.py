@@ -386,6 +386,13 @@ ISENTAS = {
     ("excluirConta", "401"): "validação de credencial JWT é feita pela Edge Function excluir-conta",
     ("excluirConta", "405"): "método não permitido é decidido pela Edge Function excluir-conta",
     ("excluirConta", "422"): "confirmação explícita no corpo ({ confirmar: true }) é exigida pela Edge Function excluir-conta",
+    # A ler-midia (0.2.82) é chamada pela URL que a leitura entrega, sem sessão; as recusas são da
+    # Edge Function e estão em supabase/functions/ler-midia/index_test.ts. A decisão do banco que
+    # vira o 404 (privado.resolver_link_leitura_midia) está no pgTAP 858.
+    ("lerMidia", "404"): "link inválido, vencido, esgotado ou sem vínculo: o 404 único é decidido pela Edge Function ler-midia (Deno + pgTAP 858)",
+    ("lerMidia", "405"): "método não permitido é decidido pela Edge Function ler-midia",
+    ("lerMidia", "502"): "falha do Storage ao servir a miniatura, tratada pela Edge Function ler-midia",
+    ("lerMidia", "503"): "banco indisponível para a Edge Function ler-midia",
 }
 
 
