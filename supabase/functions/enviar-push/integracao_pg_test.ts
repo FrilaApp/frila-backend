@@ -2,7 +2,7 @@
 // ao banco como lista. Com `${JSON.stringify(lista)}::jsonb`, o postgres.js 3.4.4 codificava de novo e
 // o banco recebia um texto JSON: jsonb_to_recordset falhava SEMPRE (22023) e nenhum aviso chamada_*
 // saía (B-019, achado no ponta a ponta do frila-dev, 13/11/2026). Roda só com FRILA_PG_TESTE_URL
-// apontando para um banco LOCAL com as migrações (ex.: postgresql://postgres:postgres@127.0.0.1:54322/postgres).
+// apontando para o banco LOCAL da stack (porta 54322), com as migrações.
 import "./test_setup.ts";
 import postgres from "npm:postgres@3.4.4";
 import { assertEquals } from "jsr:@std/assert@1.0.19";
