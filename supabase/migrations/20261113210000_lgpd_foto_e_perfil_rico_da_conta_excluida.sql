@@ -9,16 +9,20 @@
 -- Passo novo na rotina diária, privado.limpar_foto_e_perfil_rico_de_contas_anonimizadas(15), para
 -- toda conta anonimizada há 15 dias ou mais:
 --   1. cada mídia da própria pessoa (estabelecimento_id nulo; a foto e o logo da casa são da casa)
---      ainda não removida vira 'removida' e entra na fila expurgo_midia com o original e a
---      miniatura, a mesma mensagem de public.remover_midia. A Edge Function expurgar-midias apaga
---      os dois arquivos do bucket midia-perfil e confirma ('expurgada');
---   2. a linha de privado.midia sai depois de expurgada, quando nenhum pedido dela espera na fila
---      (sem isso, a validação do expurgo não acharia a linha e os arquivos ficariam). Com ela saem,
---      por on delete cascade, as linhas de privado.moderacao_chamada da mídia; a ocorrencia.midia_id
---      vira nula (on delete set null);
+--      ainda não removida vira 'removida', perde o motivo de recusa, e entra na fila
+--      expurgo_midia com o original e a miniatura, a mesma mensagem de public.remover_midia. A Edge
+--      Function expurgar-midias apaga os dois arquivos do bucket midia-perfil e confirma ('expurgada');
+--   2. a varredura que converge: toda mídia dessas contas ainda com arquivo no Storage (o original ou
+--      a miniatura em storage.objects) e sem pedido na fila entra de novo na fila. Cobre a corrida com
+--      a moderar-midia, que pode regravar o original e a miniatura depois do expurgo (revisão do Lince
+--      Codex no #497, P1): o arquivo regravado sai na rodada seguinte;
+--      A LINHA DE privado.midia FICA, como marca 'expurgada' sem motivo de recusa e ligada à conta
+--      já anonimizada. Apagá-la levaria por cascata as linhas de privado.moderacao_chamada e devolveria
+--      ao mês a cota já gasta no provedor (P2), e a validação do expurgo precisa achá-la enquanto
+--      houver pedido;
 --   3. perfil rico: as regiões (profissional_regiao), os serviços com preço (profissional_servico, e
 --      por cascata as especialidades) e atende_todo_df = false.
--- Idempotente: a 2ª rodada não acha nada. Um passo próprio, como os outros, com o bloco de exceção
+-- Idempotente: sem arquivo sobrando, a 2ª rodada não enfileira nada. Um passo próprio, como os outros, com o bloco de exceção
 -- da rotina (uma falha não para os demais).
 --
 -- Sem mudança de superfície: nenhuma função de public mudou.
@@ -35,7 +39,7 @@ declare
   v_corte      timestamptz;
   r            record;
   v_enfileiradas integer := 0;
-  v_linhas     integer := 0;
+  v_reenfileiradas integer := 0;
   v_regioes    integer := 0;
   v_servicos   integer := 0;
   v_todo_df    integer := 0;
@@ -57,7 +61,8 @@ begin
        and m.estado not in ('removida', 'expurgada')
      for update of m skip locked
   loop
-    update privado.midia set estado = 'removida', atualizado_em = privado.agora() where id = r.id;
+    update privado.midia set estado = 'removida', motivo_recusa = null, atualizado_em = privado.agora()
+     where id = r.id;
     perform pgmq.send(
       'expurgo_midia',
       jsonb_build_object(
@@ -70,16 +75,33 @@ begin
     v_enfileiradas := v_enfileiradas + 1;
   end loop;
 
-  -- 2. A linha sai depois de expurgada, sem pedido dela na fila
-  delete from privado.midia m
-   using public.usuario u
-   where u.id = m.dono_usuario_id
-     and u.estado = 'anonimizada'
-     and u.anonimizado_em <= v_corte
-     and m.estabelecimento_id is null
-     and m.estado = 'expurgada'
-     and not exists (select 1 from pgmq.q_expurgo_midia q where q.message ->> 'verificacao_id' = m.id::text);
-  get diagnostics v_linhas = row_count;
+  -- 2. A varredura que converge: arquivo ainda no Storage e sem pedido na fila volta à fila. A linha fica.
+  for r in
+    select m.id, m.storage_path
+      from privado.midia m
+      join public.usuario u on u.id = m.dono_usuario_id
+     where u.estado = 'anonimizada'
+       and u.anonimizado_em <= v_corte
+       and m.estabelecimento_id is null
+       and m.estado in ('removida', 'expurgada')
+       and exists (select 1 from storage.objects o
+                    where o.bucket_id = 'midia-perfil'
+                      and o.name in (m.storage_path, replace(m.storage_path, '.jpg', '_thumb.jpg')))
+       and not exists (select 1 from pgmq.q_expurgo_midia q where q.message ->> 'verificacao_id' = m.id::text)
+     limit 500
+  loop
+    update privado.midia set motivo_recusa = null where id = r.id and motivo_recusa is not null;
+    perform pgmq.send(
+      'expurgo_midia',
+      jsonb_build_object(
+        'verificacao_id', r.id::text,
+        'bucket', 'midia-perfil',
+        'caminhos', jsonb_build_array(r.storage_path, replace(r.storage_path, '.jpg', '_thumb.jpg')),
+        'origem', 'foto_perfil'
+      )
+    );
+    v_reenfileiradas := v_reenfileiradas + 1;
+  end loop;
 
   -- 3. O perfil rico
   delete from public.profissional_regiao pr
@@ -103,14 +125,14 @@ begin
 
   return jsonb_build_object(
     'midias_enfileiradas', v_enfileiradas,
-    'midias_apagadas',     v_linhas,
+    'midias_reenfileiradas', v_reenfileiradas,
     'regioes_apagadas',    v_regioes,
     'servicos_apagados',   v_servicos,
     'atende_todo_df_desligado', v_todo_df);
 end $$;
 
 comment on function privado.limpar_foto_e_perfil_rico_de_contas_anonimizadas(integer) is
-  'LGPD art. 16 e 18, VI (B-019): para conta anonimizada há p_dias (15) ou mais, põe cada mídia da pessoa (estabelecimento_id nulo) em removida e na fila expurgo_midia (original e miniatura, bucket midia-perfil), apaga a linha já expurgada sem pedido na fila, e apaga o perfil rico (profissional_regiao, profissional_servico) e desliga atende_todo_df. Idempotente. Passo da rotina diária.';
+  'LGPD art. 16 e 18, VI (B-019): para conta anonimizada há p_dias (15) ou mais, põe cada mídia da pessoa (estabelecimento_id nulo) em removida, sem motivo de recusa, e na fila expurgo_midia (original e miniatura, bucket midia-perfil); põe de novo na fila a que ainda tem arquivo em storage.objects sem pedido (corrida com a moderar-midia); a linha fica como marca expurgada (a cota do mês em moderacao_chamada se preserva); e apaga o perfil rico (profissional_regiao, profissional_servico) e desliga atende_todo_df. Idempotente. Passo da rotina diária.';
 
 revoke execute on function privado.limpar_foto_e_perfil_rico_de_contas_anonimizadas(integer) from public, anon, authenticated;
 grant  execute on function privado.limpar_foto_e_perfil_rico_de_contas_anonimizadas(integer) to service_role;

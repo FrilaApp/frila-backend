@@ -4,17 +4,19 @@
 -- (migração 20261113210000; Bússola, condição para ligar a foto; LGPD art. 16 e 18, VI; B-019).
 -- Cobre:
 --   1. A função existe, só o service_role executa, e a rotina diária a chama (chave própria, sem falha);
---   2. Conta anonimizada há 16 dias: a foto aprovada e a em análise viram 'removida' e entram na fila
---      expurgo_midia com o original e a miniatura; a já expurgada sem pedido na fila sai da tabela;
+--   2. Conta anonimizada há 16 dias: a foto aprovada e a em análise viram 'removida', sem motivo de recusa, e entram na
+--      fila expurgo_midia com o original e a miniatura; a já expurgada sem arquivo fica como marca, sem pedido;
 --      regiões, serviços e atende_todo_df saem;
 --   3. Não toca: a foto da casa (estabelecimento_id), nem a conta anonimizada há 10 dias, nem a ativa;
---   4. Idempotente; depois que a Edge Function confirma o expurgo e tira o pedido da fila, a linha sai.
+--   4. Idempotente; a linha fica (marca 'expurgada') e a cota do mês em moderacao_chamada não cai (Lince
+--      Codex no #497, P2); a moderação que regrava o arquivo depois do expurgo (P1) é varrida na rodada
+--      seguinte: o arquivo em storage.objects sem pedido volta à fila.
 -- Massa sintética; o arquivo desfaz tudo no rollback.
 
 begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-02-10 12:00:00+00', true);
-select plan(24);
+select plan(29);
 
 select pgmq.purge_queue('expurgo_midia');
 
@@ -72,6 +74,10 @@ select m, u, e, dt, 'foto_perfil', 'perfil/' || m || '.jpg', 'image/jpeg', 1000,
     (m_recente,   u_recente, null::uuid, 'profissional',    'aprovada'),
     (m_ativa,     u_ativa,   null::uuid, 'profissional',    'aprovada')) v (m, u, e, dt, st);
 
+update privado.midia set motivo_recusa = 'Motivo 856' where id = (select m_aprovada from ids);
+insert into privado.moderacao_chamada (midia_id, provedor, mes)
+select m_aprovada, 'azure', '2027-02' from ids;
+
 -- Exclusões: três contas; duas há 16 dias, uma há 10
 select privado.excluir_conta(u_prof) from ids;
 select privado.excluir_conta(u_casa) from ids;
@@ -99,14 +105,15 @@ create temp table r1 as select privado.executar_retencao_diaria() as r;
 select is((select r -> 'falhas' from r1), '[]'::jsonb, 'a rotina diária roda sem falha');
 select is((select r -> 'foto_e_perfil_rico_de_contas_excluidas' ->> 'midias_enfileiradas' from r1), '2',
           'a rotina diária chama a limpeza: 2 mídias da conta excluída na fila');
-select is((select r -> 'foto_e_perfil_rico_de_contas_excluidas' ->> 'midias_apagadas' from r1), '1',
-          'a já expurgada, sem pedido na fila, sai da tabela');
+select is((select r -> 'foto_e_perfil_rico_de_contas_excluidas' ->> 'midias_reenfileiradas' from r1), '0',
+          'a já expurgada, sem arquivo no Storage, não volta à fila');
 
 -- ── 2. A conta excluída há 16 dias ────────────────────────────────────────────
 
 select is(pg_temp.estado((select m_aprovada from ids)), 'removida', 'a foto aprovada vira removida');
 select is(pg_temp.estado((select m_analise from ids)), 'removida', 'a foto em análise vira removida');
-select is(pg_temp.estado((select m_expurgada from ids)), 'apagada', 'a linha já expurgada some');
+select is(pg_temp.estado((select m_expurgada from ids)), 'expurgada', 'a linha já expurgada fica como marca');
+select is((select motivo_recusa from privado.midia where id = (select m_aprovada from ids)), null, 'o motivo de recusa sai');
 select is((select q.message from pgmq.q_expurgo_midia q, ids
             where q.message ->> 'verificacao_id' = ids.m_aprovada::text),
           (select jsonb_build_object('verificacao_id', m_aprovada::text, 'bucket', 'midia-perfil',
@@ -139,8 +146,20 @@ select is(pg_temp.estado((select m_aprovada from ids)), 'removida', 'com o pedid
 select privado.confirmar_expurgo_midia_perfil(m) from ids, lateral (values (m_aprovada), (m_analise)) v (m);
 select pgmq.delete('expurgo_midia', q.msg_id) from pgmq.q_expurgo_midia q;
 
-select is(privado.limpar_foto_e_perfil_rico_de_contas_anonimizadas(15) ->> 'midias_apagadas', '2', 'depois do expurgo confirmado, as 2 linhas saem');
-select is(pg_temp.estado((select m_aprovada from ids)) || ',' || pg_temp.estado((select m_analise from ids)), 'apagada,apagada', 'nenhuma linha da conta excluída fica');
+select is(privado.limpar_foto_e_perfil_rico_de_contas_anonimizadas(15) ->> 'midias_reenfileiradas', '0', 'sem arquivo sobrando, nada volta à fila');
+select is(pg_temp.estado((select m_aprovada from ids)) || ',' || pg_temp.estado((select m_analise from ids)), 'expurgada,expurgada',
+          'as linhas ficam como marca expurgada');
+select is((select count(*)::int from privado.moderacao_chamada where mes = '2027-02' and provedor = 'azure'), 1,
+          'P2: a cota já gasta no mês não cai');
+
+-- P1: a moderação regrava o original e a miniatura depois do expurgo
+insert into storage.objects (bucket_id, name)
+select 'midia-perfil', p from ids, lateral (values ('perfil/' || m_analise || '.jpg'), ('perfil/' || m_analise || '_thumb.jpg')) v (p);
+select is(privado.limpar_foto_e_perfil_rico_de_contas_anonimizadas(15) ->> 'midias_reenfileiradas', '1',
+          'P1: o arquivo regravado tarde volta à fila na rodada seguinte');
+select is(pg_temp.na_fila((select m_analise from ids)), 1, 'um pedido só para a mídia regravada');
+select is(privado.limpar_foto_e_perfil_rico_de_contas_anonimizadas(15) ->> 'midias_reenfileiradas', '0',
+          'com o pedido já na fila, não duplica');
 select is(pg_temp.estado((select m_casa from ids)), 'aprovada', 'a foto da casa segue');
 
 select * from finish();
