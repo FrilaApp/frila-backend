@@ -561,7 +561,7 @@ export function criarSqlClient(deps?: Dependencias): SqlClient {
         const lista = aparelhos.map((a) => ({ id: a.id, plataforma: a.plataforma, versao_app: a.versao_app ?? null }));
         const res = await sql`
           select x.id
-            from jsonb_to_recordset(${JSON.stringify(lista)}::jsonb) as x(id text, plataforma text, versao_app text)
+            from jsonb_to_recordset(${sql.json(lista)}) as x(id text, plataforma text, versao_app text)
            where privado.recurso_na_versao('chamada_direta', x.plataforma, x.versao_app)
         `;
         return res.map((r) => String(r.id));
