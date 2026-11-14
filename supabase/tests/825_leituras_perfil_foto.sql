@@ -5,14 +5,15 @@
 --
 -- As duas chaves saem juntas ou nenhuma sai. Cada condição de ausência tem um caso próprio, que
 -- liga e desliga UMA coisa por vez a partir do caso positivo: chave desligada, sem vínculo, foto
--- que não está aprovada, titular suspenso, titular com conta encerrada, segredo do Storage ausente
--- e leitor do papel errado. Sem o caso positivo verde antes, um negativo verde não provaria nada.
+-- que não está aprovada, titular suspenso, titular com conta encerrada e leitor do papel errado.
+-- Desde o B-020 (0.2.82), foto_url é o link da Edge Function ler-midia, sem o segredo legado do
+-- Storage; a resolução do link se prova no 858. Sem o caso positivo verde antes, um negativo verde não provaria nada.
 
 begin;
 insert into privado.ambiente values (true, true) on conflict (id) do update set eh_teste = true;
 set local frila.agora = '2027-01-11 09:00:00+00';
 set local frila.agendador_secret = 'segredo-de-teste-825';
-set local frila.storage_url = 'http://storage.invalid/storage/v1';
+set local frila.ler_midia_function_url = 'http://funcoes.invalid/functions/v1/ler-midia';
 select no_plan();
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
@@ -79,9 +80,9 @@ insert into privado.midia (id, dono_usuario_id, estabelecimento_id, dono_tipo, t
  ('c8250000-0000-4000-8000-0000000000b1','c8250000-0000-4000-8000-000000000003',
    (select id from public.estabelecimento where nome = 'Bar Foto X'),'estabelecimento','foto_perfil','perfil/c8250000-0000-4000-8000-0000000000b1.jpg','image/jpeg',1000,'aprovada');
 
--- O recurso ligado e o segredo do Storage no Vault.
+-- O recurso ligado, e nenhum segredo legado do Storage no Vault.
 update privado.configuracao_app set foto_de_perfil = true;
-select vault.create_secret('segredo-de-teste-storage-825-0123456789', 'storage_jwt_secret');
+delete from vault.secrets where name in ('storage_jwt_secret', 'ler_midia_function_url');
 
 create function pg_temp.casa_x() returns uuid language sql as
   $$ select id from public.estabelecimento where nome = 'Bar Foto X' $$;
@@ -110,25 +111,8 @@ select is(pg_temp.perfil_de('c8250000-0000-4000-8000-000000000003', 'c8250000-00
   'c8250000-0000-4000-8000-0000000000a1', 'profissional, leitor com candidatura: foto_id é o id da mídia aprovada');
 
 select matches(pg_temp.perfil_de('c8250000-0000-4000-8000-000000000003', 'c8250000-0000-4000-8000-000000000011') ->> 'foto_url',
-  '^http://storage\.invalid/storage/v1/object/sign/midia-perfil/perfil/c8250000-0000-4000-8000-0000000000a1_thumb\.jpg\?token=[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$',
-  'foto_url aponta para a miniatura, no formato de URL assinada do Storage');
-
--- O token: carga {url, scope=download, iat, exp = iat + 3600} e assinatura HS256 refeita à parte.
-create temp table tok as
-  select split_part(pg_temp.perfil_de('c8250000-0000-4000-8000-000000000003', 'c8250000-0000-4000-8000-000000000011') ->> 'foto_url', 'token=', 2) as t;
-create function pg_temp.b64u_json(p text) returns jsonb language sql as
-  $$ select convert_from(decode(translate(p, '-_', '+/') || repeat('=', (4 - length(p) % 4) % 4), 'base64'), 'utf8')::jsonb $$;
-
-select is(pg_temp.b64u_json(split_part((select t from tok), '.', 2)) ->> 'url',
-  'midia-perfil/perfil/c8250000-0000-4000-8000-0000000000a1_thumb.jpg', 'token: url = bucket/miniatura');
-select is(pg_temp.b64u_json(split_part((select t from tok), '.', 2)) ->> 'scope', 'download', 'token: scope download');
-select is((pg_temp.b64u_json(split_part((select t from tok), '.', 2)) ->> 'exp')::bigint
-        - (pg_temp.b64u_json(split_part((select t from tok), '.', 2)) ->> 'iat')::bigint,
-  3600::bigint, 'token: vale por 1 hora');
-select is(split_part((select t from tok), '.', 3),
-  translate(rtrim(encode(extensions.hmac(split_part((select t from tok), '.', 1) || '.' || split_part((select t from tok), '.', 2),
-    'segredo-de-teste-storage-825-0123456789', 'sha256'), 'base64'), '='), '+/', '-_'),
-  'token: assinatura HS256 com o segredo do Vault, refeita de forma independente');
+  '^http://funcoes\.invalid/functions/v1/ler-midia\?midia_id=c8250000-0000-4000-8000-0000000000a1&token=[0-9a-f]{64}$',
+  'foto_url é o link de 1 h da ler-midia, com o id da mídia e um token opaco (B-020)');
 
 select ok(position('c8250000-0000-4000-8000-0000000000a1.jpg' in
     pg_temp.perfil_de('c8250000-0000-4000-8000-000000000003', 'c8250000-0000-4000-8000-000000000011')::text) = 0,
@@ -172,13 +156,12 @@ select ok(not (pg_temp.perfil_de('c8250000-0000-4000-8000-000000000003', 'c82500
   'titular com conta encerrada: as duas chaves ausentes');
 update public.usuario set estado = 'ativa', anonimizado_em = null where id = 'c8250000-0000-4000-8000-000000000001';
 
--- 3.5 segredo do Storage ausente: a foto some, e a leitura do perfil continua de pé
-delete from vault.secrets where name = 'storage_jwt_secret';
-select ok(not (pg_temp.perfil_de('c8250000-0000-4000-8000-000000000003', 'c8250000-0000-4000-8000-000000000011') ?| array['foto_url','foto_id']),
-  'sem segredo do Storage: as duas chaves ausentes');
+-- 3.5 sem o segredo legado do Storage (ausente desde o começo deste arquivo): a foto vem e a
+-- leitura do perfil não falha. Era o defeito do P6: a foto aprovada nunca aparecia (B-020).
+select ok(pg_temp.perfil_de('c8250000-0000-4000-8000-000000000003', 'c8250000-0000-4000-8000-000000000011') ?& array['foto_url','foto_id'],
+  'sem segredo legado do Storage: as duas chaves vêm');
 select is(pg_temp.erro_ou_nulo('c8250000-0000-4000-8000-000000000003', 'c8250000-0000-4000-8000-000000000011'), 'ok',
-  'sem segredo do Storage: perfil_publico NÃO falha');
-select vault.create_secret('segredo-de-teste-storage-825-0123456789', 'storage_jwt_secret');
+  'sem segredo legado do Storage: perfil_publico NÃO falha');
 
 -- 3.6 leitor do papel errado (profissional lendo foto de profissional)
 select ok(not (pg_temp.perfil_de('c8250000-0000-4000-8000-000000000005', 'c8250000-0000-4000-8000-000000000011') ?| array['foto_url','foto_id']),
