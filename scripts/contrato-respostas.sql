@@ -549,6 +549,8 @@ select pg_temp.guarda('erro:contestacao_ja_aberta',
 -- ── Chamada direta, F4 parte A (0.2.55) ───────────────────────────────────────
 -- O Pê Três está na equipe de confiança (vínculo na v1.1, RN28). O Pê do Contrato, com início
 -- em 1 h, cai em 422 profissional_indisponivel. O interruptor nasce desligado: mede o 403.
+-- 20261113220000 liga a chamada direta para todos: desliga aqui para medir o 403 recurso_desligado.
+update privado.recurso set ligado = false where chave = 'chamada_direta';
 create function pg_temp.chamar(prof text, daqui interval default '1 day') returns text
 language sql as $$ select format($c$ select public.chamar_profissional(chave => gen_random_uuid(),
   profissional_id => %L,
@@ -1073,6 +1075,8 @@ select pg_temp.guarda('promete:atualizarPerfilProfissional:404',
 
 -- F2 atrás da chave perfil_rico (RN46, contrato 0.2.60): desligada, a F2 recusa com 403
 -- recurso_desligado. Colhe a recusa e liga a chave antes de qualquer outra colheita da F2.
+-- 20261113220000 liga o perfil rico para todos: desliga aqui para colher o 403 recurso_desligado.
+update privado.recurso set ligado = false where chave = 'perfil_rico';
 select pg_temp.guarda('promete:meuPerfilDetalhado:403', pg_temp.observado('cc000000-0000-4000-8000-000000000002', $$select public.meu_perfil_detalhado()$$));
 update privado.recurso set ligado = true where chave = 'perfil_rico';
 

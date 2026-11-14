@@ -9,6 +9,11 @@
 -- A matriz inclui as três RPCs F2 nos quatro papéis (220 asserções no total).
 
 begin;
+-- 20261113220000 liga foto, chamada direta e perfil rico para todos; este teste parte das chaves
+-- desligadas, como nasceram, e liga o que precisar.
+update privado.recurso set ligado = false where chave in ('chamada_direta', 'perfil_rico');
+update privado.configuracao_app set foto_de_perfil = false;
+delete from privado.recurso_versao_minima where recurso in ('foto_de_perfil', 'chamada_direta', 'perfil_rico');
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = extensions, public, pg_temp;
