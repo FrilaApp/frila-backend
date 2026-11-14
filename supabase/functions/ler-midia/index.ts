@@ -1,4 +1,4 @@
-// Edge Function `ler-midia`: abre a foto de perfil por um link temporário (B-020, contrato 0.2.82).
+// Edge Function `ler-midia`: serve a foto de perfil por um link temporário (B-020, contrato 0.2.82).
 //
 // As leituras (`perfil_publico`, `candidatos_da_vaga`, `detalhe_chamada`, `minhas_midias`) conferem
 // o vínculo e devolvem `foto_url`/`url` = esta função com `midia_id` e um token opaco de 1 h (o
@@ -6,27 +6,30 @@
 //
 // A ordem:
 //   1. Método GET, formato do id e do token. Formato ruim é 404, igual a token errado.
-//   2. `privado.resolver_link_leitura_midia` RECONFERE tudo na hora: hash e validade, foto
-//      aprovada, titular ativo, recurso ligado, bloqueio e vínculo. Devolve o caminho da
-//      miniatura, ou nulo. Toda recusa é o mesmo 404: quem adivinha não aprende nada.
-//   3. Storage com a credencial de serviço, que só existe no ambiente desta função:
-//      `POST /object/sign/...` (createSignedUrl) por 60 s, e 302 para a URL assinada. Bucket e
-//      caminho vêm do banco, nunca do pedido. Nenhum segredo no Postgres.
+//   2. `privado.resolver_link_leitura_midia` RECONFERE tudo na hora e conta o uso: hash preso à
+//      mídia, validade, teto de 120 usos, leitor ativo, foto aprovada, titular ativo, recurso
+//      ligado, casa atual, bloqueio e vínculo. Devolve o caminho da miniatura, ou nulo. Toda
+//      recusa é o mesmo 404: quem adivinha não aprende nada.
+//   3. Baixa a miniatura do Storage com a credencial de serviço (só no ambiente desta função) e
+//      SERVE OS BYTES (`image/jpeg`). Sem redirecionamento: nem o caminho nem um link assinado
+//      saem, e a CDN não entra (parecer do Lince Codex, B-020). Bucket e caminho vêm do banco.
 //
+// Toda resposta, de sucesso ou de erro, vai com `Cache-Control: private, no-store`.
 // verify_jwt desligado (config.toml): a imagem chega sem sessão por desenho; quem autoriza é o
-// token. Nada de token, URL assinada ou caminho em log: só o evento, o status e o midia_id.
+// token. Nada de token ou caminho em log: só o evento, o status e o midia_id.
 
 import postgres from "npm:postgres@3.4.4";
 
 export const BUCKET = "midia-perfil";
-export const VALIDADE_STORAGE_S = 60;
+/** A miniatura tem 320 px (moderar-midia); acima disto algo está errado e nada é servido. */
+export const LIMITE_BYTES = 2_097_152;
 const TIMEOUT_REDE_MS = 10_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TOKEN = /^[0-9a-f]{64}$/;
 const CAMINHO = /^perfil\/[0-9a-f-]{36}_thumb\.jpg$/;
 
 export interface HandlerDeps {
-  /** Resolve o link e devolve o caminho da miniatura, ou null. Padrão: SQL em SUPABASE_DB_URL. */
+  /** Resolve o link (e conta o uso); devolve o caminho da miniatura, ou null. Padrão: SQL em SUPABASE_DB_URL. */
   resolverLink?: (midiaId: string, token: string) => Promise<string | null>;
   fetchFn?: typeof fetch;
   supabaseUrl?: string;
@@ -35,7 +38,7 @@ export interface HandlerDeps {
   registrar?: (evento: Record<string, unknown>) => void;
 }
 
-const CABECALHOS_BASE = {
+export const CABECALHOS_BASE = {
   "Cache-Control": "private, no-store",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
@@ -60,6 +63,35 @@ function registrarPadrao(evento: Record<string, unknown>) {
 
 function caminhoCodificado(caminho: string): string {
   return caminho.split("/").map(encodeURIComponent).join("/");
+}
+
+/** Lê o corpo até LIMITE_BYTES; acima disso para de ler e devolve null. */
+async function lerCorpoLimitado(r: Response): Promise<Uint8Array | null> {
+  if (!r.body) return new Uint8Array(0);
+  const leitor = r.body.getReader();
+  const partes: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await leitor.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > LIMITE_BYTES) {
+      await leitor.cancel().catch(() => {});
+      return null;
+    }
+    partes.push(value);
+  }
+  const corpo = new Uint8Array(total);
+  let pos = 0;
+  for (const p of partes) {
+    corpo.set(p, pos);
+    pos += p.byteLength;
+  }
+  return corpo;
+}
+
+function ehJpeg(corpo: Uint8Array): boolean {
+  return corpo.byteLength >= 3 && corpo[0] === 0xff && corpo[1] === 0xd8 && corpo[2] === 0xff;
 }
 
 /** O resolvedor real, por SQL; exportado para o teste de integração com Postgres. */
@@ -115,37 +147,44 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   }
   const fetchFn = deps?.fetchFn ?? fetch;
 
-  // createSignedUrl: o Storage assina com a chave dele.
-  let assinada: string;
+  let corpo: Uint8Array | null;
   try {
-    const r = await fetchFn(`${supabaseUrl}/storage/v1/object/sign/${BUCKET}/${caminhoCodificado(caminho)}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${serviceRoleKey}`,
-        apikey: serviceRoleKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ expiresIn: VALIDADE_STORAGE_S }),
+    const r = await fetchFn(`${supabaseUrl}/storage/v1/object/authenticated/${BUCKET}/${caminhoCodificado(caminho)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey },
       signal: AbortSignal.timeout(TIMEOUT_REDE_MS),
     });
     if (!r.ok) {
       await r.body?.cancel().catch(() => {});
       registrar({ evento: "ler_midia_storage_falhou", status: r.status, midia_id: midiaId });
+      // Arquivo que sumiu do Storage é o mesmo 404 de qualquer recusa.
+      return r.status === 400 || r.status === 404 ? resposta(404, "nao_encontrado") : resposta(502, "storage_indisponivel");
+    }
+    const declarado = Number(r.headers.get("content-length") ?? "");
+    if (Number.isFinite(declarado) && declarado > LIMITE_BYTES) {
+      await r.body?.cancel().catch(() => {});
+      registrar({ evento: "ler_midia_storage_falhou", status: r.status, motivo: "tamanho", midia_id: midiaId });
       return resposta(502, "storage_indisponivel");
     }
-    const json = await r.json() as { signedURL?: string };
-    if (!json.signedURL || !json.signedURL.startsWith(`/object/sign/${BUCKET}/`)) {
-      registrar({ evento: "ler_midia_storage_falhou", status: r.status, midia_id: midiaId });
-      return resposta(502, "storage_indisponivel");
-    }
-    assinada = `${supabaseUrl}/storage/v1${json.signedURL}`;
+    corpo = await lerCorpoLimitado(r);
   } catch (_err) {
     registrar({ evento: "ler_midia_storage_falhou", status: 0, midia_id: midiaId });
     return resposta(502, "storage_indisponivel");
   }
+  if (corpo === null || !ehJpeg(corpo)) {
+    registrar({ evento: "ler_midia_storage_falhou", motivo: corpo === null ? "tamanho" : "formato", midia_id: midiaId });
+    return resposta(502, "storage_indisponivel");
+  }
 
-  registrar({ evento: "ler_midia_redirecionada", midia_id: midiaId });
-  return new Response(null, { status: 302, headers: { ...CABECALHOS_BASE, Location: assinada } });
+  registrar({ evento: "ler_midia_servida", midia_id: midiaId, bytes: corpo.byteLength });
+  return new Response(corpo as unknown as BodyInit, {
+    status: 200,
+    headers: {
+      ...CABECALHOS_BASE,
+      "Content-Type": "image/jpeg",
+      "Content-Length": String(corpo.byteLength),
+    },
+  });
 }
 
 if (import.meta.main) {

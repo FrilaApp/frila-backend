@@ -2,11 +2,13 @@
 --
 -- A foto de perfil se lê por um link temporário da Edge Function `ler-midia` (B-020, contrato
 -- 0.2.82), sem o segredo legado do Storage no Vault. O banco cunha um token opaco de 1 h DEPOIS
--- de conferir o vínculo, guarda só o SHA-256 e, quando a função pede, RECONFERE tudo e devolve o
--- caminho da miniatura (ou nulo). Quem assina a URL do Storage é a função, com createSignedUrl.
+-- de conferir o vínculo, guarda só o SHA-256 e, quando a função pede, RECONFERE tudo, conta o uso e
+-- devolve o caminho da miniatura (ou nulo). A função serve os bytes; nenhum link do Storage sai.
 --
 -- Casos do aceite: o dono vê a própria; a casa com vínculo vê; sem vínculo não vê (nem com id
--- adivinhado, nem com token de outra foto); recusada/removida não resolve; o link expira.
+-- adivinhado, nem com token de outra foto); recusada/removida não resolve; o link expira. E, do
+-- parecer do Lince Codex: repasse × token incompatível, revogação (leitor, casa, bloqueio, recurso)
+-- e o teto de 120 usos por token (replay).
 
 begin;
 insert into privado.ambiente values (true, true) on conflict (id) do update set eh_teste = true;
@@ -111,7 +113,7 @@ select isnt(pg_temp.token_de(pg_temp.perfil_de('c8580000-0000-4000-8000-00000000
   pg_temp.token_de((select url from lx)), 'cada leitura cunha um token novo');
 
 -- Cunhar e resolver vão em comandos separados, como na vida real (a leitura e o GET da função são
--- duas requisições): o resolvedor é STABLE e não enxerga o INSERT feito no mesmo comando.
+-- duas requisições).
 
 -- A logo da casa, lida pelo profissional com candidatura.
 create temp table logo as
@@ -158,6 +160,15 @@ select is(pg_temp.resolver('c8580000-0000-4000-8000-0000000000b1', pg_temp.token
 select is(pg_temp.resolver('c8580000-0000-4000-8000-0000000000a1', 'nao-e-token'), null, 'token malformado: nulo');
 select is(pg_temp.resolver(null, pg_temp.token_de((select url from lx))), null, 'sem id: nulo');
 
+-- Repasse válido × token incompatível. O token é portador: o resolvedor não sabe quem abriu, e o
+-- link da casa X, repassado a qualquer pessoa, resolve por 1 h com os direitos da casa X (risco
+-- aceito no desenho, o mesmo da URL assinada de antes, limitado pelo teto de usos). Já um token
+-- que não é DAQUELA mídia não resolve nunca.
+select is(pg_temp.resolver('c8580000-0000-4000-8000-0000000000a1', pg_temp.token_de((select url from lx))),
+  'perfil/c8580000-0000-4000-8000-0000000000a1_thumb.jpg', 'repasse válido: o token da casa X resolve a mídia dele');
+select is(pg_temp.resolver('c8580000-0000-4000-8000-0000000000a2', pg_temp.token_de((select url from lx))), null,
+  'token incompatível: o mesmo token com o id de outra mídia do mesmo tipo não resolve');
+
 -- Um hash válido gravado para quem NÃO tem vínculo (casa Y) não resolve: o vínculo é reconferido.
 insert into privado.midia_link_leitura (token_hash, midia_id, leitor_id, expira_em) values
  (encode(sha256(convert_to(repeat('b', 64), 'UTF8')), 'hex'), 'c8580000-0000-4000-8000-0000000000a1',
@@ -194,6 +205,38 @@ select is(pg_temp.resolver('c8580000-0000-4000-8000-0000000000a1', pg_temp.token
   'bloqueio entre o titular e o leitor depois do link: nulo (RF26)');
 delete from public.bloqueio where autor_id = 'c8580000-0000-4000-8000-000000000001';
 
+-- O leitor que recebeu o link: anonimizado ou suspenso, o link morre.
+update public.usuario set estado = 'anonimizada', anonimizado_em = now() where id = 'c8580000-0000-4000-8000-000000000003';
+select is(pg_temp.resolver('c8580000-0000-4000-8000-0000000000a1', pg_temp.token_de((select url from lx))), null,
+  'leitor anonimizado depois do link: nulo');
+update public.usuario set estado = 'suspensa', anonimizado_em = null where id = 'c8580000-0000-4000-8000-000000000003';
+select is(pg_temp.resolver('c8580000-0000-4000-8000-0000000000a1', pg_temp.token_de((select url from lx))), null,
+  'leitor suspenso depois do link: nulo');
+update public.usuario set estado = 'ativa' where id = 'c8580000-0000-4000-8000-000000000003';
+
+-- O leitor sai da casa: o vínculo vinha pela casa, e o link morre.
+create temp table membro_x as
+  select * from public.membro_estabelecimento where usuario_id = 'c8580000-0000-4000-8000-000000000003';
+delete from public.membro_estabelecimento where usuario_id = 'c8580000-0000-4000-8000-000000000003';
+select is(pg_temp.resolver('c8580000-0000-4000-8000-0000000000a1', pg_temp.token_de((select url from lx))), null,
+  'leitor fora da casa depois do link: nulo');
+insert into public.membro_estabelecimento select * from membro_x;
+select is(pg_temp.resolver('c8580000-0000-4000-8000-0000000000a1', pg_temp.token_de((select url from lx))),
+  'perfil/c8580000-0000-4000-8000-0000000000a1_thumb.jpg', 'controle: de volta à casa, resolve');
+
+-- Teto de 120 usos por token: replay e GETs concorrentes disputam o mesmo UPDATE atômico.
+select ok((select usos from privado.midia_link_leitura
+            where token_hash = encode(sha256(convert_to(pg_temp.token_de((select url from lx)), 'UTF8')), 'hex')) > 0,
+  'cada GET resolvido conta um uso');
+update privado.midia_link_leitura set usos = 119
+ where token_hash = encode(sha256(convert_to(pg_temp.token_de((select url from lx)), 'UTF8')), 'hex');
+select is(pg_temp.resolver('c8580000-0000-4000-8000-0000000000a1', pg_temp.token_de((select url from lx))),
+  'perfil/c8580000-0000-4000-8000-0000000000a1_thumb.jpg', 'o 120º uso ainda resolve');
+select is(pg_temp.resolver('c8580000-0000-4000-8000-0000000000a1', pg_temp.token_de((select url from lx))), null,
+  'o 121º uso não resolve: teto por token');
+update privado.midia_link_leitura set usos = 0
+ where token_hash = encode(sha256(convert_to(pg_temp.token_de((select url from lx)), 'UTF8')), 'hex');
+
 -- ── 6. O link expira em 1 h ───────────────────────────────────────────────────
 select set_config('frila.agora', '2027-01-11 09:59:00+00', true);
 select is(pg_temp.resolver('c8580000-0000-4000-8000-0000000000a1', pg_temp.token_de((select url from lx))),
@@ -223,6 +266,12 @@ select ok(not has_table_privilege('authenticated', 'privado.midia_link_leitura',
   'a tabela dos hashes não é legível pelo app');
 select ok(has_function_privilege('service_role', 'privado.resolver_link_leitura_midia(uuid,text)', 'execute'),
   'service_role resolve (a Edge Function)');
+select is((select provolatile from pg_proc where oid = 'privado.resolver_link_leitura_midia(uuid,text)'::regprocedure), 'v',
+  'o resolvedor, que conta o uso, é VOLATILE');
+select is((select provolatile from pg_proc where oid = 'privado.foto_de_perfil_projecao(uuid,uuid,uuid)'::regprocedure), 'v',
+  'a projeção, que grava o hash, é VOLATILE');
+select is((select provolatile from pg_proc where oid = 'privado.midia_em_json(privado.midia)'::regprocedure), 's',
+  'midia_em_json segue STABLE: a url não entra nela');
 select has_function('public', 'perfil_publico', array['uuid'], 'perfil_publico mantém a assinatura');
 select has_function('public', 'minhas_midias', array[]::text[], 'minhas_midias mantém a assinatura');
 

@@ -1,7 +1,8 @@
 // Integração com Postgres REAL: o resolvedor da ler-midia (privado.resolver_link_leitura_midia) pelo
 // mesmo driver da função (postgres.js 3.4.4), com o uuid e o token como parâmetros. Prova que o link
 // cunhado pelo banco resolve para a miniatura, que um token adivinhado não resolve e que o link
-// vence em 1 h. Roda só com FRILA_PG_TESTE_URL apontando para um banco LOCAL com as migrações.
+// vence em 1 h, e que GETs concorrentes não passam do teto de 120 usos. Roda só com
+// FRILA_PG_TESTE_URL apontando para um banco LOCAL com as migrações.
 import postgres from "npm:postgres@3.4.4";
 import { assertEquals, assertMatch } from "jsr:@std/assert@1.0.19";
 import { resolverPadrao } from "./index.ts";
@@ -35,6 +36,14 @@ Deno.test({
       assertEquals(await resolver(midia, token), `perfil/${midia}_thumb.jpg`, "o link do dono resolve");
       assertEquals(await resolver(midia, "e".repeat(64)), null, "token adivinhado não resolve");
       assertEquals(await resolver(crypto.randomUUID(), token), null, "o token não serve a outro id");
+
+      // Replay concorrente: 10 conexões ao mesmo tempo com o token a 2 usos do teto de 120.
+      await adm`update privado.midia_link_leitura set usos = 118 where midia_id = ${midia}`;
+      const corrida = await Promise.all(Array.from({ length: 10 }, () => resolverPadrao({ dbUrl: URL })(midia, token)));
+      assertEquals(corrida.filter((c) => c !== null).length, 2, "só 2 dos 10 GETs simultâneos passam: teto de 120 por token");
+      const [{ usos }] = await adm`select usos from privado.midia_link_leitura where midia_id = ${midia}`;
+      assertEquals(Number(usos), 120, "o contador para no teto");
+      await adm`update privado.midia_link_leitura set usos = 0 where midia_id = ${midia}`;
 
       await adm`update privado.midia_link_leitura set expira_em = now() - interval '1 second' where midia_id = ${midia}`;
       assertEquals(await resolver(midia, token), null, "link vencido não resolve");

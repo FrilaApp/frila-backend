@@ -11,15 +11,24 @@
 --      `…/functions/v1/ler-midia?midia_id=<id>&token=<64 hex>`. O banco guarda só o SHA-256, preso
 --      à mídia e ao leitor, por 1 h;
 --   2. a `ler-midia` chama `privado.resolver_link_leitura_midia`, que RECONFERE tudo na hora (hash,
---      validade, foto aprovada, titular ativo, recurso ligado, vínculo e bloqueio) e devolve o
---      caminho da miniatura, ou nulo;
---   3. a função assina com createSignedUrl (60 s, service role só no ambiente dela) e responde 302.
+--      validade, teto de usos, leitor ativo, foto aprovada, titular ativo, recurso ligado, vínculo
+--      e bloqueio) e devolve o caminho da miniatura, ou nulo;
+--   3. a função baixa a miniatura do Storage com a service role (só no ambiente dela) e SERVE OS
+--      BYTES (`image/jpeg`, `private, no-store`). Sem 302: nem o caminho nem um link assinado saem,
+--      e a CDN não entra (parecer do Lince Codex, retornos/B-020-parecer-desenho-lince-codex.md).
 -- Nenhum segredo no Postgres. O caminho do arquivo nunca sai (RN15). O app não muda: `foto_url` e
 -- `Midia.url` continuam uma URL que o AsyncImage abre sem cabeçalho.
+--
+-- O token é portador: quem o recebe na leitura pode repassá-lo, e ele vale por 1 h com os
+-- direitos de quem o recebeu (mesmo risco da URL assinada que o contrato já previa). O teto de
+-- 120 usos por token limita o replay.
 --
 -- `foto_de_perfil_projecao` passa de STABLE para VOLATILE (grava o hash). As três RPCs que a chamam
 -- já são voláteis e o app as chama por POST; nenhuma assinatura pública muda. O vínculo é o mesmo
 -- de 20261109150000:115-153, agora numa função própria que a projeção e o resolvedor usam.
+-- `privado.midia_em_json` NÃO muda (segue STABLE): a `url` é composta só em `minhas_midias`.
+-- Os outros chamadores dela (confirmar_upload_midia, remover_midia, pedir_nova_analise_midia e
+-- privado.meus_dados, do exportar_meus_dados) não ganham url nem mudam de classificação.
 
 select set_config('lock_timeout', '2s', true);
 
@@ -28,14 +37,15 @@ create table privado.midia_link_leitura (
   token_hash text        primary key constraint midia_link_leitura_hash check (token_hash ~ '^[0-9a-f]{64}$'),
   midia_id   uuid        not null references privado.midia(id) on delete cascade,
   leitor_id  uuid        not null,
-  expira_em  timestamptz not null
+  expira_em  timestamptz not null,
+  usos       integer     not null default 0
 );
 create index midia_link_leitura_por_expiracao on privado.midia_link_leitura (expira_em);
 create index midia_link_leitura_por_midia on privado.midia_link_leitura (midia_id);
 alter table privado.midia_link_leitura enable row level security;
 revoke all on table privado.midia_link_leitura from public, anon, authenticated;
 comment on table privado.midia_link_leitura is
-  'SHA-256 dos tokens de leitura da foto (B-020, contrato 0.2.82): mídia, leitor e validade de 1 h. O token em claro só existe na resposta da leitura. Vencidos saem em lote a cada link novo.';
+  'SHA-256 dos tokens de leitura da foto (B-020, contrato 0.2.82): mídia, leitor, validade de 1 h e usos (teto de 120 GETs). O token em claro só existe na resposta da leitura. Vencidos saem em lote a cada link novo.';
 
 -- ── 2. O vínculo de leitura (o mesmo de 20261109150000:115-153) ────────────────
 -- Exatamente um entre p_profissional e p_estabelecimento.
@@ -126,9 +136,11 @@ begin
   if p_midia_id is null or p_leitor is null then return null; end if;
 
   -- Vencidos saem em lote curto, para a tabela não crescer sem a retenção diária.
+  -- `skip locked`: duas leituras ao mesmo tempo não disputam as mesmas linhas.
   delete from privado.midia_link_leitura l
    where l.token_hash in (select v.token_hash from privado.midia_link_leitura v
-                           where v.expira_em <= privado.agora() limit 500);
+                           where v.expira_em <= privado.agora()
+                           limit 500 for update skip locked);
 
   insert into privado.midia_link_leitura (token_hash, midia_id, leitor_id, expira_em)
   values (encode(sha256(convert_to(v_token, 'UTF8')), 'hex'), p_midia_id, p_leitor,
@@ -186,9 +198,11 @@ comment on function privado.foto_de_perfil_projecao(uuid, uuid, uuid) is
 
 -- ── 7. O resolvedor, chamado pela ler-midia ───────────────────────────────────
 -- Devolve o caminho da miniatura ou nulo. Qualquer falha é o mesmo nulo: a função responde 404.
+-- Volátil: conta o uso num UPDATE atômico (teto de 120 por token; replay e leitura concorrente
+-- disputam a mesma linha e nenhum passa do teto).
 create function privado.resolver_link_leitura_midia(p_midia_id uuid, p_token text)
 returns text
-language plpgsql stable security definer set search_path = '' as $$
+language plpgsql volatile security definer set search_path = '' as $$
 declare
   v_leitor   uuid;
   v_m        privado.midia;
@@ -198,12 +212,19 @@ begin
     return null;
   end if;
 
-  select l.leitor_id into v_leitor
-    from privado.midia_link_leitura l
+  update privado.midia_link_leitura l
+     set usos = l.usos + 1
    where l.token_hash = encode(sha256(convert_to(p_token, 'UTF8')), 'hex')
      and l.midia_id = p_midia_id
-     and l.expira_em > privado.agora();
+     and l.expira_em > privado.agora()
+     and l.usos < 120
+  returning l.leitor_id into v_leitor;
   if not found then return null; end if;
+
+  -- Quem recebeu o link segue existindo e ativo (anonimizado ou suspenso: nulo).
+  if not exists (select 1 from public.usuario u where u.id = v_leitor and u.estado = 'ativa') then
+    return null;
+  end if;
 
   select m.* into v_m from privado.midia m where m.id = p_midia_id;
   if not found or not privado.foto_legivel(v_m) then return null; end if;
@@ -241,7 +262,7 @@ begin
   return replace(v_m.storage_path, '.jpg', '_thumb.jpg');
 end $$;
 comment on function privado.resolver_link_leitura_midia(uuid, text) is
-  'Chamada só pela Edge Function ler-midia. Confere o hash do token, a validade de 1 h, a foto legível e, para quem não é o titular, o bloqueio (RF26) e o vínculo de leitura; devolve o caminho da miniatura ou nulo (B-020).';
+  'Chamada só pela Edge Function ler-midia. Confere o hash do token preso à mídia, a validade de 1 h, o teto de 120 usos, o leitor ativo, a foto legível e, para quem não é o titular, a casa atual, o bloqueio (RF26) e o vínculo de leitura; devolve o caminho da miniatura ou nulo (B-020).';
 revoke execute on function privado.resolver_link_leitura_midia(uuid, text) from public, anon, authenticated;
 grant  execute on function privado.resolver_link_leitura_midia(uuid, text) to service_role;
 
