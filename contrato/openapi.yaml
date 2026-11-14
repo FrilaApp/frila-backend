@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.82
+  version: 0.2.83
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -102,7 +102,7 @@ info:
     | 422 | `horario_invalido` | Fim antes do início, ou turno no passado |
     | 422 | `inelegivel` | `details`: `turno_sobreposto` (RN21), `perfil_suspenso` (RN13) ou `funcao_incompativel` (RN05) |
     | 422 | `avaliacao_indisponivel` | `details`: `antes_do_fim` ou `sem_presenca_verificada` (RN07) |
-    | 422 | `fora_da_janela` | Check-in ou check-out fora da janela que a regra permite para o turno (RN22); desde a 0.2.80, inclui check-in que chega ao servidor depois do fim previsto |
+    | 422 | `fora_da_janela` | Check-in ou check-out fora da janela que a regra permite para o turno (RN22); desde a 0.2.80 (check-in) e a 0.2.83 (check-out), inclui toques que chegam ao servidor depois do limite (fim previsto para check-in, fim previsto + 60 min para check-out) |
     | 422 | `fora_do_raio` | Leitura do código de check-in com distância superior ao raio de validação (50 m provisório). Não conta como tentativa errada (0.2.76) |
     | 422 | `sem_localizacao` | Leitura do código de check-in sem posição do aparelho (`distancia_m` nulo). Não conta como tentativa errada; orienta confirmação manual (0.2.76) |
     | 422 | `codigo_invalido` | Código de check-in recusado (0.2.68): errado, vencido ou de outro turno lido dentro do raio de validação (0.2.76). Um código só, sem `details`. Conta como tentativa errada |
@@ -114,6 +114,11 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.83, de 14/11/2026.** Check-out recebido depois de fim previsto + 60 min é recusado com tolerância zero (RN22, decisão JP 14/11/2026).
+    - **`POST /rpc/fazer_checkout`:** além da janela conferida pelo instante informado pelo aparelho (`registrado_em`), o servidor recusa com `422 fora_da_janela` qualquer check-out que ele **receber** após `fim_em + 60 min`, sem tolerância (mesmo desenho do check-in na 0.2.80), inclusive toques guardados offline e sincronizados após o limite.
+    - **Demonstração:** a conta de demonstração/revisão da App Store (`usuario.demonstracao`) continua isenta da janela de turno (atravessa sem recusa de `fora_da_janela`), mantendo a trava de `registro_no_futuro`.
+    - **Repetição:** reenvio de check-out após `fim_em + 60 min` num turno que já possui check-out é recusado com `422 fora_da_janela`, preservando intacto o registro anterior.
 
     **Versão 0.2.82, de 14/11/2026.** A foto de perfil passa a ser lida por um link da Edge Function
     `ler-midia`, e não mais por uma URL assinada pelo Storage. Nenhum campo, operação ou código muda, e
@@ -4815,10 +4820,14 @@ paths:
         em mais de 2 minutos em relação ao relógio do servidor recusa `422 registro_no_futuro`, e fora da
         janela permitida do turno recusa `422 fora_da_janela` (RN22). A janela do check-out vai de
         **60 minutos antes do início previsto até 60 minutos depois do fim previsto** (`fim_em`),
-        conferida pelo `registrado_em` (0.2.81). Ela é mais larga que a do check-in, que termina no fim
-        previsto. Para a tela, "Fazer check-out" só faz sentido até `fim_em + 60 min`; depois disso o
-        servidor recusa. A conta de demonstração/revisão da App Store é isenta da janela de turno,
-        mantendo a trava de `registro_no_futuro`.
+        conferida pelo `registrado_em` (0.2.81). Além da conferência da janela pelo instante informado pelo
+        aparelho (`registrado_em`), o servidor recusa com `422 fora_da_janela` qualquer check-out que ele
+        **receber** após `fim_em + 60 min`, sem tolerância (tolerância zero, 0.2.83; mesmo desenho da 0.2.80 no
+        check-in), inclusive toques guardados offline e sincronizados após o limite. Reenvios após o limite em
+        turno já com check-out também são recusados com `422 fora_da_janela`, mantendo o check-out anterior intacto.
+        Para a tela, "Fazer check-out" só faz sentido até `fim_em + 60 min`; depois disso o servidor recusa. A conta
+        de demonstração/revisão da App Store (`usuario.demonstracao`) é isenta da janela de turno (atravessa sem
+        recusa de `fora_da_janela`), mantendo a trava de `registro_no_futuro`.
       x-requisitos: [RF13, RN11, RN22, UC05]
       requestBody:
         required: true
@@ -7727,6 +7736,10 @@ components:
     RegistroDePresenca:
       type: object
       required: [turno_id, distancia_m, registrado_em]
+      description: |
+        Corpo das ações de presença (`fazer_checkout` e base de `fazer_checkin`). Desde a 0.2.83,
+        check-out recebido pelo servidor após `fim_em + 60 min` é recusado com `422 fora_da_janela`
+        mesmo que `registrado_em` esteja dentro da janela permitida.
       properties:
         turno_id:
           $ref: '#/components/schemas/Uuid'
