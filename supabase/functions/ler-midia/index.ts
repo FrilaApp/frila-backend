@@ -94,15 +94,45 @@ function ehJpeg(corpo: Uint8Array): boolean {
   return corpo.byteLength >= 3 && corpo[0] === 0xff && corpo[1] === 0xd8 && corpo[2] === 0xff;
 }
 
+// Caminho quente: um GET por foto exibida, e a lista de candidatos pede N ao mesmo tempo. Um
+// cliente só por isolate, criado na 1ª chamada e reaproveitado (no máximo 2 conexões), em vez de
+// abrir e fechar uma conexão por GET. Se uma consulta falhar, o cliente é descartado e a próxima
+// chamada cria outro.
+type Sql = ReturnType<typeof postgres>;
+const clientes = new Map<string, Sql>();
+
+function clienteDoModulo(dbUrl: string): Sql {
+  let sql = clientes.get(dbUrl);
+  if (!sql) {
+    sql = postgres(dbUrl, { max: 2, idle_timeout: 20, connect_timeout: 5 });
+    clientes.set(dbUrl, sql);
+  }
+  return sql;
+}
+
+function descartarCliente(dbUrl: string, sql: Sql) {
+  if (clientes.get(dbUrl) === sql) clientes.delete(dbUrl);
+  sql.end({ timeout: 2 }).catch(() => {});
+}
+
+/** Encerra os clientes do módulo (para o teste de integração não deixar conexão aberta). */
+export async function encerrarClientes(): Promise<void> {
+  const todos = [...clientes.values()];
+  clientes.clear();
+  await Promise.all(todos.map((sql) => sql.end({ timeout: 2 }).catch(() => {})));
+}
+
 /** O resolvedor real, por SQL; exportado para o teste de integração com Postgres. */
 export function resolverPadrao(deps?: HandlerDeps) {
   return async (midiaId: string, token: string): Promise<string | null> => {
-    const sql = postgres(obterVariavel("SUPABASE_DB_URL", deps?.dbUrl), { max: 1, connect_timeout: 5 });
+    const dbUrl = obterVariavel("SUPABASE_DB_URL", deps?.dbUrl);
+    const sql = clienteDoModulo(dbUrl);
     try {
       const [linha] = await sql`select privado.resolver_link_leitura_midia(${midiaId}::uuid, ${token}) as caminho`;
       return linha?.caminho ? String(linha.caminho) : null;
-    } finally {
-      await sql.end({ timeout: 2 });
+    } catch (err) {
+      descartarCliente(dbUrl, sql);
+      throw err;
     }
   };
 }

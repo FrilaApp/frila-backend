@@ -134,6 +134,10 @@ declare
   v_token text := encode(extensions.gen_random_bytes(32), 'hex');
 begin
   if p_midia_id is null or p_leitor is null then return null; end if;
+  -- O contrato descreve as leituras em GET, e o PostgREST roda GET numa transação só-leitura, onde
+  -- o INSERT do hash falharia e derrubaria a leitura inteira. Ali o link não sai (campo ausente); o
+  -- app iOS chama por POST (SupabaseApiCliente.swift), que grava.
+  if current_setting('transaction_read_only') = 'on' then return null; end if;
 
   -- Vencidos saem em lote curto, para a tabela não crescer sem a retenção diária.
   -- `skip locked`: duas leituras ao mesmo tempo não disputam as mesmas linhas.
@@ -162,7 +166,8 @@ create or replace function privado.foto_de_perfil_projecao(
 ) returns jsonb
 language plpgsql volatile security definer set search_path = '' as $$
 declare
-  v_m privado.midia;
+  v_m   privado.midia;
+  v_url text;
 begin
   if p_leitor is null or (p_profissional is null) = (p_estabelecimento is null) then
     return '{}'::jsonb;
@@ -189,9 +194,9 @@ begin
     return '{}'::jsonb;
   end if;
 
-  return jsonb_build_object(
-    'foto_id',  v_m.id,
-    'foto_url', privado.cunhar_link_leitura_midia(v_m.id, p_leitor));
+  v_url := privado.cunhar_link_leitura_midia(v_m.id, p_leitor);
+  if v_url is null then return '{}'::jsonb; end if;   -- transação só-leitura: as duas chaves saem juntas ou nenhuma
+  return jsonb_build_object('foto_id', v_m.id, 'foto_url', v_url);
 end $$;
 comment on function privado.foto_de_perfil_projecao(uuid, uuid, uuid) is
   'As chaves foto_id e foto_url do PerfilPublico (contrato 0.2.54; link da ler-midia desde a 0.2.82), ou {}: recurso ligado, foto aprovada, titular ativo (RN13, RF25) e vínculo de leitura. Grava o hash do link, por isso é volátil (B-020).';
@@ -275,7 +280,8 @@ begin
   return (select coalesce(jsonb_agg(
              privado.midia_em_json(m)
              || case when privado.foto_legivel(m)
-                     then jsonb_build_object('url', privado.cunhar_link_leitura_midia(m.id, v_uid))
+                     -- jsonb_strip_nulls: numa transação só-leitura o link não sai, e `url` fica ausente.
+                     then jsonb_strip_nulls(jsonb_build_object('url', privado.cunhar_link_leitura_midia(m.id, v_uid)))
                      else '{}'::jsonb end
            order by m.criado_em, m.id), '[]'::jsonb)
     from privado.midia m where m.estado <> 'expurgada'

@@ -5,7 +5,7 @@
 // FRILA_PG_TESTE_URL apontando para um banco LOCAL com as migrações.
 import postgres from "npm:postgres@3.4.4";
 import { assertEquals, assertMatch } from "jsr:@std/assert@1.0.19";
-import { resolverPadrao } from "./index.ts";
+import { encerrarClientes, resolverPadrao } from "./index.ts";
 
 const URL = Deno.env.get("FRILA_PG_TESTE_URL");
 
@@ -32,12 +32,16 @@ Deno.test({
       assertMatch(String(url), new RegExp(`/functions/v1/ler-midia\\?midia_id=${midia}&token=[0-9a-f]{64}$`));
       const token = String(url).split("token=")[1];
 
+      // GET do PostgREST = transação só-leitura: o link não é cunhado (nulo) e a leitura não falha.
+      const [{ ro }] = await adm.begin("read only", (t) => t`select privado.cunhar_link_leitura_midia(${midia}::uuid, ${usuario}::uuid) as ro`);
+      assertEquals(ro, null, "em transação só-leitura o link não sai, sem erro");
+
       const resolver = resolverPadrao({ dbUrl: URL });
       assertEquals(await resolver(midia, token), `perfil/${midia}_thumb.jpg`, "o link do dono resolve");
       assertEquals(await resolver(midia, "e".repeat(64)), null, "token adivinhado não resolve");
       assertEquals(await resolver(crypto.randomUUID(), token), null, "o token não serve a outro id");
 
-      // Replay concorrente: 10 conexões ao mesmo tempo com o token a 2 usos do teto de 120.
+      // Replay concorrente: 10 GETs ao mesmo tempo (pelo cliente do módulo) com o token a 2 usos do teto de 120.
       await adm`update privado.midia_link_leitura set usos = 118 where midia_id = ${midia}`;
       const corrida = await Promise.all(Array.from({ length: 10 }, () => resolverPadrao({ dbUrl: URL })(midia, token)));
       assertEquals(corrida.filter((c) => c !== null).length, 2, "só 2 dos 10 GETs simultâneos passam: teto de 120 por token");
@@ -52,6 +56,7 @@ Deno.test({
       await adm`delete from privado.midia where id = ${midia}`;
       await adm`delete from public.usuario where id = ${usuario}`;
       await adm.end({ timeout: 2 });
+      await encerrarClientes();
     }
   },
 });
