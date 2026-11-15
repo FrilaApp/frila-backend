@@ -73,6 +73,7 @@ export interface Dependencias {
   sqlClient?: SqlClient;
   dbUrl?: string;
   caixaDaEquipe?: string;
+  caixaDosCasos?: string;
   caixaResponderPara?: string;
 }
 
@@ -95,10 +96,20 @@ const FORMA_MINIMA_DE_EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 // A caixa da Equipe Frila é segredo de ambiente, e não linha de tabela: ela não é dado
 // do produto, muda com o provedor de e-mail e não deve viajar num `db reset`.
-// É SÓ destino interno: os avisos de ocorrência e os alertas do monitoramento. Ela
-// nunca vira o Reply-To do e-mail que sai para fora (esse é o `caixaResponderPara`).
+// É SÓ para os alertas técnicos do monitoramento (tipo `alerta`). Os casos de usuário
+// (denúncia, contestação, revisão de despacho) vão para a `caixaDosCasos`. Ela nunca vira
+// o Reply-To do e-mail que sai para fora (esse é o `caixaResponderPara`).
 export function caixaDaEquipe(injetada?: string): string {
   return (injetada || Deno.env.get("EMAIL_EQUIPE") || CAIXA_DE_SUPORTE).trim();
+}
+
+// Para onde vai o aviso interno de um caso de usuário: denúncia, contestação e revisão de
+// despacho. Lê o EMAIL_CASOS; se faltar, vier vazio, falhar no `validarDestinatario` ou
+// não tiver a forma mínima de e-mail, é a caixa de suporte. Nunca cai no EMAIL_EQUIPE:
+// o caso traz dado pessoal e não pode ir parar na caixa dos alertas técnicos só porque a
+// variável não foi configurada.
+export function caixaDosCasos(injetada?: string): string {
+  return caixaValida([injetada, Deno.env.get("EMAIL_CASOS")]);
 }
 
 // Para onde vai a resposta de quem recebeu o protocolo (o Reply-To ao autor). Lê o
@@ -107,7 +118,14 @@ export function caixaDaEquipe(injetada?: string): string {
 // cai no EMAIL_EQUIPE: a resposta do usuário traz dado pessoal e não pode ir parar num
 // destino interno só porque a variável de atendimento não foi configurada.
 export function caixaResponderPara(injetada?: string): string {
-  for (const candidata of [injetada, Deno.env.get("EMAIL_RESPONDER_PARA")]) {
+  return caixaValida([injetada, Deno.env.get("EMAIL_RESPONDER_PARA")]);
+}
+
+// A guarda das caixas que não podem cair no EMAIL_EQUIPE: a primeira candidata não vazia
+// vale se passar no `validarDestinatario` e tiver a forma mínima de e-mail; senão (ou se
+// todas faltarem) é a caixa de suporte.
+function caixaValida(candidatas: Array<string | undefined>): string {
+  for (const candidata of candidatas) {
     if (candidata === undefined || candidata.trim() === "") continue;
     const valor = candidata.trim();
     return validarDestinatario(valor) && FORMA_MINIMA_DE_EMAIL.test(valor)
@@ -239,7 +257,7 @@ async function processarOcorrencia(
   pedido: PedidoDaFila,
   tipo: string,
   enviar: Enviar,
-  equipe: string,
+  casos: string,
   responderParaAutor: string,
   sql: SqlClient,
 ): Promise<LinhaDoRelatorio> {
@@ -259,7 +277,7 @@ async function processarOcorrencia(
   }
 
   const destinos: Array<{ destino: Destino; para: string }> = [];
-  if (dados.equipe_pendente) destinos.push({ destino: "equipe", para: equipe });
+  if (dados.equipe_pendente) destinos.push({ destino: "equipe", para: casos });
   if (dados.autor_pendente && dados.autor_email) {
     destinos.push({ destino: "autor", para: dados.autor_email });
   }
@@ -298,8 +316,8 @@ async function processarOcorrencia(
       assunto: modelo.assunto,
       texto: modelo.texto,
       // A Equipe Frila só responde por e-mail: a resposta de quem recebeu o protocolo
-      // tem de cair na caixa de atendimento, e não no remetente que não lê nem no
-      // destino interno (EMAIL_EQUIPE).
+      // tem de cair na caixa de atendimento, e não no remetente que não lê nem na
+      // caixa dos alertas (EMAIL_EQUIPE).
       responderPara,
     };
 
@@ -382,6 +400,7 @@ export async function processarEnvioEmail(
 
   const sql = criarSqlClient(deps);
   const equipe = caixaDaEquipe(deps.caixaDaEquipe);
+  const casos = caixaDosCasos(deps.caixaDosCasos);
   const responderParaAutor = caixaResponderPara(deps.caixaResponderPara);
 
   const pedidos = await sql.lerFilaEmail(limite, vt);
@@ -396,7 +415,7 @@ export async function processarEnvioEmail(
       relatorio.push(await processarAlerta(pedido, enviar, equipe, sql));
     } else {
       relatorio.push(
-        await processarOcorrencia(pedido, tipo, enviar, equipe, responderParaAutor, sql),
+        await processarOcorrencia(pedido, tipo, enviar, casos, responderParaAutor, sql),
       );
     }
   }
