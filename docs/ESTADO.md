@@ -357,6 +357,7 @@ Colunas do esquema com funções de negócio específicas que complementam a Mod
 | `turno.checkin_recebido_em` | `checkin_em` é a hora do toque; sem as duas, registro offline vira indistinguível |
 | `turno.checkout_recebido_em` | o mesmo, do outro lado |
 | `posicao.reaberta_por_atraso_de` | `reabrir_por_atraso` (e8XpOZJN): a posição nova sabe de qual falta nasceu; aceita candidato depois do início até 1 h antes do fim |
+| `privado.anulacao_falta` | anulação operacional de falta pelo admin (decisão JP 15/11, RN12): auditoria, operador e rastreabilidade no schema privado para evitar vazamento aos clientes |
 | `vaga.rodada_despacho` | rodada de despacho (9DbPXis7): 1 na publicação, incrementada a cada `reabrir_por_atraso` |
 | `despacho.rodada` | unicidade do despacho por `(vaga_id, profissional_id, rodada)` |
 | `notificacao.rodada` | marca de envio de vaga por rodada para não suprimir push da rodada nova |
