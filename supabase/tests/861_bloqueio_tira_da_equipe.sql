@@ -17,6 +17,9 @@
 --   8. Membro novo com bloqueio prévio (nos dois sentidos) entra na casa: a linha sai.
 --   9. O bloqueio e a saída da equipe são o mesmo comando: a linha já não existe no fim
 --      de um único bloco que só chama bloquear.
+--  10. Estrutura do incluir_na_equipe reescrito nesta migração (mesmos grants do 860) e as
+--      travas que fecham a corrida com os gatilhos. A corrida em si, com duas conexões, fica
+--      em scripts/corrida-equipe-bloqueio.sh: o pgTAP roda numa sessão só.
 
 begin;
 
@@ -28,7 +31,7 @@ on conflict (id) do update set eh_teste = true;
 
 set local frila.agora = '2026-11-14 12:00:00-03';
 
-select plan(39);
+select plan(47);
 
 -- ── 1. Estrutura ───────────────────────────────────────────────────────────────
 
@@ -87,6 +90,64 @@ select has_trigger('public', 'bloqueio', 'trg_bloqueio_tirar_da_equipe',
 
 select has_trigger('public', 'membro_estabelecimento', 'trg_membro_tirar_da_equipe',
   'public.membro_estabelecimento tem o gatilho trg_membro_tirar_da_equipe');
+
+-- ── 1b. incluir_na_equipe reescrito e as travas da corrida ────────────────────
+
+select is(
+  (select prosecdef from pg_proc
+    where proname = 'incluir_na_equipe' and pronamespace = 'public'::regnamespace),
+  true, 'public.incluir_na_equipe continua SECURITY DEFINER'
+);
+
+select ok(
+  (select proconfig from pg_proc
+    where proname = 'incluir_na_equipe' and pronamespace = 'public'::regnamespace)
+    @> array['search_path=""'],
+  'public.incluir_na_equipe continua com search_path="" fixado'
+);
+
+select ok(
+  has_function_privilege('authenticated', 'public.incluir_na_equipe(uuid, uuid)', 'execute'),
+  'authenticated continua executando public.incluir_na_equipe'
+);
+
+select ok(
+  not has_function_privilege('anon', 'public.incluir_na_equipe(uuid, uuid)', 'execute'),
+  'anon continua sem executar public.incluir_na_equipe'
+);
+
+-- As travas são o conserto da corrida; um create or replace futuro que as perca reabre o
+-- furo sem que nenhum caso de uma sessão só perceba.
+select ok(
+  (select prosrc from pg_proc
+    where proname = 'incluir_na_equipe' and pronamespace = 'public'::regnamespace)
+    ~* 'from public\.estabelecimento e where e\.id = incluir_na_equipe\.estabelecimento_id for update',
+  'incluir_na_equipe trava a casa com FOR UPDATE'
+);
+
+select ok(
+  (select prosrc from pg_proc
+    where proname = 'incluir_na_equipe' and pronamespace = 'public'::regnamespace)
+    ~* 'from public\.estabelecimento e where e\.id = incluir_na_equipe\.estabelecimento_id for update;\s*perform 1 from public\.profissional p where p\.id = incluir_na_equipe\.profissional_id for update;\s*select \* into v_user',
+  'incluir_na_equipe trava casa e depois profissional, antes de ler a conta e conferir o bloqueio'
+);
+
+select ok(
+  (select prosrc from pg_proc
+    where proname = 'tirar_da_equipe_no_bloqueio' and pronamespace = 'privado'::regnamespace)
+    ~* 'from public\.profissional p where p\.usuario_id in \(new\.autor_id, new\.bloqueado_id\) for update;\s*delete from public\.equipe_confianca'
+  and (select prosrc from pg_proc
+        where proname = 'tirar_da_equipe_no_bloqueio' and pronamespace = 'privado'::regnamespace)
+      !~* 'public\.estabelecimento',
+  'o gatilho do bloqueio trava só o profissional, antes do delete, e nunca a casa'
+);
+
+select ok(
+  (select prosrc from pg_proc
+    where proname = 'tirar_da_equipe_no_membro_novo' and pronamespace = 'privado'::regnamespace)
+    ~* 'from public\.estabelecimento e where e\.id = new\.estabelecimento_id for no key update;\s*delete from public\.equipe_confianca',
+  'o gatilho do membro novo trava a casa com FOR NO KEY UPDATE, antes do delete'
+);
 
 -- ── 2. Auxiliares de JWT e de contagem ─────────────────────────────────────────
 
