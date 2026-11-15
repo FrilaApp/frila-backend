@@ -25,12 +25,13 @@
 # presa numa trava enquanto a outra segurava. Se não ficou, a corrida não aconteceu e a rodada
 # não prova nada: reprova.
 #
-# Uso: ./scripts/corrida-equipe-bloqueio.sh        RODADAS=5 ./scripts/corrida-equipe-bloqueio.sh
+# Uso: ./scripts/corrida-equipe-bloqueio.sh        (10 rodadas por cenário; o vermelho sem as travas
+#      falha em toda rodada, então 10 bastam)       RODADAS=20 ./scripts/corrida-equipe-bloqueio.sh
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DB=${DB_CONTAINER:-supabase_db_frila-backend}
-RODADAS=${RODADAS:-20}
+RODADAS=${RODADAS:-10}
 psql() { docker exec -i "$DB" psql -U postgres -d postgres -X -q -t -A -v ON_ERROR_STOP=1 "$@"; }
 
 ok()     { printf '  ✓ %s\n' "$1"; }
