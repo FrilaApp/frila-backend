@@ -18,6 +18,11 @@
 #   6. entra na casa quem tem bloqueio prévio e segura · inclui
 #   7. dois membros entram na mesma casa ao mesmo tempo pelo aceitar_convite_membro
 #   8. dois membros entram na mesma casa ao mesmo tempo por insert direto (como a demonstração)
+#   9. entra na casa (aceitar_convite_membro) quem ainda não tem bloqueio e segura · ele mesmo
+#      bloqueia o profissional que já está na equipe
+#  10. ele bloqueia o profissional da equipe e segura · entra na casa (aceitar_convite_membro)
+#  Nos cenários 9 e 10 quem entra é a 2ª conta, que tem convite e nenhum bloqueio prévio
+#  (o caso do Lince Codex na rodada 2 do #506).
 #
 # Em toda rodada: nenhuma linha de equipe_confianca da casa com
 # privado.bloqueado_com_estabelecimento(conta do profissional, casa) verdadeiro, nenhuma
@@ -303,6 +308,10 @@ cenario 7 "dois membros entram na mesma casa ao mesmo tempo (aceitar_convite_mem
   c1 aceitar:3 ok       c2 aceitar:4 ok
 cenario 8 "dois membros entram na mesma casa ao mesmo tempo (insert direto)" sim \
   pg inserir:3 ok       pg inserir:4 ok
+cenario 9 "entra na casa sem bloqueio e segura · ele mesmo bloqueia o profissional da equipe" sim \
+  c2 aceitar:4 ok       c2 bloq_prof ok
+cenario 10 "bloqueia o profissional da equipe e segura · entra na casa (aceitar_convite_membro)" sim \
+  c2 bloq_prof ok       c2 aceitar:4 ok
 
 echo "▸ tempo: $(( SECONDS - inicio )) s"
 exit "$falha"

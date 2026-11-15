@@ -15,6 +15,7 @@
 --   7. Desbloquear não devolve o profissional; o administrador consegue incluí-lo de novo
 --      por incluir_na_equipe (a volta só não é automática).
 --   8. Membro novo com bloqueio prévio (nos dois sentidos) entra na casa: a linha sai.
+--      Membro novo sem bloqueio entra: ninguém sai.
 --   9. O bloqueio e a saída da equipe são o mesmo comando: a linha já não existe no fim
 --      de um único bloco que só chama bloquear.
 --  10. Estrutura do incluir_na_equipe reescrito nesta migração (mesmos grants do 860) e as
@@ -31,7 +32,7 @@ on conflict (id) do update set eh_teste = true;
 
 set local frila.agora = '2026-11-14 12:00:00-03';
 
-select plan(47);
+select plan(49);
 
 -- ── 1. Estrutura ───────────────────────────────────────────────────────────────
 
@@ -145,8 +146,17 @@ select ok(
 select ok(
   (select prosrc from pg_proc
     where proname = 'tirar_da_equipe_no_membro_novo' and pronamespace = 'privado'::regnamespace)
-    ~* 'from public\.estabelecimento e where e\.id = new\.estabelecimento_id for no key update;\s*delete from public\.equipe_confianca',
-  'o gatilho do membro novo trava a casa com FOR NO KEY UPDATE, antes do delete'
+    ~* 'from public\.estabelecimento e where e\.id = new\.estabelecimento_id for no key update;',
+  'o gatilho do membro novo trava a casa com FOR NO KEY UPDATE'
+);
+
+-- Rodada 2 do Lince Codex: sem a trava dos profissionais, o bloqueio do membro que entra e a
+-- entrada dele não se esperam. Casa, depois os profissionais da equipe por id, depois o delete.
+select ok(
+  (select prosrc from pg_proc
+    where proname = 'tirar_da_equipe_no_membro_novo' and pronamespace = 'privado'::regnamespace)
+    ~* 'for no key update;\s*(--[^\n]*\n\s*)*perform 1 from public\.profissional p\s+where p\.id in \(select e\.profissional_id from public\.equipe_confianca e\s+where e\.estabelecimento_id = new\.estabelecimento_id\)\s+order by p\.id\s+for update;\s*delete from public\.equipe_confianca',
+  'o gatilho do membro novo trava os profissionais da equipe da casa (por id, FOR UPDATE) depois da casa e antes do delete'
 );
 
 -- ── 2. Auxiliares de JWT e de contagem ─────────────────────────────────────────
@@ -405,6 +415,15 @@ select is(
     where estabelecimento_id = (select estab_a from ids)
       and profissional_id in (pg_temp.pp(1), pg_temp.pp(4), pg_temp.pp(8))),
   3, 'Linhas sem relação ficam: P1, P4 e P8 continuam na casa A');
+
+-- Entrada sem bloqueio nenhum: o gatilho trava, mas não apaga ninguém da casa que recebe.
+insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
+values ((select user_dono_c from ids), (select estab_a from ids), 'operador');
+
+select is(
+  (select count(*)::int from public.equipe_confianca
+    where estabelecimento_id = (select estab_a from ids)),
+  3, 'Membro novo sem bloqueio (o dono da casa C) entra na casa A: a equipe dela fica igual (P1, P4, P8)');
 
 select is(
   (select count(*)::int from public.equipe_confianca

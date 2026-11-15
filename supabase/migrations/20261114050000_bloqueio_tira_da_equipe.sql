@@ -25,9 +25,12 @@ select set_config('lock_timeout', '2s', true);
 --   incluir_na_equipe          casa (FOR UPDATE) e depois profissional (FOR UPDATE), na
 --                              mesma ordem da chamar_profissional;
 --   bloqueio (gatilho)         só o profissional (FOR UPDATE), nunca a casa;
---   membro novo (gatilho)      só a casa (FOR NO KEY UPDATE), nunca o profissional.
+--   membro novo (gatilho)      a casa (FOR NO KEY UPDATE) e depois os profissionais da
+--                              equipe dela (FOR UPDATE, por id): é o que o serializa com o
+--                              bloqueio do próprio membro que entra (Lince Codex, rodada 2).
 -- Quem chega depois espera e, em READ COMMITTED, o comando seguinte já vê o que o outro
--- confirmou: a inclusão recusa com 404 ou o gatilho apaga a linha. Não há ciclo.
+-- confirmou: a inclusão recusa com 404 ou o gatilho apaga a linha. Não há ciclo: a ordem é
+-- sempre casa e depois profissional, e o bloqueio nunca trava a casa.
 
 -- ── 0. incluir_na_equipe trava casa e profissional antes de conferir o bloqueio ──
 -- contrato: corpo-sem-mudanca-de-superficie public.incluir_na_equipe 0.2.83
@@ -190,6 +193,17 @@ begin
   -- troca de trava sobre o KEY SHARE que o insert pegou pela chave estrangeira: dois membros
   -- entrando juntos na mesma casa só se enfileiram, sem deadlock.
   perform 1 from public.estabelecimento e where e.id = new.estabelecimento_id for no key update;
+
+  -- Trava também os profissionais da equipe da casa (as linhas que o gatilho do bloqueio
+  -- trava). Sem isso, um bloqueio do membro que está entrando, feito ao mesmo tempo, e esta
+  -- entrada não se esperam, e cada delete deixa de ver a escrita do outro. A ordem é a da
+  -- inclusão (casa e depois profissional), e o `order by p.id` evita ciclo entre duas
+  -- entradas em casas que dividem profissionais.
+  perform 1 from public.profissional p
+   where p.id in (select e.profissional_id from public.equipe_confianca e
+                   where e.estabelecimento_id = new.estabelecimento_id)
+   order by p.id
+   for update;
 
   delete from public.equipe_confianca e
    using public.profissional p
