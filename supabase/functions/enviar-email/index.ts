@@ -73,6 +73,7 @@ export interface Dependencias {
   sqlClient?: SqlClient;
   dbUrl?: string;
   caixaDaEquipe?: string;
+  caixaResponderPara?: string;
 }
 
 const AGENDADOR_SECRET = Deno.env.get("AGENDADOR_SECRET");
@@ -85,10 +86,35 @@ function segredoValido(req: Request, agendadorSecret?: string): boolean {
   return segredoAgendadorValido(req, secret ?? "");
 }
 
+const CAIXA_DE_SUPORTE = "suporte@frilabr.com";
+
+// A forma mínima de um endereço: um @ só, parte local e domínio com ponto, sem espaço.
+// Fica aqui, e não no `validarDestinatario`, que só barra injeção de cabeçalho e é usado
+// em outros lugares.
+const FORMA_MINIMA_DE_EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
 // A caixa da Equipe Frila é segredo de ambiente, e não linha de tabela: ela não é dado
 // do produto, muda com o provedor de e-mail e não deve viajar num `db reset`.
+// É SÓ destino interno: os avisos de ocorrência e os alertas do monitoramento. Ela
+// nunca vira o Reply-To do e-mail que sai para fora (esse é o `caixaResponderPara`).
 export function caixaDaEquipe(injetada?: string): string {
-  return (injetada || Deno.env.get("EMAIL_EQUIPE") || "suporte@frilabr.com").trim();
+  return (injetada || Deno.env.get("EMAIL_EQUIPE") || CAIXA_DE_SUPORTE).trim();
+}
+
+// Para onde vai a resposta de quem recebeu o protocolo (o Reply-To ao autor). Lê o
+// EMAIL_RESPONDER_PARA; se faltar, vier vazia, falhar no `validarDestinatario` ou não
+// tiver a forma mínima de e-mail, é a caixa de suporte. Nunca
+// cai no EMAIL_EQUIPE: a resposta do usuário traz dado pessoal e não pode ir parar num
+// destino interno só porque a variável de atendimento não foi configurada.
+export function caixaResponderPara(injetada?: string): string {
+  for (const candidata of [injetada, Deno.env.get("EMAIL_RESPONDER_PARA")]) {
+    if (candidata === undefined || candidata.trim() === "") continue;
+    const valor = candidata.trim();
+    return validarDestinatario(valor) && FORMA_MINIMA_DE_EMAIL.test(valor)
+      ? valor
+      : CAIXA_DE_SUPORTE;
+  }
+  return CAIXA_DE_SUPORTE;
 }
 
 function obterDbUrl(injetada?: string): string {
@@ -214,6 +240,7 @@ async function processarOcorrencia(
   tipo: string,
   enviar: Enviar,
   equipe: string,
+  responderParaAutor: string,
   sql: SqlClient,
 ): Promise<LinhaDoRelatorio> {
   const ocorrenciaId = typeof pedido.mensagem.ocorrencia_id === "string"
@@ -254,7 +281,7 @@ async function processarOcorrencia(
       return { msg_id: pedido.msg_id, status: "arquivado", detalhe: "tipo_desconhecido" };
     }
 
-    const responderPara = destino === "autor" ? equipe : undefined;
+    const responderPara = destino === "autor" ? responderParaAutor : undefined;
 
     if (
       !validarDestinatario(para) ||
@@ -271,7 +298,8 @@ async function processarOcorrencia(
       assunto: modelo.assunto,
       texto: modelo.texto,
       // A Equipe Frila só responde por e-mail: a resposta de quem recebeu o protocolo
-      // tem de cair na caixa dela, e não no remetente que não lê.
+      // tem de cair na caixa de atendimento, e não no remetente que não lê nem no
+      // destino interno (EMAIL_EQUIPE).
       responderPara,
     };
 
@@ -354,6 +382,7 @@ export async function processarEnvioEmail(
 
   const sql = criarSqlClient(deps);
   const equipe = caixaDaEquipe(deps.caixaDaEquipe);
+  const responderParaAutor = caixaResponderPara(deps.caixaResponderPara);
 
   const pedidos = await sql.lerFilaEmail(limite, vt);
   if (pedidos.length === 0) {
@@ -366,7 +395,9 @@ export async function processarEnvioEmail(
     if (tipo === "alerta") {
       relatorio.push(await processarAlerta(pedido, enviar, equipe, sql));
     } else {
-      relatorio.push(await processarOcorrencia(pedido, tipo, enviar, equipe, sql));
+      relatorio.push(
+        await processarOcorrencia(pedido, tipo, enviar, equipe, responderParaAutor, sql),
+      );
     }
   }
 
