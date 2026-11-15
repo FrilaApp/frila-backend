@@ -14,8 +14,11 @@ import {
 } from "jsr:@std/assert@1.0.19";
 
 import {
+  caixaDaEquipe,
+  caixaResponderPara,
   criarSqlClient,
   DadosDoEmail,
+  Dependencias,
   LIMITE_PADRAO_EMAIL,
   PedidoDaFila,
   processarEnvioEmail,
@@ -49,6 +52,8 @@ import {
 
 const SEGREDO = "segredo-de-teste";
 const EQUIPE = "equipe@frila.test";
+const RESPONDER = "resposta@frila.test";
+const SUPORTE = "suporte@frilabr.com";
 const OCORRENCIA = "3f2a1b9c-1111-4000-8000-000000000001";
 
 // O relato nunca é devolvido por `privado.dados_do_email`; a constante existe para os
@@ -131,10 +136,11 @@ function requisicao(corpo: unknown = {}): Request {
 function chamar(
   e: Espiao,
   enviar: (email: Email) => Promise<ResultadoEnvio>,
+  extras: Partial<Dependencias> = { caixaDaEquipe: EQUIPE },
 ): Promise<Response> {
   return processarEnvioEmail(requisicao(), {
     agendadorSecret: SEGREDO,
-    caixaDaEquipe: EQUIPE,
+    ...extras,
     sqlClient: e.sql,
     enviar: (email) => {
       e.enviados.push(email);
@@ -164,14 +170,15 @@ Deno.test("7yq1flLG 1: a denúncia vai para a caixa da equipe com protocolo e pr
 
 Deno.test("7yq1flLG 2: quem abriu a denúncia recebe o protocolo por e-mail", async () => {
   const e = espiao([pedido()]);
-  await chamar(e, sucesso);
+  await chamar(e, sucesso, { caixaDaEquipe: EQUIPE, caixaResponderPara: RESPONDER });
 
   const paraAutor = e.enviados.find((m) => m.para === "ana@frila.test");
   assert(paraAutor, "o autor não recebeu e-mail");
   assertStringIncludes(paraAutor.texto, OCORRENCIA);
   assertStringIncludes(paraAutor.texto, "06/10/2026");
-  // A Equipe Frila só responde por e-mail: a resposta tem de cair na caixa dela.
-  assertEquals(paraAutor.responderPara, EQUIPE);
+  // A Equipe Frila só responde por e-mail: a resposta tem de cair na caixa de
+  // atendimento (EMAIL_RESPONDER_PARA), e nunca no destino interno (EMAIL_EQUIPE).
+  assertEquals(paraAutor.responderPara, RESPONDER);
 
   assertEquals(e.registrados.map((r) => r.destino).sort(), ["autor", "equipe"]);
   assertEquals(e.arquivados, [1], "o pedido só é arquivado com os dois e-mails enviados");
@@ -1285,4 +1292,124 @@ Deno.test("B-DEMO: a assinatura de todo modelo aponta para frilabr.com, nunca pa
     assert(m.texto.endsWith("Equipe Frila\nfrilabr.com"), m.assunto);
     assertEquals(/frila\.app/i.test(`${m.assunto}\n${m.texto}`), false, m.assunto);
   }
+});
+
+// ── B-025: o destino interno (EMAIL_EQUIPE) e o Responder-para ao autor são separados ─
+//
+// O EMAIL_EQUIPE é só destino interno (denúncia, contestação, revisão de despacho e
+// alerta). A resposta de quem recebeu o protocolo vai para EMAIL_RESPONDER_PARA, e sem
+// ela para suporte@frilabr.com: nunca para o EMAIL_EQUIPE.
+
+const VARIAVEIS_DE_CAIXA = ["EMAIL_EQUIPE", "EMAIL_RESPONDER_PARA"] as const;
+
+async function comAmbiente(
+  valores: Partial<Record<(typeof VARIAVEIS_DE_CAIXA)[number], string>>,
+  fn: () => Promise<void> | void,
+): Promise<void> {
+  const anteriores = VARIAVEIS_DE_CAIXA.map((k) => [k, Deno.env.get(k)] as const);
+  try {
+    for (const k of VARIAVEIS_DE_CAIXA) {
+      const v = valores[k];
+      if (v === undefined) Deno.env.delete(k);
+      else Deno.env.set(k, v);
+    }
+    await fn();
+  } finally {
+    for (const [k, v] of anteriores) {
+      if (v === undefined) Deno.env.delete(k);
+      else Deno.env.set(k, v);
+    }
+  }
+}
+
+// Sem `caixaDaEquipe` nem `caixaResponderPara` injetados: as duas caixas vêm do ambiente,
+// como no ar.
+const peloAmbiente: Partial<Dependencias> = {};
+
+Deno.test("B-025: o autor recebe com Reply-To = EMAIL_RESPONDER_PARA quando ela existe", async () => {
+  await comAmbiente({ EMAIL_EQUIPE: EQUIPE, EMAIL_RESPONDER_PARA: RESPONDER }, async () => {
+    const e = espiao([pedido()]);
+    await chamar(e, sucesso, peloAmbiente);
+
+    const paraAutor = e.enviados.find((m) => m.para === "ana@frila.test");
+    assert(paraAutor, "o autor não recebeu e-mail");
+    assertEquals(paraAutor.responderPara, RESPONDER);
+  });
+});
+
+Deno.test("B-025: sem EMAIL_RESPONDER_PARA o Reply-To é suporte@, mesmo com EMAIL_EQUIPE definida (o bug)", async () => {
+  await comAmbiente({ EMAIL_EQUIPE: EQUIPE }, async () => {
+    const e = espiao([pedido()]);
+    await chamar(e, sucesso, peloAmbiente);
+
+    const paraAutor = e.enviados.find((m) => m.para === "ana@frila.test");
+    assert(paraAutor, "o autor não recebeu e-mail");
+    assertEquals(paraAutor.responderPara, SUPORTE);
+    // A equipe continua recebendo no destino interno.
+    assert(e.enviados.some((m) => m.para === EQUIPE), "a equipe não recebeu o aviso");
+  });
+});
+
+Deno.test("B-025: EMAIL_RESPONDER_PARA vazia ou inválida cai em suporte@, e nunca no EMAIL_EQUIPE", async () => {
+  for (const invalido of ["", "   ", "resposta@frila.test\r\nBcc: vazou@frila.test", "resposta@frila.test%0d%0aBcc:x"]) {
+    await comAmbiente({ EMAIL_EQUIPE: EQUIPE, EMAIL_RESPONDER_PARA: invalido }, async () => {
+      const e = espiao([pedido()]);
+      const res = await chamar(e, sucesso, peloAmbiente);
+      const corpo = await res.json();
+
+      const paraAutor = e.enviados.find((m) => m.para === "ana@frila.test");
+      assert(paraAutor, `o autor não recebeu e-mail com ${JSON.stringify(invalido)}`);
+      assertEquals(paraAutor.responderPara, SUPORTE, JSON.stringify(invalido));
+      // O valor ruim não derruba o protocolo: ele sai, com o Reply-To do suporte.
+      assertEquals(corpo.relatorio[0].status, "enviado");
+    });
+  }
+});
+
+Deno.test("B-025: caixaResponderPara usa a injetada, depois o ambiente, depois suporte@, e ignora o EMAIL_EQUIPE", async () => {
+  await comAmbiente({ EMAIL_EQUIPE: EQUIPE, EMAIL_RESPONDER_PARA: RESPONDER }, () => {
+    assertEquals(caixaResponderPara("injetada@frila.test"), "injetada@frila.test");
+    assertEquals(caixaResponderPara(), RESPONDER);
+    assertEquals(caixaResponderPara("  "), RESPONDER);
+    assertEquals(caixaResponderPara("x@frila.test\nBcc: y@frila.test"), SUPORTE);
+  });
+  await comAmbiente({ EMAIL_EQUIPE: EQUIPE, EMAIL_RESPONDER_PARA: `  ${RESPONDER}  ` }, () => {
+    assertEquals(caixaResponderPara(), RESPONDER);
+  });
+  await comAmbiente({ EMAIL_EQUIPE: EQUIPE }, () => {
+    assertEquals(caixaResponderPara(), SUPORTE);
+    // O destino interno não muda com a função nova.
+    assertEquals(caixaDaEquipe(), EQUIPE);
+  });
+});
+
+Deno.test("B-025: as três ocorrências e o alerta vão ao EMAIL_EQUIPE, sem Reply-To, e o autor responde para EMAIL_RESPONDER_PARA", async () => {
+  await comAmbiente({ EMAIL_EQUIPE: EQUIPE, EMAIL_RESPONDER_PARA: RESPONDER }, async () => {
+    for (const tipo of ["denuncia", "contestacao", "revisao_despacho"]) {
+      const e = espiao(
+        [pedido({ mensagem: { tipo, ocorrencia_id: OCORRENCIA } })],
+        dados({ tipo }),
+      );
+      await chamar(e, sucesso, peloAmbiente);
+
+      const paraEquipe = e.enviados.filter((m) => m.para === EQUIPE);
+      assertEquals(paraEquipe.length, 1, `${tipo}: a equipe recebe um aviso`);
+      // O aviso interno não leva Reply-To do autor (nem nenhum outro): como era antes.
+      assertEquals(paraEquipe[0].responderPara, undefined, tipo);
+
+      const paraAutor = e.enviados.find((m) => m.para === "ana@frila.test");
+      assert(paraAutor, `${tipo}: o autor não recebeu e-mail`);
+      assertEquals(paraAutor.responderPara, RESPONDER, tipo);
+      // A caixa de resposta não vira destino de aviso interno.
+      assert(!e.enviados.some((m) => m.para === RESPONDER), tipo);
+    }
+
+    const e = espiao([
+      pedido({ mensagem: { tipo: "alerta", codigo: "fila_despacho_parada", valor: 3 } }),
+    ]);
+    await chamar(e, sucesso, peloAmbiente);
+    assertEquals(e.enviados.length, 1);
+    assertEquals(e.enviados[0].para, EQUIPE);
+    assertEquals(e.enviados[0].responderPara, undefined);
+  });
 });
