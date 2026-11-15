@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.83
+  version: 0.2.84
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -114,6 +114,9 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.84, de 15/11/2026.** Alinhamento do push de cancelamento por atraso com a falta (D-13, decisão JP 15/11/2026).
+    - **Push de cancelamento por atraso:** quando uma posição é reaberta por atraso (`public.reabrir_por_atraso`, motivo estável `reabertura_por_atraso`), a notificação `cancelamento` enviada exclusivamente ao profissional removido passa a ter título "Participação cancelada por atraso" e corpo "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.", explicitando a penalidade e refletindo com precisão que a saída decorreu de iniciativa do estabelecimento.
 
     **Versão 0.2.83, de 14/11/2026.** Check-out recebido depois de fim previsto + 60 min é recusado com tolerância zero (RN22, decisão JP 14/11/2026).
     - **`POST /rpc/fazer_checkout`:** além da janela conferida pelo instante informado pelo aparelho (`registrado_em`), o servidor recusa com `422 fora_da_janela` qualquer check-out que ele **receber** após `fim_em + 60 min`, sem tolerância (mesmo desenho do check-in na 0.2.80), inclusive toques guardados offline e sincronizados após o limite.
@@ -6479,6 +6482,12 @@ components:
         |---|---|---|---|
         | `lembrete_30min_fim_turno` | Membros da casa | Chegada a confirmar | Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos. |
         | `lembrete_fim_turno` | Membros da casa | Turno encerrado | O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas. |
+
+        **Cancelamento por atraso (0.2.84, D-13).** Disparado exclusivamente ao profissional quando a casa declara a falta por atraso (`reabrir_por_atraso`, RN12). Explicita que a saída decorreu de cancelamento da participação pelo estabelecimento e que conta como falta.
+
+        | Tipo | Quem recebe | Título | Corpo |
+        |---|---|---|---|
+        | `cancelamento` (com `reabertura_por_atraso`) | Profissional removido | Participação cancelada por atraso | O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta. |
 
         Em versões antigas dos apps: iOS e Android mostram o push com título e corpo do servidor; no
         iOS o toque abre a tela inicial (`AvisoDePush` não reconhece o tipo); no Android cai no canal
