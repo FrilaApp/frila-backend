@@ -419,11 +419,11 @@ export function titulosECorposPorTipo(
         body: "Check-in manual registrado, aguardando confirmação do contratante.",
       };
     case "cancelamento":
-      // Caso 17 da planilha: a casa reabriu a vaga por falta de check-in.
+      // Caso 17 da planilha (alinhado ao D-13, decisão JP 15/11/2026): falta por atraso declarada pela casa.
       if (variaveis.reaberturaPorAtraso) {
         return {
-          title: "Turno cancelado por atraso",
-          body: "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.",
+          title: "Participação cancelada por atraso",
+          body: "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.",
         };
       }
       return {

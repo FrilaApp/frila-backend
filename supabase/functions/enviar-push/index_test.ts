@@ -929,11 +929,11 @@ Deno.test("Planilha: início sem check-in (caso 13) e atraso de 15 min (caso 16)
 
 Deno.test("Planilha: cancelamento por reabertura por atraso (caso 17), e só ele", () => {
   assertEquals(titulosECorposPorTipo("cancelamento", {}, { reaberturaPorAtraso: true }), {
-    title: "Turno cancelado por atraso",
-    body: "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.",
+    title: "Participação cancelada por atraso",
+    body: "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.",
   });
   const generico = titulosECorposPorTipo("cancelamento", {});
-  assert(generico.title !== "Turno cancelado por atraso",
+  assert(generico.title !== "Participação cancelada por atraso",
     "cancelamento comum não pode dizer que foi atraso");
 });
 
@@ -1003,8 +1003,8 @@ Deno.test("Envio: cancelamento com ocorrência reabertura_por_atraso sai com o t
 
   assertEquals(res.status, 200);
   assert(consultouOcorrencia, "o motivo do cancelamento é lido do banco no envio");
-  assertEquals(enviado.title, "Turno cancelado por atraso");
-  assertEquals(enviado.body, "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.");
+  assertEquals(enviado.title, "Participação cancelada por atraso");
+  assertEquals(enviado.body, "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.");
 });
 
 Deno.test("Lembretes 24h e 3h: interpolação Opção A homologada (k5R4tzjC)", async () => {
