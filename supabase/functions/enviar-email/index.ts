@@ -88,6 +88,11 @@ function segredoValido(req: Request, agendadorSecret?: string): boolean {
 
 const CAIXA_DE_SUPORTE = "suporte@frilabr.com";
 
+// A forma mínima de um endereço: um @ só, parte local e domínio com ponto, sem espaço.
+// Fica aqui, e não no `validarDestinatario`, que só barra injeção de cabeçalho e é usado
+// em outros lugares.
+const FORMA_MINIMA_DE_EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
 // A caixa da Equipe Frila é segredo de ambiente, e não linha de tabela: ela não é dado
 // do produto, muda com o provedor de e-mail e não deve viajar num `db reset`.
 // É SÓ destino interno: os avisos de ocorrência e os alertas do monitoramento. Ela
@@ -97,14 +102,17 @@ export function caixaDaEquipe(injetada?: string): string {
 }
 
 // Para onde vai a resposta de quem recebeu o protocolo (o Reply-To ao autor). Lê o
-// EMAIL_RESPONDER_PARA; se faltar, vier vazia ou inválida, é a caixa de suporte. Nunca
+// EMAIL_RESPONDER_PARA; se faltar, vier vazia, falhar no `validarDestinatario` ou não
+// tiver a forma mínima de e-mail, é a caixa de suporte. Nunca
 // cai no EMAIL_EQUIPE: a resposta do usuário traz dado pessoal e não pode ir parar num
 // destino interno só porque a variável de atendimento não foi configurada.
 export function caixaResponderPara(injetada?: string): string {
   for (const candidata of [injetada, Deno.env.get("EMAIL_RESPONDER_PARA")]) {
     if (candidata === undefined || candidata.trim() === "") continue;
     const valor = candidata.trim();
-    return validarDestinatario(valor) ? valor : CAIXA_DE_SUPORTE;
+    return validarDestinatario(valor) && FORMA_MINIMA_DE_EMAIL.test(valor)
+      ? valor
+      : CAIXA_DE_SUPORTE;
   }
   return CAIXA_DE_SUPORTE;
 }

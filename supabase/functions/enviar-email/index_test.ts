@@ -1366,6 +1366,24 @@ Deno.test("B-025: EMAIL_RESPONDER_PARA vazia ou inválida cai em suporte@, e nun
   }
 });
 
+Deno.test("B-025: EMAIL_RESPONDER_PARA sem forma de e-mail ('abc') cai em suporte@", async () => {
+  await comAmbiente({ EMAIL_EQUIPE: EQUIPE, EMAIL_RESPONDER_PARA: "abc" }, async () => {
+    const e = espiao([pedido()]);
+    const res = await chamar(e, sucesso, peloAmbiente);
+    const corpo = await res.json();
+
+    const paraAutor = e.enviados.find((m) => m.para === "ana@frila.test");
+    assert(paraAutor, "o autor não recebeu e-mail");
+    assertEquals(paraAutor.responderPara, SUPORTE);
+    assertEquals(corpo.relatorio[0].status, "enviado");
+  });
+  // Outras formas que não são e-mail também caem no suporte; a forma mínima passa.
+  for (const ruim of ["abc@", "@frila.test", "a@b", "a@@frila.test", "a b@frila.test", "a@frila.test b@frila.test"]) {
+    assertEquals(caixaResponderPara(ruim), SUPORTE, ruim);
+  }
+  assertEquals(caixaResponderPara("a@b.co"), "a@b.co");
+});
+
 Deno.test("B-025: caixaResponderPara usa a injetada, depois o ambiente, depois suporte@, e ignora o EMAIL_EQUIPE", async () => {
   await comAmbiente({ EMAIL_EQUIPE: EQUIPE, EMAIL_RESPONDER_PARA: RESPONDER }, () => {
     assertEquals(caixaResponderPara("injetada@frila.test"), "injetada@frila.test");
