@@ -246,8 +246,8 @@ select pg_temp.como('c7970000-0000-4000-8000-000000000002', $$ select public.lis
 
 select is(
   (select j->0->>'nome' from lista_casa),
-  'Profissional B',
-  'a lista do colega mostra o nome público do profissional');
+  'Profissional B.',
+  'a lista do colega mostra o nome público do profissional, curto: o colega não tem candidatura, turno nem equipe com ele (contrato 0.2.89)');
 
 select is(
   (select (j->0->>'alvo_id')::uuid from lista_casa),

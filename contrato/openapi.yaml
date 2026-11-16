@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.88
+  version: 0.2.89
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -114,6 +114,16 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.89, de 16/11/2026.** Só descrição: a regra do nome do profissional fica fechada
+    para todo leitor (pedido da Forja, B-027 PR 2, parecer do Lince Opus). Nenhum campo, operação ou
+    código muda, e o app não precisa mudar.
+    - **`PerfilPublico.nome` de profissional** vem inteiro só para o próprio profissional e para o
+      contratante membro de uma casa com vínculo com ele: candidatura numa vaga da casa, turno entre
+      eles ou equipe de confiança. Qualquer outro leitor recebe o primeiro nome e a inicial do
+      sobrenome ("Maria L."). Isso inclui outro profissional, o contratante sem casa e o contratante
+      de casa sem vínculo. A 0.2.88 dizia só o caso do contratante sem vínculo.
+    - **`ItemBloqueio.nome`** segue a mesma regra.
 
     **Versão 0.2.88, de 16/11/2026.** Busca de profissionais (pedido do Cauê 2026-11-16-03;
     `historico/produto/contratacao-direta/01-especificacao.md`, CD-B01 a CD-B11, e
@@ -5531,7 +5541,7 @@ paths:
                   value:
                     - alvo_tipo: profissional
                       alvo_id: 7c1d2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d
-                      nome: Carlos Mendes
+                      nome: Carlos M.
                       criado_em: '2026-11-03T14:20:00Z'
                     - alvo_tipo: estabelecimento
                       alvo_id: 0b8a7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
@@ -7558,12 +7568,15 @@ components:
           enum: [profissional, estabelecimento]
         nome:
           description: |
-            0.2.88. Para contratante que não tem com o profissional candidatura numa vaga da casa,
-            turno entre eles nem equipe de confiança, vem sempre como no `CartaoProfissional`:
-            primeiro nome e inicial do sobrenome. Vale em toda leitura que traz `PerfilPublico`
-            (inclusive `ChamadaResumo.outra_parte`), esteja o profissional na busca ou não, e tenha a
-            casa chamado ou não. Assim uma chamada recusada, ou sair da busca, não revela o nome
-            completo. Com candidatura, turno ou equipe, vem como sempre veio.
+            0.2.89. Perfil de profissional: o nome vem **inteiro só** para o próprio profissional e
+            para o contratante membro de uma casa que tem com ele candidatura numa vaga da casa,
+            turno entre eles ou equipe de confiança. **Qualquer outro leitor** recebe o primeiro nome
+            e a inicial do sobrenome, como no `CartaoProfissional` ("Maria L."): outro profissional,
+            o contratante sem casa e o contratante de casa sem esse vínculo. Vale em toda leitura que
+            traz `PerfilPublico` (inclusive `ChamadaResumo.outra_parte`), esteja o profissional na
+            busca ou não, e tenha a casa chamado ou não. Assim uma chamada recusada, ou sair da busca,
+            não revela o nome completo. Perfil de estabelecimento: o nome vem como sempre veio. Conta
+            encerrada continua "Conta encerrada" (RF25).
           type: string
         funcoes:
           type: array
@@ -8574,9 +8587,10 @@ components:
         nome:
           type: string
           description: |
-            Nome público da outra parte, o mesmo de `PerfilPublico.nome`. Desde a 0.2.88, com o
-            mesmo corte, calculado na leitura: para a casa sem candidatura, turno ou equipe com o
-            profissional, primeiro nome e inicial do sobrenome.
+            Nome público da outra parte, o mesmo de `PerfilPublico.nome`, com a mesma regra
+            (0.2.89), calculada na leitura: o nome do profissional vem inteiro só para quem tem com
+            ele candidatura, turno ou equipe de confiança; para os demais, primeiro nome e inicial do
+            sobrenome.
         criado_em:
           $ref: '#/components/schemas/Instante'
     SituacaoDaConta:
