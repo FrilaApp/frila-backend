@@ -12,12 +12,13 @@
 --   3. O perfil rico: quem ligou "Aceito chamadas diretas" conta como vínculo de leitura para qualquer
 --      contratante, com ou sem pausa (privado.contratante_com_vinculo_leitura). A foto NÃO: ela segue o
 --      vínculo próprio da 0.2.54 (privado.foto_de_perfil_projecao), que esta migração não toca.
---   4. O nome curto ("Maria L.", privado.nome_curto, do PR 1) vale em TODA leitura de PerfilPublico para o
---      contratante sem candidatura, turno nem equipe de confiança com o profissional: perfil_publico,
+--   4. O nome curto ("Maria L.", privado.nome_curto, do PR 1) vale em TODA leitura de PerfilPublico para todo
+--      leitor que não seja o próprio profissional nem contratante com candidatura, turno ou equipe de
+--      confiança com ele (inclusive outro profissional): perfil_publico,
 --      ChamadaResumo.outra_parte (minhas_chamadas), detalhe_chamada, candidatos_da_vaga e os turnos
 --      passam todos por privado.perfil_publico_profissional, que é onde a regra mora (privado.leitor_ve_nome_completo).
 --      Muda leitoras que já existiam: a casa que só chamou o profissional (sem candidatura, turno nem
---      equipe) passa a ver o nome curto, que hoje vê inteiro. listar_bloqueios (ItemBloqueio.nome) idem.
+--      equipe) passa a ver o nome curto, que hoje vê inteiro, e outro profissional também. listar_bloqueios (ItemBloqueio.nome) idem.
 
 select set_config('lock_timeout', '2s', true);
 
@@ -29,16 +30,21 @@ comment on column public.vaga.regiao_id is
 
 -- ── 2. Quem lê o nome inteiro ─────────────────────────────────────────────────
 
--- O contratante que não tem com o profissional candidatura em vaga da casa, turno com a casa nem
--- equipe de confiança lê o nome curto (0.2.88). Quem não é contratante (o próprio profissional, outro
--- profissional, leitura sem sessão) lê como sempre leu. Chamada direta NÃO conta: é justamente o caso
--- da casa que só chamou. O vínculo vale se alguma casa de que o leitor é membro o tem (RN25).
+-- Nome inteiro SÓ para o próprio profissional e para o contratante com candidatura em vaga da casa, turno com
+-- a casa ou equipe de confiança com ele (0.2.88). Qualquer outro leitor lê o nome curto: contratante sem
+-- vínculo (chamada direta e busca não contam: é justamente o caso da casa que só chamou), contratante sem
+-- casa, outro profissional e leitura sem sessão. Decide pelo perfil da conta do leitor. O vínculo vale se
+-- QUALQUER casa de que o leitor é membro o tem (RN25). Só conta o vínculo VIGENTE na hora da leitura: candidatura
+-- pendente ou aceita (retirada, recusada e expirada não), turno e equipe de confiança (desfeita, já não existe).
 create function privado.leitor_ve_nome_completo(p_profissional uuid, p_leitor uuid)
 returns boolean
 language sql stable security definer set search_path = ''
 as $$
-  select not exists (select 1 from public.membro_estabelecimento me where me.usuario_id = p_leitor)
-      or exists (
+  select coalesce(
+    exists (select 1 from public.profissional p where p.id = p_profissional and p.usuario_id = p_leitor)
+    or (
+      (select u.perfil from public.usuario u where u.id = p_leitor) = 'contratante'
+      and exists (
         select 1
           from public.membro_estabelecimento me
          where me.usuario_id = p_leitor
@@ -48,14 +54,15 @@ as $$
              or exists (select 1 from public.candidatura c
                           join public.posicao pos on pos.id = c.posicao_id
                           join public.vaga v on v.id = pos.vaga_id
-                         where v.estabelecimento_id = me.estabelecimento_id and c.profissional_id = p_profissional)
+                         where v.estabelecimento_id = me.estabelecimento_id and c.profissional_id = p_profissional
+                           and c.estado in ('pendente', 'aceita'))
              or exists (select 1 from public.posicao pos
                           join public.vaga v on v.id = pos.vaga_id
                          where v.estabelecimento_id = me.estabelecimento_id and pos.profissional_id = p_profissional)
-           ))
+           ))), false)
 $$;
 comment on function privado.leitor_ve_nome_completo(uuid, uuid) is
-  'Se o leitor vê o nome inteiro do profissional (contrato 0.2.88): quem não é contratante, ou o contratante com candidatura, turno ou equipe de confiança com o profissional em alguma casa sua. Chamada direta e busca não contam: nesses casos o nome vem curto (privado.nome_curto).';
+  'Se o leitor vê o nome inteiro do profissional (contrato 0.2.88): só o próprio profissional e o contratante com candidatura, turno ou equipe de confiança com ele em QUALQUER casa de que é membro. Todo outro leitor, inclusive outro profissional e contratante sem casa, lê o nome curto (privado.nome_curto). Chamada direta e busca não contam como vínculo.';
 revoke all on function privado.leitor_ve_nome_completo(uuid, uuid) from public, anon, authenticated;
 grant execute on function privado.leitor_ve_nome_completo(uuid, uuid) to service_role;
 
@@ -105,7 +112,10 @@ language sql stable security definer set search_path = '' as $$
          or (privado.recurso_ligado('busca_profissionais')
              and privado.recurso_ligado('chamada_direta')
              and exists (select 1 from public.profissional_preferencia_chamada pc
-                          where pc.profissional_id = p_prof and pc.aceita_chamadas)
+                           join public.profissional pr on pr.id = pc.profissional_id
+                           join public.usuario u on u.id = pr.usuario_id
+                          where pc.profissional_id = p_prof and pc.aceita_chamadas
+                            and u.estado = 'ativa')
              and privado.mesma_populacao(privado.usuario_do_profissional(p_prof)))
        )
   );
@@ -345,8 +355,16 @@ begin
   select * into v_c from public.chamada c where c.estabelecimento_id = v_estab and c.chave = chamar_profissional.chave;
   if found then return to_jsonb(v_c) - array['criada_por', 'chave', 'lembrete_em']; end if;
 
+  -- Profissional inexistente, fora do ar ou com bloqueio: o mesmo 404 (RF26).
+  select u.* into v_conta from public.profissional p join public.usuario u on u.id = p.usuario_id where p.id = v_prof;
+  if not found or v_conta.estado <> 'ativa'
+     or privado.bloqueado_com_estabelecimento(v_conta.id, v_estab) then
+    perform public.erro(404, 'nao_encontrado');
+  end if;
+
   -- 0.2.88: regiao_id é o id do catálogo (ativo) e o nome dele é o regiao_administrativa do corpo. Não
-  -- depende do profissional, então a recusa sai antes de qualquer conta dele e não revela nada. Com
+  -- depende do profissional, então a recusa sai antes de qualquer conta dele e não revela nada. Vem
+  -- depois do 404 do bloqueio, que tem precedência sobre qualquer outra recusa (CD-C03, RF26). Com
   -- vaga_id, a região é a da vaga e o regiao_id do corpo é ignorado, como o regiao_administrativa.
   if chamar_profissional.vaga_id is null and chamar_profissional.regiao_id is not null
      and not exists (select 1 from public.regiao_administrativa r
@@ -354,13 +372,6 @@ begin
                         and (nullif(btrim(chamar_profissional.regiao_administrativa), '') is null
                              or r.nome = btrim(chamar_profissional.regiao_administrativa))) then
     perform public.erro(422, 'campo_invalido', 'regiao_id');
-  end if;
-
-  -- Profissional inexistente, fora do ar ou com bloqueio: o mesmo 404 (RF26).
-  select u.* into v_conta from public.profissional p join public.usuario u on u.id = p.usuario_id where p.id = v_prof;
-  if not found or v_conta.estado <> 'ativa'
-     or privado.bloqueado_com_estabelecimento(v_conta.id, v_estab) then
-    perform public.erro(404, 'nao_encontrado');
   end if;
 
   -- Serializa as chamadas da casa: os limites somam os membros (RN34).
@@ -436,10 +447,13 @@ begin
                    and (pr.atende_todo_df
                         or exists (select 1 from public.profissional_regiao pg
                                     where pg.profissional_id = pr.id and pg.regiao_id = v_regiao_busca))), false);
-  v_sem_vinculo := not v_veterana and not v_na_busca
-                   and not exists (select 1 from public.equipe_confianca q
-                                    where q.estabelecimento_id = v_estab and q.profissional_id = v_prof);
-  if v_so_cnpj or v_nao_aceita or v_sem_versao or v_sem_vinculo then
+  -- "Aceitar de quem já trabalhou comigo" desligado só vale no caminho do VÍNCULO (contrato 0.2.88): quem
+  -- ligou "Aceito chamadas diretas" aceitou qualquer contratante, então esta preferência não o barra.
+  v_sem_vinculo := not v_na_busca
+                   and (not (v_veterana or exists (select 1 from public.equipe_confianca q
+                                                    where q.estabelecimento_id = v_estab and q.profissional_id = v_prof))
+                        or v_nao_aceita);
+  if v_so_cnpj or v_sem_versao or v_sem_vinculo then
     perform public.erro(422, 'profissional_indisponivel', 'nao_aceita_chamadas');
   end if;
 

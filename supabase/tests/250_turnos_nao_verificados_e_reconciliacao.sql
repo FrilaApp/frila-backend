@@ -543,14 +543,18 @@ select matches(
   'Critério 4: public.perfil_publico delega para privado.perfil_publico_profissional'
 );
 
--- (b) privado.perfil_publico_profissional lê taxa_comparecimento diretamente de public.profissional p
+-- (b) privado.perfil_publico_profissional delega a reputação a privado.reputacao_profissional (0.2.88, o helper único
+--     do perfil e do cartão da busca), que lê taxa_comparecimento diretamente de public.profissional p
 --     sem funções agregadas (avg, sum, count) sobre a taxa e sem varrer public.turno
 select ok(
-  pg_get_functiondef('privado.perfil_publico_profissional'::regproc) ~* '''taxa_comparecimento'',\s*p\.taxa_comparecimento'
-  and pg_get_functiondef('privado.perfil_publico_profissional'::regproc) ~* '''turnos_realizados'',\s*p\.turnos_realizados'
+  pg_get_functiondef('privado.perfil_publico_profissional'::regproc) ~* 'privado\.reputacao_profissional\(p\.id\)'
+  and pg_get_functiondef('privado.reputacao_profissional'::regproc) ~* '''taxa_comparecimento'',\s*p\.taxa_comparecimento'
+  and pg_get_functiondef('privado.reputacao_profissional'::regproc) ~* '''turnos_realizados'',\s*p\.turnos_realizados'
+  and pg_get_functiondef('privado.reputacao_profissional'::regproc) !~* '(avg|sum)\s*\([^)]*taxa'
+  and pg_get_functiondef('privado.reputacao_profissional'::regproc) !~* 'from\s+public\.turno'
   and pg_get_functiondef('privado.perfil_publico_profissional'::regproc) !~* '(avg|sum)\s*\([^)]*taxa'
   and pg_get_functiondef('privado.perfil_publico_profissional'::regproc) !~* 'from\s+public\.turno',
-  'Critério 4: corpo de privado.perfil_publico_profissional lê taxa_comparecimento em cache de profissional sem agregação'
+  'Critério 4: perfil_publico_profissional delega a privado.reputacao_profissional, e os dois corpos leem taxa_comparecimento em cache de profissional sem agregação'
 );
 
 -- (c) EXPLAIN da chamada real de public.perfil_publico não gera nó Aggregate

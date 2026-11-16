@@ -17,7 +17,7 @@ insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id)
 select set_config('frila.agora', '2026-11-16 15:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-871';
 set local frila.ler_midia_function_url = 'http://funcoes.invalid/functions/v1/ler-midia';
-select plan(67);
+select plan(86);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -95,24 +95,26 @@ begin
 end $$;
 
 -- ── Massa ─────────────────────────────────────────────────────────────────────
--- Contratantes: 1 (casa CNPJ), 2 (casa CPF), 3 (casa de demonstração). Profissionais 11 a 40.
+-- Contratantes: 1 (casa CNPJ), 2 (casa CPF), 3 (casa de demonstração), 4 (sem casa), 5 (casa 4, a do teste das 3 chamadas por vaga).
+-- Profissionais 11 a 44.
 insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
 select '00000000-0000-0000-0000-000000000000', pg_temp.u(n), 'authenticated', 'authenticated',
        'p' || n || '@t871.test', privado.agora(), privado.agora(), false, false
-  from (select generate_series(1, 3) union all select generate_series(11, 40)) s(n);
+  from (select generate_series(1, 5) union all select generate_series(11, 44)) s(n);
 select pg_temp.como(pg_temp.u(n), format(
   $$ select public.criar_conta(%L, %L, %L, '1990-01-01', '2026-09-22') $$,
-  case when n <= 3 then 'contratante' else 'profissional' end,
+  case when n <= 5 then 'contratante' else 'profissional' end,
   case n when 11 then 'Maria Souza Lima' when 19 then 'Pedro Alves Pinto' when 25 then 'Carla Mendes Rocha'
          when 26 then 'Rui Barbosa Neto' when 36 then 'Joana Pereira Dias' else 'Prof ' || n || ' Sobrenome' end,
   '+55619555871' || lpad(n::text, 2, '0')))
-  from (select generate_series(1, 3) union all select generate_series(11, 40)) s(n);
+  from (select generate_series(1, 5) union all select generate_series(11, 44)) s(n);
 update public.usuario set demonstracao = true where id in (pg_temp.u(3), pg_temp.u(14));
 
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto, regiao_administrativa) values
   (pg_temp.casa(1), 'Casa 871 CNPJ', '87112345000169', 'food_service', 'CLN 201', 'POINT(-47.8822 -15.7942)'::extensions.geography, 'Plano Piloto'),
   (pg_temp.casa(2), 'Casa 871 CPF',  '87112345669',    'food_service', 'CLN 202', 'POINT(-47.8822 -15.7942)'::extensions.geography, 'Plano Piloto'),
-  (pg_temp.casa(3), 'Casa 871 Demo', '87112345000270', 'food_service', 'CLN 203', 'POINT(-47.8822 -15.7942)'::extensions.geography, 'Plano Piloto');
+  (pg_temp.casa(3), 'Casa 871 Demo', '87112345000270', 'food_service', 'CLN 203', 'POINT(-47.8822 -15.7942)'::extensions.geography, 'Plano Piloto'),
+  (pg_temp.casa(4), 'Casa 871 Vaga', '87112345000371', 'food_service', 'CLN 204', 'POINT(-47.8822 -15.7942)'::extensions.geography, 'Plano Piloto');
 -- Casas sem membro, só para o que depende de outra casa (cinco abertas, recusa de outra casa).
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto, regiao_administrativa)
 select pg_temp.casa(10 + k), 'Casa 871 extra ' || k, '8719999900' || lpad(k::text, 2, '0') || '69', 'food_service', 'CLN 2' || k,
@@ -121,37 +123,39 @@ select pg_temp.casa(10 + k), 'Casa 871 extra ' || k, '8719999900' || lpad(k::tex
 insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel) values
   (pg_temp.u(1), pg_temp.casa(1), 'administrador'),
   (pg_temp.u(2), pg_temp.casa(2), 'administrador'),
-  (pg_temp.u(3), pg_temp.casa(3), 'administrador');
+  (pg_temp.u(3), pg_temp.casa(3), 'administrador'),
+  (pg_temp.u(5), pg_temp.casa(4), 'administrador');
 
 insert into public.profissional (id, usuario_id, ponto_base, apresentacao)
 select pg_temp.p(n), pg_temp.u(n), 'POINT(-47.8822 -15.7852)'::extensions.geography, 'Apresentação ' || n
-  from generate_series(11, 40) n;
+  from generate_series(11, 44) n;
 insert into public.profissional_funcao (profissional_id, funcao_id)
-select pg_temp.p(n), pg_temp.garcom() from generate_series(11, 40) n;
+select pg_temp.p(n), pg_temp.garcom() from generate_series(11, 44) n;
 insert into public.profissional_servico (profissional_id, funcao_id, unidade, valor_centavos)
-select pg_temp.p(n), pg_temp.garcom(), 'hora', 5000 from generate_series(11, 40) n;
+select pg_temp.p(n), pg_temp.garcom(), 'hora', 5000 from generate_series(11, 44) n;
 delete from public.profissional_servico where profissional_id = pg_temp.p(16);          -- 16: sem serviço
 -- Regiões: 17, 32, 33 e 34 só em Taguatinga (3); 18 e 27 atendem o DF todo; os outros, o Plano Piloto (1).
 insert into public.profissional_regiao (profissional_id, regiao_id)
 select pg_temp.p(n), case when n in (17, 32, 33, 34) then 3 else 1 end
-  from generate_series(11, 40) n where n not in (18, 27);
+  from generate_series(11, 44) n where n not in (18, 27);
 update public.profissional set atende_todo_df = true where id in (pg_temp.p(18), pg_temp.p(27));
 -- Aparelho na versão mínima da chamada direta para todos, menos 23 (1.1.0).
 insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app)
 select pg_temp.u(n), 'tok-871-' || n || '-000000000000000000', 'ios', case n when 23 then '1.1.0' else '1.2.0' end
-  from generate_series(11, 40) n;
+  from generate_series(11, 44) n;
 
 -- Preferências. "Aceito chamadas diretas" ligado para quase todos; 12 desligado, 13 sem linha, 19 e 31 (vínculo) desligado.
 insert into public.profissional_preferencia_chamada (profissional_id, aceita_chamadas, aceita_chamadas_em, versao_texto_busca)
-select pg_temp.p(n), true, privado.agora(), 'busca-v1' from generate_series(11, 40) n where n not in (12, 13, 19, 31);
-insert into public.profissional_preferencia_chamada (profissional_id) values (pg_temp.p(12)), (pg_temp.p(19)), (pg_temp.p(31));
+select pg_temp.p(n), true, privado.agora(), 'busca-v1' from generate_series(11, 44) n where n not in (12, 13, 19, 31, 39);
+insert into public.profissional_preferencia_chamada (profissional_id) values (pg_temp.p(12)), (pg_temp.p(19)), (pg_temp.p(31)), (pg_temp.p(39));
 update public.profissional_preferencia_chamada set pausado_ate = '2026-11-20' where profissional_id in (pg_temp.p(15), pg_temp.p(31));
 update public.profissional_preferencia_chamada set aceita_de = 'so_cnpj' where profissional_id = pg_temp.p(22);
+update public.profissional_preferencia_chamada set aceita_de_quem_ja_trabalhou = false where profissional_id in (pg_temp.p(38), pg_temp.p(39));
 update public.profissional_preferencia_chamada set antecedencia_minima_h = 48 where profissional_id = pg_temp.p(24);
 
 -- Vínculos de trabalho com a casa 1: 19 e 31 equipe; 25 candidatura; 26 turno.
 insert into public.equipe_confianca (estabelecimento_id, profissional_id) values
-  (pg_temp.casa(1), pg_temp.p(19)), (pg_temp.casa(1), pg_temp.p(31));
+  (pg_temp.casa(1), pg_temp.p(19)), (pg_temp.casa(1), pg_temp.p(31)), (pg_temp.casa(1), pg_temp.p(39));
 select pg_temp.turno(pg_temp.casa(1), pg_temp.p(26), '2026-11-01 10:00-03');
 select pg_temp.como(pg_temp.u(1),
   format($$select public.publicar_vaga(%L, %L, '2026-11-25 18:00:00+00'::timestamptz, '2026-11-26 02:00:00+00'::timestamptz,
@@ -270,6 +274,36 @@ update privado.recurso set ligado = true where chave = 'busca_profissionais';
 -- Bloqueio tem precedência (RF26).
 select pg_temp.como(pg_temp.u(1), format($$select public.bloquear('profissional', %L::uuid)$$, pg_temp.p(36)));
 select is(pg_temp.chamar(pg_temp.u(1), pg_temp.casa(1), 36), '404 nao_encontrado', 'A35 bloqueado: 404, antes de qualquer outra recusa');
+select is(pg_temp.chamar(pg_temp.u(1), pg_temp.casa(1), 36, extra => ', regiao_id => 9999'), '404 nao_encontrado',
+  'A36 bloqueado com regiao_id inválido: o 404 do bloqueio vem ANTES do 422 de regiao_id (CD-C03)');
+
+-- "Aceitar chamadas de quem já trabalhou comigo" desligado só vale no caminho do VÍNCULO (contrato 0.2.88).
+create temp table lista_p38 as select pg_temp.lista(pg_temp.u(2), pg_temp.casa(2)) as v;
+select ok(pg_temp.tem((select v from lista_p38), 38),
+  'A37 "Aceito chamadas diretas" ligado com aceita_de_quem_ja_trabalhou desligado: aparece na busca');
+select is(pg_temp.chamar(pg_temp.u(2), pg_temp.casa(2), 38), 'ok',
+  'A38 e a chamada pela busca, sem vínculo, FUNCIONA: a preferência do vínculo não o barra');
+select is(pg_temp.chamar(pg_temp.u(1), pg_temp.casa(1), 39), '422 profissional_indisponivel nao_aceita_chamadas',
+  'A39 controle: com vínculo (equipe) e a preferência desligada, sem "Aceito chamadas diretas": a recusa genérica de sempre (857)');
+
+-- A 1ª chamada pela busca cria a vaga direta; a 2ª e a 3ª, com o vaga_id dela, ficam na mesma vaga; a 4ª recusa
+-- pelo limite de 3 por vaga (422 limite_de_chamadas, por_vaga). Casa 4, sem vínculo com nenhum dos quatro.
+create temp table vagas_antes as select count(*)::int as n from public.vaga where estabelecimento_id = pg_temp.casa(4);
+select is(pg_temp.chamar(pg_temp.u(5), pg_temp.casa(4), 41), 'ok', 'A40 a 1ª chamada pela busca (sem vínculo) nasce');
+create temp table vaga_primeira as select c.vaga_id as id from public.chamada c where c.profissional_id = pg_temp.p(41);
+select is((select count(*)::int from public.vaga where estabelecimento_id = pg_temp.casa(4)) - (select n from vagas_antes), 1,
+  'A41 a 1ª chamada criou UMA vaga direta nova na casa');
+select is(pg_temp.chamar_vaga(pg_temp.u(5), pg_temp.casa(4), 42, (select id from vaga_primeira)), 'ok', 'A42 a 2ª chamada, a outro profissional, pelo vaga_id da 1ª');
+select is(pg_temp.chamar_vaga(pg_temp.u(5), pg_temp.casa(4), 43, (select id from vaga_primeira)), 'ok', 'A43 a 3ª chamada, a outro profissional, pelo vaga_id da 1ª');
+select is((select count(*)::int from public.vaga where estabelecimento_id = pg_temp.casa(4)) - (select n from vagas_antes), 1,
+  'A44 a 2ª e a 3ª NÃO criaram vaga: a casa tem só a vaga a mais da 1ª');
+select is((select count(*)::int || '/' || count(distinct profissional_id)::int from public.chamada where vaga_id = (select id from vaga_primeira)),
+  '3/3', 'A45 as três chamadas ficam na mesma vaga, para três profissionais diferentes');
+select is(pg_temp.chamar_vaga(pg_temp.u(5), pg_temp.casa(4), 44, (select id from vaga_primeira)), '422 limite_de_chamadas por_vaga',
+  'A46 a 4ª chamada no mesmo vaga_id recusa pelo limite de 3 por vaga (422 limite_de_chamadas, por_vaga)');
+select is((select count(*) from public.chamada where vaga_id = (select id from vaga_primeira))::text || '/'
+          || ((select count(*) from public.vaga where estabelecimento_id = pg_temp.casa(4)) - (select n from vagas_antes))::text,
+  '3/1', 'A47 a recusa não criou chamada nem vaga');
 
 -- ══ B. Paridade: quem a busca mostra, a chamada aceita ════════════════════════
 create temp table lista_busca as select pg_temp.lista(pg_temp.u(1), pg_temp.casa(1)) as v;
@@ -319,7 +353,8 @@ select is(pg_temp.nome(pg_temp.u(1), pg_temp.p(25)), 'Carla Mendes Rocha', 'C12 
 select is(pg_temp.nome(pg_temp.u(1), pg_temp.p(26)), 'Rui Barbosa Neto', 'C13 turno com a casa: nome inteiro');
 select is(pg_temp.nome(pg_temp.u(2), pg_temp.p(26)), 'Rui B.', 'C14 outra casa, sem vínculo com ele: nome curto, sem o sufixo Neto (o vínculo é da casa)');
 -- Quem não é contratante lê como sempre leu.
-select is(pg_temp.nome(pg_temp.u(12), pg_temp.p(11)), 'Maria Souza Lima', 'C15 outro profissional lê o nome inteiro');
+select is(pg_temp.nome(pg_temp.u(12), pg_temp.p(11)), 'Maria L.', 'C15 outro PROFISSIONAL lê o nome curto (nome inteiro só para o próprio e para contratante com vínculo)');
+select is(pg_temp.nome(pg_temp.u(4), pg_temp.p(11)), 'Maria L.', 'C15b contratante sem estabelecimento lê o nome curto');
 select is(pg_temp.nome(pg_temp.u(11), pg_temp.p(11)), 'Maria Souza Lima', 'C16 o próprio profissional lê o nome inteiro');
 -- Controle da foto: com equipe de confiança, a foto vem (o vínculo da 0.2.54).
 insert into public.equipe_confianca (estabelecimento_id, profissional_id) values (pg_temp.casa(1), pg_temp.p(37));
@@ -327,6 +362,12 @@ select is(pg_temp.perfil(pg_temp.u(1), pg_temp.p(37)) ->> 'foto_id', 'c8710000-0
   'C17 controle: com equipe de confiança a foto vem (só o vínculo da 0.2.54 a libera)');
 select is(pg_temp.nome(pg_temp.u(1), pg_temp.p(37)), 'Prof 37 Sobrenome', 'C18 e o nome passa a vir inteiro');
 delete from public.equipe_confianca where profissional_id = pg_temp.p(37);
+-- m2: a busca não dá perfil rico a profissional que não está ativo (suspenso).
+select is(pg_temp.perfil(pg_temp.u(1), pg_temp.p(40)) ->> 'apresentacao', 'Apresentação 40',
+  'C19 controle: profissional ativo na busca: o perfil rico vem');
+update public.usuario set estado = 'suspensa' where id = pg_temp.u(40);
+select ok(not (pg_temp.perfil(pg_temp.u(1), pg_temp.p(40)) ? 'apresentacao'),
+  'C20 profissional suspenso na busca: o perfil rico NÃO vem');
 
 -- ══ D. O nome curto em cada leitora de PerfilPublico ═════════════════════════
 -- D1 minhas_chamadas (ChamadaResumo.outra_parte)
@@ -353,6 +394,15 @@ select is(pg_temp.como(pg_temp.u(1), format($$select public.candidatos_da_vaga(%
   'D6 candidatos_da_vaga: o candidato vem com o nome inteiro');
 -- D7 a leitura da casa que NÃO chamou nem tem vínculo (casa 2) traz o nome curto no perfil
 select is(pg_temp.nome(pg_temp.u(2), pg_temp.p(11)), 'Maria L.', 'D7 a casa que nunca chamou também lê o nome curto');
+-- Só o vínculo VIGENTE na hora da leitura conta (Juiz): candidatura retirada e equipe desfeita voltam ao nome curto.
+update public.candidatura set estado = 'retirada' where profissional_id = pg_temp.p(25);
+select is(pg_temp.nome(pg_temp.u(1), pg_temp.p(25)), 'Carla R.', 'D10 candidatura RETIRADA não é vínculo: o nome volta a vir curto');
+update public.candidatura set estado = 'pendente' where profissional_id = pg_temp.p(25);
+select is(pg_temp.nome(pg_temp.u(1), pg_temp.p(25)), 'Carla Mendes Rocha', 'D11 com a candidatura vigente de novo, o nome vem inteiro');
+delete from public.equipe_confianca where profissional_id = pg_temp.p(19) and estabelecimento_id = pg_temp.casa(1);
+select is(pg_temp.nome(pg_temp.u(1), pg_temp.p(19)), 'Pedro P.', 'D12 equipe DESFEITA não é vínculo: o nome volta a vir curto');
+insert into public.equipe_confianca (estabelecimento_id, profissional_id) values (pg_temp.casa(1), pg_temp.p(19));
+select is(pg_temp.nome(pg_temp.u(1), pg_temp.p(19)), 'Pedro Alves Pinto', 'D13 com a equipe de volta, o nome vem inteiro');
 -- D8 ItemBloqueio.nome
 select pg_temp.como(pg_temp.u(1), format($$select public.bloquear('profissional', %L::uuid)$$, pg_temp.p(26)));
 create temp table bloqueios as select pg_temp.como(pg_temp.u(1), $$select public.listar_bloqueios()$$) as j;
