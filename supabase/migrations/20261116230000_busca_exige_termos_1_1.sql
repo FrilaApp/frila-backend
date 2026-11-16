@@ -715,8 +715,9 @@ begin
   -- Trava a linha da conta: dois aceites ao mesmo tempo viram um só.
   select * into v_conta from public.usuario u where u.id = v_uid for update;
   if not found then perform public.erro(404, 'nao_encontrado'); end if;
-  -- Anonimizada: 401; suspensa: 403 conta_suspensa (RN13).
-  perform privado.exigir_conta_ativa();
+  -- Anonimizada: 401. Suspensa pode aceitar: o contrato 0.2.90 não promete 403 aqui, aceitar os Termos não
+  -- é o que a suspensão (RN13) barra, e a busca já recusa a conta suspensa por conta própria.
+  if v_conta.estado = 'anonimizada' then perform public.erro(401, 'nao_autenticado'); end if;
   if v_versao is null then perform public.erro(422, 'campo_obrigatorio', 'termos_versao'); end if;
   -- Só a versão vigente: o app não aceita pela pessoa uma versão que o servidor não conhece.
   if v_versao is distinct from privado.termos_versao_vigente() then

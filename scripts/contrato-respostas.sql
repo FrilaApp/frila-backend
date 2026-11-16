@@ -131,7 +131,7 @@ select '00000000-0000-0000-0000-000000000000', c.id, 'authenticated','authentica
   ) as c(id, email);
 
 select pg_temp.guarda('criarConta', pg_temp.como('cc000000-0000-4000-8000-000000000001',
-  $$ select public.criar_conta('contratante','Casa do Contrato','+5561944440001','1980-05-05','2026-09-22') $$));
+  $$ select public.criar_conta('contratante','Casa do Contrato','+5561944440001','1980-05-05','2026-11-13') $$));
 select pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.criar_conta('profissional','Pê do Contrato','+5561944440002','1995-05-05','2026-09-22') $$);
 select pg_temp.como('cc000000-0000-4000-8000-000000000003',
@@ -1061,6 +1061,11 @@ select pg_temp.guarda('promete:minhaConta:404',
   pg_temp.observado('ee000000-0000-4000-8000-000000000097',
     $$ select public.minha_conta() $$));
 
+-- aceitarTermos (0.2.90): 404 nao_encontrado (login sem cadastro), como a minhaConta acima
+select pg_temp.guarda('promete:aceitarTermos:404',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000097',
+    $$ select public.aceitar_termos('2026-11-13') $$));
+
 delete from auth.users where id = 'ee000000-0000-4000-8000-000000000097';
 
 -- 62. meuPerfilProfissional: 404 nao_encontrado (contratante sem linha em public.profissional)
@@ -1985,6 +1990,25 @@ select pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
 select pg_temp.guarda('promete:buscarProfissionais:429', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
   (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+
+-- Termos 1.1 (0.2.90): a busca recusa quem não aceitou (403 termos_pendentes, antes dos filtros e do contador).
+-- A casa volta para a versão anterior só neste trecho.
+update public.usuario set termos_versao = '2026-11-12' where id = 'cc000000-0000-4000-8000-000000000001';
+select pg_temp.guarda('promete:buscarProfissionais:403', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+update public.usuario set termos_versao = '2026-11-13' where id = 'cc000000-0000-4000-8000-000000000001';
+
+-- aceitar_termos: o aceite da versão vigente (200), a versão vazia (422), a versão que o servidor não conhece (422) e sem sessão (401).
+update public.usuario set termos_versao = '2026-09-22' where id = 'cc000000-0000-4000-8000-000000000002';
+select pg_temp.guarda('aceitarTermos', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.aceitar_termos('2026-11-13') $$));
+select pg_temp.guarda('promete:aceitarTermos:422', pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+  $$ select public.aceitar_termos('') $$));
+select pg_temp.guarda('promete:aceitarTermos:422', pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+  $$ select public.aceitar_termos('2026-11-12') $$));
+select pg_temp.guarda('promete:aceitarTermos:401', pg_temp.observado(null,
+  $$ select public.aceitar_termos('2026-11-13') $$));
 
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o

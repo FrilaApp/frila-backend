@@ -21,7 +21,7 @@ insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id)
 -- 16/11/2026, 12:00 em Brasília (segunda-feira).
 select set_config('frila.agora', '2026-11-16 15:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-872';
-select plan(75);
+select plan(76);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -277,8 +277,10 @@ select is((select termos_versao from public.usuario where id = pg_temp.u(3)), '2
 select is(pg_temp.tenta(null, $$ select public.aceitar_termos('2026-11-13') $$), '401 nao_autenticado', 'G18 sem sessão: 401');
 select is(pg_temp.tenta(pg_temp.u(20), $$ select public.aceitar_termos('2026-11-13') $$), '404 nao_encontrado',
   'G19 login sem conta criada: 404 nao_encontrado');
-select is(pg_temp.tenta(pg_temp.u(6), $$ select public.aceitar_termos('2026-11-13') $$), '403 sem_permissao conta_suspensa',
-  'G20 conta suspensa: 403 conta_suspensa');
+select is(pg_temp.tenta(pg_temp.u(6), $$ select public.aceitar_termos('2026-11-13') $$), 'ok',
+  'G20 conta suspensa também aceita (o contrato não promete 403 aqui); a busca segue barrando a suspensa');
+select is(pg_temp.busca(pg_temp.u(6), pg_temp.casa(6)), '403 sem_permissao conta_suspensa',
+  'G20b e, já com a 1.1 aceita, a suspensa segue recusada pela busca (conta_suspensa)');
 select is(pg_temp.tenta(pg_temp.u(17), $$ select public.aceitar_termos('2026-11-13') $$), 'ok',
   'G21 profissional também aceita (o aceite é da conta, não do perfil)');
 select is(pg_temp.tenta(pg_temp.u(5), $$ select public.aceitar_termos('2026-11-13') $$), 'ok',
