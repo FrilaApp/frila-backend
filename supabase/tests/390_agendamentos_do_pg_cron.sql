@@ -138,9 +138,11 @@ select set_eq(
     -- Apaga o valor do código de check-in vencido, a cada minuto (check-in por código, LGPD).
     'apagar_codigos_checkin_vencidos',
     -- Apaga o convite de membro 30 dias depois de vencer ou ser aceito, uma vez por dia (LGPD, 20261112200000).
-    'apagar_convites_membro_vencidos'
+    'apagar_convites_membro_vencidos',
+    -- Apaga o contador de buscas de profissionais com mais de um dia, uma vez por dia (CD-B09, 20261116210000).
+    'limpar_contador_busca'
   ],
-  'Os jobs agendados são exatamente os vinte e cinco conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os vinte e seis conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;
