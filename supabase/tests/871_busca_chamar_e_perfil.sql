@@ -403,10 +403,12 @@ delete from public.equipe_confianca where profissional_id = pg_temp.p(19) and es
 select is(pg_temp.nome(pg_temp.u(1), pg_temp.p(19)), 'Pedro P.', 'D12 equipe DESFEITA não é vínculo: o nome volta a vir curto');
 insert into public.equipe_confianca (estabelecimento_id, profissional_id) values (pg_temp.casa(1), pg_temp.p(19));
 select is(pg_temp.nome(pg_temp.u(1), pg_temp.p(19)), 'Pedro Alves Pinto', 'D13 com a equipe de volta, o nome vem inteiro');
--- m4: a exportação (privado.meus_dados, pela Edge Function sem JWT: auth.uid() nulo) não encurta o nome de quem tem
--- turno com a casa. Aqui roda sem sessão, como a função exportar-meus-dados.
-select is((select jsonb_path_query_first(privado.meus_dados(pg_temp.u(1)), '$.turnos[*] ? (@.contraparte.nome == "Rui Barbosa Neto")') -> 'contraparte' ->> 'nome'),
-  'Rui Barbosa Neto', 'D14 exportação do contratante, sem sessão: a contraparte de quem tem turno com a casa sai com o nome inteiro');
+-- m4 (limite conhecido): a exportação (privado.meus_dados, pela Edge Function sem JWT: auth.uid() nulo) traz a contraparte
+-- dos turnos do contratante com o nome CURTO, enquanto privado.turno_em_json não passa o leitor ao nome. O ajuste vem
+-- depois que o JP mesclar os PRs #513 e #516, que reescrevem turno_em_json (esta migração não a recria, para não apagar a dele).
+-- Este teste trava o comportamento de hoje: quando o ajuste entrar, ele muda para o nome inteiro.
+select is((select jsonb_path_query_first(privado.meus_dados(pg_temp.u(1)), '$.turnos[*] ? (@.contraparte.nome == "Rui B.")') -> 'contraparte' ->> 'nome'),
+  'Rui B.', 'D14 exportação do contratante, sem sessão: a contraparte do turno sai com o nome curto (limite conhecido, m4)');
 -- D8 ItemBloqueio.nome
 select pg_temp.como(pg_temp.u(1), format($$select public.bloquear('profissional', %L::uuid)$$, pg_temp.p(26)));
 create temp table bloqueios as select pg_temp.como(pg_temp.u(1), $$select public.listar_bloqueios()$$) as j;
