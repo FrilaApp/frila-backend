@@ -2166,9 +2166,12 @@ paths:
         Privacidade que a tela exibiu, como em `criar_conta.termos_versao`. O servidor carimba o
         instante (data enviada pelo cliente não vale como registro) e guarda cada aceite, com a
         versão e o instante; o mais novo é o que vale e volta em `Usuario.termos_versao`. Repetir a
-        mesma versão não cria outro registro e devolve o aceite que já existe. Versão vazia,
-        `422 campo_obrigatorio` (`termos_versao`). Versão anterior à que a conta já aceitou é
-        `422 campo_invalido` (`termos_versao`): o aceite não volta atrás.
+        mesma versão não cria outro registro e devolve o aceite que já existe. Só vale uma versão
+        **publicada**: o servidor mantém a lista (hoje, `2026-11-13`). Versão vazia,
+        `422 campo_obrigatorio` (`termos_versao`). Versão fora do formato `AAAA-MM-DD`, fora da lista
+        de publicadas ou anterior à que a conta já aceitou é `422 campo_invalido` (`termos_versao`):
+        o aceite não volta atrás. Sessão sem conta (antes de `criar_conta`) é `404 nao_encontrado`,
+        como em `minha_conta`.
 
         O primeiro uso é a busca de profissionais (0.2.90): o contratante que recebe
         `403 sem_permissao` (`termos_pendentes`) vê os Termos, aceita por aqui e repete a busca.
@@ -2184,8 +2187,8 @@ paths:
               properties:
                 termos_versao:
                   type: string
-                  minLength: 1
-                  description: Versão que a tela exibiu, no formato de `criar_conta.termos_versao`.
+                  pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                  description: Versão publicada que a tela exibiu, no formato `AAAA-MM-DD`.
                   example: '2026-11-13'
       responses:
         '200':
@@ -4051,8 +4054,10 @@ paths:
 
         **Termos 1.1 aceitos (0.2.90):** quem busca tem de ter aceito a versão `2026-11-13` ou mais
         nova dos Termos (`Usuario.termos_versao`; as versões são datas `AAAA-MM-DD` e se comparam
-        como texto). Sem isso, `403 sem_permissao` (`termos_pendentes`), depois das três recusas
-        acima: o app mostra os Termos, chama `aceitar_termos` e repete a busca. O motivo é a seção
+        como data, ou como texto em `collate "C"` depois de conferir o formato; valor gravado fora do
+        formato conta como não aceito). Sem isso, `403 sem_permissao` (`termos_pendentes`), depois
+        das três recusas acima e antes da validação dos filtros (`422`); essa recusa não gasta o
+        limite de buscas (`429`). O app mostra os Termos, chama `aceitar_termos` e repete a busca. O motivo é a seção
         10.1 dos Termos (uso dos dados do profissional), que só vale para quem a aceitou.
 
         **Filtros (CD-B02, reduzidos aos três do fluxo aprovado pelo Cauê em 16/11/2026):**
@@ -4208,10 +4213,13 @@ paths:
         `vaga_id`, a função e a região são as da vaga direta, que guarda o `regiao_id` com que nasceu
         (a 2ª e a 3ª chamada usam o mesmo id da 1ª).
 
-        **Termos (0.2.90):** o caminho da busca exige quem chama com os Termos 1.1 ou mais novos
-        aceitos, como em `buscar_profissionais`. Sem o aceite e sem vínculo de trabalho com o
-        profissional, a resposta é `403 sem_permissao` (`termos_pendentes`). Com vínculo de trabalho,
-        nada muda.
+        **Termos (0.2.90):** com `recursos.busca_profissionais` ligado e quem chama sem os Termos 1.1
+        ou mais novos aceitos (como em `buscar_profissionais`), a busca não conta como caminho. Sem
+        turno cumprido com presença verificada nem equipe de confiança com o profissional (os fatos
+        que a casa já conhece, e não a preferência dele), a resposta é `403 sem_permissao`
+        (`termos_pendentes`), depois das recusas de permissão e do bloqueio (`404`) e antes de
+        qualquer conferência sobre o profissional. Com turno ou equipe, vale só o caminho do vínculo,
+        com as recusas de sempre. Com a busca desligada, `termos_pendentes` nunca sai.
 
         **Prazo:** o início tem de estar a pelo menos o maior entre 2 h e a antecedência mínima do
         profissional (`422 profissional_indisponivel`, `antecedencia_insuficiente`). O servidor calcula
