@@ -32,8 +32,10 @@
 #   1. no app, digite o e-mail e toque em pedir código (a tela passa para o campo do código);
 #   2. `./scripts/dev-busca-teste.sh --alvo dev codigo busca-casa@frila.test`;
 #   3. digite o código na tela. Vale uma vez e por até 1 hora (o padrão do Auth).
-# `codigo` só aceita os 4 e-mails acima, e só de conta que `montar` já criou: nunca cria conta nem gera código
-# para e-mail de pessoa.
+# `codigo` só aceita os 4 e-mails acima, e só de conta que `montar` já criou (o id fixo e o e-mail conferem
+# no Auth): nunca cria conta nem gera código para e-mail de pessoa. Ele só fala HTTPS com a Admin API do Auth
+# (a chave service_role vem da Management API): não usa psql nem a porta do banco, então funciona mesmo
+# quando a rede barra a 5432/6543. Quem roda: só o Cauê ou o Prisma. Agente nenhum roda `codigo`.
 #
 # ── Uso ───────────────────────────────────────────────────────────────────────────────────────────────────
 #
@@ -46,7 +48,9 @@
 #   ./scripts/dev-busca-teste.sh --alvo local acesso --saida <arquivo>   # ensaio: a saída tem de ficar fora do repo
 #
 # O alvo padrão é o banco LOCAL (o ensaio). `--alvo dev` lê a conexão de ~/.config/frila/dev-db-url sem
-# imprimi-la. Não existe alvo prod: o script não sabe falar com ele.
+# imprimi-la, e o psql nunca a recebe na linha de comando (nada dela aparece no `ps`): a senha vai num
+# arquivo de senhas temporário (600, apagado na saída) e o resto em variáveis PG* só do psql.
+# Não existe alvo prod: o script não sabe falar com ele.
 #
 # ── O que `montar` faz e o que NÃO faz com as chaves ──────────────────────────────────────────────────────
 #
@@ -118,10 +122,141 @@ refs_da_url() {
     printf '%s' "$1" | grep -oE '[a-z0-9]{20}\.(pooler\.)?supabase\.(co|com)' | cut -c1-20
   } || true
 }
+# `codigo` só fala HTTPS com o Auth (Admin API): não usa psql, nem a porta do banco, nem o contêiner local.
+usa_banco() { [ "$COMANDO" != codigo ]; }
+
+# Senha fora da linha de comando (B-027.j). O psql do dev nunca recebe a URL: a senha vai num arquivo de senhas
+# do libpq (PGPASSFILE) temporário, 600, numa pasta 700 fora do repositório, criado com umask 077 e apagado na
+# saída (também no erro e no Ctrl-C); host, porta, usuário e banco vão em variáveis PG* só no ambiente do psql.
+# Assim nada da conexão aparece no `ps`. O arquivo só nasce DEPOIS da trava do ref.
+CONEXAO_DIR=""; CON_HOST=""; CON_PORT=""; CON_USER=""; CON_DB=""; CON_SSLMODE=""; CON_TIMEOUT=""; CON_APPNAME=""
+limpar_conexao() { if [ -n "$CONEXAO_DIR" ]; then rm -rf "$CONEXAO_DIR"; CONEXAO_DIR=""; fi; }
+trap limpar_conexao EXIT
+trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+
+# Lê a URL pela entrada (nunca por argumento), como o libpq a lê: o usuário e a senha vão até a primeira @ antes
+# da primeira /, o %XX é decodificado e ssl=true vale sslmode=require. É mais estrito que o libpq: um host só,
+# usuário e host sem %, e só os parâmetros sslmode, connect_timeout e application_name (hostaddr, host, service,
+# passfile e qualquer outro saem com erro, para nada desviar a conexão que a trava conferiu). Grava a senha no
+# arquivo do argumento 1 e devolve o resto (sem a senha), um campo por linha. Erro: só o motivo, nunca a URL.
+LER_URL_PY='import os, re, sys
+def sair(motivo):
+    sys.stderr.write("  ✗ conexão do dev: " + motivo + "\n")
+    sys.exit(2)
+def dec(s, campo):
+    b = s.encode("utf-8"); out = bytearray(); i = 0
+    while i < len(b):
+        if b[i] == 37:
+            h = b[i + 1:i + 3]
+            if len(h) != 2 or not all(c in b"0123456789abcdefABCDEF" for c in h):
+                sair("% sem dois dígitos hexadecimais em " + campo)
+            if int(h, 16) == 0:
+                sair("%00 em " + campo)
+            out.append(int(h, 16)); i += 3
+        else:
+            out.append(b[i]); i += 1
+    try:
+        t = out.decode("utf-8")
+    except UnicodeDecodeError:
+        sair(campo + " não é UTF-8")
+    if "\n" in t or "\r" in t:
+        sair("quebra de linha em " + campo)
+    return t
+u = sys.stdin.read()
+r = None
+for prefixo in ("postgresql://", "postgres://"):
+    if u.startswith(prefixo):
+        r = u[len(prefixo):]
+        break
+if r is None:
+    sair("não começa com postgresql://")
+i = 0
+while i < len(r) and r[i] not in "@/":
+    i += 1
+if i == len(r) or r[i] != "@":
+    sair("sem usuário e senha antes do host")
+user, tem_senha, senha = r[:i].partition(":")
+if not tem_senha or not senha:
+    sair("sem senha")
+r = r[i + 1:]
+j = 0
+while j < len(r) and r[j] not in ":/?,":
+    j += 1
+host, sep, r = r[:j], r[j:j + 1], r[j + 1:]
+porta = ""
+if sep == ":":
+    j = 0
+    while j < len(r) and r[j] not in "/?,":
+        j += 1
+    porta, sep, r = r[:j], r[j:j + 1], r[j + 1:]
+if sep == ",":
+    sair("mais de um host")
+banco, query = "", ""
+if sep == "/":
+    banco, _, query = r.partition("?")
+elif sep == "?":
+    query = r
+if not re.fullmatch(r"[A-Za-z0-9._-]+", user):
+    sair("usuário fora do formato (só letras, dígitos, ponto, hífen e sublinhado)")
+if not re.fullmatch(r"[A-Za-z0-9.-]+", host):
+    sair("host fora do formato (um nome ou IPv4, sem %)")
+if not re.fullmatch(r"[0-9]{0,5}", porta):
+    sair("porta não numérica")
+banco = dec(banco, "banco")
+if banco and not re.fullmatch(r"[A-Za-z0-9._-]+", banco):
+    sair("nome do banco fora do formato")
+senha = dec(senha, "senha")
+campos = [("host", host), ("port", porta), ("user", user), ("dbname", banco)]
+partes = query.split("&") if query else []
+if partes and partes[-1] == "":
+    partes.pop()
+for par in partes:
+    if par.count("=") != 1:
+        sair("parâmetro sem um = só")
+    k, v = par.split("=")
+    k, v = dec(k, "nome de parâmetro"), dec(v, "valor de parâmetro")
+    if k == "ssl" and v == "true":
+        k, v = "sslmode", "require"
+    if k == "sslmode" and v in ("disable", "allow", "prefer", "require", "verify-ca", "verify-full"):
+        campos.append((k, v))
+    elif k == "connect_timeout" and re.fullmatch(r"[0-9]{1,4}", v):
+        campos.append((k, v))
+    elif k == "application_name" and re.fullmatch(r"[A-Za-z0-9 ._-]{0,63}", v):
+        campos.append((k, v))
+    else:
+        sair("parâmetro não aceito aqui: " + re.sub(r"[^A-Za-z0-9_]", "?", k)[:40])
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    f.write("*:*:*:*:" + senha.replace("\\", "\\\\").replace(":", "\\:") + "\n")
+for k, v in campos:
+    if v:
+        print(k + "=" + v)'
+
+preparar_conexao_dev() {
+  local campos linha valor
+  CONEXAO_DIR=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/frila-dev-busca.XXXXXX") \
+    || falhou "não consegui criar a pasta temporária da conexão"
+  campos=$(umask 077; printf '%s' "$PGURL" | python3 -I -c "$LER_URL_PY" "$CONEXAO_DIR/pgpass") \
+    || falhou "a conexão do dev (.config/frila/dev-db-url) não está no formato esperado. Nada foi conectado."
+  while IFS= read -r linha; do
+    valor=${linha#*=}
+    case "$linha" in
+      host=*)             CON_HOST=$valor ;;
+      port=*)             CON_PORT=$valor ;;
+      user=*)             CON_USER=$valor ;;
+      dbname=*)           CON_DB=$valor ;;
+      sslmode=*)          CON_SSLMODE=$valor ;;
+      connect_timeout=*)  CON_TIMEOUT=$valor ;;
+      application_name=*) CON_APPNAME=$valor ;;
+    esac
+  done <<< "$campos"
+  [ -n "$CON_HOST" ] && [ -n "$CON_USER" ] && [ -s "$CONEXAO_DIR/pgpass" ] \
+    || falhou "a conexão do dev ficou incompleta (host, usuário ou senha). Nada foi conectado."
+}
+
 if [ "$ALVO" = dev ]; then
   ARQUIVO_URL="${FRILA_DEV_DB_URL_ARQUIVO:-$HOME/.config/frila/dev-db-url}"
   [ -f "$ARQUIVO_URL" ] || falhou "não achei o arquivo da conexão do dev (.config/frila/dev-db-url)"
-  [ -x "$PSQL" ] || falhou "não achei o psql em $PSQL (defina PSQL)"
   PGURL="$(tr -d '\n' < "$ARQUIVO_URL" | sed 's/^[A-Za-z_]*=//')"
   [ -n "$PGURL" ] || falhou "o arquivo da conexão do dev está vazio"
   # Todos os refs achados têm de ser o do dev (uma URL com um ref do dev e outro de outro projeto também sai).
@@ -133,14 +268,29 @@ if [ "$ALVO" = dev ]; then
     REF="$ref"
   done <<< "$(refs_da_url "$PGURL")"
   [ -n "$REF" ] || falhou "a conexão lida NÃO é a do frila-dev (nenhum ref reconhecível na URL). Nada foi conectado."
-else
+  if usa_banco; then
+    [ -x "$PSQL" ] || falhou "não achei o psql em $PSQL (defina PSQL)"
+    preparar_conexao_dev
+  fi
+  PGURL=""   # daqui em diante a URL (com a senha) não é usada: o psql lê o arquivo de senhas
+elif usa_banco; then
   docker ps --format '{{.Names}}' | grep -qx "$DB_CONTAINER" \
     || falhou "o contêiner $DB_CONTAINER não está de pé (supabase start; ou defina DB_CONTAINER)"
 fi
 
 psql_() {
   if [ "$ALVO" = dev ]; then
-    "$PSQL" "$PGURL" -X -q -t -A -v ON_ERROR_STOP=1 "$@" 2> >(redigir >&2)
+    # Num subshell, para as PG* valerem só neste psql. Antes, sai toda PG* herdada do terminal (PGHOSTADDR,
+    # PGSERVICE, PGPASSWORD, PGOPTIONS...): nenhuma desvia a conexão nem põe outra senha. O connect_timeout
+    # padrão (15 s) faz a rede que barra a porta falhar logo, em vez de esperar o TCP desistir.
+    ( for v in $(compgen -e); do case "$v" in PG*) unset "$v" ;; esac; done
+      export PGPASSFILE="$CONEXAO_DIR/pgpass" PGHOST="$CON_HOST" PGUSER="$CON_USER" PGCONNECT_TIMEOUT="${CON_TIMEOUT:-15}"
+      [ -z "$CON_PORT" ] || export PGPORT="$CON_PORT"
+      [ -z "$CON_DB" ] || export PGDATABASE="$CON_DB"
+      [ -z "$CON_SSLMODE" ] || export PGSSLMODE="$CON_SSLMODE"
+      [ -z "$CON_APPNAME" ] || export PGAPPNAME="$CON_APPNAME"
+      "$PSQL" -X -q -t -A -v ON_ERROR_STOP=1 "$@" 2> >(redigir >&2)
+    )
   else
     docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -X -q -t -A -v ON_ERROR_STOP=1 "$@"
   fi
@@ -510,11 +660,35 @@ gerar_codigo() {
   api POST /auth/v1/admin/generate_link "$SR_KEY" "$SR_KEY" "{\"type\":\"magiclink\",\"email\":\"$1\"}" | json_campo email_otp
 }
 
+# O id fixo de cada e-mail de teste (o do cabeçalho). Fora desta lista, nada.
+id_da_conta_de_teste() {
+  case "$1" in
+    busca-casa@frila.test)   echo b027f000-0000-4000-8000-000000000001 ;;
+    busca-prof-1@frila.test) echo b027f000-0000-4000-8000-000000000011 ;;
+    busca-prof-2@frila.test) echo b027f000-0000-4000-8000-000000000012 ;;
+    busca-prof-3@frila.test) echo b027f000-0000-4000-8000-000000000013 ;;
+    *) return 1 ;;
+  esac
+}
+
+# A conta de teste existe no Auth, com o id fixo E o mesmo e-mail? Pela Admin API, sem psql. Tem de vir antes do
+# generate_link: o tipo magiclink CRIA a conta quando o e-mail não existe, e o `codigo` nunca cria conta.
+conta_de_teste_no_auth() {
+  local email="$1" id resp
+  id=$(id_da_conta_de_teste "$email") || falhou "só gero código para os e-mails de teste: $EMAILS_DE_TESTE"
+  resp=$(api GET "/auth/v1/admin/users/$id" "$SR_KEY" "$SR_KEY") || falhou "o Auth de $ALVO não respondeu"
+  [ "$(printf '%s' "$resp" | json_campo id)" = "$id" ] && [ "$(printf '%s' "$resp" | json_campo email)" = "$email" ] \
+    || falhou "a conta $email não existe no Auth de $ALVO com o id de teste: rode montar antes (o código nunca cria conta)"
+}
+
+# Só HTTPS: a lista fixa, a chave service_role pela Management API (carregar_chaves), a conta conferida pela
+# Admin API e o código pelo generate_link. Nenhum psql: funciona com a 5432/6543 barradas.
 codigo() {
   local email="${1:-}"
   [ -n "$email" ] || falhou "uso: codigo <e-mail de teste>"
-  so_email_de_teste "$email"
+  id_da_conta_de_teste "$email" >/dev/null || falhou "só gero código para os e-mails de teste: $EMAILS_DE_TESTE"
   carregar_chaves
+  conta_de_teste_no_auth "$email"
   local otp
   otp=$(gerar_codigo "$email")
   [ -n "$otp" ] || falhou "o Auth não devolveu código para $email"
@@ -588,6 +762,8 @@ acesso() {
       echo
       echo '## Como pegar o código (o código NÃO fica neste arquivo)'
       echo
+      echo 'Quem roda: só o Cauê ou o Prisma. O código sai só no terminal de quem rodou: não vai para arquivo, log nem mensagem.'
+      echo
       echo '1. No app, digite o e-mail e toque em pedir código (pedir de novo invalida o código anterior).'
       echo '2. Na sequência, rode:'
       echo
@@ -595,9 +771,13 @@ acesso() {
       echo "$CAMINHO_GROUND/scripts/dev-busca-teste.sh --alvo $ALVO codigo <e-mail>"
       echo '```'
       echo
-      echo "Até o #518 ser mesclado, use o do floor: $raiz/scripts/dev-busca-teste.sh"
+      if [ "$raiz" != "$CAMINHO_GROUND" ]; then
+        echo "Enquanto esta versão do script não estiver na develop, use a deste floor: $raiz/scripts/dev-busca-teste.sh"
+        echo
+      fi
+      echo "O \`codigo\` só fala HTTPS com a Admin API do Auth (a chave service_role vem da Management API): não usa psql nem a porta do banco, então funciona mesmo com a 5432/6543 barradas pela rede."
       echo
-      echo '3. Digite o código que sai no terminal. Vale uma vez e por até 1 hora. Só funciona para os 4 e-mails acima.'
+      echo "3. Digite o código que sai no terminal. Vale uma vez e por até 1 hora. Só funciona para os 4 e-mails acima, e só para conta que o \`montar\` já criou (o \`codigo\` nunca cria conta)."
       echo
       echo '## O que cada conta tem (lido do banco agora)'
       echo
