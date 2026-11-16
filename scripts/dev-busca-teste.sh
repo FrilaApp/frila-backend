@@ -49,9 +49,11 @@
 # ── O que `montar` faz e o que NÃO faz com as chaves ──────────────────────────────────────────────────────
 #
 # Liga `busca_profissionais` e `chamada_direta` em privado.recurso (no dev; no Prod isso é ato do O2).
-# A VERSÃO MÍNIMA do iOS é por chave em privado.recurso_versao_minima, e o script só a LÊ e a mostra: o app
-# só vê `recursos.busca_profissionais = true` se existir a linha da busca (a migração não cria nenhuma).
-# Se não existir, o `montar` avisa; para criar no dev: `montar --minimo-busca <versão do build do Prisma>`.
+# A VERSÃO MÍNIMA do iOS é por chave em privado.recurso_versao_minima, e o app só vê
+# `recursos.busca_profissionais = true` se existir a linha da busca (a migração não cria nenhuma). Decisão da
+# Forja (16/11/2026): no dev, sem linha, o `montar` copia a mínima da chamada_direta (o Prisma testa com o
+# build atual); linha que já existe não é tocada, e `--minimo-busca <versão>` sobrescreve. No Prod o script
+# não roda: a chave fica desligada e a mínima se decide ao ligar.
 #
 # Aparelhos de teste: o token FCM é falso de propósito. Se alguma chamada de teste tentar mandar push a um
 # deles, o FCM responde UNREGISTERED e o enviar-push APAGA a linha do aparelho (supabase/functions/enviar-push/
@@ -213,6 +215,13 @@ update privado.recurso set ligado = true where chave in ('busca_profissionais', 
 insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima)
 select 'busca_profissionais', 'ios', :'minimo_busca' where nullif(:'minimo_busca', '') is not null
 on conflict (recurso, plataforma) do update set versao_minima = excluded.versao_minima, atualizado_em = privado.agora();
+-- Sem --minimo-busca e sem linha da busca: a mesma mínima da chamada_direta (decisão da Forja, 16/11/2026, para o
+-- Prisma testar com o build atual). Quem já tem linha não é tocado.
+insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima)
+select 'busca_profissionais', 'ios', m.versao_minima
+  from privado.recurso_versao_minima m
+ where m.recurso = 'chamada_direta' and m.plataforma = 'ios'
+on conflict (recurso, plataforma) do nothing;
 
 -- 2. As contas. O Auth precisa da linha em auth.users (e em auth.identities) para o código de e-mail entrar;
 --    public.usuario não tem chave para auth.users, então as duas são criadas aqui.
