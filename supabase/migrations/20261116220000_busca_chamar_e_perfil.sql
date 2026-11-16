@@ -423,6 +423,7 @@ begin
                          then (select g.funcao_id from public.vaga g
                                 where g.id = chamar_profissional.vaga_id and g.estabelecimento_id = v_estab)
                          else chamar_profissional.funcao_id end;
+  -- Com vaga_id vale a região da vaga (o regiao_id do corpo é ignorado); sem ele, o regiao_id ou o nome da região.
   v_regiao_busca := case
     when chamar_profissional.vaga_id is not null
       then (select coalesce(g.regiao_id,
