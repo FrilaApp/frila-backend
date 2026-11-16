@@ -110,8 +110,11 @@ PGURL=""; REF=""
 # do frila-dev, gravado aqui (o ref em si não aparece em lugar nenhum). Qualquer outro ref, ou URL que não dê
 # para ler, sai com erro ANTES de qualquer psql ou curl. A constante é o sha256 do ref do frila-dev.
 REF_DEV_SHA256="32177c7c441023509f4274c29fbbffb4eb9c216c9d192c7fb2ddf6b6492c3fbd"
-ref_da_url() {
-  printf '%s' "$1" | sed -nE 's#.*postgres\.([a-z0-9]{20}).*#\1#p; s#.*@db\.([a-z0-9]{20})\.supabase\.co.*#\1#p' | head -1
+# TODOS os refs que a URL traz (usuário postgres.<ref> e/ou host <ref>.supabase.co), um por linha.
+refs_da_url() {
+  { printf '%s' "$1" | grep -oE 'postgres\.[a-z0-9]{20}' | sed 's/^postgres\.//'
+    printf '%s' "$1" | grep -oE '[a-z0-9]{20}\.(pooler\.)?supabase\.(co|com)' | cut -c1-20
+  } || true
 }
 if [ "$ALVO" = dev ]; then
   ARQUIVO_URL="${FRILA_DEV_DB_URL_ARQUIVO:-$HOME/.config/frila/dev-db-url}"
@@ -119,10 +122,15 @@ if [ "$ALVO" = dev ]; then
   [ -x "$PSQL" ] || falhou "não achei o psql em $PSQL (defina PSQL)"
   PGURL="$(tr -d '\n' < "$ARQUIVO_URL" | sed 's/^[A-Za-z_]*=//')"
   [ -n "$PGURL" ] || falhou "o arquivo da conexão do dev está vazio"
-  REF="$(ref_da_url "$PGURL")"
-  if [ -z "$REF" ] || [ "$(printf '%s' "$REF" | shasum -a 256 | cut -d' ' -f1)" != "$REF_DEV_SHA256" ]; then
-    falhou "a conexão lida NÃO é a do frila-dev (o sha256 do projeto não confere). Nada foi conectado."
-  fi
+  # Todos os refs achados têm de ser o do dev (uma URL com um ref do dev e outro de outro projeto também sai).
+  REF=""; ref=""
+  while IFS= read -r ref; do
+    [ -n "$ref" ] || continue
+    [ "$(printf '%s' "$ref" | shasum -a 256 | cut -d' ' -f1)" = "$REF_DEV_SHA256" ] \
+      || falhou "a conexão lida NÃO é a do frila-dev (um ref da URL tem sha256 diferente). Nada foi conectado."
+    REF="$ref"
+  done <<< "$(refs_da_url "$PGURL")"
+  [ -n "$REF" ] || falhou "a conexão lida NÃO é a do frila-dev (nenhum ref reconhecível na URL). Nada foi conectado."
 else
   docker ps --format '{{.Names}}' | grep -qx "$DB_CONTAINER" \
     || falhou "o contêiner $DB_CONTAINER não está de pé (supabase start; ou defina DB_CONTAINER)"
