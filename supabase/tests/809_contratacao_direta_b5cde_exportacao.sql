@@ -397,13 +397,14 @@ select pg_temp.como('80900000-0000-4000-8000-000000000003',
     valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'C'
   )$$));
 
--- Abre chamada 2
+-- Abre chamada 2 (0.2.95: as chamadas 2, 3 e a 4ª começam um minuto depois da anterior, cada uma um
+-- trabalho próprio; no mesmo minuto a casa receberia trabalho_ja_aberto, que vem antes dos limites)
 select pg_temp.como('80900000-0000-4000-8000-000000000003',
   format($$select public.chamar_profissional(
     chave => gen_random_uuid(), profissional_id => '80900000-0000-4000-8000-000000000014',
     estabelecimento_id => '80900000-0000-4000-8000-000000000021',
     funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
-    inicio_em => '2026-11-25 18:00:00-03'::timestamptz, fim_em => '2026-11-25 23:00:00-03'::timestamptz,
+    inicio_em => '2026-11-25 18:01:00-03'::timestamptz, fim_em => '2026-11-25 23:00:00-03'::timestamptz,
     local => 'Lago Sul', regiao_administrativa => 'Lago Sul', ponto => '{"latitude": -15.7942, "longitude": -47.8825}'::jsonb,
     valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'C'
   )$$));
@@ -414,7 +415,7 @@ select pg_temp.como('80900000-0000-4000-8000-000000000003',
     chave => gen_random_uuid(), profissional_id => '80900000-0000-4000-8000-000000000015',
     estabelecimento_id => '80900000-0000-4000-8000-000000000021',
     funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
-    inicio_em => '2026-11-25 18:00:00-03'::timestamptz, fim_em => '2026-11-25 23:00:00-03'::timestamptz,
+    inicio_em => '2026-11-25 18:02:00-03'::timestamptz, fim_em => '2026-11-25 23:00:00-03'::timestamptz,
     local => 'Lago Sul', regiao_administrativa => 'Lago Sul', ponto => '{"latitude": -15.7942, "longitude": -47.8825}'::jsonb,
     valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'C'
   )$$));
@@ -426,7 +427,7 @@ select is(
       chave => gen_random_uuid(), profissional_id => '80900000-0000-4000-8000-000000000012',
       estabelecimento_id => '80900000-0000-4000-8000-000000000021',
       funcao_id => (select id from public.funcao where nome = 'garçom' limit 1),
-      inicio_em => '2026-11-25 18:00:00-03'::timestamptz, fim_em => '2026-11-25 23:00:00-03'::timestamptz,
+      inicio_em => '2026-11-25 18:03:00-03'::timestamptz, fim_em => '2026-11-25 23:00:00-03'::timestamptz,
       local => 'Lago Sul', regiao_administrativa => 'Lago Sul', ponto => '{"latitude": -15.7942, "longitude": -47.8825}'::jsonb,
       valor_centavos => 18000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false, responsavel_local => 'C'
     )$$)),
