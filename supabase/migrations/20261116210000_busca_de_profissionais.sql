@@ -982,7 +982,7 @@ as $$
     -- guarda enquanto a conta existir e entra na exportação). Só a versão do texto e o instante; na
     -- exportação de quem opera a casa vem [].
     'registros_aceita_chamadas', coalesce((
-      select jsonb_agg(jsonb_build_object('versao_texto_busca', ra.versao_texto_busca, 'em', ra.em)
+      select jsonb_agg(jsonb_build_object('versao_texto_busca', ra.versao_texto_busca, 'ligado_em', ra.em)
                        order by ra.em, ra.versao_texto_busca)
         from privado.registro_aceita_chamadas ra
        where c.perfil = 'profissional'

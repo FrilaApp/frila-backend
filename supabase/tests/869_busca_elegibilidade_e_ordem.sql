@@ -14,7 +14,7 @@ insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id)
 -- 16/11/2026, 12:00 em Brasília (segunda-feira).
 select set_config('frila.agora', '2026-11-16 15:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-869';
-select plan(60);
+select plan(62);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -294,20 +294,32 @@ select is((select (e->'reputacao'->>'total')::int
 select is(pg_temp.lista(pg_temp.u(1)), (select v from la), 'mudar a reputação não muda a ordem (RN06, D2)');
 
 -- ── LGPD do registro de ligar (decisão da Bússola, 16/11/2026) ───────────────
-select is((select jsonb_agg(r->>'versao_texto_busca' order by r->>'em', r->>'versao_texto_busca')
+select is((select jsonb_agg(r->>'versao_texto_busca' order by r->>'ligado_em', r->>'versao_texto_busca')
              from jsonb_array_elements(privado.meus_dados(pg_temp.u(11)) -> 'registros_aceita_chamadas') r),
           '["busca-v1", "busca-v2"]'::jsonb, 'meus_dados exporta cada vez que o titular ligou (versão e instante)');
 select is(privado.meus_dados(pg_temp.u(1)) -> 'registros_aceita_chamadas', '[]'::jsonb,
   'na exportação de quem opera a casa, registros_aceita_chamadas vem vazio');
+select ok((select bool_and(r ? 'versao_texto_busca' and r ? 'ligado_em' and not r ? 'em')
+             from jsonb_array_elements(privado.meus_dados(pg_temp.u(11)) -> 'registros_aceita_chamadas') r),
+  'cada item exportado traz versao_texto_busca e ligado_em (contrato 0.2.88)');
 -- 11 exclui a conta há 16 dias: a limpeza de 15 dias apaga o registro e a preferência da busca.
+-- Controles: 12 segue ativa e 41 foi excluída há só 14 dias; os dois ficam intocados.
+insert into privado.registro_aceita_chamadas (profissional_id, versao_texto_busca, em)
+values (pg_temp.p(12), 'busca-v1', privado.agora()), (pg_temp.p(41), 'busca-v1', privado.agora());
 update public.usuario set estado = 'anonimizada', anonimizado_em = privado.agora() - interval '16 days'
  where id = pg_temp.u(11);
+update public.usuario set estado = 'anonimizada', anonimizado_em = privado.agora() - interval '14 days'
+ where id = pg_temp.u(41);
 select is((privado.limpar_foto_e_perfil_rico_de_contas_anonimizadas(15) ->> 'registros_aceita_chamadas_apagados')::int, 2,
   'a limpeza da conta excluída apaga as duas linhas do registro');
 select ok(not exists (select 1 from privado.registro_aceita_chamadas where profissional_id = pg_temp.p(11))
           and (select not aceita_chamadas and aceita_chamadas_em is null and versao_texto_busca is null
                  from public.profissional_preferencia_chamada where profissional_id = pg_temp.p(11)),
   'depois da limpeza: nenhuma linha do registro e a preferência da busca limpa');
+select ok((select count(*) from privado.registro_aceita_chamadas where profissional_id in (pg_temp.p(12), pg_temp.p(41))) = 2
+          and (select bool_and(aceita_chamadas and versao_texto_busca is not null)
+                 from public.profissional_preferencia_chamada where profissional_id in (pg_temp.p(12), pg_temp.p(41))),
+  'controles: a conta ativa e a excluída há 14 dias ficam com o registro e a preferência');
 
 select * from finish();
 rollback;
