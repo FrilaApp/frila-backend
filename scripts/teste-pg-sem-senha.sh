@@ -65,6 +65,7 @@ cat > "$TMP/bin/psql" <<'EOF'
 #!/usr/bin/env bash
 printf 'psql %s\n' "$*" >> "$TESTE_LINHAS"
 printf '%s\n' "${PGPASSWORD-<ausente>}" >> "$TESTE_SENHAS"
+printf '%s\n' "${PGSSLMODE-<ausente>}" >> "$TESTE_SSL"
 # Respostas mínimas para os scripts passarem da conferência de tabela e chegarem ao alvo() (o python).
 case "$*" in
   *server_version_num*) echo 170006; exit 0 ;;
@@ -101,8 +102,8 @@ EOF
 # shellcheck disable=SC2016  # o $* e o $@ são do python3 de mentira, não deste shell
 printf '#!/usr/bin/env bash\nprintf "python3 %%s\\n" "$*" >> "$TESTE_PYTHON"\nexec "%s" "$@"\n' "$PYTHON_REAL" > "$TMP/bin/python3"
 chmod +x "$TMP/bin/"*
-export TESTE_LINHAS="$TMP/linhas" TESTE_SENHAS="$TMP/senhas" TESTE_PYTHON="$TMP/python"
-zerar() { : > "$TESTE_LINHAS"; : > "$TESTE_SENHAS"; : > "$TESTE_PYTHON"; }
+export TESTE_LINHAS="$TMP/linhas" TESTE_SENHAS="$TMP/senhas" TESTE_PYTHON="$TMP/python" TESTE_SSL="$TMP/ssl"
+zerar() { : > "$TESTE_LINHAS"; : > "$TESTE_SENHAS"; : > "$TESTE_PYTHON"; : > "$TESTE_SSL"; }
 
 # ── 2. psql_url e com_senha_da_url ────────────────────────────────────────────
 echo "▸ 2. psql_url (a senha só no ambiente do filho)"
@@ -177,6 +178,12 @@ if grep -q '^pg_dump .*--dbname postgresql://u_exemplo@127.0.0.1:5432/postgres?s
   ok "backup-logico: o pg_dump do \\! recebeu a URL sem a senha"
 else
   falha "backup-logico: o pg_dump do \\! não recebeu a URL sem a senha"
+fi
+# O sslmode=require padrão do backup vem por atribuição antes de uma função (com_senha_da_url): tem de chegar ao psql.
+if [ -s "$TESTE_SSL" ] && ! grep -v -x -q 'require' "$TESTE_SSL"; then
+  ok "backup-logico: todo psql recebeu PGSSLMODE=require (o padrão do backup) pela função"
+else
+  falha "backup-logico: algum psql não recebeu PGSSLMODE=require"
 fi
 
 echo
