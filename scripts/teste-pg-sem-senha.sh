@@ -65,7 +65,12 @@ cat > "$TMP/bin/psql" <<'EOF'
 #!/usr/bin/env bash
 printf 'psql %s\n' "$*" >> "$TESTE_LINHAS"
 printf '%s\n' "${PGPASSWORD-<ausente>}" >> "$TESTE_SENHAS"
-case "$*" in *server_version_num*) echo 170006; exit 0 ;; esac
+# Respostas mínimas para os scripts passarem da conferência de tabela e chegarem ao alvo() (o python).
+case "$*" in
+  *server_version_num*) echo 170006; exit 0 ;;
+  *to_regclass*::text*) echo true; exit 0 ;;
+  *to_regclass*) echo t; exit 0 ;;
+esac
 # Como o \! do psql de verdade: roda a linha do shell com o ambiente do psql (o backup lógico usa).
 if [ ! -t 0 ]; then
   while IFS= read -r linha; do
@@ -93,6 +98,7 @@ anterior=""
 for a in "$@"; do [ "$anterior" = --output ] && : > "$a"; anterior=$a; done
 exit 0
 EOF
+# shellcheck disable=SC2016  # o $* e o $@ são do python3 de mentira, não deste shell
 printf '#!/usr/bin/env bash\nprintf "python3 %%s\\n" "$*" >> "$TESTE_PYTHON"\nexec "%s" "$@"\n' "$PYTHON_REAL" > "$TMP/bin/python3"
 chmod +x "$TMP/bin/"*
 export TESTE_LINHAS="$TMP/linhas" TESTE_SENHAS="$TMP/senhas" TESTE_PYTHON="$TMP/python"
@@ -111,9 +117,11 @@ zerar
 igual "sem senha: a URL vai igual" "$(cat "$TESTE_LINHAS")" "psql postgresql://u_exemplo@$H/postgres -c select 1"
 igual "sem senha: PGPASSWORD continua ausente" "$(cat "$TESTE_SENHAS")" "<ausente>"
 zerar
+# shellcheck disable=SC2030,SC2031  # de propósito: o PGPASSWORD herdado vale só dentro do subshell
 ( export PGPASSWORD=exemplo-herdada; PATH="$TMP/bin:$PATH" psql_url "postgresql://u_exemplo@$H/postgres" -c "select 1" )
 igual "sem senha: vale o PGPASSWORD de quem chamou" "$(cat "$TESTE_SENHAS")" "exemplo-herdada"
 zerar
+# shellcheck disable=SC2030,SC2031
 depois=$( export PGPASSWORD=exemplo-herdada; PATH="$TMP/bin:$PATH" psql_url "$URL_TESTE" -c "select 1"; printf '%s' "$PGPASSWORD" )
 igual "com senha e PGPASSWORD herdado: vale a senha da URL (como no libpq)" "$(cat "$TESTE_SENHAS")" "exemplo@com:dois"
 igual "com senha: depois da chamada o PGPASSWORD do shell não mudou" "$depois" "exemplo-herdada"
@@ -150,9 +158,16 @@ roda_script() { # roda_script <nome> <variável da URL> <script e argumentos...>
       [ -s "$TESTE_PYTHON" ] && printf ', python3 sem senha')"
   fi
 }
+exige_python() { # o alvo() desses scripts passa a URL ao python: tem de ter passado, e sem a senha
+  if ! grep -q '^python3 ' "$TESTE_PYTHON"; then falha "$1: o python do alvo não foi chamado (o teste não exercitou esse caminho)"
+  elif grep -F -q -e "$SENHA_COD" -e "$SENHA" "$TESTE_PYTHON"; then falha "$1: o python do alvo recebeu a senha na linha de comando"
+  else ok "$1: o python do alvo recebeu a URL sem a senha"; fi
+}
 roda_script "ajustar-parametro-despacho" DATABASE_URL ./scripts/ajustar-parametro-despacho.sh ler
+exige_python "ajustar-parametro-despacho"
 roda_script "checagem-diaria" DATABASE_URL ./scripts/checagem-diaria.sh
 roda_script "checkin-por-codigo-casa" DATABASE_URL ./scripts/checkin-por-codigo-casa.sh estado
+exige_python "checkin-por-codigo-casa"
 roda_script "funil" DATABASE_URL ./scripts/funil.sh --json
 roda_script "gerar-painel" DATABASE_URL ./scripts/gerar-painel.sh -o "$TMP/painel.html"
 roda_script "medir-despacho-remoto" DATABASE_URL ./scripts/medir-despacho-remoto.sh
