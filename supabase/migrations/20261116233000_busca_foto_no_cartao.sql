@@ -256,7 +256,7 @@ comment on function privado.cartao_profissional(uuid, uuid, smallint, boolean, b
 
 -- A chave do cursor da busca passa a derivar também o link da foto (parecer do Lince Opus, I2).
 comment on table privado.chave_cursor_busca is
-  'Chave aleatória (32 bytes) do HMAC-SHA256 do cursor de buscar_profissionais. Uma linha, gerada pela migração. Desde a 0.2.90 ela TAMBÉM deriva a chave do link da foto (privado.cunhar_link_foto_na_janela, HMAC de link-foto-cartao): é segredo de acesso às miniaturas, nunca sai do banco nem entra em log, dump ou fixture. Trocá-la invalida os cursores e os links de foto do momento (o app pede de novo). Toda cópia do Prod para ensaio a regenera depois do restore.';
+  'Chave aleatória (32 bytes) do HMAC-SHA256 do cursor de buscar_profissionais. Uma linha, gerada pela migração. Desde a 0.2.90 ela TAMBÉM deriva a chave do link da foto (privado.cunhar_link_foto_na_janela, HMAC de link-foto-cartao): é segredo de acesso às miniaturas: fora de log e fixture; em dump/backup só cifrado; regenerada em qualquer restore fora do Prod. Trocá-la invalida os cursores e os links de foto do momento (o app pede de novo).';
 
 -- O cunhar antigo segue em uso: a mídia do próprio dono (minhas_midias) e o resto que não passa pela projeção.
 comment on function privado.cunhar_link_leitura_midia(uuid, uuid) is
