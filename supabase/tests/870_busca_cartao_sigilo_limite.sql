@@ -14,7 +14,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-16 15:00:00+00', true);   -- segunda 12h em Brasília
-select plan(115);
+select plan(117);
 
 -- ── Quem já existia: ninguém aceita chamada direta antes dos meus dados ──────
 select is((select count(*)::int from public.profissional_preferencia_chamada where aceita_chamadas), 0,
@@ -314,6 +314,13 @@ select is(pg_temp.r(pg_temp.conta(2), pg_temp.q(format($$, inicio_em => '2026-11
   '422 cursor_invalido', 'cursor de outro horário: 422 cursor_invalido');
 select is(pg_temp.r(pg_temp.conta(1), pg_temp.q(format(', cursor => %L', (select v #>> '{}' from guarda where k = 'cur')))),
   '422 cursor_invalido', 'cursor de outra conta: 422 cursor_invalido');
+-- O cursor vale 15 minutos (campo 'e'): o 'cur' nasceu às 15h00 UTC e vence às 15h15.
+select set_config('frila.agora', '2026-11-16 15:14:00+00', true);
+select is(pg_temp.r(pg_temp.conta(2), pg_temp.q(format(', cursor => %L', (select v #>> '{}' from guarda where k = 'cur')))), 'ok',
+  'o cursor ainda vale aos 14 minutos');
+select set_config('frila.agora', '2026-11-16 15:16:00+00', true);
+select is(pg_temp.r(pg_temp.conta(2), pg_temp.q(format(', cursor => %L', (select v #>> '{}' from guarda where k = 'cur')))),
+  '422 cursor_invalido', 'cursor vencido (passou de 15 minutos): 422 cursor_invalido');
 -- O dia do cursor é o de Brasília. O cursor nasce às 23h50 de segunda (perto da virada, para o tempo de vida
 -- do cursor não interferir) e é testado às 23h59 de segunda e às 00h00 de terça.
 select set_config('frila.agora', '2026-11-17 02:50:00+00', true);
