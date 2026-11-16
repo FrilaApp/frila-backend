@@ -70,6 +70,8 @@ DB_CONTAINER=${DB_CONTAINER:-supabase_db_frila-backend}
 PSQL=${PSQL:-/opt/homebrew/opt/postgresql@16/bin/psql}
 MINIMO_BUSCA=""
 SAIDA=""
+# O checkout principal (Ground): é o caminho que o arquivo de acesso cita depois da mescla do #518.
+CAMINHO_GROUND=/Users/cauecarneiro/Documents/Projetos/Frila/frila-backend
 
 CASA_USUARIO=b027f000-0000-4000-8000-000000000001
 CASA_ESTAB=b027f000-0000-4000-8000-0000000000c1
@@ -547,8 +549,10 @@ acesso() {
       echo '2. Na sequência, rode:'
       echo
       echo '```'
-      echo "$raiz/scripts/dev-busca-teste.sh --alvo $ALVO codigo <e-mail>"
+      echo "$CAMINHO_GROUND/scripts/dev-busca-teste.sh --alvo $ALVO codigo <e-mail>"
       echo '```'
+      echo
+      echo "Até o #518 ser mesclado, use o do floor: $raiz/scripts/dev-busca-teste.sh"
       echo
       echo '3. Digite o código que sai no terminal. Vale uma vez e por até 1 hora. Só funciona para os 4 e-mails acima.'
       echo
@@ -568,7 +572,7 @@ acesso() {
       echo
       echo '## Refazer ou consertar'
       echo
-      echo "Rode \`$raiz/scripts/dev-busca-teste.sh --alvo $ALVO montar\` (idempotente) e \`conferir\` para provar as 4 buscas."
+      echo "Rode \`$CAMINHO_GROUND/scripts/dev-busca-teste.sh --alvo $ALVO montar\` (idempotente) e \`conferir\` para provar as 4 buscas."
     } > "$saida"
   )
   chmod 600 "$saida"
