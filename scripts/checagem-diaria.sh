@@ -26,6 +26,9 @@
 #   1: Alerta operacional crítico detectado (VERMELHO - exige ação imediata)
 #   2: Erro de conexão ou configuração
 set -uo pipefail
+# A senha da DATABASE_URL vai só no ambiente do psql, nunca na linha de comando (B-027.j).
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")/pg-sem-senha.sh"
 
 DB_CONTAINER="${DB_CONTAINER:-supabase_db_frila-backend}"
 DATABASE_URL="${DATABASE_URL:-}"
@@ -34,7 +37,7 @@ DATABASE_URL="${DATABASE_URL:-}"
 exec_sql() {
   local sql="$1"
   if [ -n "$DATABASE_URL" ]; then
-    psql "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
+    psql_url "$DATABASE_URL" -X -v ON_ERROR_STOP=1 \
       -c "SET default_transaction_read_only = on;" \
       -c "$sql"
   elif [ -n "${PGHOST:-}" ]; then
@@ -51,7 +54,7 @@ exec_sql() {
 exec_sql_quiet() {
   local sql="$1"
   if [ -n "$DATABASE_URL" ]; then
-    psql "$DATABASE_URL" -X -q -t -A -v ON_ERROR_STOP=1 \
+    psql_url "$DATABASE_URL" -X -q -t -A -v ON_ERROR_STOP=1 \
       -c "SET default_transaction_read_only = on;" \
       -c "$sql" 2>/dev/null | sed '/^SET$/d' | head -n 1
   elif [ -n "${PGHOST:-}" ]; then
