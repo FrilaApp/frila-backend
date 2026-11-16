@@ -26,6 +26,8 @@
 --      ponto base, nascimento nem foto. O cursor é assinado e vale 15 min.
 --   8. Job pg_cron limpar_contador_busca, às 08:13 UTC (05:13 em Brasília): apaga as horas com mais de
 --      um dia.
+--   9. privado.meus_dados exporta registros_aceita_chamadas, e a limpeza da conta excluída (15 dias)
+--      apaga o registro e a preferência da busca (decisão da Bússola, 16/11/2026).
 --
 -- Fica para o PR seguinte (contrato 0.2.88): chamar_profissional aceitar quem está na busca, e
 -- perfil_publico contar a busca como vínculo de leitura do perfil rico. A foto não entra no cartão.
@@ -459,8 +461,9 @@ select cron.schedule('limpar_contador_busca', '13 8 * * *', 'select privado.limp
 -- O ÚNICO lugar do nome curto ("Maria L."): o cartão da busca e as leituras do PR 2 usam este helper.
 -- Contrato 0.2.88: "primeiro nome e inicial do sobrenome". Sobrenome = o último (o de família, no
 -- Brasil): ele nunca é partícula e, em prenome composto, não expõe o segundo prenome ("Ana Maria
--- Souza" → "Ana S."). Partículas (da, de, do, das, dos, e, d') não contam. Nome de uma palavra só, ou
--- só com partículas depois, sai sem inicial. Vazio ou nulo: nulo.
+-- Souza" → "Ana S."). Partículas (da, de, do, das, dos, e, d') e sufixos de geração (Filho, Filha,
+-- Júnior, Junior, Jr, Neto, Neta, Sobrinho, Sobrinha) não contam ("João Silva Filho" → "João S.").
+-- Nome de uma palavra só, ou só com partículas e sufixos depois, sai sem inicial. Vazio ou nulo: nulo.
 create function privado.nome_curto(p_nome text)
 returns text
 language sql immutable set search_path = ''
@@ -468,13 +471,15 @@ as $$
   select case when n.partes is null or n.partes[1] is null or n.partes[1] = '' then null
               else n.partes[1]
                    || coalesce(' ' || upper(left((select t.x from unnest(n.partes[2:]) with ordinality t(x, i)
-                                                  where lower(t.x) not in ('da', 'de', 'do', 'das', 'dos', 'e', 'd''')
+                                                  where lower(t.x) not in ('da', 'de', 'do', 'das', 'dos', 'e', 'd''',
+                                                                           'filho', 'filha', 'júnior', 'junior', 'jr', 'jr.',
+                                                                           'neto', 'neta', 'sobrinho', 'sobrinha')
                                                   order by t.i desc limit 1), 1)) || '.', '')
          end
     from (select regexp_split_to_array(btrim(p_nome), '\s+') as partes) n
 $$;
 comment on function privado.nome_curto(text) is
-  'Nome curto do contrato 0.2.88 (CD-B07, CD-S03): primeiro nome e a inicial do último sobrenome, sem contar partículas ("Maria Souza Lima" → "Maria L.", "João dos Santos" → "João S.", "Maria" → "Maria"). O único lugar dessa regra. Nunca o sobrenome completo.';
+  'Nome curto do contrato 0.2.88 (CD-B07, CD-S03): primeiro nome e a inicial do último sobrenome, sem contar partículas nem sufixos como Filho e Júnior ("Maria Souza Lima" → "Maria L.", "João dos Santos" → "João S.", "João Silva Filho" → "João S.", "Maria" → "Maria"). O único lugar dessa regra. Nunca o sobrenome completo.';
 revoke all on function privado.nome_curto(text) from public, anon, authenticated;
 grant execute on function privado.nome_curto(text) to service_role;
 
@@ -728,3 +733,389 @@ comment on function public.buscar_profissionais(uuid, uuid, int, timestamptz, ti
   '0.2.88. Busca de profissionais para chamar direto (CD-B01 a CD-B10): serviço obrigatório, região (padrão: a da casa) e horário. Ordem: a grade cobre o horário, faixa de distância, embaralho estável por contratante e dia; a reputação não ordena (RN06). 20 por página por cursor assinado, no máximo 200 por busca e 60 buscas por hora por conta (429 limite_excedido). Os filtros não ficam gravados (CD-B09). POST: a busca grava o contador.';
 revoke all on function public.buscar_profissionais(uuid, uuid, int, timestamptz, timestamptz, text, int) from public, anon;
 grant execute on function public.buscar_profissionais(uuid, uuid, int, timestamptz, timestamptz, text, int) to authenticated;
+
+-- ── 9. LGPD do registro de "Aceito chamadas diretas" (decisão da Bússola, 16/11/2026) ──
+-- O registro guarda enquanto a conta existir, entra na exportação (MeusDados.registros_aceita_chamadas)
+-- e sai na limpeza da conta excluída, em até 15 dias (RF25), no passo que já limpa o perfil rico.
+
+-- Corpo de 20261111203000 com só o campo registros_aceita_chamadas no fim.
+create or replace function privado.meus_dados(p_usuario uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  with conta as (
+    select * from public.usuario u where u.id = p_usuario
+  ),
+  prof as (
+    select p.* from public.profissional p where p.usuario_id = p_usuario
+  ),
+  casas as (
+    select m.estabelecimento_id, m.papel, e.nome, e.tipo
+      from public.membro_estabelecimento m
+      join public.estabelecimento e on e.id = m.estabelecimento_id
+     where m.usuario_id = p_usuario
+  )
+  select jsonb_build_object(
+    'gerado_em', privado.agora(),
+
+    'conta', jsonb_build_object(
+      'id',         c.id,
+      'perfil',     c.perfil,
+      'nome',       c.nome,
+      'telefone',   c.telefone,
+      'email',      c.email,
+      'nascimento', c.nascimento,
+      'estado',     c.estado),
+
+    -- 0.2.58: PerfilProfissionalDetalhado completo via privado.perfil_com_servicos
+    'perfil_profissional',
+      (select privado.perfil_com_servicos(p) from prof p),
+
+    'estabelecimentos', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id',        k.estabelecimento_id,
+               'nome',      k.nome,
+               'tipo',      k.tipo,
+               'papel',     k.papel,
+               'reputacao', privado.estabelecimento_publico(k.estabelecimento_id)->'reputacao')
+             order by k.nome)
+        from casas k), '[]'::jsonb),
+
+    'disponibilidade', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'dia_semana',  d.dia_semana,
+               'hora_inicio', to_char(d.hora_inicio, 'HH24:MI'),
+               'hora_fim',    to_char(d.hora_fim,    'HH24:MI'))
+             order by d.dia_semana, d.hora_inicio)
+        from public.disponibilidade d
+        join prof p on p.id = d.profissional_id), '[]'::jsonb),
+
+    'turnos', coalesce((
+      select jsonb_agg(privado.turno_em_json(t.id, p_usuario) order by pos.inicio_em desc)
+        from public.turno t
+        join public.posicao pos on pos.id = t.posicao_id
+        join public.vaga vg     on vg.id = pos.vaga_id
+       where (c.perfil = 'profissional' and pos.profissional_id in (select p.id from prof p))
+          or (c.perfil = 'contratante' and vg.estabelecimento_id in (select k.estabelecimento_id from casas k))), '[]'::jsonb),
+
+    'avaliacoes_dadas', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'turno_id',  a.turno_id,
+               'resposta',  a.resposta,
+               'criada_em', a.criada_em)
+             order by a.criada_em desc)
+        from public.avaliacao a
+       where a.autor_id = p_usuario), '[]'::jsonb),
+
+    'avaliacoes_recebidas', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'turno_id',  a.turno_id,
+               'resposta',  a.resposta,
+               'criada_em', a.criada_em)
+             order by a.criada_em desc)
+        from public.avaliacao a
+        join public.turno t on t.id = a.turno_id
+        join public.posicao pos on pos.id = t.posicao_id
+        join public.vaga vg on vg.id = pos.vaga_id
+       where (c.perfil = 'profissional' and pos.profissional_id in (select p.id from prof p) and a.alvo_tipo = 'profissional')
+          or (c.perfil = 'contratante' and vg.estabelecimento_id in (select k.estabelecimento_id from casas k) and a.alvo_tipo = 'estabelecimento')), '[]'::jsonb),
+
+    'dispositivos', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'plataforma',    dp.plataforma,
+               'atualizado_em', dp.atualizado_em)
+             order by dp.atualizado_em desc)
+        from public.dispositivo dp
+       where dp.usuario_id = p_usuario), '[]'::jsonb),
+
+    'candidaturas', coalesce((
+      select jsonb_agg(privado.candidatura_em_json(cd.id)
+             order by cd.criada_em desc)
+        from public.candidatura cd
+       where cd.profissional_id in (select p.id from prof p)), '[]'::jsonb),
+
+    'ocorrencias', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id',           o.id,
+               'tipo',         o.tipo,
+               'papel',        case when o.autor_id = p_usuario then 'autor' else 'alvo' end,
+               'criada_em',    o.criada_em,
+               'resolvido_em', o.resolvido_em,
+               'motivo',       case when o.autor_id = p_usuario or o.tipo = 'suspensao' then o.motivo else null end)
+             order by o.criada_em desc)
+        from public.ocorrencia o
+       where o.autor_id = p_usuario or o.usuario_id = p_usuario), '[]'::jsonb),
+
+    'bloqueios', coalesce((
+      select jsonb_agg(x.o order by x.criado_em desc)
+        from (
+          select distinct jsonb_build_object(
+                   'alvo_tipo', 'profissional',
+                   'alvo_id',   pb.id,
+                   'criado_em', b.criado_em) as o,
+                 b.criado_em
+            from public.bloqueio b
+            join public.profissional pb on pb.usuario_id = b.bloqueado_id
+           where b.autor_id = p_usuario
+          union
+          select distinct jsonb_build_object(
+                   'alvo_tipo', 'estabelecimento',
+                   'alvo_id',   mb.estabelecimento_id,
+                   'criado_em', b.criado_em) as o,
+                 b.criado_em
+            from public.bloqueio b
+            join public.usuario ub on ub.id = b.bloqueado_id and ub.perfil = 'contratante'
+            join public.membro_estabelecimento mb on mb.usuario_id = b.bloqueado_id
+           where b.autor_id = p_usuario
+        ) x), '[]'::jsonb),
+
+    'notificacoes', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'tipo',          n.tipo,
+               'referencia_id', n.referencia_id,
+               'payload',       n.payload,
+               'enviada_em',    n.enviada_em,
+               'entregue_em',   n.entregue_em)
+             order by n.enviada_em desc nulls last)
+        from public.notificacao n
+       where n.usuario_id = p_usuario), '[]'::jsonb),
+
+    'despachos', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'vaga_id',   ds.vaga_id,
+               'criado_em', ds.criado_em,
+               'reaberta',  ds.reaberta)
+             order by ds.criado_em desc)
+        from public.despacho ds
+       where ds.profissional_id in (select p.id from prof p)), '[]'::jsonb),
+
+    'equipe_confianca', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'estabelecimento_id', ec.estabelecimento_id,
+               'nome',               es.nome,
+               'adicionado_em',      ec.adicionado_em)
+             order by ec.adicionado_em desc)
+        from public.equipe_confianca ec
+        join public.estabelecimento es on es.id = ec.estabelecimento_id
+       where ec.profissional_id in (select p.id from prof p)), '[]'::jsonb),
+
+    'pedido_de_exclusao', (
+      select jsonb_build_object(
+               'pedido_em',    pe.pedido_em,
+               'estado',       pe.estado,
+               'tentativas',   pe.tentativas,
+               'concluido_em', pe.concluido_em)
+        from public.pedido_de_exclusao pe
+       where pe.usuario_id = p_usuario
+       order by pe.pedido_em desc
+       limit 1),
+
+    'eventos_app', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id',          ea.id,
+               'evento',      ea.evento,
+               'vaga_id',     ea.vaga_id,
+               'turno_id',    ea.turno_id,
+               'ocorrido_em', ea.ocorrido_em,
+               'criado_em',   ea.criado_em)
+             order by ea.ocorrido_em desc, ea.criado_em desc, ea.id desc)
+        from public.evento_app ea
+       where ea.usuario_id = p_usuario), '[]'::jsonb),
+
+    -- 0.2.59: mídias ativas do titular
+    'midias', coalesce((
+      select jsonb_agg(privado.midia_em_json(m)
+             order by m.criado_em desc)
+        from privado.midia m
+       where (m.estabelecimento_id is null and m.dono_usuario_id = p_usuario
+              or m.estabelecimento_id in (select k.estabelecimento_id from casas k))), '[]'::jsonb),
+
+    -- 0.2.59: chamadas do titular (como profissional chamado ou membro da casa)
+    'chamadas', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id',                 ch.id,
+               'vaga_id',            ch.vaga_id,
+               'profissional_id',    ch.profissional_id,
+               'estabelecimento_id', ch.estabelecimento_id,
+               'estado',             ch.estado,
+               'recado',             ch.recado,
+               'motivo_recusa',      ch.motivo_recusa,
+               'expira_em',          ch.expira_em,
+               'respondida_em',      ch.respondida_em,
+               'criada_em',          ch.criada_em)
+             order by ch.criada_em desc)
+        from public.chamada ch
+       where (c.perfil = 'profissional' and ch.profissional_id in (select p.id from prof p))
+          or (c.perfil = 'contratante' and ch.estabelecimento_id in (select k.estabelecimento_id from casas k))), '[]'::jsonb),
+
+    -- 0.2.68 (revisto na 0.2.70): o check-in por código do titular como profissional (LGPD, art. 18,
+    -- II, e art. 19). Só o turno com algum dos três registros, e só enquanto existem (a guarda é a do
+    -- PR3). Nunca o valor do código, o contador, o bloqueio nem quem gerou: o contrato não os declara.
+    -- Na exportação de quem opera a casa vem [] (regra (d) da Bússola), por isso o perfil explícito.
+    'checkins_por_codigo', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'turno_id',        cc.turno_id,
+               'codigo_exigido',  cc.codigo_exigido,
+               'confianca_baixa', cc.confianca_baixa,
+               'tentativas', coalesce((
+                 select jsonb_agg(jsonb_build_object(
+                          'em',               ct.em,
+                          'resultado',        ct.resultado,
+                          'faixa',            ct.faixa,
+                          'codigo_gerado_em', ct.codigo_gerado_em)
+                        order by ct.em, ct.id)
+                   from privado.checkin_codigo_tentativa ct
+                  where ct.turno_id = cc.turno_id), '[]'::jsonb))
+             order by pos.inicio_em desc, cc.turno_id)
+        from privado.checkin_codigo cc
+        join public.turno t     on t.id = cc.turno_id
+        join public.posicao pos on pos.id = t.posicao_id
+       where c.perfil = 'profissional'
+         and pos.profissional_id in (select p.id from prof p)
+         and (cc.codigo_exigido or cc.confianca_baixa
+              or exists (select 1 from privado.checkin_codigo_tentativa x where x.turno_id = cc.turno_id))), '[]'::jsonb),
+
+    -- 0.2.88: cada vez que o titular ligou "Aceito chamadas diretas" (decisão da Bússola, 16/11/2026:
+    -- guarda enquanto a conta existir e entra na exportação). Só a versão do texto e o instante; na
+    -- exportação de quem opera a casa vem [].
+    'registros_aceita_chamadas', coalesce((
+      select jsonb_agg(jsonb_build_object('versao_texto_busca', ra.versao_texto_busca, 'em', ra.em)
+                       order by ra.em, ra.versao_texto_busca)
+        from privado.registro_aceita_chamadas ra
+       where c.perfil = 'profissional'
+         and ra.profissional_id in (select p.id from prof p)), '[]'::jsonb)
+  )
+  from conta c
+$$;
+
+comment on function privado.meus_dados(uuid) is
+  'Portabilidade LGPD (art. 18): consolidação de dados do titular com PerfilProfissionalDetalhado (0.2.58), midias (0.2.59), chamadas (0.2.59), só na do profissional checkins_por_codigo (0.2.68) e registros_aceita_chamadas (0.2.88): cada vez que ligou "Aceito chamadas diretas", com a versão do texto e o instante.';
+
+-- Corpo de 20261113210000 com o passo 4 (o registro e a preferência da busca).
+create or replace function privado.limpar_foto_e_perfil_rico_de_contas_anonimizadas(p_dias integer default 15)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_corte      timestamptz;
+  r            record;
+  v_enfileiradas integer := 0;
+  v_reenfileiradas integer := 0;
+  v_regioes    integer := 0;
+  v_servicos   integer := 0;
+  v_todo_df    integer := 0;
+  v_registros  integer := 0;
+  v_busca      integer := 0;
+begin
+  if p_dias is null or p_dias < 1 then
+    raise exception 'p_dias inválido: %', p_dias;
+  end if;
+  v_corte := privado.agora() - make_interval(days => p_dias);
+  perform set_config('privado.retencao', 'on', true);
+
+  -- 1. As mídias da pessoa: removida + expurgo físico (original e miniatura)
+  for r in
+    select m.id, m.storage_path
+      from privado.midia m
+      join public.usuario u on u.id = m.dono_usuario_id
+     where u.estado = 'anonimizada'
+       and u.anonimizado_em <= v_corte
+       and m.estabelecimento_id is null
+       and m.estado not in ('removida', 'expurgada')
+     for update of m skip locked
+  loop
+    update privado.midia set estado = 'removida', motivo_recusa = null, atualizado_em = privado.agora()
+     where id = r.id;
+    perform pgmq.send(
+      'expurgo_midia',
+      jsonb_build_object(
+        'verificacao_id', r.id::text,
+        'bucket', 'midia-perfil',
+        'caminhos', jsonb_build_array(r.storage_path, replace(r.storage_path, '.jpg', '_thumb.jpg')),
+        'origem', 'foto_perfil'
+      )
+    );
+    v_enfileiradas := v_enfileiradas + 1;
+  end loop;
+
+  -- 2. A varredura que converge: arquivo ainda no Storage e sem pedido na fila volta à fila. A linha fica.
+  for r in
+    select m.id, m.storage_path
+      from privado.midia m
+      join public.usuario u on u.id = m.dono_usuario_id
+     where u.estado = 'anonimizada'
+       and u.anonimizado_em <= v_corte
+       and m.estabelecimento_id is null
+       and m.estado in ('removida', 'expurgada')
+       and exists (select 1 from storage.objects o
+                    where o.bucket_id = 'midia-perfil'
+                      and o.name in (m.storage_path, replace(m.storage_path, '.jpg', '_thumb.jpg')))
+       and not exists (select 1 from pgmq.q_expurgo_midia q where q.message ->> 'verificacao_id' = m.id::text)
+     limit 500
+  loop
+    update privado.midia set motivo_recusa = null where id = r.id and motivo_recusa is not null;
+    perform pgmq.send(
+      'expurgo_midia',
+      jsonb_build_object(
+        'verificacao_id', r.id::text,
+        'bucket', 'midia-perfil',
+        'caminhos', jsonb_build_array(r.storage_path, replace(r.storage_path, '.jpg', '_thumb.jpg')),
+        'origem', 'foto_perfil'
+      )
+    );
+    v_reenfileiradas := v_reenfileiradas + 1;
+  end loop;
+
+  -- 3. O perfil rico
+  delete from public.profissional_regiao pr
+   using public.profissional p, public.usuario u
+   where pr.profissional_id = p.id and p.usuario_id = u.id
+     and u.estado = 'anonimizada' and u.anonimizado_em <= v_corte;
+  get diagnostics v_regioes = row_count;
+
+  delete from public.profissional_servico ps
+   using public.profissional p, public.usuario u
+   where ps.profissional_id = p.id and p.usuario_id = u.id
+     and u.estado = 'anonimizada' and u.anonimizado_em <= v_corte;
+  get diagnostics v_servicos = row_count;
+
+  update public.profissional p
+     set atende_todo_df = false
+    from public.usuario u
+   where p.usuario_id = u.id and p.atende_todo_df
+     and u.estado = 'anonimizada' and u.anonimizado_em <= v_corte;
+  get diagnostics v_todo_df = row_count;
+
+  -- 4. A busca (0.2.88, decisão da Bússola de 16/11/2026): o registro de cada vez que ligou "Aceito
+  --    chamadas diretas" sai, e a preferência perde o estado e o último registro.
+  delete from privado.registro_aceita_chamadas ra
+   using public.profissional p, public.usuario u
+   where ra.profissional_id = p.id and p.usuario_id = u.id
+     and u.estado = 'anonimizada' and u.anonimizado_em <= v_corte;
+  get diagnostics v_registros = row_count;
+
+  update public.profissional_preferencia_chamada pc
+     set aceita_chamadas = false, aceita_chamadas_em = null, versao_texto_busca = null
+    from public.profissional p, public.usuario u
+   where pc.profissional_id = p.id and p.usuario_id = u.id
+     and (pc.aceita_chamadas or pc.aceita_chamadas_em is not null or pc.versao_texto_busca is not null)
+     and u.estado = 'anonimizada' and u.anonimizado_em <= v_corte;
+  get diagnostics v_busca = row_count;
+
+  return jsonb_build_object(
+    'midias_enfileiradas', v_enfileiradas,
+    'midias_reenfileiradas', v_reenfileiradas,
+    'regioes_apagadas',    v_regioes,
+    'servicos_apagados',   v_servicos,
+    'atende_todo_df_desligado', v_todo_df,
+    'registros_aceita_chamadas_apagados', v_registros,
+    'preferencias_busca_limpas', v_busca);
+end $$;
+
+comment on function privado.limpar_foto_e_perfil_rico_de_contas_anonimizadas(integer) is
+  'LGPD art. 16 e 18, VI (B-019): para conta anonimizada há p_dias (15) ou mais, põe cada mídia da pessoa (estabelecimento_id nulo) em removida, sem motivo de recusa, e na fila expurgo_midia (original e miniatura, bucket midia-perfil); põe de novo na fila a que ainda tem arquivo em storage.objects sem pedido (corrida com a moderar-midia); a linha fica como marca expurgada (a cota do mês em moderacao_chamada se preserva); apaga o perfil rico (profissional_regiao, profissional_servico) e desliga atende_todo_df; e (0.2.88) apaga privado.registro_aceita_chamadas e limpa aceita_chamadas, aceita_chamadas_em e versao_texto_busca. Idempotente. Passo da rotina diária.';

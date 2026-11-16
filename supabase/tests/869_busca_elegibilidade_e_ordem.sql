@@ -1,6 +1,6 @@
 -- 869_busca_elegibilidade_e_ordem.sql
 --
--- Busca de profissionais (migração 20261116210000, contrato 0.2.85): quem entra e em que ordem.
+-- Busca de profissionais (migração 20261116210000, contrato 0.2.88): quem entra e em que ordem.
 -- O cartão, o sigilo, o limite, o cursor e os erros estão no 870.
 --   CD-P10 "Aceito chamadas diretas" é opt-in (false para todos) e liga pela RPC
 --   CD-B03 / CD-P09 / CD-P14 serviço na função exata (sem expandir pelo grupo_busca), região ou todo o DF
@@ -14,7 +14,7 @@ insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id)
 -- 16/11/2026, 12:00 em Brasília (segunda-feira).
 select set_config('frila.agora', '2026-11-16 15:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-869';
-select plan(54);
+select plan(60);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -112,6 +112,8 @@ select is(privado.nome_curto('João dos Santos'), 'João S.', 'partícula (dos) 
 select is(privado.nome_curto('Maria da Silva e Souza'), 'Maria S.', 'partículas no meio (da, e) não contam');
 select is(privado.nome_curto('  maria   souza-lima  '), 'maria S.', 'espaços sobrando e sobrenome com hífen; o primeiro nome fica como foi escrito');
 select is(privado.nome_curto('Maria de'), 'Maria', 'só partícula depois do nome: sem inicial');
+select is(privado.nome_curto('João Silva Filho'), 'João S.', 'sufixo de geração (Filho) não conta como sobrenome');
+select is(privado.nome_curto('Pedro Souza Júnior'), 'Pedro S.', 'Júnior (com acento) também não conta');
 select ok(privado.nome_curto('') is null and privado.nome_curto(null) is null, 'vazio ou nulo: nulo');
 
 -- ── CD-P10: opt-in ────────────────────────────────────────────────────────────
@@ -290,6 +292,22 @@ select is((select (e->'reputacao'->>'total')::int
             where right(e->>'id', 2) = split_part((select v from la), ',', 1)), 40,
   'o cartão mostra a reputação nova (a mudança valeu)');
 select is(pg_temp.lista(pg_temp.u(1)), (select v from la), 'mudar a reputação não muda a ordem (RN06, D2)');
+
+-- ── LGPD do registro de ligar (decisão da Bússola, 16/11/2026) ───────────────
+select is((select jsonb_agg(r->>'versao_texto_busca' order by r->>'em', r->>'versao_texto_busca')
+             from jsonb_array_elements(privado.meus_dados(pg_temp.u(11)) -> 'registros_aceita_chamadas') r),
+          '["busca-v1", "busca-v2"]'::jsonb, 'meus_dados exporta cada vez que o titular ligou (versão e instante)');
+select is(privado.meus_dados(pg_temp.u(1)) -> 'registros_aceita_chamadas', '[]'::jsonb,
+  'na exportação de quem opera a casa, registros_aceita_chamadas vem vazio');
+-- 11 exclui a conta há 16 dias: a limpeza de 15 dias apaga o registro e a preferência da busca.
+update public.usuario set estado = 'anonimizada', anonimizado_em = privado.agora() - interval '16 days'
+ where id = pg_temp.u(11);
+select is((privado.limpar_foto_e_perfil_rico_de_contas_anonimizadas(15) ->> 'registros_aceita_chamadas_apagados')::int, 2,
+  'a limpeza da conta excluída apaga as duas linhas do registro');
+select ok(not exists (select 1 from privado.registro_aceita_chamadas where profissional_id = pg_temp.p(11))
+          and (select not aceita_chamadas and aceita_chamadas_em is null and versao_texto_busca is null
+                 from public.profissional_preferencia_chamada where profissional_id = pg_temp.p(11)),
+  'depois da limpeza: nenhuma linha do registro e a preferência da busca limpa');
 
 select * from finish();
 rollback;
