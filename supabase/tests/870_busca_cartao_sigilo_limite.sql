@@ -208,8 +208,8 @@ select ok(pg_temp.cartao('sem_horario', 101)::text !~ '1990|1990-03-15',
   'nenhum valor traz a data de nascimento');
 select ok(pg_temp.cartao('sem_horario', 101)::text !~ '47\.88|15\.78|POINT',
   'nenhum valor traz o ponto base (coordenadas)');
-select ok(pg_temp.cartao('sem_horario', 101)::text !~* 'telefone|email|e-mail|nascimento|ponto_base|usuario_id|foto|disponibilidade|apresentacao',
-  'nenhuma chave de contato, nascimento, ponto base, grade, foto ou apresentação');
+select ok(pg_temp.cartao('sem_horario', 101)::text !~* 'telefone|email|e-mail|nascimento|ponto_base|usuario_id|disponibilidade|apresentacao',
+  'nenhuma chave de contato, nascimento, ponto base, grade ou apresentação (a foto é do 873, desde a 0.2.90)');
 select ok(not (pg_temp.cartao('sem_horario', 101) -> 'servico' ?| array['profissional_id', 'extras', 'atualizado_em']),
   'servico sem profissional_id, extras nem atualizado_em');
 select ok(pg_temp.cartao('sem_horario', 101)::text !~ 'segredo_extra',

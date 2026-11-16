@@ -7,7 +7,7 @@
 --      chamada pelo vaga_id, a chave desligada e o caminho do vínculo igual ao de antes
 --   B  PARIDADE: quem a busca mostra, a chamada aceita; quem ela não mostra, a chamada recusa
 --   C  perfil_publico: o profissional na busca é vínculo de leitura do perfil rico (com ou sem pausa),
---      a foto NÃO, e o nome vem curto sem candidatura, turno nem equipe
+--      a foto TAMBÉM (0.2.90, com o aceite dos Termos 1.1; o 873 cobre o caso sem aceite), e o nome vem curto sem candidatura, turno nem equipe
 --   D  o nome curto em CADA leitora de PerfilPublico (minhas_chamadas, detalhe_chamada, candidatos_da_vaga)
 --      e em ItemBloqueio.nome; o nome inteiro com candidatura, turno e equipe
 -- Só dados sintéticos.
@@ -330,8 +330,9 @@ select is(pg_temp.perfil(pg_temp.u(1), pg_temp.p(37)) -> 'reputacao', privado.re
   'C1b a reputação do perfil é a do helper único (a mesma do cartão da busca, com o denominador)');
 select is(pg_temp.perfil(pg_temp.u(1), pg_temp.p(37)) ->> 'apresentacao', 'Apresentação 37',
   'C2 o profissional na busca é vínculo de leitura: o perfil rico vem (apresentação)');
-select ok(not (pg_temp.perfil(pg_temp.u(1), pg_temp.p(37)) ? 'foto_id') and not (pg_temp.perfil(pg_temp.u(1), pg_temp.p(37)) ? 'foto_url'),
-  'C3 a foto NÃO vem pelo vínculo da busca, mesmo aprovada');
+select ok((pg_temp.perfil(pg_temp.u(1), pg_temp.p(37)) ->> 'foto_id') = 'c8710000-0000-4000-8000-0000000000a1'
+          and (pg_temp.perfil(pg_temp.u(1), pg_temp.p(37)) ->> 'foto_url') like 'http://funcoes.invalid/functions/v1/ler-midia?midia_id=%',
+  'C3 a foto aprovada vem pelo vínculo da busca (0.2.90, contratante com os Termos 1.1 aceitos)');
 select is(pg_temp.perfil(pg_temp.u(1), pg_temp.p(15)) ->> 'apresentacao', 'Apresentação 15',
   'C4 em pausa, o perfil rico vem do mesmo jeito (o perfil não revela a pausa)');
 select is(pg_temp.nome(pg_temp.u(1), pg_temp.p(15)), 'Prof S.', 'C5 e o nome também vem curto');
@@ -356,10 +357,10 @@ select is(pg_temp.nome(pg_temp.u(2), pg_temp.p(26)), 'Rui B.', 'C14 outra casa, 
 select is(pg_temp.nome(pg_temp.u(12), pg_temp.p(11)), 'Maria L.', 'C15 outro PROFISSIONAL lê o nome curto (nome inteiro só para o próprio e para contratante com vínculo)');
 select is(pg_temp.nome(pg_temp.u(4), pg_temp.p(11)), 'Maria L.', 'C15b contratante sem estabelecimento lê o nome curto');
 select is(pg_temp.nome(pg_temp.u(11), pg_temp.p(11)), 'Maria Souza Lima', 'C16 o próprio profissional lê o nome inteiro');
--- Controle da foto: com equipe de confiança, a foto vem (o vínculo da 0.2.54).
+-- Controle da foto: com equipe de confiança, a foto vem também (o vínculo da 0.2.54, que segue valendo).
 insert into public.equipe_confianca (estabelecimento_id, profissional_id) values (pg_temp.casa(1), pg_temp.p(37));
 select is(pg_temp.perfil(pg_temp.u(1), pg_temp.p(37)) ->> 'foto_id', 'c8710000-0000-4000-8000-0000000000a1',
-  'C17 controle: com equipe de confiança a foto vem (só o vínculo da 0.2.54 a libera)');
+  'C17 controle: com equipe de confiança a foto vem igual (o vínculo antigo segue valendo)');
 select is(pg_temp.nome(pg_temp.u(1), pg_temp.p(37)), 'Prof 37 Sobrenome', 'C18 e o nome passa a vir inteiro');
 delete from public.equipe_confianca where profissional_id = pg_temp.p(37);
 -- m2: a busca não dá perfil rico a profissional que não está ativo (suspenso).
