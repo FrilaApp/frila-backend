@@ -57,7 +57,7 @@ select '00000000-0000-0000-0000-000000000000', ('c8300000-0000-4000-8000-0000000
        privado.agora(), privado.agora(), false, false
   from generate_series(1, 9) n;
 select pg_temp.como(('c8300000-0000-4000-8000-00000000000' || n)::uuid, format(
-  $$ select public.criar_conta(%L, 'Pessoa %s', '+556195558300%s', '1990-01-01', '2026-09-22') $$,
+  $$ select public.criar_conta(%L, 'Pessoa %s', '+556195558300%s', '1990-01-01', '2026-11-13') $$,
   case when n = 1 then 'contratante' else 'profissional' end, n, n)) from generate_series(1, 9) n;
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto, regiao_administrativa)
 values ('c8300000-0000-4000-8000-0000000000e1', 'Casa 830', '83012345666', 'food_service', 'CLN 201',

@@ -102,7 +102,7 @@ select '00000000-0000-0000-0000-000000000000', pg_temp.u(n), 'authenticated', 'a
        'p' || n || '@t871.test', privado.agora(), privado.agora(), false, false
   from (select generate_series(1, 5) union all select generate_series(11, 44)) s(n);
 select pg_temp.como(pg_temp.u(n), format(
-  $$ select public.criar_conta(%L, %L, %L, '1990-01-01', '2026-09-22') $$,
+  $$ select public.criar_conta(%L, %L, %L, '1990-01-01', '2026-11-13') $$,
   case when n <= 5 then 'contratante' else 'profissional' end,
   case n when 11 then 'Maria Souza Lima' when 19 then 'Pedro Alves Pinto' when 25 then 'Carla Mendes Rocha'
          when 26 then 'Rui Barbosa Neto' when 36 then 'Joana Pereira Dias' else 'Prof ' || n || ' Sobrenome' end,

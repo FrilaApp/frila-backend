@@ -53,7 +53,7 @@ select '00000000-0000-0000-0000-000000000000', pg_temp.u(n), 'authenticated', 'a
        'p' || n || '@t869.test', privado.agora(), privado.agora(), false, false
   from (select generate_series(1, 3) union all select generate_series(11, 42)) s(n);
 select pg_temp.como(pg_temp.u(n), format(
-  $$ select public.criar_conta(%L, %L, %L, '1990-01-01', '2026-09-22') $$,
+  $$ select public.criar_conta(%L, %L, %L, '1990-01-01', '2026-11-13') $$,
   case when n <= 3 then 'contratante' else 'profissional' end,
   'Pessoa ' || n || ' Sobrenome', '+55619555869' || lpad(n::text, 2, '0')))
   from (select generate_series(1, 3) union all select generate_series(11, 42)) s(n);
