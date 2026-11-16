@@ -11,7 +11,8 @@
 -- e passa a querer dizer Termos 1.1 + Política 1.2"). Antes: `2026-10-15` (1.0) e `2026-11-12` (Termos 1.0.1).
 -- Logo, "aceitou a 1.1" = `termos_versao` em formato AAAA-MM-DD e >= `2026-11-13` (a data compara como texto).
 --
---   1. privado.termos_versao_vigente() e privado.aceitou_termos(usuario, versao_minima): o fato num lugar só.
+--   1. privado.termos_minimos_da_busca() e privado.aceitou_termos(usuario, versao_minima): o fato num lugar só;
+--      privado.termos_publicadas(): a lista de versões que aceitar_termos aceita.
 --      A conta de demonstração conta como tendo aceitado: é nossa, isolada da população real, e é o login
 --      que a revisão da Apple usa (hoje com `2026-09-22`; as funções de renovação da demonstração a recriam
 --      com esse valor, então atualizar o dado não duraria).
@@ -21,9 +22,10 @@
 --      recusa do mesmo jeito. O caminho do vínculo NÃO muda. A recusa olha só quem chama, não o profissional.
 --   4. O perfil rico: estar na busca só vale como vínculo de leitura para contratante que aceitou a 1.1
 --      (privado.contratante_com_vinculo_leitura, caso 5; contrato 0.2.90).
---   5. public.aceitar_termos(termos_versao): quem já tem conta aceita a versão vigente dos Termos. Grava no
---      MESMO lugar que criar_conta (public.usuario.termos_versao e termos_aceite_em; nenhum registro novo),
---      com o instante do servidor. Idempotente; só a versão vigente; o aceite não volta atrás.
+--   5. public.aceitar_termos(termos_versao): quem já tem conta aceita uma versão PUBLICADA (AAAA-MM-DD, na lista
+--      privado.termos_publicadas(); hoje 2026-11-13), com o instante do servidor. Idempotente; o aceite não volta
+--      atrás. O histórico (privado.termos_aceite, chave única conta+versão, preenchido por gatilho em public.usuario
+--      e com os aceites de hoje copiados) guarda o aceite do cadastro ao lado do novo, fora da anonimização.
 --   6. public.conta_em_json (o Usuario de minha_conta e criar_conta) devolve termos_versao.
 --
 -- Só muda o trecho da trava: os dois corpos são os do #518 (20261116210000 e 20261116220000), com `create or
@@ -33,16 +35,16 @@ select set_config('lock_timeout', '2s', true);
 
 -- ── 1. O fato ─────────────────────────────────────────────────────────────────
 
-create function privado.termos_versao_vigente()
+create function privado.termos_minimos_da_busca()
 returns text
 language sql
 immutable
 set search_path = ''
 as $$ select '2026-11-13'::text $$;
-comment on function privado.termos_versao_vigente() is
-  'A versão vigente dos Termos e da Política (data da publicação, AAAA-MM-DD): 2026-11-13, os Termos 1.1 e a Política 1.2. É a mínima de quem usa a busca de profissionais e a única que aceitar_termos aceita (I6, 16/11/2026). Publicar versão nova é trocar o valor aqui, em migração nova.';
-revoke all on function privado.termos_versao_vigente() from public, anon, authenticated;
-grant execute on function privado.termos_versao_vigente() to service_role;
+comment on function privado.termos_minimos_da_busca() is
+  'A versão mínima dos Termos e da Política (data da publicação, AAAA-MM-DD) para usar a busca de profissionais: 2026-11-13, os Termos 1.1 e a Política 1.2 (I6, 16/11/2026). Não sobe sozinha quando sai versão nova: subir a barra é decisão e migração próprias.';
+revoke all on function privado.termos_minimos_da_busca() from public, anon, authenticated;
+grant execute on function privado.termos_minimos_da_busca() to service_role;
 
 create function privado.aceitou_termos(p_usuario uuid, p_versao_minima text)
 returns boolean
@@ -60,6 +62,57 @@ comment on function privado.aceitou_termos(uuid, text) is
   'A conta aceitou os Termos na versão mínima ou numa mais nova? termos_versao é a data da publicação (AAAA-MM-DD, texto); valor fora desse formato (ex.: "1.0") não conta. Conta de demonstração conta como aceito. Conta inexistente: falso (I6, 16/11/2026).';
 revoke all on function privado.aceitou_termos(uuid, text) from public, anon, authenticated;
 grant execute on function privado.aceitou_termos(uuid, text) to service_role;
+
+-- Versões PUBLICADAS dos Termos e da Política (data da publicação). aceitar_termos só aceita uma delas
+-- (contrato 0.2.90). Publicar versão nova é uma migração que acrescenta a data aqui.
+create function privado.termos_publicadas()
+returns text[]
+language sql
+immutable
+set search_path = ''
+as $$ select array['2026-11-13']::text[] $$;
+comment on function privado.termos_publicadas() is
+  'As versões dos Termos e da Política publicadas que aceitar_termos aceita (contrato 0.2.90): hoje só 2026-11-13. As anteriores (2026-10-15, 2026-11-12) foram aceitas no cadastro e ficam no histórico, mas não se aceitam mais.';
+revoke all on function privado.termos_publicadas() from public, anon, authenticated;
+grant execute on function privado.termos_publicadas() to service_role;
+
+-- O histórico dos aceites: um por conta e versão. usuario.termos_versao e termos_aceite_em seguem sendo o
+-- ÚLTIMO aceite (é o que criar_conta grava e o que Usuario devolve); cada aceite novo, do cadastro ou de
+-- aceitar_termos, cai aqui por gatilho, então aceitar a 1.1 nunca apaga o aceite do cadastro: ele continua
+-- consultável. Fica FORA da anonimização e da limpeza dos 15 dias: é prova de obrigação legal, como as colunas
+-- de usuario (a anonimização atualiza a linha de usuario, não a apaga, e ninguém mexe nesta tabela).
+create table privado.termos_aceite (
+  usuario_id uuid        not null references public.usuario (id) on delete cascade,
+  versao     text        not null check (btrim(versao) <> ''),
+  aceito_em  timestamptz not null,
+  primary key (usuario_id, versao)
+);
+comment on table privado.termos_aceite is
+  'Histórico dos aceites dos Termos e da Política: um por conta e versão (chave única), com o instante do servidor. Alimentado por gatilho em public.usuario (cadastro e aceitar_termos). Não é apagado na anonimização nem na limpeza de 15 dias (prova de obrigação legal; a linha não identifica a pessoa sozinha). Contrato 0.2.90.';
+alter table privado.termos_aceite enable row level security;
+revoke all on privado.termos_aceite from public, anon, authenticated;
+
+-- Quem já tem conta: o aceite que está em usuario hoje vira a primeira linha do histórico.
+insert into privado.termos_aceite (usuario_id, versao, aceito_em)
+select u.id, u.termos_versao, u.termos_aceite_em from public.usuario u
+on conflict (usuario_id, versao) do nothing;
+
+create function privado.registrar_aceite_termos()
+returns trigger
+language plpgsql
+security definer set search_path = ''
+as $$
+begin
+  insert into privado.termos_aceite (usuario_id, versao, aceito_em)
+  values (new.id, new.termos_versao, new.termos_aceite_em)
+  on conflict (usuario_id, versao) do nothing;
+  return new;
+end $$;
+revoke all on function privado.registrar_aceite_termos() from public, anon, authenticated;
+
+create trigger registrar_aceite_termos
+  after insert or update of termos_versao on public.usuario
+  for each row execute function privado.registrar_aceite_termos();
 
 -- ── 2. A busca ────────────────────────────────────────────────────────────────
 
@@ -118,7 +171,7 @@ begin
   end if;
   -- I6 (pedido 2026-11-16-12 do Cauê): a busca só vale para quem aceitou os Termos 1.1. Vem depois de conta e
   -- perfil e antes de qualquer filtro (e do contador de 60 por hora: a recusa não gasta busca).
-  if not privado.aceitou_termos(v_uid, privado.termos_versao_vigente()) then
+  if not privado.aceitou_termos(v_uid, privado.termos_minimos_da_busca()) then
     perform public.erro(403, 'sem_permissao', 'termos_pendentes');
   end if;
   if v_estab is null then perform public.erro(422, 'campo_obrigatorio', 'estabelecimento_id'); end if;
@@ -307,6 +360,22 @@ begin
     perform public.erro(404, 'nao_encontrado');
   end if;
 
+  -- I6 (contrato 0.2.90): com a busca ligada e quem chama sem os Termos 1.1, a busca não conta como caminho.
+  -- Sem turno cumprido com presença verificada nem equipe de confiança (fatos que a casa já conhece, e não a
+  -- preferência do profissional), a recusa é termos_pendentes. Vem depois do bloqueio (404) e ANTES de qualquer
+  -- conferência sobre o profissional, então não revela quem está na busca. Com turno ou equipe vale só o
+  -- caminho do vínculo, com as recusas de sempre. Busca desligada: nunca sai.
+  if privado.recurso_ligado('busca_profissionais')
+     and not privado.aceitou_termos(v_uid, privado.termos_minimos_da_busca())
+     and not exists (select 1 from public.turno t join public.posicao p on p.id = t.posicao_id
+                       join public.vaga g on g.id = p.vaga_id
+                      where g.estabelecimento_id = v_estab and p.profissional_id = v_prof
+                        and p.estado = 'cumprida' and t.verificacao = 'verificado')
+     and not exists (select 1 from public.equipe_confianca q
+                      where q.estabelecimento_id = v_estab and q.profissional_id = v_prof) then
+    perform public.erro(403, 'sem_permissao', 'termos_pendentes');
+  end if;
+
   -- 0.2.88: regiao_id é o id do catálogo (ativo) e o nome dele é o regiao_administrativa do corpo. Não
   -- depende do profissional, então a recusa sai antes de qualquer conta dele e não revela nada. Vem
   -- depois do 404 do bloqueio, que tem precedência sobre qualquer outra recusa (CD-C03, RF26). Com
@@ -399,14 +468,6 @@ begin
                    and (not (v_veterana or exists (select 1 from public.equipe_confianca q
                                                     where q.estabelecimento_id = v_estab and q.profissional_id = v_prof))
                         or v_nao_aceita);
-  -- I6: sem vínculo com a casa, o único caminho é a busca, e ela só vale para quem aceitou os Termos 1.1.
-  -- A recusa depende só de quem chama (a conta e o vínculo dela com a casa), nunca do profissional: não
-  -- revela se ele está na busca. O caminho do vínculo (turno cumprido ou equipe de confiança) não muda.
-  if not (v_veterana or exists (select 1 from public.equipe_confianca q
-                                 where q.estabelecimento_id = v_estab and q.profissional_id = v_prof))
-     and not privado.aceitou_termos(v_uid, privado.termos_versao_vigente()) then
-    perform public.erro(403, 'sem_permissao', 'termos_pendentes');
-  end if;
   if v_so_cnpj or v_sem_versao or v_sem_vinculo then
     perform public.erro(422, 'profissional_indisponivel', 'nao_aceita_chamadas');
   end if;
@@ -684,7 +745,7 @@ language sql stable security definer set search_path = '' as $$
          or (privado.recurso_ligado('busca_profissionais')
              and privado.recurso_ligado('chamada_direta')
              -- 0.2.90 (I6): a busca só vale como vínculo de leitura para quem aceitou os Termos 1.1.
-             and privado.aceitou_termos(p_uid, privado.termos_versao_vigente())
+             and privado.aceitou_termos(p_uid, privado.termos_minimos_da_busca())
              and exists (select 1 from public.profissional_preferencia_chamada pc
                            join public.profissional pr on pr.id = pc.profissional_id
                            join public.usuario u on u.id = pr.usuario_id
@@ -710,6 +771,7 @@ declare
   v_versao text := nullif(btrim(aceitar_termos.termos_versao), '');
   v_conta  public.usuario%rowtype;
   v_agora  timestamptz := privado.agora();
+  v_em     timestamptz;
 begin
   if v_uid is null then perform public.erro(401, 'nao_autenticado'); end if;
   -- Trava a linha da conta: dois aceites ao mesmo tempo viram um só.
@@ -719,25 +781,29 @@ begin
   -- é o que a suspensão (RN13) barra, e a busca já recusa a conta suspensa por conta própria.
   if v_conta.estado = 'anonimizada' then perform public.erro(401, 'nao_autenticado'); end if;
   if v_versao is null then perform public.erro(422, 'campo_obrigatorio', 'termos_versao'); end if;
-  -- Só a versão vigente: o app não aceita pela pessoa uma versão que o servidor não conhece.
-  if v_versao is distinct from privado.termos_versao_vigente() then
+  -- Só uma versão PUBLICADA, no formato AAAA-MM-DD: o app não aceita pela pessoa uma versão que o servidor
+  -- não conhece (a lista é privado.termos_publicadas(); hoje só 2026-11-13).
+  if v_versao !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' or not (v_versao = any (privado.termos_publicadas())) then
     perform public.erro(422, 'campo_invalido', 'termos_versao');
   end if;
-  -- O aceite não volta atrás: conta que já aceitou versão mais nova (data maior) não troca pela vigente.
+  -- O aceite não volta atrás: conta que já aceitou versão mais nova (data maior) não troca por esta.
   if v_conta.termos_versao ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
      and v_conta.termos_versao collate "C" > v_versao collate "C" then
     perform public.erro(422, 'campo_invalido', 'termos_versao');
   end if;
-  -- Repetir a mesma versão devolve o aceite que já existe, sem gravar de novo (o instante não anda).
-  if v_conta.termos_versao = v_versao then
-    return jsonb_build_object('termos_versao', v_conta.termos_versao, 'aceito_em', v_conta.termos_aceite_em);
+  -- Repetir a mesma versão devolve o aceite que já existe no histórico, sem gravar de novo (o instante não anda).
+  select a.aceito_em into v_em from privado.termos_aceite a where a.usuario_id = v_uid and a.versao = v_versao;
+  if found then
+    return jsonb_build_object('termos_versao', v_versao, 'aceito_em', v_em);
   end if;
+  -- O aceite anterior (o do cadastro) já está no histórico: o gatilho guarda este ao lado dele. usuario passa a
+  -- mostrar o último.
   update public.usuario u set termos_versao = v_versao, termos_aceite_em = v_agora where u.id = v_uid;
   return jsonb_build_object('termos_versao', v_versao, 'aceito_em', v_agora);
 end $$;
 
 comment on function public.aceitar_termos(text) is
-  '0.2.90. Quem já tem conta aceita a versão vigente dos Termos e da Política (privado.termos_versao_vigente()). Grava no mesmo lugar que criar_conta (usuario.termos_versao e termos_aceite_em), com o instante do servidor. Idempotente: a mesma versão devolve o aceite existente. Outra versão que não a vigente, ou mais antiga que a já aceita: 422 campo_invalido (termos_versao). POST: grava.';
+  '0.2.90. Quem já tem conta aceita uma versão PUBLICADA dos Termos e da Política (AAAA-MM-DD, privado.termos_publicadas(); hoje 2026-11-13). Grava o aceite no histórico (privado.termos_aceite, um por conta e versão) e atualiza o último aceite em usuario.termos_versao e termos_aceite_em, com o instante do servidor; o aceite do cadastro continua no histórico. Idempotente: a mesma versão devolve o aceite existente. Versão vazia: 422 campo_obrigatorio; fora do formato, não publicada ou mais antiga que a já aceita: 422 campo_invalido (termos_versao). Sessão sem conta: 404. POST: grava.';
 revoke execute on function public.aceitar_termos(text) from public, anon;
 grant  execute on function public.aceitar_termos(text) to authenticated;
 

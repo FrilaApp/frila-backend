@@ -3,7 +3,7 @@
 -- A busca só para contratante que aceitou os Termos 1.1 (migração 20261116230000; I6 do pedido
 -- 2026-11-16-12 do Cauê). O aceite é public.usuario.termos_versao, a data da publicação em AAAA-MM-DD:
 -- vale quem tem 2026-11-13 (Termos 1.1 + Política 1.2) ou mais; a demonstração conta como aceito.
---   A  o fato: privado.termos_versao_vigente(), privado.aceitou_termos (limites, formato, demonstração,
+--   A  o fato: privado.termos_minimos_da_busca(), privado.aceitou_termos (limites, formato, demonstração,
 --      conta inexistente) e o privilégio (só service_role)
 --   B  buscar_profissionais: recusa 403 sem_permissao termos_pendentes (versão anterior, formato fora do padrão),
 --      passa com a 1.1 ou mais nova e com a demonstração; a ordem dos erros (conta e perfil antes, filtros
@@ -21,7 +21,7 @@ insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id)
 -- 16/11/2026, 12:00 em Brasília (segunda-feira).
 select set_config('frila.agora', '2026-11-16 15:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-872';
-select plan(76);
+select plan(92);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -147,8 +147,8 @@ insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima) v
 on conflict (recurso, plataforma) do update set versao_minima = excluded.versao_minima;
 
 -- ══ A. O fato ═════════════════════════════════════════════════════════════════
-select is(privado.termos_versao_vigente(), '2026-11-13',
-  'A1 a versão vigente dos Termos é a de 13/11/2026 (Termos 1.1 + Política 1.2)');
+select is(privado.termos_minimos_da_busca(), '2026-11-13',
+  'A1 a versão mínima da busca é a de 13/11/2026 (Termos 1.1 + Política 1.2)');
 select ok(privado.aceitou_termos(pg_temp.u(1), '2026-11-13'), 'A2 termos_versao igual à mínima: aceitou');
 select ok(privado.aceitou_termos(pg_temp.u(3), '2026-11-13'), 'A3 termos_versao mais nova que a mínima: aceitou');
 select ok(not privado.aceitou_termos(pg_temp.u(2), '2026-11-13'), 'A4 um dia antes da mínima (2026-11-12): não aceitou');
@@ -158,8 +158,11 @@ select ok(not privado.aceitou_termos(gen_random_uuid(), '2026-11-13'), 'A7 conta
 select ok(not has_function_privilege('authenticated', 'privado.aceitou_termos(uuid, text)', 'execute')
           and not has_function_privilege('anon', 'privado.aceitou_termos(uuid, text)', 'execute'),
   'A8 o helper não é executável por anon nem por authenticated');
-select ok(not has_function_privilege('authenticated', 'privado.termos_versao_vigente()', 'execute'),
-  'A9 a versão vigente não é executável por authenticated');
+select is(privado.termos_publicadas(), array['2026-11-13'], 'A10 as versões publicadas que aceitar_termos aceita: só 2026-11-13');
+select ok(not has_function_privilege('authenticated', 'privado.termos_publicadas()', 'execute'),
+  'A11 a lista de publicadas não é executável por authenticated');
+select ok(not has_function_privilege('authenticated', 'privado.termos_minimos_da_busca()', 'execute'),
+  'A9 a versão mínima não é executável por authenticated');
 
 -- ══ B. buscar_profissionais ═══════════════════════════════════════════════════
 select is(pg_temp.busca(pg_temp.u(1), pg_temp.casa(1)), 'ok', 'B1 aceitou a 1.1 (2026-11-13): a busca responde');
@@ -188,6 +191,12 @@ select is((select coalesce(sum(total), 0)::int from privado.contador_busca where
   'B12 a recusa por termos não gasta busca do limite por hora');
 select is((select coalesce(sum(total), 0)::int from privado.contador_busca where usuario_id = pg_temp.u(1)), 1,
   'B13 e a busca de quem aceitou conta (só a B1: a B9 recusou o filtro antes do contador)');
+
+select is((select count(*)::int from generate_series(1, 61) g
+            where pg_temp.busca(pg_temp.u(2), pg_temp.casa(2)) = '403 sem_permissao termos_pendentes'), 61,
+  'B14 61 recusas por termos seguidas: todas termos_pendentes, nenhuma vira 429 (a recusa não gasta o limite de 60 por hora)');
+select is((select coalesce(sum(total), 0)::int from privado.contador_busca where usuario_id = pg_temp.u(2)), 0,
+  'B15 e o contador de quem não aceitou segue zerado');
 
 -- ══ C. chamar_profissional pela busca (sem vínculo) ═══════════════════════════
 select is(pg_temp.chamar(pg_temp.u(1), pg_temp.casa(1), 11), 'ok',
@@ -218,6 +227,16 @@ select is(pg_temp.tenta(pg_temp.u(2), format($a$ select public.chamar_profission
 select is(pg_temp.chamar(pg_temp.u(6), pg_temp.casa(6), 11), '403 sem_permissao conta_suspensa',
   'C11 conta suspensa com versão antiga: conta_suspensa vem antes da trava');
 
+-- Busca desligada: termos_pendentes nunca sai; a recusa é a genérica de sempre.
+update privado.recurso set ligado = false where chave = 'busca_profissionais';
+select is(pg_temp.chamar(pg_temp.u(2), pg_temp.casa(2), 11), '422 profissional_indisponivel nao_aceita_chamadas',
+  'C12 com a busca desligada, quem não aceitou e não tem vínculo recebe a genérica (termos_pendentes não sai)');
+update privado.recurso set ligado = true where chave = 'busca_profissionais';
+-- O bloqueio (404) vem antes da trava dos Termos; profissional que não existe também.
+select is(pg_temp.tenta(pg_temp.u(2), format($a$ select public.chamar_profissional(chave => gen_random_uuid(), profissional_id => %L,
+    estabelecimento_id => %L) $a$, gen_random_uuid(), pg_temp.casa(2))), '404 nao_encontrado',
+  'C13 profissional inexistente, sem aceite: o 404 vem antes de termos_pendentes');
+
 -- ══ D. O caminho do vínculo NÃO muda ══════════════════════════════════════════
 select is(pg_temp.chamar(pg_temp.u(2), pg_temp.casa(2), 12), 'ok',
   'D1 sem aceite, profissional da equipe de confiança da casa (sem "Aceito chamadas"): a chamada nasce, como antes');
@@ -235,6 +254,7 @@ select is(pg_temp.chamar(pg_temp.u(1), pg_temp.casa(1), 12), '422 profissional_i
 -- ══ G. aceitar_termos e Usuario.termos_versao ════════════════════════════════
 -- Conta 4: "1.0" no cadastro. O instante do aceite antigo é recuado para provar que o servidor carimba de novo.
 update public.usuario set termos_aceite_em = '2026-10-01 10:00+00' where id = pg_temp.u(4);
+update privado.termos_aceite set aceito_em = '2026-10-01 10:00+00' where usuario_id = pg_temp.u(4) and versao = '1.0';
 select is(pg_temp.como(pg_temp.u(4), 'select public.minha_conta()') ->> 'termos_versao', '1.0',
   'G1 minha_conta devolve termos_versao (a última aceita, no cadastro)');
 select ok(not (pg_temp.como(pg_temp.u(4), 'select public.minha_conta()') ? 'termos_aceite_em'),
@@ -302,6 +322,33 @@ select is(pg_temp.como(pg_temp.u(2), format('select public.perfil_publico(%L::uu
 select is(pg_temp.como(pg_temp.u(2), format('select public.perfil_publico(%L::uuid)', pg_temp.p(12))) ->> 'apresentacao', 'Apresentação 12',
   'H4 o vínculo de trabalho (equipe de confiança) segue dando o perfil rico, sem aceite');
 
+-- ══ M. O histórico dos aceites (privado.termos_aceite) ═══════════════════════
+-- (a) chave única (conta, versão).
+select throws_ok(format($$ insert into privado.termos_aceite (usuario_id, versao, aceito_em) values (%L, '2026-11-13', now()) $$, pg_temp.u(4)),
+  '23505', null, 'M1 a chave é única por conta e versão: o mesmo aceite não entra duas vezes');
+-- (b) aceitar a 1.1 não sobrescreve o aceite do cadastro sem guardá-lo: os dois ficam consultáveis.
+select is((select string_agg(versao, ',' order by versao) from privado.termos_aceite where usuario_id = pg_temp.u(4)), '1.0,2026-11-13',
+  'M2 a conta 4 aceitou "1.0" no cadastro e a 1.1 depois: as duas versões estão no histórico');
+select is((select aceito_em from privado.termos_aceite where usuario_id = pg_temp.u(4) and versao = '1.0'), '2026-10-01 10:00+00'::timestamptz,
+  'M3 o aceite do cadastro segue com o instante que tinha (não foi regravado pela 1.1)');
+select is((select aceito_em from privado.termos_aceite where usuario_id = pg_temp.u(4) and versao = '2026-11-13'), '2026-11-16 15:00+00'::timestamptz,
+  'M4 e o da 1.1 tem o instante do servidor');
+select is((select count(*)::int from privado.termos_aceite where usuario_id = pg_temp.u(1)), 1,
+  'M5 o cadastro grava o primeiro aceite no histórico (a conta 1 só tem o do cadastro)');
+select is((select count(*)::int from privado.termos_aceite where usuario_id = pg_temp.u(17)), 2,
+  'M6 o reenvio não duplica: a conta 17 tem o cadastro e a 1.1, e só');
+select ok(not has_table_privilege('authenticated', 'privado.termos_aceite', 'select') and not has_table_privilege('anon', 'privado.termos_aceite', 'select'),
+  'M7 o histórico não é legível por authenticated nem por anon');
+-- (c) fora da anonimização e da limpeza dos 15 dias.
+select privado.excluir_conta(pg_temp.u(17));
+select is((select estado::text from public.usuario where id = pg_temp.u(17)), 'anonimizada', 'M8 a conta 17 foi anonimizada');
+update public.usuario set anonimizado_em = privado.agora() - interval '16 days' where id = pg_temp.u(17);
+select privado.limpar_contas_anonimizadas(15);
+select is((select count(*)::int from privado.termos_aceite where usuario_id = pg_temp.u(17)), 2,
+  'M9 depois da anonimização e da limpeza de 15 dias, as linhas de aceite continuam');
+select is((select termos_versao from public.usuario where id = pg_temp.u(17)), '2026-11-13',
+  'M10 e o último aceite segue em usuario (a anonimização não o toca)');
+
 -- ══ E. Aceitar depois destrava ════════════════════════════════════════════════
 update public.usuario set termos_versao = '2026-11-13', termos_aceite_em = privado.agora() where id = pg_temp.u(2);
 select is(pg_temp.busca(pg_temp.u(2), pg_temp.casa(2)), 'ok', 'E1 depois de aceitar a 1.1, a busca responde');
@@ -315,8 +362,8 @@ select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.
             where n.nspname = 'public' and p.proname in ('buscar_profissionais', 'chamar_profissional')), 2,
   'F1 as duas RPCs seguem com uma assinatura cada (create or replace, sem sobrecarga nova)');
 select is((select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-            where n.nspname = 'privado' and p.proname in ('aceitou_termos', 'termos_versao_vigente')), 2,
-  'F2 as duas funções novas moram no schema privado');
+            where n.nspname = 'privado' and p.proname in ('aceitou_termos', 'termos_minimos_da_busca', 'termos_publicadas', 'registrar_aceite_termos')), 4,
+  'F2 as funções novas moram no schema privado (o fato, a mínima, a lista de publicadas e o gatilho do histórico)');
 select ok(has_function_privilege('authenticated', 'public.buscar_profissionais(uuid, uuid, int, timestamptz, timestamptz, text, int)', 'execute')
           and not has_function_privilege('anon', 'public.buscar_profissionais(uuid, uuid, int, timestamptz, timestamptz, text, int)', 'execute'),
   'F3 buscar_profissionais mantém os privilégios (authenticated sim, anon não)');
