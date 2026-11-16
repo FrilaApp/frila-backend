@@ -71,7 +71,7 @@ PSQL=${PSQL:-/opt/homebrew/opt/postgresql@16/bin/psql}
 MINIMO_BUSCA=""
 SAIDA=""
 # O checkout principal (Ground): é o caminho que o arquivo de acesso cita depois da mescla do #518.
-CAMINHO_GROUND=/Users/cauecarneiro/Documents/Projetos/Frila/frila-backend
+CAMINHO_GROUND="$HOME/Documents/Projetos/Frila/frila-backend"
 
 CASA_USUARIO=b027f000-0000-4000-8000-000000000001
 CASA_ESTAB=b027f000-0000-4000-8000-0000000000c1
@@ -105,12 +105,24 @@ if [ -n "$MINIMO_BUSCA" ] && ! printf '%s' "$MINIMO_BUSCA" | grep -Eq '^[0-9]{1,
 fi
 
 # ── Acesso ao banco ────────────────────────────────────────────────────────
-PGURL=""
+PGURL=""; REF=""
+# Trava POSITIVA contra o Prod (parecer do Lince, S1): o ref do projeto sai da URL e o seu sha256 tem de ser o
+# do frila-dev, gravado aqui (o ref em si não aparece em lugar nenhum). Qualquer outro ref, ou URL que não dê
+# para ler, sai com erro ANTES de qualquer psql ou curl. A constante é o sha256 do ref do frila-dev.
+REF_DEV_SHA256="32177c7c441023509f4274c29fbbffb4eb9c216c9d192c7fb2ddf6b6492c3fbd"
+ref_da_url() {
+  printf '%s' "$1" | sed -nE 's#.*postgres\.([a-z0-9]{20}).*#\1#p; s#.*@db\.([a-z0-9]{20})\.supabase\.co.*#\1#p' | head -1
+}
 if [ "$ALVO" = dev ]; then
-  [ -f "$HOME/.config/frila/dev-db-url" ] || falhou "não achei ~/.config/frila/dev-db-url"
+  ARQUIVO_URL="${FRILA_DEV_DB_URL_ARQUIVO:-$HOME/.config/frila/dev-db-url}"
+  [ -f "$ARQUIVO_URL" ] || falhou "não achei o arquivo da conexão do dev (.config/frila/dev-db-url)"
   [ -x "$PSQL" ] || falhou "não achei o psql em $PSQL (defina PSQL)"
-  PGURL="$(tr -d '\n' < "$HOME/.config/frila/dev-db-url" | sed 's/^[A-Za-z_]*=//')"
-  [ -n "$PGURL" ] || falhou "o arquivo dev-db-url (em .config/frila) está vazio"
+  PGURL="$(tr -d '\n' < "$ARQUIVO_URL" | sed 's/^[A-Za-z_]*=//')"
+  [ -n "$PGURL" ] || falhou "o arquivo da conexão do dev está vazio"
+  REF="$(ref_da_url "$PGURL")"
+  if [ -z "$REF" ] || [ "$(printf '%s' "$REF" | shasum -a 256 | cut -d' ' -f1)" != "$REF_DEV_SHA256" ]; then
+    falhou "a conexão lida NÃO é a do frila-dev (o sha256 do projeto não confere). Nada foi conectado."
+  fi
 else
   docker ps --format '{{.Names}}' | grep -qx "$DB_CONTAINER" \
     || falhou "o contêiner $DB_CONTAINER não está de pé (supabase start; ou defina DB_CONTAINER)"
@@ -419,9 +431,8 @@ carregar_chaves() {
   else
     # O projeto sai da própria conexão do dev (nunca de uma variável solta, para não apontar sem querer ao Prod);
     # as chaves, da Management API, com o token de conta do dev.
-    local ref token chaves
-    ref=$(printf '%s' "$PGURL" | sed -nE 's#.*postgres\.([a-z0-9]{20}).*#\1#p; s#.*@db\.([a-z0-9]{20})\.supabase\.co.*#\1#p' | head -1)
-    [ -n "$ref" ] || falhou "não consegui descobrir o projeto a partir de ~/.config/frila/dev-db-url"
+    local ref="$REF" token chaves
+    [ -n "$ref" ] || falhou "projeto do dev não confirmado"
     [ -f "$HOME/.config/frila/supabase-token" ] || falhou "não achei ~/.config/frila/supabase-token"
     token="$(tr -d '\n' < "$HOME/.config/frila/supabase-token" | sed 's/^[A-Za-z_]*=//')"
     chaves=$(curl -sS -K - <<EOF
@@ -463,6 +474,7 @@ so_email_de_teste() {
 }
 
 # O código de uma vez só (a mesma chamada de e-mail+código do app). Sai em stdout, para quem o pediu.
+# REGRA: `codigo` IMPRIME o código; agente NÃO o roda (só o Cauê ou o Prisma). O `http` não imprime.
 gerar_codigo() {
   api POST /auth/v1/admin/generate_link "$SR_KEY" "$SR_KEY" "{\"type\":\"magiclink\",\"email\":\"$1\"}" | json_campo email_otp
 }
