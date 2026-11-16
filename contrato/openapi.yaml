@@ -119,15 +119,16 @@ info:
     `historico/produto/contratacao-direta/01-especificacao.md`, CD-B01 a CD-B11, e
     `historico/requisitos/contratacao-direta-v1.1.md`, RN39 e RN40), com os filtros reduzidos aos
     três do fluxo aprovado: serviço, região e horário. Adição compatível: uma operação e um schema
-    novos, um campo opcional em `RecursosDoApp`, dois em `definir_preferencia_chamadas` e dois em
-    `PreferenciaChamadas`. Nenhum código de erro novo, e o app 1.2 não precisa mudar.
+    novos, um campo opcional em `RecursosDoApp`, dois em `definir_preferencia_chamadas`, dois em
+    `PreferenciaChamadas` e um em `MeusDados`. Nenhum código de erro novo, e o app 1.2 não precisa mudar.
     - **`POST /rpc/buscar_profissionais`** (leitura em `POST`, porque grava o contador do limite): o contratante procura por serviço (obrigatório), região
       e horário. Só aparece quem a chamada aceitaria. A reputação não ordena (D2). Com horário, quem
       tem a grade livre nesse horário vem primeiro, com o selo `disponivel_no_horario`.
     - **"Aceito chamadas diretas"**: `definir_preferencia_chamadas` ganha `aceita_chamadas`
       (desligado por padrão) e `versao_texto_busca`, a versão do texto que o profissional viu ao
       ligar. É o registro do pedido do titular (LGPD, art. 7º, V, parecer J1), e não consentimento.
-      A resposta diz o que ainda falta para aparecer (`pendencias_para_busca`).
+      A resposta diz o que ainda falta para aparecer (`pendencias_para_busca`). O registro vai à
+      exportação (`MeusDados.registros_aceita_chamadas`, opcional).
     - **`chamar_profissional`** passa a aceitar também quem está na busca, sem vínculo de trabalho,
       e ganha `regiao_id` opcional, copiado da busca. O caminho do vínculo continua igual.
     - **`perfil_publico`**: para contratante, o profissional com `aceita_chamadas` ligado passa a
@@ -4518,7 +4519,8 @@ paths:
         Ligar exige `versao_texto_busca`, a versão do texto da tela ("Quero aparecer na busca e receber
         chamadas de contratantes", CD-P11); sem ela, `422 campo_obrigatorio` (`versao_texto_busca`). O
         servidor guarda a versão e o instante de cada vez que liga, como registro do pedido do titular
-        (LGPD, art. 7º, V, parecer J1); não é consentimento. Desligar ou pausar tira da busca na hora.
+        (LGPD, art. 7º, V, parecer J1); não é consentimento. O registro fica enquanto a conta existir,
+        é apagado na exclusão (RF25) e sai na exportação (`MeusDados.registros_aceita_chamadas`). Desligar ou pausar tira da busca na hora.
         Ligar não exige o perfil completo: a resposta traz em `pendencias_para_busca` o que ainda
         impede de aparecer. Com `recursos.busca_profissionais` desligado, mandar `aceita_chamadas` é
         `403 sem_permissao` (`recurso_desligado`).
@@ -8902,6 +8904,21 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Chamada'
+        registros_aceita_chamadas:
+          description: |
+            0.2.88. Cada vez que o profissional ligou "Aceito chamadas diretas": a versão do texto que
+            ele viu e o instante. É o registro do pedido do titular (J1). Fica enquanto a conta
+            existir e é apagado com os dados da conta na exclusão (RF25). Lista vazia para quem nunca
+            ligou e para contratante. Opcional nesta versão, pelo mesmo motivo de `midias`.
+          type: array
+          items:
+            type: object
+            required: [versao_texto_busca, ligado_em]
+            properties:
+              versao_texto_busca:
+                type: string
+              ligado_em:
+                $ref: '#/components/schemas/Instante'
         checkins_por_codigo:
           description: |
             0.2.68, revisto na 0.2.70 e 0.2.75. O que o check-in por código registrou sobre o titular
