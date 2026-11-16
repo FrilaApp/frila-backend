@@ -6,7 +6,7 @@ on:
   # juntos, continuam verdes. O `pull_request` segue sem filtro de branch, então PR contra
   # qualquer base roda a CI inteira.
   push:
-    branches: [main, develop]
+    branches: [main, develop, 'test-*', 'teste-*']
   pull_request:
   schedule:
     # Mutação completa semanal (domingo às 03:00 UTC)
