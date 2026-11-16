@@ -4335,7 +4335,8 @@ paths:
           description: |
             `sem_permissao`: `recurso_desligado` quando `recursos.chamada_direta` está desligado;
             `conta_suspensa`; quem chama não é membro do estabelecimento; ou `termos_pendentes`
-            (0.2.90), pelo caminho da busca, sem os Termos 1.1 aceitos.
+            (0.2.90), com `busca_profissionais` ligado, sem vínculo de trabalho e sem os Termos 1.1
+            aceitos.
           content:
             application/json:
               schema:
@@ -6199,6 +6200,12 @@ paths:
         assinada saem (RN15). Qualquer recusa é o mesmo `404 nao_encontrado`: token errado, vencido
         ou esgotado, foto removida, vínculo perdido. Toda resposta vem com
         `Cache-Control: private, no-store`.
+
+        **Vínculo pela busca (0.2.90):** conta também o vínculo pela busca
+        (`PerfilPublico.apresentacao`). Ele vale com `recursos.busca_profissionais` ligado, o
+        profissional com `aceita_chamadas` ligado e quem lê com os Termos 1.1 ou mais novos aceitos,
+        tudo reconferido a cada `GET`. Desligada a opção ou a chave, o link deixa de abrir
+        (`404 nao_encontrado`).
 
         O token é portador: quem o tiver vê a miniatura até vencer, como acontecia com a URL
         assinada. Ele vai na query, e os registros de requisição do provedor podem guardá-lo.
