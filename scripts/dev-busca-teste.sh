@@ -42,6 +42,8 @@
 #   ./scripts/dev-busca-teste.sh [--alvo local|dev] http            # entra pelo Auth e busca pelo REST (4 logins)
 #   ./scripts/dev-busca-teste.sh [--alvo local|dev] codigo <e-mail> # o código de entrada, para o Prisma
 #   ./scripts/dev-busca-teste.sh [--alvo local|dev] estado          # chaves, versões mínimas e o resumo
+#   ./scripts/dev-busca-teste.sh --alvo dev acesso                  # grava ~/.config/frila/dev-teste-busca.md (600)
+#   ./scripts/dev-busca-teste.sh --alvo local acesso --saida <arquivo>   # ensaio: a saída tem de ficar fora do repo
 #
 # O alvo padrão é o banco LOCAL (o ensaio). `--alvo dev` lê a conexão de ~/.config/frila/dev-db-url sem
 # imprimi-la. Não existe alvo prod: o script não sabe falar com ele.
@@ -67,6 +69,7 @@ ALVO=local
 DB_CONTAINER=${DB_CONTAINER:-supabase_db_frila-backend}
 PSQL=${PSQL:-/opt/homebrew/opt/postgresql@16/bin/psql}
 MINIMO_BUSCA=""
+SAIDA=""
 
 CASA_USUARIO=b027f000-0000-4000-8000-000000000001
 CASA_ESTAB=b027f000-0000-4000-8000-0000000000c1
@@ -87,13 +90,14 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --alvo)          ALVO="${2:-}"; shift 2 || break ;;
     --minimo-busca)  MINIMO_BUSCA="${2:-}"; shift 2 || break ;;
+    --saida)         SAIDA="${2:-}"; shift 2 || break ;;
     -h|--ajuda)      sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)              falhou "opção desconhecida: $1 (veja --ajuda)" ;;
     *)               if [ -z "$COMANDO" ]; then COMANDO="$1"; elif [ -z "$ARG1" ]; then ARG1="$1"; else falhou "argumento a mais: $1"; fi; shift ;;
   esac
 done
 case "$ALVO" in local|dev) ;; *) falhou "--alvo vale local ou dev (recebi \"$ALVO\"). Prod não existe aqui." ;; esac
-case "$COMANDO" in montar|conferir|http|codigo|estado) ;; *) falhou "uso: dev-busca-teste.sh [--alvo local|dev] montar|conferir|http|codigo <e-mail>|estado (veja --ajuda)" ;; esac
+case "$COMANDO" in montar|conferir|http|codigo|estado|acesso) ;; *) falhou "uso: dev-busca-teste.sh [--alvo local|dev] montar|conferir|http|codigo <e-mail>|estado|acesso (veja --ajuda)" ;; esac
 if [ -n "$MINIMO_BUSCA" ] && ! printf '%s' "$MINIMO_BUSCA" | grep -Eq '^[0-9]{1,6}(\.[0-9]{1,6}){0,2}$'; then
   falhou "--minimo-busca precisa ter de 1 a 3 partes numéricas (ex.: 1.2.0)"
 fi
@@ -506,10 +510,76 @@ print("    garçom no Plano Piloto pelo REST:", " > ".join(i["nome"] + " (" + i[
   ok "casa entrou e buscou pelo REST"
 }
 
+# O arquivo de acesso do Prisma: e-mails de teste, ids, papéis, o comando do código e as buscas de exemplo.
+# Fica FORA do repositório, com permissão 600. Não leva código nem segredo: o código sai de `codigo`, na hora.
+acesso() {
+  local saida="$SAIDA" raiz pasta
+  if [ -z "$saida" ]; then
+    [ "$ALVO" = dev ] || falhou "no local, passe --saida <arquivo> (fora do repositório): o arquivo padrão é só do dev"
+    saida="$HOME/.config/frila/dev-teste-busca.md"
+  fi
+  raiz=$(pwd -P); pasta=$(cd "$(dirname "$saida")" 2>/dev/null && pwd -P) || falhou "a pasta de $saida não existe"
+  case "$pasta/" in "$raiz"/*) falhou "a saída tem de ficar fora do repositório" ;; esac
+  if [ -e "$saida" ] && ! head -1 "$saida" | grep -q 'gerado por dev-busca-teste.sh'; then
+    falhou "$saida já existe e não é um arquivo gerado por este script: não sobrescrevo"
+  fi
+  echo "▸ acesso ($ALVO): gravando o arquivo de acesso (permissão 600)"
+  checar_migracoes
+  local corpo_estado
+  corpo_estado=$(recursos; resumo)
+  ( umask 077
+    {
+      echo '<!-- gerado por dev-busca-teste.sh (B-027.f). Dados sintéticos; sem código nem segredo. Pode ser regerado. -->'
+      echo "# Teste de ponta a ponta da busca de profissionais ($ALVO)"
+      echo
+      echo "Gerado em $(date '+%Y-%m-%d %H:%M') pelo scripts/dev-busca-teste.sh (branch feat/busca-chamar-e-perfil, PR #518)."
+      echo
+      echo '## Contas (todas entram por e-mail + código; o e-mail @frila.test não recebe nada)'
+      echo
+      echo '- casa (contratante, administradora da "Casa Teste Busca", Plano Piloto): busca-casa@frila.test'
+      echo '- profissional 1, Ana T., faxina residencial: busca-prof-1@frila.test'
+      echo '- profissional 2, Bruno T., garçom e cozinheiro de festa: busca-prof-2@frila.test'
+      echo '- profissional 3, Clara T., cozinheiro de festa e garçom: busca-prof-3@frila.test'
+      echo
+      echo '## Como pegar o código (o código NÃO fica neste arquivo)'
+      echo
+      echo '1. No app, digite o e-mail e toque em pedir código (pedir de novo invalida o código anterior).'
+      echo '2. Na sequência, rode:'
+      echo
+      echo '```'
+      echo "$raiz/scripts/dev-busca-teste.sh --alvo $ALVO codigo <e-mail>"
+      echo '```'
+      echo
+      echo '3. Digite o código que sai no terminal. Vale uma vez e por até 1 hora. Só funciona para os 4 e-mails acima.'
+      echo
+      echo '## O que cada conta tem (lido do banco agora)'
+      echo
+      echo '```'
+      printf '%s\n' "$corpo_estado"
+      echo '```'
+      echo
+      echo '## Três buscas de exemplo (como a casa; a RPC é buscar_profissionais)'
+      echo
+      echo '1. garçom, região da casa (Plano Piloto), sem horário → Bruno T. (5 a 15 km) e depois Clara T. (mais de 15 km).'
+      echo '2. garçom, Plano Piloto, no próximo sábado das 11h às 15h → Clara T. (na grade) antes de Bruno T. (fora da grade): quem cobre o horário vem primeiro, mesmo mais longe.'
+      echo '3. faxina residencial, região Taguatinga, na próxima segunda das 9h às 13h → só Ana T. (atende todo o DF; na grade).'
+      echo
+      echo 'Extra: garçom em Guará → só Bruno T. Os horários precisam estar a mais de 6 horas do momento da busca.'
+      echo
+      echo '## Refazer ou consertar'
+      echo
+      echo "Rode \`$raiz/scripts/dev-busca-teste.sh --alvo $ALVO montar\` (idempotente) e \`conferir\` para provar as 4 buscas."
+    } > "$saida"
+  )
+  chmod 600 "$saida"
+  ok "gravado em $saida (modo $(stat -f '%Lp' "$saida"))"
+}
+
 case "$COMANDO" in
   montar)   montar ;;
   conferir) checar_migracoes; conferir ;;
   http)     checar_migracoes; http ;;
   codigo)   codigo "$ARG1" ;;
   estado)   checar_migracoes; recursos; resumo ;;
+  acesso)   acesso ;;
 esac
