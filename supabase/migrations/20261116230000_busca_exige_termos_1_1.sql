@@ -23,7 +23,7 @@
 --   4. O perfil rico: estar na busca só vale como vínculo de leitura para contratante que aceitou a 1.1
 --      (privado.contratante_com_vinculo_leitura, caso 5; contrato 0.2.90).
 --   5. public.aceitar_termos(termos_versao): quem já tem conta aceita uma versão PUBLICADA (AAAA-MM-DD, na lista
---      privado.termos_publicadas(); hoje 2026-11-13), com o instante do servidor. Idempotente; o aceite não volta
+--      privado.termos_publicadas(); hoje 2026-11-13 e 2026-11-16), com o instante do servidor. Idempotente; o aceite não volta
 --      atrás. O histórico (privado.termos_aceite, chave única conta+versão, preenchido por gatilho em public.usuario
 --      e com os aceites de hoje copiados) guarda o aceite do cadastro ao lado do novo, fora da anonimização.
 --   6. public.conta_em_json (o Usuario de minha_conta e criar_conta) devolve termos_versao.
@@ -42,7 +42,7 @@ immutable
 set search_path = ''
 as $$ select '2026-11-13'::text $$;
 comment on function privado.termos_minimos_da_busca() is
-  'A versão mínima dos Termos e da Política (data da publicação, AAAA-MM-DD) para usar a busca de profissionais: 2026-11-13, os Termos 1.1 e a Política 1.2 (I6, 16/11/2026). Não sobe sozinha quando sai versão nova: subir a barra é decisão e migração próprias.';
+  'A versão mínima dos Termos e da Política (data da publicação, AAAA-MM-DD) para usar a busca de profissionais: 2026-11-13, os Termos 1.1 e a Política 1.2 (I6, 16/11/2026). Não sobe sozinha quando sai versão nova (hoje 2026-11-13, mesmo com 2026-11-16 publicada): subir a barra é decisão da Bússola e uma migração só com este valors.';
 revoke all on function privado.termos_minimos_da_busca() from public, anon, authenticated;
 grant execute on function privado.termos_minimos_da_busca() to service_role;
 
@@ -70,9 +70,9 @@ returns text[]
 language sql
 immutable
 set search_path = ''
-as $$ select array['2026-11-13']::text[] $$;
+as $$ select array['2026-11-13', '2026-11-16']::text[] $$;
 comment on function privado.termos_publicadas() is
-  'As versões dos Termos e da Política publicadas que aceitar_termos aceita (contrato 0.2.90): hoje só 2026-11-13. As anteriores (2026-10-15, 2026-11-12) foram aceitas no cadastro e ficam no histórico, mas não se aceitam mais.';
+  'A ÚNICA lista das versões dos Termos e da Política publicadas que aceitar_termos aceita (contrato 0.2.90 e 0.2.91): hoje 2026-11-13 (Termos 1.1 e Política 1.2) e 2026-11-16 (Termos 1.2). Versão nova publicada = uma migração que a acrescenta aqui. As anteriores (2026-10-15, 2026-11-12) foram aceitas no cadastro e ficam no histórico, mas não se aceitam mais. A mínima da busca é outra decisão: privado.termos_minimos_da_busca().';
 revoke all on function privado.termos_publicadas() from public, anon, authenticated;
 grant execute on function privado.termos_publicadas() to service_role;
 
@@ -782,7 +782,7 @@ begin
   if v_conta.estado = 'anonimizada' then perform public.erro(401, 'nao_autenticado'); end if;
   if v_versao is null then perform public.erro(422, 'campo_obrigatorio', 'termos_versao'); end if;
   -- Só uma versão PUBLICADA, no formato AAAA-MM-DD: o app não aceita pela pessoa uma versão que o servidor
-  -- não conhece (a lista é privado.termos_publicadas(); hoje só 2026-11-13).
+  -- não conhece (a lista é privado.termos_publicadas(); hoje 2026-11-13 e 2026-11-16).
   if v_versao !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' or not (v_versao = any (privado.termos_publicadas())) then
     perform public.erro(422, 'campo_invalido', 'termos_versao');
   end if;
@@ -803,7 +803,7 @@ begin
 end $$;
 
 comment on function public.aceitar_termos(text) is
-  '0.2.90. Quem já tem conta aceita uma versão PUBLICADA dos Termos e da Política (AAAA-MM-DD, privado.termos_publicadas(); hoje 2026-11-13). Grava o aceite no histórico (privado.termos_aceite, um por conta e versão) e atualiza o último aceite em usuario.termos_versao e termos_aceite_em, com o instante do servidor; o aceite do cadastro continua no histórico. Idempotente: a mesma versão devolve o aceite existente. Versão vazia: 422 campo_obrigatorio; fora do formato, não publicada ou mais antiga que a já aceita: 422 campo_invalido (termos_versao). Sessão sem conta: 404. POST: grava.';
+  '0.2.90. Quem já tem conta aceita uma versão PUBLICADA dos Termos e da Política (AAAA-MM-DD, privado.termos_publicadas(); hoje 2026-11-13 e 2026-11-16). Grava o aceite no histórico (privado.termos_aceite, um por conta e versão) e atualiza o último aceite em usuario.termos_versao e termos_aceite_em, com o instante do servidor; o aceite do cadastro continua no histórico. Idempotente: a mesma versão devolve o aceite existente. Versão vazia: 422 campo_obrigatorio; fora do formato, não publicada ou mais antiga que a já aceita: 422 campo_invalido (termos_versao). Sessão sem conta: 404. POST: grava.';
 revoke execute on function public.aceitar_termos(text) from public, anon;
 grant  execute on function public.aceitar_termos(text) to authenticated;
 

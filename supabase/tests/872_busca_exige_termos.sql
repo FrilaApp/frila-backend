@@ -21,7 +21,7 @@ insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id)
 -- 16/11/2026, 12:00 em Brasília (segunda-feira).
 select set_config('frila.agora', '2026-11-16 15:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-872';
-select plan(92);
+select plan(102);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -90,7 +90,7 @@ end $$;
 --   1  aceitou a 1.1 (2026-11-13)        2  versão anterior (2026-11-12, Termos 1.0.1)
 --   3  versão mais nova (2026-11-20)     4  formato fora do padrão ("1.0")
 --   5  demonstração, 2026-09-22 (é o que a conta de demonstração tem de verdade)
---   6  versão anterior, mas suspensa     7  profissional-perfil errado: é o 17, abaixo
+--   6  versão anterior, mas suspensa     7  criada direto com 2026-11-16 (Termos 1.2), sem aceitar de novo
 -- Profissionais 11 a 15 (o 17 é um profissional com versão antiga, para a ordem dos erros).
 --   11 na busca, sem vínculo com nenhuma casa      12 equipe de confiança da casa 2 (sem "Aceito chamadas")
 --   13 turno cumprido com a casa 2 (sem "Aceito chamadas")
@@ -101,15 +101,15 @@ end $$;
 insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
 select '00000000-0000-0000-0000-000000000000', pg_temp.u(n), 'authenticated', 'authenticated',
        'p' || n || '@t872.test', privado.agora(), privado.agora(), false, false
-  from (select generate_series(1, 6) union all select generate_series(11, 18) union all select 20) s(n);
+  from (select generate_series(1, 7) union all select generate_series(11, 18) union all select 20) s(n);
 select pg_temp.como(pg_temp.u(n), format(
   $$ select public.criar_conta(%L, %L, %L, '1990-01-01', %L) $$,
-  case when n <= 6 then 'contratante' else 'profissional' end,
+  case when n <= 7 then 'contratante' else 'profissional' end,
   case n when 11 then 'Maria Souza Lima' else 'Conta ' || n || ' Sobrenome' end,
   '+55619555872' || lpad(n::text, 2, '0'),
-  case n when 1 then '2026-11-13' when 2 then '2026-11-12' when 3 then '2026-11-20' when 4 then '1.0'
+  case n when 1 then '2026-11-13' when 7 then '2026-11-16' when 2 then '2026-11-12' when 3 then '2026-11-20' when 4 then '1.0'
          when 5 then '2026-09-22' when 6 then '2026-11-12' else '2026-09-22' end))
-  from (select generate_series(1, 6) union all select generate_series(11, 18) union all select 20) s(n)
+  from (select generate_series(1, 7) union all select generate_series(11, 18) union all select 20) s(n)
  where n <> 20;
 update public.usuario set demonstracao = true where id in (pg_temp.u(5), pg_temp.u(14));
 update public.usuario set estado = 'suspensa' where id = pg_temp.u(6);
@@ -117,9 +117,9 @@ update public.usuario set estado = 'suspensa' where id = pg_temp.u(6);
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto, regiao_administrativa)
 select pg_temp.casa(n), 'Casa 872 ' || n, '8721234500' || lpad(n::text, 2, '0') || '69', 'food_service', 'CLN 20' || n,
        'POINT(-47.8822 -15.7942)'::extensions.geography, 'Plano Piloto'
-  from generate_series(1, 6) n;
+  from generate_series(1, 7) n;
 insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
-select pg_temp.u(n), pg_temp.casa(n), 'administrador' from generate_series(1, 6) n;
+select pg_temp.u(n), pg_temp.casa(n), 'administrador' from generate_series(1, 7) n;
 
 insert into public.profissional (id, usuario_id, ponto_base, apresentacao)
 select pg_temp.p(n), pg_temp.u(n), 'POINT(-47.8822 -15.7852)'::extensions.geography, 'Apresentação ' || n
@@ -153,12 +153,14 @@ select ok(privado.aceitou_termos(pg_temp.u(1), '2026-11-13'), 'A2 termos_versao 
 select ok(privado.aceitou_termos(pg_temp.u(3), '2026-11-13'), 'A3 termos_versao mais nova que a mínima: aceitou');
 select ok(not privado.aceitou_termos(pg_temp.u(2), '2026-11-13'), 'A4 um dia antes da mínima (2026-11-12): não aceitou');
 select ok(not privado.aceitou_termos(pg_temp.u(4), '2026-11-13'), 'A5 "1.0", fora do formato de data: não aceitou');
+select ok(privado.aceitou_termos(pg_temp.u(7), '2026-11-13'), 'A5b conta criada com 2026-11-16 (Termos 1.2): conta como aceite da mínima 2026-11-13, sem aceitar de novo');
+select ok(not privado.aceitou_termos(pg_temp.u(17), '2026-11-13'), 'A5c conta antiga (2026-09-22, de antes da 1.1): não aceitou');
 select ok(privado.aceitou_termos(pg_temp.u(5), '2026-11-13'), 'A6 a conta de demonstração conta como aceito (login da revisão da Apple)');
 select ok(not privado.aceitou_termos(gen_random_uuid(), '2026-11-13'), 'A7 conta inexistente: não aceitou');
 select ok(not has_function_privilege('authenticated', 'privado.aceitou_termos(uuid, text)', 'execute')
           and not has_function_privilege('anon', 'privado.aceitou_termos(uuid, text)', 'execute'),
   'A8 o helper não é executável por anon nem por authenticated');
-select is(privado.termos_publicadas(), array['2026-11-13'], 'A10 as versões publicadas que aceitar_termos aceita: só 2026-11-13');
+select is(privado.termos_publicadas(), array['2026-11-13', '2026-11-16'], 'A10 as versões publicadas que aceitar_termos aceita: 2026-11-13 e 2026-11-16 (a mínima da busca segue 2026-11-13, A1)');
 select ok(not has_function_privilege('authenticated', 'privado.termos_publicadas()', 'execute'),
   'A11 a lista de publicadas não é executável por authenticated');
 select ok(not has_function_privilege('authenticated', 'privado.termos_minimos_da_busca()', 'execute'),
@@ -171,6 +173,7 @@ select is(pg_temp.busca(pg_temp.u(2), pg_temp.casa(2)), '403 sem_permissao termo
   'B3 aceitou só uma versão anterior (2026-11-12): 403 sem_permissao, termos_pendentes');
 select is(pg_temp.busca(pg_temp.u(4), pg_temp.casa(4)), '403 sem_permissao termos_pendentes',
   'B4 termos_versao fora do formato de data: a mesma recusa');
+select is(pg_temp.busca(pg_temp.u(7), pg_temp.casa(7)), 'ok', 'B4b conta criada com 2026-11-16 busca sem aceitar de novo');
 select is(pg_temp.busca(pg_temp.u(5), pg_temp.casa(5)), 'ok', 'B5 a demonstração (2026-09-22) segue buscando');
 -- A ordem dos erros: conta e perfil antes da trava; a trava antes de qualquer filtro.
 select is(pg_temp.busca(pg_temp.u(17), pg_temp.casa(1)), '403 sem_permissao',
@@ -213,6 +216,8 @@ select is(pg_temp.chamar(pg_temp.u(1), pg_temp.casa(1), 15), '422 profissional_i
   'C6 com aceite, o profissional fora da busca segue com a recusa genérica de sempre');
 select is(pg_temp.chamar(pg_temp.u(3), pg_temp.casa(3), 11), 'ok',
   'C7 aceitou uma versão mais nova: a chamada nasce');
+select is(pg_temp.chamar(pg_temp.u(7), pg_temp.casa(7), 11), 'ok',
+  'C7b conta criada com 2026-11-16: a chamada pela busca nasce sem aceitar de novo');
 select is(pg_temp.chamar(pg_temp.u(5), pg_temp.casa(5), 14), 'ok',
   'C8 demonstração (2026-09-22) com profissional de demonstração: segue chamando');
 -- A 2ª chamada pela vaga direta (a vaga nasceu da chamada C1) também é pelo caminho da busca.
@@ -291,8 +296,20 @@ select is(pg_temp.tenta(pg_temp.u(2), $$ select public.aceitar_termos('') $$), '
 select is(pg_temp.tenta(pg_temp.u(2), $$ select public.aceitar_termos() $$), '422 campo_obrigatorio termos_versao',
   'G15 sem a versão: a mesma recusa');
 select is(pg_temp.tenta(pg_temp.u(3), $$ select public.aceitar_termos('2026-11-13') $$), '422 campo_invalido termos_versao',
-  'G16 o aceite não volta atrás: quem já aceitou 2026-11-20 não troca pela vigente');
+  'G16 o aceite não volta atrás: quem já aceitou 2026-11-20 não troca por 2026-11-13');
+select is(pg_temp.tenta(pg_temp.u(3), $$ select public.aceitar_termos('2026-11-16') $$), '422 campo_invalido termos_versao',
+  'G16b nem por 2026-11-16 (mais antiga que a já aceita)');
 select is((select termos_versao from public.usuario where id = pg_temp.u(3)), '2026-11-20', 'G17 e a versão mais nova fica');
+-- A versão 2026-11-16 (Termos 1.2) também está publicada: grava, e quem a aceitou busca (a mínima segue 2026-11-13).
+select is(pg_temp.como(pg_temp.u(1), $$ select public.aceitar_termos('2026-11-16') $$) ->> 'termos_versao', '2026-11-16',
+  'G16c a conta 1 aceita a versão publicada 2026-11-16: grava e devolve a versão');
+select is((select termos_versao || ' ' || termos_aceite_em::text from public.usuario where id = pg_temp.u(1)), '2026-11-16 2026-11-16 15:00:00+00',
+  'G16d usuario guarda o último aceite, com o instante do servidor');
+select is((select string_agg(versao, ',' order by versao) from privado.termos_aceite where usuario_id = pg_temp.u(1)), '2026-11-13,2026-11-16',
+  'G16e e o histórico guarda as duas: o aceite da 1.1 do cadastro continua lá');
+select is(pg_temp.busca(pg_temp.u(1), pg_temp.casa(1)), 'ok', 'G16f quem aceitou 2026-11-16 (acima da mínima 2026-11-13) busca');
+select is(pg_temp.tenta(pg_temp.u(1), $$ select public.aceitar_termos('2026-11-13') $$), '422 campo_invalido termos_versao',
+  'G16g depois da 2026-11-16, voltar para a 2026-11-13 é recusado (o aceite não volta atrás)');
 -- Quem pode.
 select is(pg_temp.tenta(null, $$ select public.aceitar_termos('2026-11-13') $$), '401 nao_autenticado', 'G18 sem sessão: 401');
 select is(pg_temp.tenta(pg_temp.u(20), $$ select public.aceitar_termos('2026-11-13') $$), '404 nao_encontrado',
@@ -333,8 +350,8 @@ select is((select aceito_em from privado.termos_aceite where usuario_id = pg_tem
   'M3 o aceite do cadastro segue com o instante que tinha (não foi regravado pela 1.1)');
 select is((select aceito_em from privado.termos_aceite where usuario_id = pg_temp.u(4) and versao = '2026-11-13'), '2026-11-16 15:00+00'::timestamptz,
   'M4 e o da 1.1 tem o instante do servidor');
-select is((select count(*)::int from privado.termos_aceite where usuario_id = pg_temp.u(1)), 1,
-  'M5 o cadastro grava o primeiro aceite no histórico (a conta 1 só tem o do cadastro)');
+select is((select count(*)::int from privado.termos_aceite where usuario_id = pg_temp.u(3)), 1,
+  'M5 o cadastro grava o primeiro aceite no histórico (a conta 3 só tem o do cadastro)');
 select is((select count(*)::int from privado.termos_aceite where usuario_id = pg_temp.u(17)), 2,
   'M6 o reenvio não duplica: a conta 17 tem o cadastro e a 1.1, e só');
 select ok(not has_table_privilege('authenticated', 'privado.termos_aceite', 'select') and not has_table_privilege('anon', 'privado.termos_aceite', 'select'),
