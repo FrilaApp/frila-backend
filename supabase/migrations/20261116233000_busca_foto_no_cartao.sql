@@ -147,7 +147,7 @@ begin
   return privado.url_ler_midia() || '?midia_id=' || p_midia_id || '&token=' || v_token;
 end $$;
 comment on function privado.cunhar_link_foto_na_janela(uuid, uuid) is
-  'Link de leitura da foto (cartão da busca, perfil, chamadas e candidatos): o token é o HMAC da (mídia, leitor, janela de 30 min) com uma chave própria do link (derivada da do cursor), então o mesmo cartão relido na janela devolve o mesmo link sem gravar outra linha, e o link vale de 30 a 60 min. O teto de 120 GETs da ler-midia vale por token, ou seja, por (mídia, leitor, janela). Não confere vínculo: quem chama confere antes (privado.foto_de_perfil_projecao).';
+  'Link de leitura da foto (cartão da busca, perfil, chamadas e candidatos): o token é o HMAC da (mídia, leitor, janela de 30 min) com uma chave própria do link (derivada da do cursor), então o mesmo cartão relido na janela devolve o mesmo link sem gravar outra linha, e o link vale de 30 a 60 min. O teto de 120 GETs da ler-midia vale por token, ou seja, por (mídia, leitor, janela). O token é compartilhado na janela: um link repassado pode gastar os 120 usos, e o leitor fica sem a foto até a próxima janela (risco aceito). Não confere vínculo: quem chama confere antes (privado.foto_de_perfil_projecao).';
 revoke execute on function privado.cunhar_link_foto_na_janela(uuid, uuid) from public, anon, authenticated;
 grant  execute on function privado.cunhar_link_foto_na_janela(uuid, uuid) to service_role;
 
@@ -253,3 +253,11 @@ as $$
 $$;
 comment on function privado.cartao_profissional(uuid, uuid, smallint, boolean, boolean) is
   'CartaoProfissional de buscar_profissionais (contrato 0.2.88 e 0.2.90, CD-B07), por lista explícita de campos: id, nome curto, o serviço da função, regiões, todo o DF, faixa de distância, reputação com denominador, com horário o selo da grade e, desde a 0.2.90, a foto aprovada (foto_url e foto_id, as condições do perfil; ausentes sem foto). Nunca contato, ponto base nem nascimento (CD-S03). Volátil: a projeção grava o hash do link.';
+
+-- A chave do cursor da busca passa a derivar também o link da foto (parecer do Lince Opus, I2).
+comment on table privado.chave_cursor_busca is
+  'Chave aleatória (32 bytes) do HMAC-SHA256 do cursor de buscar_profissionais. Uma linha, gerada pela migração. Desde a 0.2.90 ela TAMBÉM deriva a chave do link da foto (privado.cunhar_link_foto_na_janela, HMAC de link-foto-cartao): é segredo de acesso às miniaturas, nunca sai do banco nem entra em log, dump ou fixture. Trocá-la invalida os cursores e os links de foto do momento (o app pede de novo). Toda cópia do Prod para ensaio a regenera depois do restore.';
+
+-- O cunhar antigo segue em uso: a mídia do próprio dono (minhas_midias) e o resto que não passa pela projeção.
+comment on function privado.cunhar_link_leitura_midia(uuid, uuid) is
+  'Cunha o link de leitura de 1 h da foto para um leitor: token opaco de 32 bytes, só o SHA-256 no banco. Não confere vínculo: quem chama confere antes (B-020). Segue em uso para a mídia do PRÓPRIO dono (minhas_midias), um token novo por leitura; a projeção do perfil e o cartão usam privado.cunhar_link_foto_na_janela. Não remover.';
