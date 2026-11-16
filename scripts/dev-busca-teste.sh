@@ -308,11 +308,11 @@ insert into public.profissional_regiao (profissional_id, regiao_id) values
 delete from public.disponibilidade
  where profissional_id in ('b027f000-0000-4000-8000-000000000021', 'b027f000-0000-4000-8000-000000000022', 'b027f000-0000-4000-8000-000000000023');
 insert into public.disponibilidade (profissional_id, dia_semana, hora_inicio, hora_fim)
-select 'b027f000-0000-4000-8000-000000000021', d, time '08:00', time '18:00' from generate_series(1, 5) d
+select 'b027f000-0000-4000-8000-000000000021'::uuid, d, time '08:00', time '18:00' from generate_series(1, 5) d
 union all
-select 'b027f000-0000-4000-8000-000000000022', d, time '18:00', time '02:00' from unnest(array[4, 5, 6, 0]) d
+select 'b027f000-0000-4000-8000-000000000022'::uuid, d, time '18:00', time '02:00' from unnest(array[4, 5, 6, 0]) d
 union all
-select 'b027f000-0000-4000-8000-000000000023', d, time '10:00', time '22:00' from unnest(array[6, 0]) d;
+select 'b027f000-0000-4000-8000-000000000023'::uuid, d, time '10:00', time '22:00' from unnest(array[6, 0]) d;
 
 -- 5. O aparelho iOS na versão mínima da chamada_direta. Token falso de propósito (ver o cabeçalho do script).
 insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app)
