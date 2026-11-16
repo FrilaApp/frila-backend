@@ -85,8 +85,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and not has_function_privilege('anon', p.oid, 'execute')),
-  77::bigint,
-  'superficie anonima blindada: 77 de 78 rotinas negam execucao para o papel anon'
+  78::bigint,
+  'superficie anonima blindada: 78 de 79 rotinas negam execucao para o papel anon'
 );
 
 -- Papel authenticated possui EXECUTE concedido em exatamente 67 RPCs
@@ -94,8 +94,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and has_function_privilege('authenticated', p.oid, 'execute')),
-  74::bigint,
-  'superficie autenticada: exatamente 74 RPCs publicas concedem execucao a authenticated'
+  75::bigint,
+  'superficie autenticada: exatamente 75 RPCs publicas concedem execucao a authenticated'
 );
 
 -- Papel authenticated NÃO possui privilégio em rotinas internas (erro, conta_em_json, perfil_profissional_em_json, rls_auto_enable)
