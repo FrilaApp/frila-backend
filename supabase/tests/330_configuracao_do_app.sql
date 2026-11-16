@@ -87,7 +87,8 @@ select is(
     'url_da_loja',        'https://apps.apple.com/app/id6815311991',
     'mensagem',           null,
     'recursos',           jsonb_build_object('foto_de_perfil', false, 'chamada_direta', false, 'perfil_rico', false,
-                                             'checkin_por_codigo', false)),
+                                             'checkin_por_codigo', false,
+                                             'busca_profissionais', false)),
   'anon lê a configuração do iOS: a mínima inicial é a versão do build de hoje, e não bloqueia ninguém');
 
 select is(
@@ -121,7 +122,8 @@ select is(
     'url_da_loja',        'https://apps.apple.com/app/id6815311991',
     'mensagem',           'Corrigimos um defeito grave. Atualize para continuar.',
     'recursos',           jsonb_build_object('foto_de_perfil', false, 'chamada_direta', false, 'perfil_rico', false,
-                                             'checkin_por_codigo', false)),
+                                             'checkin_por_codigo', false,
+                                             'busca_profissionais', false)),
   'subir a versão mínima na tabela muda a resposta na hora, sem deploy de app');
 
 select is(

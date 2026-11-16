@@ -41,15 +41,15 @@ $$;
 -- Total de rotinas existentes em public (67 RPCs + 1 event trigger + 3 helpers)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace),
-  77::bigint,
-  'censo de catalogo: schema public contem exatamente 77 rotinas catalogadas'
+  78::bigint,
+  'censo de catalogo: schema public contem exatamente 78 rotinas catalogadas (com buscar_profissionais, 0.2.88)'
 );
 
 -- Total de rotinas declaradas como SECURITY DEFINER (67 RPCs + 1 event trigger rls_auto_enable)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prosecdef = true),
-  74::bigint,
-  'seguranca de privilegios: exatamente 74 rotinas sao SECURITY DEFINER (73 RPCs + rls_auto_enable)'
+  75::bigint,
+  'seguranca de privilegios: exatamente 75 rotinas sao SECURITY DEFINER (74 RPCs + rls_auto_enable)'
 );
 
 -- 100% das rotinas de public possuem search_path="" estrito configurado em proconfig
@@ -57,8 +57,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and p.proconfig @> array['search_path=""']),
-  77::bigint,
-  'mitigacao de sequestro de schema: 100% das rotinas (77 de 77) possuem search_path="" estrito'
+  78::bigint,
+  'mitigacao de sequestro de schema: 100% das rotinas (78 de 78) possuem search_path="" estrito'
 );
 
 -- Apenas 1 única função possui privilégio de execução concedido ao papel anon
@@ -85,8 +85,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and not has_function_privilege('anon', p.oid, 'execute')),
-  76::bigint,
-  'superficie anonima blindada: 76 de 77 rotinas negam execucao para o papel anon'
+  77::bigint,
+  'superficie anonima blindada: 77 de 78 rotinas negam execucao para o papel anon'
 );
 
 -- Papel authenticated possui EXECUTE concedido em exatamente 67 RPCs
@@ -94,8 +94,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and has_function_privilege('authenticated', p.oid, 'execute')),
-  73::bigint,
-  'superficie autenticada: exatamente 73 RPCs publicas concedem execucao a authenticated'
+  74::bigint,
+  'superficie autenticada: exatamente 74 RPCs publicas concedem execucao a authenticated'
 );
 
 -- Papel authenticated NÃO possui privilégio em rotinas internas (erro, conta_em_json, perfil_profissional_em_json, rls_auto_enable)

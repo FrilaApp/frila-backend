@@ -31,8 +31,8 @@ create function pg_temp.r(plataforma text, versao text) returns text language sq
   select public.configuracao_do_app(plataforma, versao)->'recursos'->>'checkin_por_codigo' $$;
 
 select is((select string_agg(k, ',' order by k) from jsonb_object_keys(public.configuracao_do_app('ios')->'recursos') k),
-  'chamada_direta,checkin_por_codigo,foto_de_perfil,perfil_rico',
-  'RecursosDoApp tem exatamente os quatro recursos do contrato, com checkin_por_codigo (0.2.68)');
+  'busca_profissionais,chamada_direta,checkin_por_codigo,foto_de_perfil,perfil_rico',
+  'RecursosDoApp tem exatamente os recursos do contrato, com checkin_por_codigo (0.2.68) e busca_profissionais (0.2.85)');
 -- Desde 20261112230000 o recurso nasce como o "vale para todos": chave ligada e mínimo de 1.2.0 só no iOS.
 select is(pg_temp.r('ios', '9.9'), 'true', 'como nasce (chave ligada, mínimo 1.2.0 no iOS, 20261112230000): "9.9" é true');
 select is((select string_agg(plataforma::text || ':' || versao_minima, ',' order by plataforma::text)
