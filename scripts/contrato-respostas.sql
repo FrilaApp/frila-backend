@@ -392,6 +392,15 @@ select pg_temp.guarda('confirmarCheckinManual', pg_temp.como('cc000000-0000-4000
 -- Edge Functions, logo depois do caminho do código e antes de a posição dele ser cancelada, mais
 -- abaixo. Assim checkins_por_codigo sai com o código exigido e a tentativa errada, e o schema dos
 -- itens é exercitado (--falhar-vazias).
+-- registros_aceita_chamadas (0.2.88): o profissional da cand2 liga "Aceito chamadas diretas" uma vez,
+-- para a coleção sair com 1 item e o schema dele ser exercitado (--falhar-vazias). As duas chaves ligam
+-- só para esta chamada e voltam como estavam: as amostras de recurso desligado vêm depois.
+create temp table recurso_antes_da_exportacao as
+  select r.chave, r.ligado from privado.recurso r where r.chave in ('chamada_direta', 'busca_profissionais');
+update privado.recurso set ligado = true where chave in ('chamada_direta', 'busca_profissionais');
+select pg_temp.como('cc000000-0000-4000-8000-000000000003',
+  $$ select public.definir_preferencia_chamadas(aceita_chamadas => true, versao_texto_busca => 'busca-2026-11') $$);
+update privado.recurso r set ligado = a.ligado from recurso_antes_da_exportacao a where a.chave = r.chave;
 select pg_temp.guarda('exportarMeusDados', privado.meus_dados('cc000000-0000-4000-8000-000000000003'));
 
 -- ── Avaliar e o perfil público ────────────────────────────────────────────────
