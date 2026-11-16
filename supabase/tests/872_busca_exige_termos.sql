@@ -21,7 +21,7 @@ insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id)
 -- 16/11/2026, 12:00 em Brasília (segunda-feira).
 select set_config('frila.agora', '2026-11-16 15:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-872';
-select plan(102);
+select plan(103);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -365,6 +365,9 @@ select is((select count(*)::int from privado.termos_aceite where usuario_id = pg
   'M9 depois da anonimização e da limpeza de 15 dias, as linhas de aceite continuam');
 select is((select termos_versao from public.usuario where id = pg_temp.u(17)), '2026-11-13',
   'M10 e o último aceite segue em usuario (a anonimização não o toca)');
+-- (d) a versão do aceite não fica em branco (termos_aceite_versao_check): sem a restrição, este insert passaria.
+select throws_ok(format($$ insert into privado.termos_aceite (usuario_id, versao, aceito_em) values (%L, '   ', now()) $$, pg_temp.u(4)),
+  '23514', null, 'M11 a versão do aceite não pode ficar em branco (só espaços é recusado pela restrição da versão)');
 
 -- ══ E. Aceitar depois destrava ════════════════════════════════════════════════
 update public.usuario set termos_versao = '2026-11-13', termos_aceite_em = privado.agora() where id = pg_temp.u(2);
