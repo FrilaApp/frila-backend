@@ -15,7 +15,7 @@ insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id)
 select set_config('frila.agora', '2026-11-16 15:00:00+00', true);   -- segunda 12h em Brasília
 set local frila.agendador_secret = 'segredo-de-teste-873';
 set local frila.ler_midia_function_url = 'http://funcoes.invalid/functions/v1/ler-midia';
-select plan(36);
+select plan(51);
 
 -- ── Ajudantes ────────────────────────────────────────────────────────────────
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
@@ -194,6 +194,19 @@ select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), (select t from 
 update privado.recurso set ligado = true where chave = 'busca_profissionais';
 select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), (select t from link)),
   'perfil/' || pg_temp.midia(11) || '_thumb.jpg', 'C4c a chave volta: o mesmo link abre de novo');
+-- Bloqueio dentro da hora (RF26) e chamada_direta desligada: o link já emitido deixa de abrir.
+insert into public.bloqueio (autor_id, bloqueado_id) values (pg_temp.u(1), pg_temp.u(11));
+select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), (select t from link)), null,
+  'C7 bloqueio entre o leitor e o titular dentro da hora: o link deixa de abrir (RF26)');
+delete from public.bloqueio where autor_id = pg_temp.u(1);
+select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), (select t from link)),
+  'perfil/' || pg_temp.midia(11) || '_thumb.jpg', 'C7b sem o bloqueio o mesmo link abre de novo');
+update privado.recurso set ligado = false where chave = 'chamada_direta';
+select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), (select t from link)), null,
+  'C8 chamada_direta desligada dentro da hora: o link deixa de abrir');
+update privado.recurso set ligado = true where chave = 'chamada_direta';
+select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), (select t from link)),
+  'perfil/' || pg_temp.midia(11) || '_thumb.jpg', 'C8b a chave volta: o mesmo link abre de novo');
 -- Link cunhado para quem não tem vínculo nenhum (sem o aceite e fora da equipe) não abre.
 delete from public.equipe_confianca where profissional_id = pg_temp.p(11);
 create temp table link_sem as
@@ -203,6 +216,50 @@ select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), (select t from 
 insert into public.equipe_confianca (estabelecimento_id, profissional_id) values (pg_temp.casa(2), pg_temp.p(11));
 select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), (select t from link_sem)),
   'perfil/' || pg_temp.midia(11) || '_thumb.jpg', 'C6 o mesmo link, com equipe de confiança (vínculo antigo): abre');
+
+-- ══ D. O link do cartão é reusado na janela de 30 min (parecer do Lince Opus, I1) ══════════════════════
+create temp table reuso (k text primary key, v text);
+grant all on reuso to public;
+insert into reuso values ('url0', pg_temp.cartao(pg_temp.g('com_foto'), 11) ->> 'foto_url'),
+                         ('linhas0', (select count(*) from privado.midia_link_leitura)::text);
+-- O mesmo pedido de novo (é o que o reenvio do cursor faz): mesma URL, nenhuma linha nova.
+insert into reuso select 'url1', pg_temp.cartao(pg_temp.busca(pg_temp.u(1), pg_temp.casa(1)), 11) ->> 'foto_url';
+select is((select v from reuso where k = 'url1'), (select v from reuso where k = 'url0'),
+  'D1 o mesmo cartão relido na janela devolve o MESMO link');
+select is((select count(*) from privado.midia_link_leitura)::text, (select v from reuso where k = 'linhas0'),
+  'D2 e a releitura não grava nenhuma linha em midia_link_leitura');
+-- Mais 29 min, ainda na janela (o link tem 31 min de folga): o mesmo link, nenhuma linha.
+select set_config('frila.agora', '2026-11-16 15:29:00+00', true);
+insert into reuso select 'url2', pg_temp.cartao(pg_temp.busca(pg_temp.u(1), pg_temp.casa(1)), 11) ->> 'foto_url';
+select ok((select v from reuso where k = 'url2') = (select v from reuso where k = 'url0')
+          and (select count(*) from privado.midia_link_leitura)::text = (select v from reuso where k = 'linhas0'),
+  'D3 com mais de 30 min de folga o link é reusado: mesma URL e nenhuma linha nova');
+-- Menos de 30 min para vencer: cunha um novo (uma linha só), e o velho continua valendo até vencer.
+select set_config('frila.agora', '2026-11-16 15:31:00+00', true);
+insert into reuso select 'url3', pg_temp.cartao(pg_temp.busca(pg_temp.u(1), pg_temp.casa(1)), 11) ->> 'foto_url';
+select isnt((select v from reuso where k = 'url3'), (select v from reuso where k = 'url0'),
+  'D4 o link com menos de 30 min para vencer não é reusado: sai um token novo');
+select is((select count(*) from privado.midia_link_leitura)::text, ((select v from reuso where k = 'linhas0')::int + 1)::text,
+  'D4b e entra exatamente uma linha nova');
+select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), pg_temp.token((select v from reuso where k = 'url0'))),
+  'perfil/' || pg_temp.midia(11) || '_thumb.jpg', 'D5 o link velho segue abrindo até vencer (vence às 16:00)');
+select set_config('frila.agora', '2026-11-16 16:01:00+00', true);
+select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), pg_temp.token((select v from reuso where k = 'url0'))), null,
+  'D6 vencido, o link velho não abre');
+select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), pg_temp.token((select v from reuso where k = 'url3'))),
+  'perfil/' || pg_temp.midia(11) || '_thumb.jpg', 'D7 e o novo abre (vence às 16:30)');
+
+-- Quem lê e qual foto entram no token: leitor ou mídia diferente dá token diferente; o mesmo par repete.
+create temp table tk (k text primary key, v text);
+grant all on tk to public;
+insert into tk values
+  ('a',  pg_temp.token(privado.cunhar_link_foto_cartao(pg_temp.midia(11), pg_temp.u(1)))),
+  ('a2', pg_temp.token(privado.cunhar_link_foto_cartao(pg_temp.midia(11), pg_temp.u(1)))),
+  ('outro_leitor', pg_temp.token(privado.cunhar_link_foto_cartao(pg_temp.midia(11), pg_temp.u(2)))),
+  ('outra_midia',  pg_temp.token(privado.cunhar_link_foto_cartao(pg_temp.midia(16), pg_temp.u(1))));
+select is((select v from tk where k = 'a2'), (select v from tk where k = 'a'), 'D8 o mesmo (mídia, leitor) na janela: o mesmo token');
+select isnt((select v from tk where k = 'outro_leitor'), (select v from tk where k = 'a'), 'D9 outro leitor: outro token');
+select isnt((select v from tk where k = 'outra_midia'), (select v from tk where k = 'a'), 'D10 outra mídia: outro token');
 
 select * from finish();
 rollback;
