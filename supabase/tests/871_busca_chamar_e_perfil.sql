@@ -17,7 +17,7 @@ insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id)
 select set_config('frila.agora', '2026-11-16 15:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-871';
 set local frila.ler_midia_function_url = 'http://funcoes.invalid/functions/v1/ler-midia';
-select no_plan();
+select plan(67);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
