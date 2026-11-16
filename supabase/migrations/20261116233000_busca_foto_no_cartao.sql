@@ -13,12 +13,12 @@
 --      (privado.resolver_link_leitura_midia, que reconfere a cada leitura, no 1 h de vida do link) o usam.
 --      Foto de estabelecimento não muda. A regra do recurso foto_de_perfil, da foto aprovada e do titular ativo
 --      segue em privado.foto_legivel, que esta migração não toca; bloqueio (RF26) segue no resolvedor.
---   3. privado.cartao_profissional ganha foto_url e foto_id por privado.foto_do_cartao, que confere o mesmo que a
---      projeção do perfil (foto aprovada, recurso foto_de_perfil, titular ativo e o vínculo da foto acima), lendo
---      o leitor de auth.uid(). Sem foto aprovada, ou com o recurso desligado: as duas chaves AUSENTES, como no
---      PerfilPublico. A lista de campos continua explícita. A função passa de STABLE para VOLATILE (grava o hash
---      do link); o único chamador, buscar_profissionais, já é volátil e é chamado por POST.
---   3b. O link do cartão é REUSADO, não cunhado a cada página (parecer do Lince Opus, I1: o cursor reenviado
+--   3. privado.cartao_profissional ganha foto_url e foto_id pela privado.foto_de_perfil_projecao (a do perfil, que
+--      esta migração recria só no fim), lendo o leitor de auth.uid(). Sem foto aprovada, ou com o recurso
+--      desligado: as duas chaves AUSENTES, como no PerfilPublico. A lista de campos continua explícita. A função
+--      passa de STABLE para VOLATILE (grava o hash do link); o único chamador, buscar_profissionais, já é
+--      volátil e é chamado por POST.
+--   3b. O link da foto é REUSADO, não cunhado a cada leitura (parecer do Lince Opus, I1: o cursor reenviado
 --      gravava até 20 linhas por requisição). O banco guarda só o SHA-256 do token (B-020), então "reusar" é
 --      derivar o MESMO token: HMAC-SHA256 de (mídia, leitor, janela de 30 min) com uma chave PRÓPRIA do link,
 --      derivada da chave do cursor da busca (HMAC de 'link-foto-cartao' com ela), que vive só no banco: cursor e
@@ -28,7 +28,7 @@
 --      mesmo hash, a mesma validade e o mesmo teto de 120 GETs por token; como o token é o mesmo na janela, o teto
 --      passa a valer por (mídia, leitor, janela), não por página.
 --      A assinatura não muda, então a buscar_profissionais do PR 3 (20261116230000) segue valendo como está.
---   Não muda: privado.foto_legivel, a projeção, o resolvedor, as RPCs públicas.
+--   Não muda: privado.foto_legivel, o resolvedor, as RPCs públicas.
 
 select set_config('lock_timeout', '2s', true);
 
@@ -109,8 +109,8 @@ $$;
 comment on function privado.vinculo_de_leitura_da_foto(uuid, uuid, uuid) is
   'Vínculo de leitura da foto (contrato 0.2.54 e 0.2.90): foto de profissional, para contratante de casa com equipe, candidatura, turno ou, desde a 0.2.90, o profissional na busca (com os Termos 1.1 aceitos); foto de estabelecimento, para profissional com candidatura, chamada ou turno (B-020). Usado pela projeção e pelo resolvedor do link.';
 
--- ── 2b. O link do cartão: o mesmo token dentro da janela de 30 min ────────────
-create function privado.cunhar_link_foto_cartao(p_midia_id uuid, p_leitor uuid)
+-- ── 2b. O link da foto: o mesmo token dentro da janela de 30 min ────────────
+create function privado.cunhar_link_foto_na_janela(p_midia_id uuid, p_leitor uuid)
 returns text
 language plpgsql volatile security definer set search_path = '' as $$
 declare
@@ -146,37 +146,57 @@ begin
 
   return privado.url_ler_midia() || '?midia_id=' || p_midia_id || '&token=' || v_token;
 end $$;
-comment on function privado.cunhar_link_foto_cartao(uuid, uuid) is
-  'Link de leitura da foto para o cartão da busca: o token é o HMAC da (mídia, leitor, janela de 30 min) com uma chave própria do link (derivada da do cursor), então o mesmo cartão relido na janela devolve o mesmo link sem gravar outra linha, e o link vale de 30 a 60 min. O teto de 120 GETs da ler-midia vale por token, ou seja, por (mídia, leitor, janela). Não confere vínculo: quem chama confere antes (privado.foto_do_cartao).';
-revoke execute on function privado.cunhar_link_foto_cartao(uuid, uuid) from public, anon, authenticated;
-grant  execute on function privado.cunhar_link_foto_cartao(uuid, uuid) to service_role;
+comment on function privado.cunhar_link_foto_na_janela(uuid, uuid) is
+  'Link de leitura da foto (cartão da busca, perfil, chamadas e candidatos): o token é o HMAC da (mídia, leitor, janela de 30 min) com uma chave própria do link (derivada da do cursor), então o mesmo cartão relido na janela devolve o mesmo link sem gravar outra linha, e o link vale de 30 a 60 min. O teto de 120 GETs da ler-midia vale por token, ou seja, por (mídia, leitor, janela). Não confere vínculo: quem chama confere antes (privado.foto_de_perfil_projecao).';
+revoke execute on function privado.cunhar_link_foto_na_janela(uuid, uuid) from public, anon, authenticated;
+grant  execute on function privado.cunhar_link_foto_na_janela(uuid, uuid) to service_role;
 
--- A foto do cartão: as mesmas condições da projeção do perfil (foto_de_perfil_projecao), com o link acima.
-create function privado.foto_do_cartao(p_profissional uuid, p_leitor uuid)
-returns jsonb
+-- ── 2c. A projeção da foto: o mesmo link por (mídia, leitor, janela) em toda leitura ──
+-- Corpo de 20261114003000:162-199; só o fim muda: cunha pelo helper da janela em vez de um token novo por
+-- leitura (parecer do Lince Opus, m4). Vale para perfil_publico, detalhe_chamada, candidatos_da_vaga, as
+-- chamadas e o cartão da busca, sem mexer no resolvedor. O cartão chama esta mesma função: as condições da
+-- foto moram só aqui e no vínculo.
+create or replace function privado.foto_de_perfil_projecao(
+  p_profissional    uuid,
+  p_estabelecimento uuid,
+  p_leitor          uuid
+) returns jsonb
 language plpgsql volatile security definer set search_path = '' as $$
 declare
   v_m   privado.midia;
   v_url text;
 begin
-  if p_profissional is null or p_leitor is null then return '{}'::jsonb; end if;
-  select m.* into v_m
-    from privado.midia m
-    join public.profissional p on p.usuario_id = m.dono_usuario_id
-   where p.id = p_profissional
-     and m.dono_tipo = 'profissional' and m.tipo = 'foto_perfil' and m.estado = 'aprovada'
-   limit 1;
+  if p_leitor is null or (p_profissional is null) = (p_estabelecimento is null) then
+    return '{}'::jsonb;
+  end if;
+
+  if p_profissional is not null then
+    select m.* into v_m
+      from privado.midia m
+      join public.profissional p on p.usuario_id = m.dono_usuario_id
+     where p.id = p_profissional
+       and m.dono_tipo = 'profissional' and m.tipo = 'foto_perfil' and m.estado = 'aprovada'
+     limit 1;
+  else
+    select m.* into v_m
+      from privado.midia m
+     where m.estabelecimento_id = p_estabelecimento
+       and m.dono_tipo = 'estabelecimento' and m.tipo = 'foto_perfil' and m.estado = 'aprovada'
+     limit 1;
+  end if;
   if not found then return '{}'::jsonb; end if;
+
   if not privado.foto_legivel(v_m) then return '{}'::jsonb; end if;
-  if not privado.vinculo_de_leitura_da_foto(p_profissional, null, p_leitor) then return '{}'::jsonb; end if;
-  v_url := privado.cunhar_link_foto_cartao(v_m.id, p_leitor);
+  if not privado.vinculo_de_leitura_da_foto(p_profissional, p_estabelecimento, p_leitor) then
+    return '{}'::jsonb;
+  end if;
+
+  v_url := privado.cunhar_link_foto_na_janela(v_m.id, p_leitor);
   if v_url is null then return '{}'::jsonb; end if;   -- transação só-leitura: as duas chaves saem juntas ou nenhuma
   return jsonb_build_object('foto_id', v_m.id, 'foto_url', v_url);
 end $$;
-comment on function privado.foto_do_cartao(uuid, uuid) is
-  'foto_id e foto_url do CartaoProfissional (contrato 0.2.90), ou {}: foto aprovada, recurso foto_de_perfil ligado, titular ativo e o vínculo de leitura da foto (que inclui a busca com os Termos 1.1). O link é o do cartão, reusado na janela de 30 min.';
-revoke execute on function privado.foto_do_cartao(uuid, uuid) from public, anon, authenticated;
-grant  execute on function privado.foto_do_cartao(uuid, uuid) to service_role;
+comment on function privado.foto_de_perfil_projecao(uuid, uuid, uuid) is
+  'As chaves foto_id e foto_url do PerfilPublico e do CartaoProfissional (contrato 0.2.54, 0.2.82 e 0.2.90), ou {}: recurso ligado, foto aprovada, titular ativo (RN13, RF25) e vínculo de leitura (privado.vinculo_de_leitura_da_foto). É a ÚNICA função que decide a foto para o perfil, as chamadas, os candidatos e o cartão da busca. O link é o da janela de 30 min (privado.cunhar_link_foto_na_janela): reler na janela devolve o mesmo link. Grava o hash do link, por isso é volátil (B-020).';
 
 -- ── 3. O cartão da busca com a foto (corpo de 20261116210000, mais a projeção) ──
 create or replace function privado.cartao_profissional(
@@ -226,7 +246,7 @@ as $$
   ) || case when p_com_horario then jsonb_build_object('disponivel_no_horario', p_cobre) else '{}'::jsonb end
     -- A foto aprovada, se houver (0.2.90, CD-B07): as MESMAS condições da projeção do perfil (recurso foto_de_perfil, foto
     -- aprovada, titular ativo, vínculo), com o link da ler-midia reusado na janela de 30 min. Sem foto: '{}', e as chaves ficam ausentes.
-    || privado.foto_do_cartao(p.id, (select auth.uid()))
+    || privado.foto_de_perfil_projecao(p.id, null, (select auth.uid()))
     from public.profissional p
     join public.usuario u on u.id = p.usuario_id
    where p.id = p_profissional

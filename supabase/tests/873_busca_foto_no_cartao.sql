@@ -15,7 +15,7 @@ insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id)
 select set_config('frila.agora', '2026-11-16 15:00:00+00', true);   -- segunda 12h em Brasília
 set local frila.agendador_secret = 'segredo-de-teste-873';
 set local frila.ler_midia_function_url = 'http://funcoes.invalid/functions/v1/ler-midia';
-select plan(51);
+select plan(56);
 
 -- ── Ajudantes ────────────────────────────────────────────────────────────────
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
@@ -253,13 +253,35 @@ select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), pg_temp.token((
 create temp table tk (k text primary key, v text);
 grant all on tk to public;
 insert into tk values
-  ('a',  pg_temp.token(privado.cunhar_link_foto_cartao(pg_temp.midia(11), pg_temp.u(1)))),
-  ('a2', pg_temp.token(privado.cunhar_link_foto_cartao(pg_temp.midia(11), pg_temp.u(1)))),
-  ('outro_leitor', pg_temp.token(privado.cunhar_link_foto_cartao(pg_temp.midia(11), pg_temp.u(2)))),
-  ('outra_midia',  pg_temp.token(privado.cunhar_link_foto_cartao(pg_temp.midia(16), pg_temp.u(1))));
+  ('a',  pg_temp.token(privado.cunhar_link_foto_na_janela(pg_temp.midia(11), pg_temp.u(1)))),
+  ('a2', pg_temp.token(privado.cunhar_link_foto_na_janela(pg_temp.midia(11), pg_temp.u(1)))),
+  ('outro_leitor', pg_temp.token(privado.cunhar_link_foto_na_janela(pg_temp.midia(11), pg_temp.u(2)))),
+  ('outra_midia',  pg_temp.token(privado.cunhar_link_foto_na_janela(pg_temp.midia(16), pg_temp.u(1))));
 select is((select v from tk where k = 'a2'), (select v from tk where k = 'a'), 'D8 o mesmo (mídia, leitor) na janela: o mesmo token');
 select isnt((select v from tk where k = 'outro_leitor'), (select v from tk where k = 'a'), 'D9 outro leitor: outro token');
 select isnt((select v from tk where k = 'outra_midia'), (select v from tk where k = 'a'), 'D10 outra mídia: outro token');
+
+-- m4: o perfil lê pelo MESMO link da janela: perfil_publico duas vezes não grava duas linhas.
+insert into reuso values ('p1', pg_temp.perfil(pg_temp.u(1), pg_temp.p(11)) ->> 'foto_url');
+insert into reuso values ('linhas_p', (select count(*) from privado.midia_link_leitura)::text);
+insert into reuso values ('p2', pg_temp.perfil(pg_temp.u(1), pg_temp.p(11)) ->> 'foto_url');
+select is((select v from reuso where k = 'p2'), (select v from reuso where k = 'p1'),
+  'D11 perfil_publico relido na janela devolve o MESMO foto_url');
+select is((select count(*) from privado.midia_link_leitura)::text, (select v from reuso where k = 'linhas_p'),
+  'D12 e a segunda leitura do perfil não grava linha nova');
+-- m3: o teto de 120 GETs vale por token, e a janela seguinte dá um token novo (comportamento documentado).
+select set_config('frila.agora', '2026-11-16 17:00:30+00', true);
+insert into reuso values ('t120', pg_temp.token(privado.cunhar_link_foto_na_janela(pg_temp.midia(11), pg_temp.u(1))));
+select is((select count(*) from generate_series(1, 120) g
+            where privado.resolver_link_leitura_midia(pg_temp.midia(11), (select v from reuso where k = 't120')) is not null)::int,
+  120, 'D13 o link abre nas primeiras 120 leituras');
+select is(privado.resolver_link_leitura_midia(pg_temp.midia(11), (select v from reuso where k = 't120')), null,
+  'D14 a 121ª leitura do mesmo token é recusada (teto por token, na janela)');
+select set_config('frila.agora', '2026-11-16 17:31:00+00', true);
+insert into reuso values ('t120b', pg_temp.token(privado.cunhar_link_foto_na_janela(pg_temp.midia(11), pg_temp.u(1))));
+select ok((select v from reuso where k = 't120b') <> (select v from reuso where k = 't120')
+          and privado.resolver_link_leitura_midia(pg_temp.midia(11), (select v from reuso where k = 't120b')) is not null,
+  'D15 na janela seguinte sai um token novo, e ele abre de novo');
 
 select * from finish();
 rollback;
