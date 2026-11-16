@@ -320,6 +320,11 @@ VIGIADAS = {
     ("definirPreferenciaChamadas", "403"): "sem_permissao",
     ("definirPreferenciaChamadas", "404"): "nao_encontrado",
     ("definirPreferenciaChamadas", "422"): "campo_obrigatorio",
+    # Busca de profissionais (0.2.88): vigiada desde o nascimento.
+    ("buscarProfissionais", "401"): "nao_autenticado",
+    ("buscarProfissionais", "403"): "sem_permissao",
+    ("buscarProfissionais", "422"): "campo_obrigatorio",
+    ("buscarProfissionais", "429"): "limite_excedido",
     ("responderChamada", "401"): "nao_autenticado",
     ("responderChamada", "403"): "sem_permissao",
     ("responderChamada", "404"): "nao_encontrado",

@@ -1919,6 +1919,64 @@ select pg_temp.guarda('promete:sair_da_equipe:422',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002',
     $$ select public.sair_da_equipe('c0000000-0000-4000-8000-000000000099'::uuid) $$));
 
+-- ── Busca de profissionais (0.2.88) ───────────────────────────────────────────
+-- Dado sintético. O Pê Três (…0005) ganha serviço com preço, região e liga "Aceito chamadas
+-- diretas"; a casa (…0001) busca por faxina residencial no Plano Piloto. O Pê do Contrato (…0002)
+-- bloqueou a casa mais acima e o Pê Dois (…0003) também: só o Pê Três deve aparecer. A chave
+-- `busca_profissionais` nasce desligada: mede o 403 recurso_desligado antes de ligar.
+update privado.recurso set ligado = false where chave = 'busca_profissionais';
+select pg_temp.guarda('promete:buscarProfissionais:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+    (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+update privado.recurso set ligado = true where chave = 'busca_profissionais';
+
+insert into public.profissional_funcao (profissional_id, funcao_id)
+select p.id, f2.id from public.profissional p cross join public.funcao f2
+ where p.usuario_id = 'cc000000-0000-4000-8000-000000000005' and f2.nome = 'faxina residencial'
+on conflict do nothing;
+select pg_temp.como('cc000000-0000-4000-8000-000000000005', format(
+  $$ select public.definir_servicos(%L::jsonb) $$,
+  (select jsonb_build_array(jsonb_build_object('funcao_id', f2.id, 'unidade', 'diaria',
+            'valor_centavos', 15000, 'horas_incluidas', 8, 'especialidade_ids', jsonb_build_array(e.id)))
+     from public.funcao f2 join public.especialidade e on e.funcao_id = f2.id
+    where f2.nome = 'faxina residencial' limit 1)));
+select pg_temp.como('cc000000-0000-4000-8000-000000000005',
+  $$ select public.definir_regioes_atendidas(array[1], false) $$);
+
+-- A preferência com a busca ligada: aceita_chamadas e pendencias_para_busca na resposta.
+select pg_temp.guarda('definirPreferenciaChamadas', pg_temp.como('cc000000-0000-4000-8000-000000000005',
+  $$ select public.definir_preferencia_chamadas(aceita_chamadas => true, versao_texto_busca => 'busca-2026-11') $$));
+select pg_temp.guarda('promete:definirPreferenciaChamadas:422', pg_temp.observado('cc000000-0000-4000-8000-000000000005',
+  $$ select public.definir_preferencia_chamadas(aceita_chamadas => true) $$));
+-- Em pausa, a lista de pendências vem preenchida ('pausado'): o Pê do Contrato pausa até 01/03/2027.
+select pg_temp.guarda('definirPreferenciaChamadas', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.definir_preferencia_chamadas(aceita_chamadas => true, versao_texto_busca => 'busca-2026-11',
+       pausado_ate => '2027-03-01') $$));
+
+select pg_temp.guarda('buscarProfissionais', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+
+select pg_temp.guarda('promete:buscarProfissionais:401', pg_temp.observado(null, format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+-- Profissional não busca profissional: 403 sem_permissao.
+select pg_temp.guarda('promete:buscarProfissionais:403', pg_temp.observado('cc000000-0000-4000-8000-000000000005', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+-- Sem funcao_id: 422 campo_obrigatorio.
+select pg_temp.guarda('promete:buscarProfissionais:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, regiao_id => 1) $$, (select casa_id from ids))));
+-- Acima de 60 buscas por hora por conta: 429 limite_excedido. As 60 primeiras só gastam o contador.
+select pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial')))
+  from generate_series(1, 60);
+select pg_temp.guarda('promete:buscarProfissionais:429', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o
 \pset format unaligned
