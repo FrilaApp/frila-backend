@@ -14,7 +14,7 @@ begin;
 create extension if not exists pgtap with schema extensions;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-16 15:00:00+00', true);   -- segunda 12h em Brasília
-select plan(117);
+select plan(121);
 
 -- ── Quem já existia: ninguém aceita chamada direta antes dos meus dados ──────
 select is((select count(*)::int from public.profissional_preferencia_chamada where aceita_chamadas), 0,
@@ -229,6 +229,41 @@ select is(pg_temp.cartao('com_horario', 101) ->> 'disponivel_no_horario', 'true'
 select is(pg_temp.cartao('com_horario', 102) ->> 'disponivel_no_horario', 'false', 'P2 sem grade: false, mas continua na lista');
 select is((select string_agg(x ->> 'nome', ',' order by o) from guarda g, jsonb_array_elements(g.v -> 'itens') with ordinality t(x, o)
             where g.k = 'com_horario'), 'Maria S.,Rafaela', 'com horário, quem a grade cobre vem antes');
+
+-- ── CD-C13: três recusas ou expirações seguidas da casa tiram o profissional (par_bloqueado_temporariamente) ──
+-- É a mesma regra de chamar_profissional (20261113212000): as 3 últimas chamadas desta casa em 30 dias, entre
+-- aceita, recusada e expirada, todas recusadas ou expiradas e nenhuma aceita no período. Vale por casa.
+-- Usa 'expirada' (e não 'recusada') para não cair na pausa de 24 h do par_em_pausa. P2 é a Rafaela.
+create function pg_temp.nomes_barista(estab text) returns text language sql as $$
+  select string_agg(x ->> 'nome', ',' order by x ->> 'nome')
+    from jsonb_array_elements(pg_temp.como(pg_temp.conta(1), replace(pg_temp.q_barista(', regiao_id => 1'),
+           'c8700000-0000-4000-8000-0000000000e1', estab)) -> 'itens') x $$;
+insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto, valor_centavos, posicoes,
+                         inclui_refeicao, inclui_transporte, exige_material_proprio, responsavel_local, modo,
+                         chave_cliente, publicado_por, origem, estado)
+select ('c8700000-0000-4000-8000-00000000a00' || k)::uuid, 'c8700000-0000-4000-8000-0000000000e1',
+       (select id from public.funcao where nome = 'barista'), '2026-11-20 21:00+00', '2026-11-21 02:00+00', 'CLN',
+       'POINT(-47.8822 -15.7942)'::extensions.geography, 15000, 1, true, false, false, 'Maitre', 'urgencia',
+       gen_random_uuid(), pg_temp.conta(1), 'chamada_direta', 'publicada'
+  from generate_series(1, 3) k;
+insert into public.chamada (vaga_id, profissional_id, estabelecimento_id, criada_por, estado, expira_em, chave, criada_em)
+select ('c8700000-0000-4000-8000-00000000a00' || k)::uuid, (select p.id from public.profissional p where p.usuario_id = pg_temp.conta(102)),
+       'c8700000-0000-4000-8000-0000000000e1', pg_temp.conta(1), 'expirada', '2026-11-17 03:00+00', gen_random_uuid(),
+       ('2026-11-09 12:00+00'::timestamptz + k * interval '1 day')
+  from generate_series(1, 2) k;
+select is(pg_temp.nomes_barista('c8700000-0000-4000-8000-0000000000e1'), 'Maria S.,Rafaela',
+  'duas chamadas expiradas desta casa ainda não tiram o profissional (controle)');
+insert into public.chamada (vaga_id, profissional_id, estabelecimento_id, criada_por, estado, expira_em, chave, criada_em)
+values ('c8700000-0000-4000-8000-00000000a003', (select p.id from public.profissional p where p.usuario_id = pg_temp.conta(102)),
+        'c8700000-0000-4000-8000-0000000000e1', pg_temp.conta(1), 'expirada', '2026-11-17 03:00+00', gen_random_uuid(),
+        '2026-11-12 12:00+00');
+select is(pg_temp.nomes_barista('c8700000-0000-4000-8000-0000000000e1'), 'Maria S.',
+  'a terceira recusada ou expirada seguida desta casa tira o profissional (par_bloqueado_temporariamente)');
+select is(pg_temp.nomes_barista('c8700000-0000-4000-8000-0000000000e2'), 'Maria S.,Rafaela',
+  'e só desta casa: na outra casa ele segue na busca');
+update public.chamada set estado = 'aceita', respondida_em = '2026-11-12 13:00+00' where vaga_id = 'c8700000-0000-4000-8000-00000000a003';
+select is(pg_temp.nomes_barista('c8700000-0000-4000-8000-0000000000e1'), 'Maria S.,Rafaela',
+  'com um aceite no período a regra não vale: ele volta');
 
 -- ── Sigilo ───────────────────────────────────────────────────────────────────
 select is((select array_agg(column_name::text order by ordinal_position) from information_schema.columns
