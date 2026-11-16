@@ -124,6 +124,23 @@ $$;
 comment on function privado.contratante_com_vinculo_leitura(uuid, uuid) is
   'Verifica se o usuário é contratante com vínculo legítimo de leitura com o profissional: equipe de confiança, candidatura em vaga da casa, turno, chamada direta ou, desde a 0.2.88, o profissional estar na busca ("Aceito chamadas diretas" ligado, com ou sem pausa). Não vale para a foto (0.2.54).';
 
+-- ── 3b. O nome do profissional para um leitor (a regra num lugar só) ──────────
+create function privado.nome_do_profissional_para(p_profissional uuid, p_leitor uuid)
+returns text
+language sql stable security definer set search_path = ''
+as $$
+  select case when u.estado = 'anonimizada' then 'Conta encerrada'
+              when privado.leitor_ve_nome_completo(p.id, p_leitor) then u.nome
+              else coalesce(privado.nome_curto(u.nome), u.nome) end
+    from public.profissional p
+    join public.usuario u on u.id = p.usuario_id
+   where p.id = p_profissional
+$$;
+comment on function privado.nome_do_profissional_para(uuid, uuid) is
+  'O nome do profissional como o leitor o vê (contrato 0.2.89): inteiro para o próprio profissional e para o contratante com vínculo vigente (candidatura, turno ou equipe); "Maria L." para todo outro leitor; "Conta encerrada" para conta anonimizada. perfil_publico_profissional o usa com auth.uid(); turno_em_json, com o autor do turno, para a exportação (sem sessão) não encurtar o nome de quem tem turno com a casa.';
+revoke all on function privado.nome_do_profissional_para(uuid, uuid) from public, anon, authenticated;
+grant execute on function privado.nome_do_profissional_para(uuid, uuid) to service_role;
+
 -- ── 4. perfil_publico_profissional com o nome curto ───────────────────────────
 -- Corpo de 20261109180000 com só a linha do nome trocada. É a leitora de todos os PerfilPublico de
 -- profissional (perfil_publico, minhas_chamadas, detalhe_chamada, candidatos_da_vaga, turnos).
@@ -146,11 +163,9 @@ begin
   v_res := jsonb_build_object(
     'id',   p.id,
     'tipo', 'profissional',
-    -- 0.2.88: o contratante sem candidatura, turno nem equipe com o profissional lê só "Maria L."; o
-    -- nome inteiro vem com o vínculo (e para quem não é contratante), como sempre veio.
-    'nome', case when u.estado = 'anonimizada' then 'Conta encerrada'
-                 when privado.leitor_ve_nome_completo(p.id, v_uid) then u.nome
-                 else coalesce(privado.nome_curto(u.nome), u.nome) end,
+    -- 0.2.89: nome inteiro só para o próprio profissional e para o contratante com vínculo vigente; todo
+    -- outro leitor lê "Maria L." (privado.nome_do_profissional_para, a regra num lugar só).
+    'nome', privado.nome_do_profissional_para(p.id, v_uid),
     'funcoes', coalesce((select jsonb_agg(f.nome order by f.nome)
                            from public.profissional_funcao pf
                            join public.funcao f on f.id = pf.funcao_id
@@ -222,6 +237,93 @@ end $$;
 
 comment on function privado.perfil_publico_profissional(uuid) is
   'Gera o json de perfil público de profissional, somando histórico vivo e base histórica expurgada (R9). Inclui campos F2 se recurso perfil_rico estiver ligado e houver vínculo legítimo (inclusive a busca, 0.2.88). O nome vem curto para o contratante sem candidatura, turno nem equipe com o profissional (0.2.88).';
+
+-- ── 4b. turno_em_json: a contraparte pelo leitor do turno ─────────────────────
+-- Corpo de 20261101010000 com só a contraparte do contratante trocada. A exportação (privado.meus_dados, pela
+-- Edge Function exportar-meus-dados, sem JWT) tem auth.uid() nulo: sem isto, a contraparte dos turnos do
+-- contratante sairia "Maria L." mesmo com turno (vínculo). Os grants e o comentário da função não mudam.
+
+create or replace function privado.turno_em_json(turno uuid, autor uuid)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'id',         t.id,
+    'posicao_id', t.posicao_id,
+    'vaga', jsonb_build_object(
+      'id',                    v.id,
+      'funcao',                f.nome,
+      'local',                 v.local,
+      'regiao_administrativa', v.regiao_administrativa,
+      'ponto',                 case
+                                 -- 1. Membro do estabelecimento da vaga: lê coordenadas da própria casa
+                                 when exists (
+                                   select 1 from public.membro_estabelecimento m
+                                    where m.estabelecimento_id = v.estabelecimento_id
+                                      and m.usuario_id = autor
+                                 )
+                                   and v.ponto is not null
+                                   then privado.ponto_em_json(v.ponto)
+                                 -- 2. Profissional alocado no turno:
+                                 --    - Visível enquanto confirmado (futuro / em andamento, LGPD art. 7º, V)
+                                 --    - Visível se cumprido e presença verificada (LGPD art. 7º, VI)
+                                 when privado.usuario_do_profissional(p.profissional_id) = autor
+                                   and (
+                                     p.estado = 'confirmada'
+                                     or (p.estado = 'cumprida' and t.verificacao = 'verificado')
+                                   )
+                                   and v.ponto is not null
+                                   then privado.ponto_em_json(v.ponto)
+                                 -- 3. Nos demais casos (cancelado, não verificado, ou terceiros): nulo (LGPD art. 6º, III)
+                                 else null
+                               end,
+      'inicio_em',             v.inicio_em,
+      'fim_em',                v.fim_em,
+      'valor_centavos',        v.valor_centavos),
+    'contraparte', case
+      when privado.usuario_do_profissional(p.profissional_id) = autor
+        then privado.estabelecimento_publico(v.estabelecimento_id)
+        else privado.perfil_publico_profissional(p.profissional_id)
+             || jsonb_build_object('nome', privado.nome_do_profissional_para(p.profissional_id, autor)) end,
+    'contato_visivel_ate',     p.fim_em + interval '7 days',
+    'a_caminho_em',            t.a_caminho_em,
+    'checkin_em',              t.checkin_em,
+    'checkin_tipo',            t.checkin_tipo,
+    'checkin_distancia_m',     t.checkin_distancia_m,
+    'checkin_confirmado_em',   t.checkin_confirmado_em,
+    'checkout_em',             t.checkout_em,
+    'checkout_distancia_m',    t.checkout_distancia_m,
+    'verificacao',             t.verificacao,
+    'valor_acordado_centavos', t.valor_acordado_centavos,
+    'pode_avaliar',            privado.pode_avaliar(t.id, autor),
+    'estado',                  p.estado,
+    'avaliacao',               (
+      select jsonb_build_object(
+        'turno_id',  a.turno_id,
+        'resposta',  a.resposta,
+        'criada_em', a.criada_em
+      )
+      from public.avaliacao a
+      where a.turno_id = t.id
+        and a.alvo_tipo = case
+          when privado.usuario_do_profissional(p.profissional_id) = autor then 'estabelecimento'
+          else 'profissional'
+        end
+    ),
+    'cancelamento',            case
+                                 when p.estado = 'cancelada'
+                                   then privado.cancelamento_do_turno(p.id)
+                                 else null
+                               end)
+    from public.turno t
+    join public.posicao p on p.id = t.posicao_id
+    join public.vaga v    on v.id = p.vaga_id
+    join public.funcao f  on f.id = v.funcao_id
+   where t.id = turno
+$$;
 
 -- ── 5. listar_bloqueios com o nome curto ──────────────────────────────────────
 -- contrato: corpo-sem-mudanca-de-superficie public.listar_bloqueios 0.2.88
