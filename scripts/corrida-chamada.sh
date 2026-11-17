@@ -26,6 +26,8 @@
 #      turno de pé numa vaga cancelada, e ninguém recebe 40P01. Em ordem livre e com a ordem
 #      forçada em que o impasse fechava (o aceite com a vaga e a chamada, o cancelamento com a
 #      posição).
+#   7. Mais uma chamada (com vaga_id) x cancelamento da vaga direta (B-040, #543): nunca nasce
+#      chamada aberta numa vaga cancelada, e ninguém recebe 40P01. Nas duas ordens, forçadas.
 #
 # Uso: ./scripts/corrida-chamada.sh        RODADAS=4 ./scripts/corrida-chamada.sh
 set -uo pipefail
@@ -605,6 +607,70 @@ for i in $(seq 1 "$RODADAS"); do
 done
 if [ "$erros" = 0 ]; then
   ok "em $RODADAS de $RODADAS rodadas das duas ordens, nenhum 40P01 e a vaga cancelada sem chamada aberta nem turno de pé"
+else
+  printf '  (%s das rodadas com 40P01)\n' "$impasses" >&2
+fi
+
+# ── 7. Mais uma chamada (com vaga_id) x cancelamento da vaga direta (B-040, #543) ─
+# A casa chama o 2º profissional para a vaga direta que já tem a chamada do 1º, enquanto cancela
+# a vaga. O gatilho da vaga cancelada (20261117050000) só fecha as chamadas que já existem; antes
+# da 20261117080000, chamar_profissional lia a vaga sem trava, via "publicada" e inseria a chamada
+# depois do cancelamento: chamada aberta numa vaga cancelada (3 de 3 no ensaio do parecer do #540).
+#   a. o cancelamento primeiro (mundos 121 a 130): X segura a posição; o cancelamento para nela
+#      com a vaga travada, e a chamada chega depois. Desfecho: 409 vaga_encerrada.
+#   b. a chamada primeiro (mundos 131 a 140): X segura a conta do 2º profissional; a chamada para
+#      no aviso (a chave estrangeira de public.notificacao), já com a vaga, e o cancelamento chega
+#      depois. Desfecho: a chamada nasce e o cancelamento a encerra.
+# Nos dois, a vaga termina cancelada e sem chamada aberta.
+echo "▸ 7. mais uma chamada x cancelamento da vaga direta (a: o cancelamento primeiro, b: a chamada primeiro)"
+erros=0; impasses=0
+for i in $(seq 1 "$RODADAS"); do
+  for ordem in a b; do
+    case "$ordem" in a) m=$((120 + i)) ;; b) m=$((130 + i)) ;; esac
+    montar_mundo "$m"
+    p2=$(id "$m" 3)
+    read -r c1 vaga < <(chamar_serial "$m" "$(id "$m" 2)")
+    [ -z "${c1:-}" ] && { falhou "rodada $i ($ordem): não montei a chamada"; erros=$((erros + 1)); continue; }
+    n="cc-$RUN-$m"
+    case "$ordem" in
+      a) segurar "$n-x" "select 1 from public.posicao where vaga_id = '$vaga' for update"
+         passos=("$n-x segurando" "cancelar" "$n-b travado" "chamar" "$n-c travado") ;;
+      b) segurar "$n-x" "select 1 from public.usuario where id = '$p2' for update"
+         passos=("$n-x segurando" "chamar" "$n-c travado" "cancelar" "$n-b travado") ;;
+    esac
+    parou=
+    for passo in "${passos[@]}"; do
+      case "$passo" in
+        cancelar) lado_nomeado "$n-b" "$(id "$m" 1)" "select public.cancelar_vaga('$vaga', 'Evento desmarcado')" ;;
+        chamar)   lado_nomeado "$n-c" "$(id "$m" 1)" "$(sql_chamar "$m" "$p2" "$vaga")" ;;
+        *) aguardar ${passo% *} ${passo#* } || { parou=$passo; break; } ;;
+      esac
+    done
+    if [ -n "$parou" ]; then
+      soltar "$n-%"; wait
+      falhou "rodada $i ($ordem): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+      erros=$((erros + 1)); continue
+    fi
+    soltar "$n-x"
+    wait
+    rb=$(resultado "$TMP/$n-b"); rc=$(resultado "$TMP/$n-c")
+    gv=$(psql -c "select estado from public.vaga where id = '$vaga';")
+    abertas=$(psql -c "select count(*) from public.chamada where vaga_id = '$vaga' and estado = 'aberta';")
+    e2=$(psql -c "select coalesce((select c.estado from public.chamada c join public.profissional p on p.id = c.profissional_id
+                                    where c.vaga_id = '$vaga' and p.usuario_id = '$p2'), 'nenhuma');")
+    case "$rb$rc" in *40P01*) impasses=$((impasses + 1)) ;; esac
+    case "$ordem" in
+      a) esperado="cancelamento 'ok', chamada 'vaga_encerrada', vaga 'cancelada', abertas 0, a do 2º 'nenhuma'" ;;
+      b) esperado="cancelamento 'ok', chamada 'ok', vaga 'cancelada', abertas 0, a do 2º 'encerrada'" ;;
+    esac
+    obtido="cancelamento '$rb', chamada '$rc', vaga '$gv', abertas $abertas, a do 2º '$e2'"
+    if [ "$obtido" != "$esperado" ]; then
+      falhou "rodada $i ($ordem): $obtido"; erros=$((erros + 1))
+    fi
+  done
+done
+if [ "$erros" = 0 ]; then
+  ok "em $RODADAS de $RODADAS rodadas das duas ordens, nenhum 40P01 e nenhuma chamada aberta na vaga cancelada"
 else
   printf '  (%s das rodadas com 40P01)\n' "$impasses" >&2
 fi
