@@ -22,6 +22,10 @@
 #   5. A mesma disputa com a ordem forçada por uma terceira conexão, nas três ordens em que o
 #      impasse fechava (#522): nenhum 40P01, e a conta excluída termina sem chamada aberta e
 #      sem turno confirmado.
+#   6. Cancelamento da vaga direta x aceite da chamada (B-035): nunca sobra chamada aberta nem
+#      turno de pé numa vaga cancelada, e ninguém recebe 40P01. Em ordem livre e com a ordem
+#      forçada em que o impasse fechava (o aceite com a vaga e a chamada, o cancelamento com a
+#      posição).
 #
 # Uso: ./scripts/corrida-chamada.sh        RODADAS=4 ./scripts/corrida-chamada.sh
 set -uo pipefail
@@ -165,9 +169,9 @@ insert into auth.users (instance_id, id, aud, role, email, created_at, updated_a
 select '00000000-0000-0000-0000-000000000000', u, 'authenticated', 'authenticated',
        'corrida-chamada-$RUN-$m-' || n || '@frila.test', now(), now(), false, false
   from (values ('$casa'::uuid, 1), ('$prof1'::uuid, 2), ('$prof2'::uuid, 3)) v(u, n);
-select pg_temp.tentar('$casa',  \$q\$ select public.criar_conta('contratante', 'Casa Corrida', '+5561$(printf '%03d%02d1%03d' "$RUN" "$m" 0)', '1980-01-01', '2026-09-22') \$q\$);
-select pg_temp.tentar('$prof1', \$q\$ select public.criar_conta('profissional', 'Pê Um', '+5561$(printf '%03d%02d2%03d' "$RUN" "$m" 0)', '1990-01-01', '2026-09-22') \$q\$);
-select pg_temp.tentar('$prof2', \$q\$ select public.criar_conta('profissional', 'Pê Dois', '+5561$(printf '%03d%02d3%03d' "$RUN" "$m" 0)', '1991-01-01', '2026-09-22') \$q\$);
+select pg_temp.tentar('$casa',  \$q\$ select public.criar_conta('contratante', 'Casa Corrida', '+5561$(printf '%03d%03d1%02d' "$RUN" "$m" 0)', '1980-01-01', '2026-09-22') \$q\$);
+select pg_temp.tentar('$prof1', \$q\$ select public.criar_conta('profissional', 'Pê Um', '+5561$(printf '%03d%03d2%02d' "$RUN" "$m" 0)', '1990-01-01', '2026-09-22') \$q\$);
+select pg_temp.tentar('$prof2', \$q\$ select public.criar_conta('profissional', 'Pê Dois', '+5561$(printf '%03d%03d3%02d' "$RUN" "$m" 0)', '1991-01-01', '2026-09-22') \$q\$);
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto, regiao_administrativa)
 values ('$estab', 'Casa Corrida $m', '7$(printf '%03d%010d' "$RUN" "$m")', 'food_service', 'CLN 201',
         'POINT(-47.8822 -15.7942)'::extensions.geography, 'Plano Piloto');
@@ -534,6 +538,73 @@ for i in $(seq 1 "$RODADAS"); do
 done
 if [ "$erros" = 0 ]; then
   ok "em $RODADAS de $RODADAS rodadas das três ordens, nenhum 40P01 e a conta excluída sem chamada aberta nem turno confirmado"
+else
+  printf '  (%s das rodadas com 40P01)\n' "$impasses" >&2
+fi
+
+# ── 6. Cancelamento da vaga direta x aceite (B-035) ───────────────────────────
+# Dois desfechos legítimos, e só eles:
+#   · o cancelamento chega antes: o aceite recebe chamada_indisponivel e a chamada fica encerrada;
+#   · o aceite chega antes: confirma, e o cancelamento recolhe o turno (a chamada fica aceita,
+#     desfecho final do contrato, com a posição cancelada).
+# Nos dois, a vaga termina cancelada, sem chamada aberta e sem posição confirmada.
+#   a. ordem livre, quem chega primeiro alterna (mundos 101 a 110);
+#   b. ordem forçada (mundos 111 a 120): X segura a chamada; o aceite para nela com a vaga já
+#      travada, e o cancelamento chega depois. Antes da 20261117050000, o cancelamento travava a
+#      posição e esperava a vaga, o aceite esperava a posição, e a rodada terminava em 40P01.
+echo "▸ 6. cancelamento da vaga direta x aceite (a: ordem livre, b: o aceite com a vaga, o cancelamento depois)"
+erros=0; impasses=0
+desfecho_6() {   # desfecho_6 <rodada> <vaga> <chamada> <aceite> <cancelamento>
+  local i=$1 vaga=$2 c1=$3 ra=$4 rb=$5 gv e1 conf abertas
+  gv=$(psql -c "select estado from public.vaga where id = '$vaga';")
+  e1=$(psql -c "select estado from public.chamada where id = '$c1';")
+  conf=$(psql -c "select count(*) from public.posicao where vaga_id = '$vaga' and estado = 'confirmada';")
+  abertas=$(psql -c "select count(*) from public.chamada where vaga_id = '$vaga' and estado = 'aberta';")
+  case "$ra$rb" in *40P01*) impasses=$((impasses + 1)) ;; esac
+  if [ "$rb" = ok ] && [ "$gv" = cancelada ] && [ "$abertas" = 0 ] && [ "$conf" = 0 ] \
+     && { { [ "$ra" = ok ] && [ "$e1" = aceita ]; } || { [ "$ra" = chamada_indisponivel ] && [ "$e1" = encerrada ]; }; }; then :
+  else
+    falhou "rodada $i: aceite '$ra', cancelamento '$rb', vaga '$gv', chamada '$e1', abertas $abertas, confirmadas $conf"
+    erros=$((erros + 1))
+  fi
+}
+for i in $(seq 1 "$RODADAS"); do
+  m=$((100 + i)); montar_mundo "$m"
+  read -r c1 vaga < <(chamar_serial "$m" "$(id "$m" 2)")
+  [ -z "${c1:-}" ] && { falhou "rodada $i (a): não montei a chamada"; erros=$((erros + 1)); continue; }
+  a=0; b=0.2; [ $((i % 2)) = 0 ] && { a=0.2; b=0; }
+  lado "$TMP/6a-$i-a" "$a" 1 "$(id "$m" 2)" "select public.responder_chamada('$c1', 'aceitar')"
+  lado "$TMP/6a-$i-b" "$b" 1 "$(id "$m" 1)" "select public.cancelar_vaga('$vaga', 'Evento desmarcado')"
+  wait
+  desfecho_6 "$i (a)" "$vaga" "$c1" "$(resultado "$TMP/6a-$i-a")" "$(resultado "$TMP/6a-$i-b")"
+done
+for i in $(seq 1 "$RODADAS"); do
+  m=$((110 + i)); montar_mundo "$m"
+  read -r c1 vaga < <(chamar_serial "$m" "$(id "$m" 2)")
+  [ -z "${c1:-}" ] && { falhou "rodada $i (b): não montei a chamada"; erros=$((erros + 1)); continue; }
+  n="cc-$RUN-$m"
+  segurar "$n-x" "select 1 from public.chamada where id = '$c1' for update"
+  parou=
+  aguardar "$n-x" segurando || parou="$n-x segurando"
+  if [ -z "$parou" ]; then
+    lado_nomeado "$n-a" "$(id "$m" 2)" "select public.responder_chamada('$c1', 'aceitar')"
+    aguardar "$n-a" travado || parou="$n-a travado"
+  fi
+  if [ -z "$parou" ]; then
+    lado_nomeado "$n-b" "$(id "$m" 1)" "select public.cancelar_vaga('$vaga', 'Evento desmarcado')"
+    aguardar "$n-b" travado || parou="$n-b travado"
+  fi
+  if [ -n "$parou" ]; then
+    soltar "$n-%"; wait
+    falhou "rodada $i (b): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    erros=$((erros + 1)); continue
+  fi
+  soltar "$n-x"
+  wait
+  desfecho_6 "$i (b)" "$vaga" "$c1" "$(resultado "$TMP/$n-a")" "$(resultado "$TMP/$n-b")"
+done
+if [ "$erros" = 0 ]; then
+  ok "em $RODADAS de $RODADAS rodadas das duas ordens, nenhum 40P01 e a vaga cancelada sem chamada aberta nem turno de pé"
 else
   printf '  (%s das rodadas com 40P01)\n' "$impasses" >&2
 fi
