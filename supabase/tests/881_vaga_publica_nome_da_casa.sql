@@ -3,13 +3,14 @@
 -- vaga_publica mostra o nome do estabelecimento (migração 20261117090000, contrato 0.2.101):
 --   só de casa com CNPJ (documento com 14 dígitos) e só com a vaga aberta (publicada e ainda não começada).
 --   CNPJ + aberta → o nome · CPF + aberta → null · CNPJ + cancelada → null · CNPJ + preenchida → null
---   CNPJ + publicada mas já começada → null · documento fora do formato → null (falha fechada)
+--   CNPJ + publicada mas já começada → null. Documento fora de 11 ou 14 dígitos o banco já recusa
+--   (estabelecimento_documento_check); a função ainda exige 14 dígitos (falha fechada).
 -- Os mesmos valores para anon e para quem está logado. Nada de endereço, ponto ou documento no corpo.
 -- Só dados sintéticos.
 begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-17 12:00:00+00', true);
-select plan(9);
+select plan(8);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -42,31 +43,28 @@ values (pg_temp.id(1), 'contratante',  'Contratante 881',  '+5561988100001', 'co
        (pg_temp.id(3), 'profissional', 'Profissional 881', '+5561988100003', 'conta3.881@teste.invalid', '1995-01-01', '2026-09-22', '2026-11-01 12:00:00+00', false);
 insert into public.profissional (id, usuario_id, ponto_base)
 values (pg_temp.id(13), pg_temp.id(3), 'POINT(-47.8820 -15.7940)'::extensions.geography);
--- 21 com CNPJ · 22 com CPF · 23 com documento fora do formato (pontuado)
+-- 21 com CNPJ · 22 com CPF
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto, regiao_administrativa)
 values (pg_temp.id(21), 'Bar Com CNPJ 881', '94827988100199', 'food_service', 'EnderecoSigiloso881',
         'POINT(-47.88 -15.79)'::extensions.geography, 'Plano Piloto'),
        (pg_temp.id(22), 'Casa da Pessoa 881', '94827988101', 'food_service', 'EnderecoSigiloso881b',
-        'POINT(-47.88 -15.79)'::extensions.geography, 'Plano Piloto'),
-       (pg_temp.id(23), 'Casa Formato 881', '94.827.988/1001-99', 'food_service', 'EnderecoSigiloso881c',
         'POINT(-47.88 -15.79)'::extensions.geography, 'Plano Piloto');
 insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
-select pg_temp.id(1), pg_temp.id(n), 'administrador' from unnest(array[21, 22, 23]) n;
+select pg_temp.id(1), pg_temp.id(n), 'administrador' from unnest(array[21, 22]) n;
 
 -- 31 CNPJ aberta · 32 CPF aberta · 33 CNPJ cancelada · 34 CNPJ preenchida · 35 CNPJ publicada já começada
--- 36 documento fora do formato, aberta
 insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto, valor_centavos,
                          posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio, responsavel_local,
                          modo, estado, chave_cliente, publicado_por, publicado_em, regiao_administrativa, origem)
 select pg_temp.id(n),
-       case n when 32 then pg_temp.id(22) when 36 then pg_temp.id(23) else pg_temp.id(21) end,
+       case n when 32 then pg_temp.id(22) else pg_temp.id(21) end,
        (select id from public.funcao where nome = 'garçom'),
        case n when 35 then '2026-11-17 11:00:00+00'::timestamptz else '2026-11-20 21:00:00+00'::timestamptz end,
        case n when 35 then '2026-11-17 16:00:00+00'::timestamptz else '2026-11-21 02:00:00+00'::timestamptz end,
        'LocalSigiloso881', 'POINT(-47.88 -15.79)'::extensions.geography, 18000, 1, true, false, false, 'Resp881',
        'urgencia', (case n when 33 then 'cancelada' when 34 then 'preenchida' else 'publicada' end)::public.estado_vaga,
        gen_random_uuid(), pg_temp.id(1), '2026-11-16 15:00:00+00', 'Plano Piloto', 'publicacao'
-  from generate_series(31, 36) n;
+  from generate_series(31, 35) n;
 
 select is(pg_temp.nome(null, 31), 'Bar Com CNPJ 881', 'CNPJ e vaga aberta: anon recebe o nome do estabelecimento');
 select is(pg_temp.nome(pg_temp.id(3), 31), 'Bar Com CNPJ 881', 'CNPJ e vaga aberta: logado recebe o mesmo nome');
@@ -74,7 +72,6 @@ select is(pg_temp.nome(null, 32), null, 'CPF: o nome vem null (pode ser o nome d
 select is(pg_temp.nome(null, 33), null, 'vaga cancelada: o nome vem null');
 select is(pg_temp.nome(null, 34), null, 'vaga preenchida: o nome vem null');
 select is(pg_temp.nome(null, 35), null, 'vaga publicada mas já começada: o nome vem null');
-select is(pg_temp.nome(null, 36), null, 'documento fora do formato de 14 dígitos: null (falha fechada)');
 select ok(pg_temp.como(null, format('select public.vaga_publica(%L)', pg_temp.id(32))) ? 'estabelecimento_nome',
           'a chave estabelecimento_nome existe mesmo quando vem null');
 select ok(pg_temp.como(null, format('select public.vaga_publica(%L)', pg_temp.id(31)))::text !~ '(EnderecoSigiloso|94827988|LocalSigiloso|Resp881)',
