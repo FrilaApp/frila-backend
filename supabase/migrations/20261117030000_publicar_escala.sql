@@ -492,7 +492,7 @@ declare
   v_obs        text;
   v_modo       public.modo_preenchimento;
   v_alerta     integer;
-  v_itens      public.vaga[] := '{}';
+  v_itens      public.vaga[] := '{}'::public.vaga[];
   v_nova       public.vaga;
   v_ids        uuid[];
   v_vaga       public.vaga%rowtype;
