@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.101
+  version: 0.2.103
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -116,6 +116,26 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.103, de 17/11/2026.** Operação nova de leitura: **`GET /rpc/membros_do_estabelecimento`**
+    lista os membros de uma casa, para a tela da equipe da casa (web 3.16; o iOS e o Android usam os
+    mesmos dados quando a tela chegar). É dela que sai o `membro_id` que `remover_membro` e
+    `transferir_administracao` já pediam, sem leitura que o desse. Nenhuma operação que já existe muda.
+    - **Só o administrador daquela casa.** O operador da casa, o membro de outra casa, quem não é membro e
+      a casa que não existe recebem a mesma recusa, `403 sem_permissao`, sem `details`: a resposta não
+      diz se a casa existe nem quem é membro dela. É a mesma regra de `remover_membro`.
+    - **Minimização (LGPD, art. 6º, III).** Cada membro traz só o `membro_id`, o nome da conta, o papel,
+      a data de entrada na casa (`desde`) e `e_voce`. Não traz e-mail, telefone, documento, data de
+      nascimento nem `usuario_id`. Decisão do jurídico do time (17/11/2026), a pedido do O2.
+
+    **Versão 0.2.102, de 17/11/2026.** Só descrição: `versao_texto_busca` passa a ter as versões
+    escritas. **`busca-1`** é o texto que a tela mostra ao ligar a opção: o título "Aceito chamadas
+    diretas" e a explicação "Quem contrata pode te achar na busca e te chamar direto, sem publicar uma
+    vaga." (iOS, `TextosBuscaDeProfissionais.swift:64-65`). O iOS, o Android e a web mostram essas duas
+    frases, palavra por palavra, e mandam `busca-1`. Qualquer mudança de palavra vira `busca-2`, e assim
+    por diante, e o app manda a versão do texto que mostrou. A frase do CD-P11 ("Quero aparecer na busca
+    e receber chamadas de contratantes") era a proposta de 16/11 e não é o texto registrado. Nenhum
+    campo, operação ou código muda.
 
     **Versão 0.2.101, de 17/11/2026.** `VagaPublica` ganha `estabelecimento_nome`: a página pública da
     vaga mostra o nome do estabelecimento (decisão do Cauê no painel, 17/11/2026: função, valor, data e
@@ -3273,6 +3293,68 @@ paths:
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
+  /rpc/membros_do_estabelecimento:
+    get:
+      tags: [Estabelecimento]
+      operationId: membrosDoEstabelecimento
+      summary: Membros da casa, para o administrador
+      description: |
+        0.2.103. Lista os membros do estabelecimento (RF21, US24), para a tela da equipe da casa. O
+        `membro_id` de cada um é o que `remover_membro` (`membro_id`) e `transferir_administracao`
+        (`novo_admin_id`) recebem.
+
+        **Só o administrador daquela casa.** O operador da casa, o membro de outra casa, quem não é
+        membro e a casa que não existe recebem a mesma recusa, `403 sem_permissao`, sem `details`. A
+        resposta não diz se a casa existe nem quem é membro dela (é a regra de `remover_membro`, com
+        `privado.eh_administrador`). Um `estabelecimento_id` que não é uuid recebe `400` do PostgREST
+        antes da função; isso fala só do formato, não da casa.
+
+        **O que sai (LGPD, art. 6º, III).** Só o `membro_id`, o nome da conta, o papel, a data de
+        entrada na casa e `e_voce`. Nunca sai e-mail, telefone, documento, data de nascimento nem
+        `usuario_id`. Quem exclui a conta deixa de ser membro na hora (`excluir_conta` apaga o vínculo),
+        então não há membro sem nome na lista. O membro com a conta suspensa continua na lista, para o
+        administrador poder removê-lo.
+
+        **Ordem:** os administradores primeiro, depois os operadores; em cada papel, pela data de
+        entrada, da mais antiga para a mais nova. A lista é curta e vem inteira, sem paginação.
+
+        Recusas: `401 nao_autenticado` sem sessão; `403 sem_permissao` para quem não é administrador da
+        casa (casos acima); `403 sem_permissao` com `details: conta_suspensa` quando a conta de quem chama
+        está suspensa (`privado.exigir_conta_ativa`).
+
+        Implementação esperada no servidor: `security definer`, `grant execute` só a `authenticated`,
+        `privado.exigir_conta_ativa()` e depois `privado.eh_administrador(estabelecimento_id)`, com a
+        mesma recusa para tudo o que não é administrador.
+      x-requisitos: [RF21, US24]
+      parameters:
+        - $ref: '#/components/parameters/EstabelecimentoId'
+      responses:
+        '200':
+          description: Membros da casa.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MembroDoEstabelecimento'
+        '400':
+          description: |
+            `estabelecimento_id` que não é uuid. Vem do PostgREST, antes da função, e fala só do formato:
+            não diz nada da casa.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              example:
+                code: '22P02'
+                message: 'invalid input syntax for type uuid: "nao-e-uuid"'
+                details: null
+                hint: null
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+
   /rpc/remover_membro:
     post:
       tags: [Estabelecimento]
@@ -4979,8 +5061,9 @@ paths:
 
         **"Aceito chamadas diretas" (0.2.88, CD-P10 a CD-P12, RN40):** `aceita_chamadas: true` põe o
         profissional na busca e o deixa receber chamadas de qualquer contratante; o padrão é `false`.
-        Ligar exige `versao_texto_busca`, a versão do texto da tela ("Quero aparecer na busca e receber
-        chamadas de contratantes", CD-P11); sem ela, `422 campo_obrigatorio` (`versao_texto_busca`). O
+        Ligar exige `versao_texto_busca`, a versão do texto da tela (0.2.102: `busca-1` é "Aceito
+        chamadas diretas" mais "Quem contrata pode te achar na busca e te chamar direto, sem publicar
+        uma vaga."; a lista das versões está em `produto/modulos/contratacao-direta-e-busca-de-perfil.md`); sem ela, `422 campo_obrigatorio` (`versao_texto_busca`). O
         servidor guarda a versão e o instante de cada vez que liga, como registro do pedido do titular
         (LGPD, art. 7º, V, parecer J1); não é consentimento. O registro fica enquanto a conta existir,
         é apagado na exclusão (RF25) e sai na exportação (`MeusDados.registros_aceita_chamadas`). Desligar ou pausar tira da busca na hora.
@@ -5019,7 +5102,7 @@ paths:
                   type: string
                   minLength: 1
                   maxLength: 20
-                  example: busca-v1
+                  example: busca-1
       responses:
         '200':
           description: Preferências em vigor.
@@ -7907,6 +7990,30 @@ components:
           latitude: -15.7942
           longitude: -47.8822
         papel: operador
+    MembroDoEstabelecimento:
+      description: |
+        0.2.103. Um membro da casa, como o administrador o vê em `membros_do_estabelecimento`. Sem
+        e-mail, telefone, documento, data de nascimento nem `usuario_id` (minimização).
+      type: object
+      required: [membro_id, nome, papel, desde, e_voce]
+      properties:
+        membro_id:
+          description: O id do vínculo (`membro_estabelecimento.id`), não o da conta.
+          $ref: '#/components/schemas/Uuid'
+        nome:
+          type: string
+          description: O nome da conta, como o membro o cadastrou (`usuario.nome`).
+          example: Ana Souza
+        papel:
+          $ref: '#/components/schemas/PapelMembro'
+        desde:
+          description: Quando a pessoa entrou na casa (`membro_estabelecimento.criado_em`).
+          $ref: '#/components/schemas/Instante'
+        e_voce:
+          type: boolean
+          description: |
+            `true` na linha de quem chama. Serve para a tela marcar "você" sem pedir o `usuario_id`
+            dos outros.
     MembroDaEquipe:
       type: object
       required: [estabelecimento_id, profissional_id]
