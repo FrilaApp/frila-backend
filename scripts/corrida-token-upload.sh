@@ -28,14 +28,15 @@ falha=0
 U_ID="f0000000-0000-4000-8000-000000000816"
 RODADAS=20
 
-foto_antes=$(psql -c "select coalesce(bool_or(foto_de_perfil), false) from privado.configuracao_app;")
+# A chave da foto é por plataforma (o iOS 1.2.0 a liga em 20261113220000, o Android não): guarda e devolve cada linha.
+foto_restaura=$(psql -c "select coalesce(string_agg(format('update privado.configuracao_app set foto_de_perfil = %L where plataforma = %L;', foto_de_perfil, plataforma), ' '), '') from privado.configuracao_app;")
 
 limpar() {
   psql >/dev/null 2>&1 <<SQL || echo "  aviso: a limpeza falhou na corrida do token de upload" >&2
 delete from privado.midia where dono_usuario_id = '$U_ID';
 delete from public.usuario where id = '$U_ID';
 delete from auth.users where id = '$U_ID';
-update privado.configuracao_app set foto_de_perfil = '${foto_antes:-f}'::boolean;
+${foto_restaura}
 SQL
   rm -rf "$TMP"
 }

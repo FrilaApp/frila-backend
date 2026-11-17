@@ -24,7 +24,7 @@ Os números abaixo foram consolidados e remedidos em 01/11/2026 (commit de refer
 | Edge Functions | **10** (inclui `limpar-contas-orfas` e `_compartilhado`) | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
 | Testes unitários em `exportar-turnos` | **44**, verde | `deno test supabase/functions/exportar-turnos/index_test.ts` |
 | Scripts em `scripts/` | **56** arquivos `.sh` | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
-| Contrato espelhado | **0.2.63** (igual ao canônico do frila-docs#180; a 0.2.65 chega com o #450 e a 0.2.66 com o #451) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
+| Contrato espelhado | **0.2.63** (igual ao canônico do frila-documentacao#180; a 0.2.65 chega com o #450 e a 0.2.66 com o #451) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
 Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **197** arquivos de teste de regras,
 e alcança **198** com `supabase/tests/carga/gerar_df.sql`, que é gerador de carga e não teste de regra.
@@ -32,16 +32,16 @@ e alcança **198** com `supabase/tests/carga/gerar_df.sql`, que é gerador de ca
 > ## 🟡 O espelho do contrato está em 0.2.63, três versões atrás do canônico (0.2.66)
 >
 > O contrato espelhado em `contrato/openapi.yaml` na `develop` está na versão **0.2.63**, byte a byte
-> igual ao canônico do frila-docs#180 (commit `1ef4533`), que entrou com o #435. O canônico já está
-> em **0.2.66** (frila-docs#193, commit `1cf0ff4f`). A 0.2.64 (frila-docs#185) é só descrição; a
+> igual ao canônico do frila-documentacao#180 (commit `1ef4533`), que entrou com o #435. O canônico já está
+> em **0.2.66** (frila-documentacao#193, commit `1cf0ff4f`). A 0.2.64 (frila-documentacao#185) é só descrição; a
 > 0.2.65 (recursos por versão do app) chega ao backend com o #450, e a 0.2.66 (a chamada e o push
 > pelo mínimo de versão) com o #451. Conferido em 08/11/2026.
 >
 > | | Versão | Origem | SHA-256 |
 > |---|---|---|---|
 > | espelho, `contrato/openapi.yaml` na `develop` | **0.2.63** | `frila-backend` | `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4` |
-> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` em `1ef4533` | **0.2.63** | `frila-docs#180` | `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4` |
-> | canônico, `FrilaApp/frila-docs · api/openapi.yaml` na `main` (`1cf0ff4f`) | **0.2.66** | `frila-docs#193` | `6cb4854e71c5c473d905fd7189d138d062139d639f6c6d2508fec5b4b2defeed` |
+> | canônico, `FrilaApp/frila-documentacao · api/openapi.yaml` em `1ef4533` | **0.2.63** | `frila-documentacao#180` | `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4` |
+> | canônico, `FrilaApp/frila-documentacao · api/openapi.yaml` na `main` (`1cf0ff4f`) | **0.2.66** | `frila-documentacao#193` | `6cb4854e71c5c473d905fd7189d138d062139d639f6c6d2508fec5b4b2defeed` |
 
 > ## 🟢 Instabilidades de concorrência em `Corridas do ciclo` sanadas na raiz
 >
@@ -87,7 +87,7 @@ O repositório conta com mais de 180 PRs mergeados (183 em 16/10, ref develop `7
 9. **PR #181 (Fechamento de Vagas Expiradas sem Processo / D654gdGQ · merge em 15/10):**
    Correção em `privado.fechar_turnos_e_vagas()` para cancelar posições remanescentes que permaneceram em `estado = 'aberta'` após o término do turno (`fim_em <= privado.agora()`) e encerrar as vagas correspondentes (`estado = 'encerrada'`), eliminando resíduos perpétuos de vagas expiradas no índice GiST `vaga_ponto_publicada`. Migração `20261015100000_fechar_vagas_expiradas_sem_processo.sql` e teste pgTAP `650_fechamento_vaga_expirada_sem_processo.sql`.
 10. **PR #182 (Atualização de Estado e Proposta do Vault · merge em 15/10):**
-    Atualização de métricas e estado do backend em `docs/ESTADO.md` e formalização da proposta técnica em `docs/proposta-vault-agendador-secret.md` para migração do segredo `frila.agendador_secret` do GUC para o Supabase Vault, eliminando o erro de permissão 42501 no banco gerenciado.
+    Atualização de métricas e estado do backend em `docs/ESTADO.md` e formalização da proposta técnica em `docs/historico/proposta-vault-agendador-secret.md` para migração do segredo `frila.agendador_secret` do GUC para o Supabase Vault, eliminando o erro de permissão 42501 no banco gerenciado.
 11. **PR #183 (Otimização de Ciclo e Filtro de Despacho / Achados 2 e 3 · merge em 15/10):**
     Correção do laço de avaliação em `privado.fechar_turnos_e_vagas()` para evitar renotificação de `avaliacao_disponivel` com filtro de 7 dias e `not exists`, e filtro em `privado.verificar_saude()` para limitar a checagem de despachos retidos além do teto a vagas ativas e futuras (`publicada` com `inicio_em > agora`). Migração `20261015140000_correcao_ciclo_de_vida_achados_2_e_3.sql` e suíte pgTAP `660_ciclo_de_vida_achados.sql`.
 12. **PR #184 (Segurança, Bloqueio Mútuo e Restrição de Privilégios · merge em 15/10):**
@@ -114,7 +114,7 @@ O repositório conta com mais de 180 PRs mergeados (183 em 16/10, ref develop `7
 2. **PR #339 (E-mail Operacional da Equipe Frila · merge em 31/10):**
    Unificação do endereço de contato operacional para `suporte@frilabr.com` e saneamento das referências documentais e operacionais.
 3. **PR #342 (Espelho do Contrato 0.2.46 · merge em 31/10):**
-   Espelhamento do contrato canônico 0.2.46 do `frila-docs` em `contrato/openapi.yaml` (SHA-256 `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10`), cobrindo push FCM data-only para Android e canais por tipo (RN15).
+   Espelhamento do contrato canônico 0.2.46 do `frila-documentacao` em `contrato/openapi.yaml` (SHA-256 `8aa49e0c39e87824a00b0d66b6f98846d92f8ce0866a000a12399933fec24e10`), cobrindo push FCM data-only para Android e canais por tipo (RN15).
 4. **PR #350 (Expansão pgTAP para Funções Auxiliares do Schema Privado · merge em 31/10):**
    Novas suítes cobrindo preservação de dígito 9 na normalização alfanumérica, rejeição de documento cercado por espaços, máscara de valor em reais e validação de status HTTP 422 em campos obrigatórios.
 5. **PR #351 (CI de Autenticação Remota · merge em 31/10):**
@@ -211,14 +211,14 @@ O que custou caro descobrir na aplicação:
 > ```
 > Como consequência, as migrações não podem avançar no `frila-dev` enquanto o segredo depender de GUC.
 >
-> **Solução proposta:** Foi redigida a proposta técnica em [`docs/proposta-vault-agendador-secret.md`](proposta-vault-agendador-secret.md) para migrar a leitura do segredo compartilhado para a extensão nativa **Supabase Vault** (`vault.decrypted_secrets`), com fallback de compatibilidade para os testes locais. O item aguarda decisão/aprovação do dono (registrado em `DECISOES.md`).
+> **Solução proposta:** Foi redigida a proposta técnica em [`docs/historico/proposta-vault-agendador-secret.md`](historico/proposta-vault-agendador-secret.md) para migrar a leitura do segredo compartilhado para a extensão nativa **Supabase Vault** (`vault.decrypted_secrets`), com fallback de compatibilidade para os testes locais. O item aguarda decisão/aprovação do dono (registrado em `DECISOES.md`).
 > *(Nota de segurança: nenhum valor de segredo real é registrado em arquivos de documentação ou histórico).*
 
 ---
 
 ## O contrato em detalhes
 
-Versão espelhada: **0.2.63** em `contrato/openapi.yaml` (igual ao canônico em `FrilaApp/frila-docs · api/openapi.yaml` no frila-docs#180 / commit `1ef4533`, SHA-256 `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4`). O canônico já está em 0.2.66 (frila-docs#193); a 0.2.65 chega com o #450 e a 0.2.66 com o #451.
+Versão espelhada: **0.2.63** em `contrato/openapi.yaml` (igual ao canônico em `FrilaApp/frila-documentacao · api/openapi.yaml` no frila-documentacao#180 / commit `1ef4533`, SHA-256 `ec2483b741e4e74cff054d4d86d13abb200c2695305063a6a174c4be890b9ea4`). O canônico já está em 0.2.66 (frila-documentacao#193); a 0.2.65 chega com o #450 e a 0.2.66 com o #451.
 
 Histórico das versões recentes integradas no backend:
 
@@ -357,6 +357,7 @@ Colunas do esquema com funções de negócio específicas que complementam a Mod
 | `turno.checkin_recebido_em` | `checkin_em` é a hora do toque; sem as duas, registro offline vira indistinguível |
 | `turno.checkout_recebido_em` | o mesmo, do outro lado |
 | `posicao.reaberta_por_atraso_de` | `reabrir_por_atraso` (e8XpOZJN): a posição nova sabe de qual falta nasceu; aceita candidato depois do início até 1 h antes do fim |
+| `privado.anulacao_falta` | anulação operacional de falta pelo admin (decisão JP 15/11, RN12): auditoria, operador e rastreabilidade no schema privado para evitar vazamento aos clientes |
 | `vaga.rodada_despacho` | rodada de despacho (9DbPXis7): 1 na publicação, incrementada a cada `reabrir_por_atraso` |
 | `despacho.rodada` | unicidade do despacho por `(vaga_id, profissional_id, rodada)` |
 | `notificacao.rodada` | marca de envio de vaga por rodada para não suprimir push da rodada nova |
@@ -377,7 +378,7 @@ E alinhamentos consolidados de negócio:
 
 ## Pendências fora do código
 
-1. **Desbloqueio de Deploy no `frila-dev` (Decisão do dono):** Aval da proposta técnica em [`docs/proposta-vault-agendador-secret.md`](proposta-vault-agendador-secret.md) para migração da leitura do segredo de GUC para Supabase Vault (`vault.decrypted_secrets`), resolvendo o erro 42501 no Postgres hospedado e liberando a execução do script `scripts/aplicar-remoto.sh` (registrado em `DECISOES.md`).
+1. **Desbloqueio de Deploy no `frila-dev` (Decisão do dono):** Aval da proposta técnica em [`docs/historico/proposta-vault-agendador-secret.md`](historico/proposta-vault-agendador-secret.md) para migração da leitura do segredo de GUC para Supabase Vault (`vault.decrypted_secrets`), resolvendo o erro 42501 no Postgres hospedado e liberando a execução do script `scripts/aplicar-remoto.sh` (registrado em `DECISOES.md`).
 2. **Push com mutable-content no iOS (`h6RoObK6`):** O backend foi entregue e mergeado no PR #178 (`mutable-content: 1`). A conclusão depende da esteira de iOS (criação do target Notification Service Extension, App Group e aprovação de design para o texto neutro sem dados pessoais).
 3. **Credenciais para Deploy Remoto:** Execução no ambiente remoto `frila-dev` e `frila-prod` depende de `SUPABASE_ACCESS_TOKEN` válido configurado no ambiente.
 4. **Revisão da Júlia:** Revisão da lista de termos bloqueados do filtro de texto ofensivo (`ggEzge6h`).

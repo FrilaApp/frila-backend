@@ -131,7 +131,7 @@ select '00000000-0000-0000-0000-000000000000', c.id, 'authenticated','authentica
   ) as c(id, email);
 
 select pg_temp.guarda('criarConta', pg_temp.como('cc000000-0000-4000-8000-000000000001',
-  $$ select public.criar_conta('contratante','Casa do Contrato','+5561944440001','1980-05-05','2026-09-22') $$));
+  $$ select public.criar_conta('contratante','Casa do Contrato','+5561944440001','1980-05-05','2026-11-13') $$));
 select pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.criar_conta('profissional','Pê do Contrato','+5561944440002','1995-05-05','2026-09-22') $$);
 select pg_temp.como('cc000000-0000-4000-8000-000000000003',
@@ -312,6 +312,10 @@ select pg_temp.guarda('avisarACaminho', pg_temp.como('cc000000-0000-4000-8000-00
 
 -- ── A presença, com o relógio no turno ────────────────────────────────────────
 set local frila.agora = '2027-01-18 21:05:00+00';
+-- Desde 20261112230000 a chave checkin_por_codigo nasce ligada (vale para todas as casas). O primeiro
+-- check-in abaixo colhe o caminho clássico (geolocalizado, verificado na hora), então a chave desliga aqui
+-- e liga adiante, no check-in com sinais.
+update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
 select pg_temp.guarda('fazerCheckin', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
   $$ select public.fazer_checkin(%L::uuid, 40, '2027-01-18 21:05:00+00'::timestamptz) $$,
@@ -335,8 +339,6 @@ select pg_temp.guarda('fazerCheckin', pg_temp.sem_rastro('cc000000-0000-4000-800
   $$ select public.fazer_checkin(%L::uuid, null, '2027-01-25 21:05:00+00'::timestamptz) $$,
   ((select r from cand2)->>'turno_id')::uuid)));
 update privado.recurso set ligado = true where chave = 'checkin_por_codigo';
-insert into privado.recurso_estabelecimento (chave, estabelecimento_id)
-select 'checkin_por_codigo', casa_id from ids;
 select pg_temp.guarda('fazerCheckin', pg_temp.como('cc000000-0000-4000-8000-000000000003', format(
   $$ select public.fazer_checkin(%L::uuid, 40, '2027-01-25 21:05:00+00'::timestamptz,
        '{"localizacao_simulada": true, "precisao_m": 12, "salto_de_posicao": false}'::jsonb) $$,
@@ -390,6 +392,15 @@ select pg_temp.guarda('confirmarCheckinManual', pg_temp.como('cc000000-0000-4000
 -- Edge Functions, logo depois do caminho do código e antes de a posição dele ser cancelada, mais
 -- abaixo. Assim checkins_por_codigo sai com o código exigido e a tentativa errada, e o schema dos
 -- itens é exercitado (--falhar-vazias).
+-- registros_aceita_chamadas (0.2.88): o profissional da cand2 liga "Aceito chamadas diretas" uma vez,
+-- para a coleção sair com 1 item e o schema dele ser exercitado (--falhar-vazias). As duas chaves ligam
+-- só para esta chamada e voltam como estavam: as amostras de recurso desligado vêm depois.
+create temp table recurso_antes_da_exportacao as
+  select r.chave, r.ligado from privado.recurso r where r.chave in ('chamada_direta', 'busca_profissionais');
+update privado.recurso set ligado = true where chave in ('chamada_direta', 'busca_profissionais');
+select pg_temp.como('cc000000-0000-4000-8000-000000000003',
+  $$ select public.definir_preferencia_chamadas(aceita_chamadas => true, versao_texto_busca => 'busca-2026-11') $$);
+update privado.recurso r set ligado = a.ligado from recurso_antes_da_exportacao a where a.chave = r.chave;
 select pg_temp.guarda('exportarMeusDados', privado.meus_dados('cc000000-0000-4000-8000-000000000003'));
 
 -- ── Avaliar e o perfil público ────────────────────────────────────────────────
@@ -547,6 +558,8 @@ select pg_temp.guarda('erro:contestacao_ja_aberta',
 -- ── Chamada direta, F4 parte A (0.2.55) ───────────────────────────────────────
 -- O Pê Três está na equipe de confiança (vínculo na v1.1, RN28). O Pê do Contrato, com início
 -- em 1 h, cai em 422 profissional_indisponivel. O interruptor nasce desligado: mede o 403.
+-- 20261113220000 liga a chamada direta para todos: desliga aqui para medir o 403 recurso_desligado.
+update privado.recurso set ligado = false where chave = 'chamada_direta';
 create function pg_temp.chamar(prof text, daqui interval default '1 day') returns text
 language sql as $$ select format($c$ select public.chamar_profissional(chave => gen_random_uuid(),
   profissional_id => %L,
@@ -1048,6 +1061,11 @@ select pg_temp.guarda('promete:minhaConta:404',
   pg_temp.observado('ee000000-0000-4000-8000-000000000097',
     $$ select public.minha_conta() $$));
 
+-- aceitarTermos (0.2.90): 404 nao_encontrado (login sem cadastro), como a minhaConta acima
+select pg_temp.guarda('promete:aceitarTermos:404',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000097',
+    $$ select public.aceitar_termos('2026-11-13') $$));
+
 delete from auth.users where id = 'ee000000-0000-4000-8000-000000000097';
 
 -- 62. meuPerfilProfissional: 404 nao_encontrado (contratante sem linha em public.profissional)
@@ -1071,6 +1089,8 @@ select pg_temp.guarda('promete:atualizarPerfilProfissional:404',
 
 -- F2 atrás da chave perfil_rico (RN46, contrato 0.2.60): desligada, a F2 recusa com 403
 -- recurso_desligado. Colhe a recusa e liga a chave antes de qualquer outra colheita da F2.
+-- 20261113220000 liga o perfil rico para todos: desliga aqui para colher o 403 recurso_desligado.
+update privado.recurso set ligado = false where chave = 'perfil_rico';
 select pg_temp.guarda('promete:meuPerfilDetalhado:403', pg_temp.observado('cc000000-0000-4000-8000-000000000002', $$select public.meu_perfil_detalhado()$$));
 update privado.recurso set ligado = true where chave = 'perfil_rico';
 
@@ -1912,6 +1932,83 @@ select pg_temp.guarda('promete:sair_da_equipe:403',
 select pg_temp.guarda('promete:sair_da_equipe:422',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002',
     $$ select public.sair_da_equipe('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+
+-- ── Busca de profissionais (0.2.88) ───────────────────────────────────────────
+-- Dado sintético. O Pê Três (…0005) ganha serviço com preço, região e liga "Aceito chamadas
+-- diretas"; a casa (…0001) busca por faxina residencial no Plano Piloto. O Pê do Contrato (…0002)
+-- bloqueou a casa mais acima e o Pê Dois (…0003) também: só o Pê Três deve aparecer. A chave
+-- `busca_profissionais` nasce desligada: mede o 403 recurso_desligado antes de ligar.
+update privado.recurso set ligado = false where chave = 'busca_profissionais';
+select pg_temp.guarda('promete:buscarProfissionais:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+    (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+update privado.recurso set ligado = true where chave = 'busca_profissionais';
+
+insert into public.profissional_funcao (profissional_id, funcao_id)
+select p.id, f2.id from public.profissional p cross join public.funcao f2
+ where p.usuario_id = 'cc000000-0000-4000-8000-000000000005' and f2.nome = 'faxina residencial'
+on conflict do nothing;
+select pg_temp.como('cc000000-0000-4000-8000-000000000005', format(
+  $$ select public.definir_servicos(%L::jsonb) $$,
+  (select jsonb_build_array(jsonb_build_object('funcao_id', f2.id, 'unidade', 'diaria',
+            'valor_centavos', 15000, 'horas_incluidas', 8, 'especialidade_ids', jsonb_build_array(e.id)))
+     from public.funcao f2 join public.especialidade e on e.funcao_id = f2.id
+    where f2.nome = 'faxina residencial' limit 1)));
+select pg_temp.como('cc000000-0000-4000-8000-000000000005',
+  $$ select public.definir_regioes_atendidas(array[1], false) $$);
+
+-- A preferência com a busca ligada: aceita_chamadas e pendencias_para_busca na resposta.
+select pg_temp.guarda('definirPreferenciaChamadas', pg_temp.como('cc000000-0000-4000-8000-000000000005',
+  $$ select public.definir_preferencia_chamadas(aceita_chamadas => true, versao_texto_busca => 'busca-2026-11') $$));
+select pg_temp.guarda('promete:definirPreferenciaChamadas:422', pg_temp.observado('cc000000-0000-4000-8000-000000000005',
+  $$ select public.definir_preferencia_chamadas(aceita_chamadas => true) $$));
+-- Em pausa, a lista de pendências vem preenchida ('pausado'): o Pê do Contrato pausa até 01/03/2027.
+select pg_temp.guarda('definirPreferenciaChamadas', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.definir_preferencia_chamadas(aceita_chamadas => true, versao_texto_busca => 'busca-2026-11',
+       pausado_ate => '2027-03-01') $$));
+
+select pg_temp.guarda('buscarProfissionais', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+
+select pg_temp.guarda('promete:buscarProfissionais:401', pg_temp.observado(null, format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+-- Profissional não busca profissional: 403 sem_permissao.
+select pg_temp.guarda('promete:buscarProfissionais:403', pg_temp.observado('cc000000-0000-4000-8000-000000000005', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+-- Sem funcao_id: 422 campo_obrigatorio.
+select pg_temp.guarda('promete:buscarProfissionais:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, regiao_id => 1) $$, (select casa_id from ids))));
+-- Acima de 60 buscas por hora por conta: 429 limite_excedido. As 60 primeiras só gastam o contador.
+select pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial')))
+  from generate_series(1, 60);
+select pg_temp.guarda('promete:buscarProfissionais:429', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+
+-- Termos 1.1 (0.2.90): a busca recusa quem não aceitou (403 termos_pendentes, antes dos filtros e do contador).
+-- A casa volta para a versão anterior só neste trecho.
+update public.usuario set termos_versao = '2026-11-12' where id = 'cc000000-0000-4000-8000-000000000001';
+select pg_temp.guarda('promete:buscarProfissionais:403', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+update public.usuario set termos_versao = '2026-11-13' where id = 'cc000000-0000-4000-8000-000000000001';
+
+-- aceitar_termos: o aceite da versão vigente (200), a versão vazia (422), a versão que o servidor não conhece (422) e sem sessão (401).
+update public.usuario set termos_versao = '2026-09-22' where id = 'cc000000-0000-4000-8000-000000000002';
+select pg_temp.guarda('aceitarTermos', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.aceitar_termos('2026-11-13') $$));
+select pg_temp.guarda('promete:aceitarTermos:422', pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+  $$ select public.aceitar_termos('') $$));
+select pg_temp.guarda('promete:aceitarTermos:422', pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+  $$ select public.aceitar_termos('2026-11-12') $$));
+select pg_temp.guarda('promete:aceitarTermos:401', pg_temp.observado(null,
+  $$ select public.aceitar_termos('2026-11-13') $$));
 
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o

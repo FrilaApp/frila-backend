@@ -2,6 +2,11 @@
 -- direta fora da lista e da tabela para terceiros, e uma violadora por restrição nova.
 -- Casa CPF (J7). A: equipe de confiança. B: sem vínculo. C: turno cumprido e verificado.
 begin;
+-- 20261113220000 liga foto, chamada direta e perfil rico para todos; este teste parte das chaves
+-- desligadas, como nasceram, e liga o que precisar.
+update privado.recurso set ligado = false where chave in ('chamada_direta', 'perfil_rico');
+update privado.configuracao_app set foto_de_perfil = false;
+delete from privado.recurso_versao_minima where recurso in ('foto_de_perfil', 'chamada_direta', 'perfil_rico');
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-07 15:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-803';
@@ -108,12 +113,13 @@ select is(pg_temp.r('c8030000-0000-4000-8000-000000000001', format(
 -- ── As recusas ───────────────────────────────────────────────────────────────
 select is(pg_temp.r('c8030000-0000-4000-8000-000000000001', pg_temp.nova('c8030000-0000-4000-8000-0000000000ff')),
   'nao_encontrado', '404: profissional inexistente');
-select is(pg_temp.r('c8030000-0000-4000-8000-000000000001', pg_temp.nova((select b from ids))),
+-- 0.2.95: o B vai a 18:01, outro trabalho (às 18:00 a casa já tem o trabalho aberto do A: trabalho_ja_aberto, 874).
+select is(pg_temp.r('c8030000-0000-4000-8000-000000000001', pg_temp.nova((select b from ids), inicio => '2026-11-08 18:01+00')),
   'profissional_indisponivel:nao_aceita_chamadas', '422: sem vínculo, a recusa genérica');
 -- 0.2.66: a recusa genérica vem antes da validação do corpo, então sem vínculo o corpo inválido também
 -- dá nao_aceita_chamadas (830). Para medir a RN02, o B ganha vínculo só nesta asserção.
 insert into public.equipe_confianca (estabelecimento_id, profissional_id) select 'c8030000-0000-4000-8000-0000000000e1', b from ids;
-select is(pg_temp.r('c8030000-0000-4000-8000-000000000001', replace(pg_temp.nova((select b from ids)), ', local => ''CLN 201''', '')),
+select is(pg_temp.r('c8030000-0000-4000-8000-000000000001', replace(pg_temp.nova((select b from ids), inicio => '2026-11-08 18:01+00'), ', local => ''CLN 201''', '')),
   'campo_obrigatorio:local', '422: campo da RN02 ausente');
 delete from public.equipe_confianca where estabelecimento_id = 'c8030000-0000-4000-8000-0000000000e1'
    and profissional_id = (select b from ids);

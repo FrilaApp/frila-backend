@@ -13,6 +13,9 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# A senha da DATABASE_URL vai só no ambiente do psql, nunca na linha de comando (B-027.j).
+# shellcheck source=/dev/null
+. scripts/pg-sem-senha.sh
 
 DB_CONTAINER="${DB_CONTAINER:-supabase_db_frila-backend}"
 REPETICOES=5
@@ -104,7 +107,7 @@ fi
 
 exec_psql() {
   if [ -n "${DATABASE_URL:-}" ]; then
-    psql "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1 "$@"
+    psql_url "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1 "$@"
   elif docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DB_CONTAINER}$"; then
     docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1 "$@"
   else

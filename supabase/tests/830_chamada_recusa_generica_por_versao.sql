@@ -10,6 +10,11 @@
 --   E: equipe, sem aparelho (sem permissão)       F: equipe, aparelho iOS "1.2" (zeros)
 --   G: equipe, aparelho ok, usado só quando o mínimo some   H: equipe, aparelho ok, pausado
 begin;
+-- 20261113220000 liga foto, chamada direta e perfil rico para todos; este teste parte das chaves
+-- desligadas, como nasceram, e liga o que precisar.
+update privado.recurso set ligado = false where chave in ('chamada_direta', 'perfil_rico');
+update privado.configuracao_app set foto_de_perfil = false;
+delete from privado.recurso_versao_minima where recurso in ('foto_de_perfil', 'chamada_direta', 'perfil_rico');
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-07 15:00:00+00', true);
 set local frila.agendador_secret = 'segredo-de-teste-830';
@@ -39,12 +44,15 @@ end $$;
 create function pg_temp.chamar(letra text, valido boolean) returns text language sql as $$
   select format($a$ select public.chamar_profissional(chave => gen_random_uuid(), profissional_id => %L,
     estabelecimento_id => 'c8300000-0000-4000-8000-0000000000e1', funcao_id => %s,
-    inicio_em => '2026-11-08 18:00+00', fim_em => '2026-11-08 23:00+00', local => 'CLN 201',
+    inicio_em => %L, fim_em => %L, local => 'CLN 201',
     regiao_administrativa => 'Plano Piloto', ponto => '{"latitude":-15.7942,"longitude":-47.8822}',
     valor_centavos => 15000, inclui_refeicao => true, inclui_transporte => false,
     exige_material_proprio => false, responsavel_local => 'Maitre') $a$,
     (select p.id from public.profissional p join auth.users u on u.id = p.usuario_id where u.email = letra || '@t830.test'),
-    case when valido then quote_literal((select id from public.funcao where nome = 'garçom')) else 'null' end) $$;
+    case when valido then quote_literal((select id from public.funcao where nome = 'garçom')) else 'null' end,
+    -- 0.2.95: um minuto por letra, para cada profissional ser um trabalho próprio (sem trabalho_ja_aberto).
+    '2026-11-08 18:00+00'::timestamptz + (ascii(letra) - ascii('a')) * interval '1 minute',
+    '2026-11-08 23:00+00'::timestamptz + (ascii(letra) - ascii('a')) * interval '1 minute') $$;
 
 insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
 select '00000000-0000-0000-0000-000000000000', ('c8300000-0000-4000-8000-00000000000' || n)::uuid,

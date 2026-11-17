@@ -929,11 +929,11 @@ Deno.test("Planilha: início sem check-in (caso 13) e atraso de 15 min (caso 16)
 
 Deno.test("Planilha: cancelamento por reabertura por atraso (caso 17), e só ele", () => {
   assertEquals(titulosECorposPorTipo("cancelamento", {}, { reaberturaPorAtraso: true }), {
-    title: "Turno cancelado por atraso",
-    body: "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.",
+    title: "Participação cancelada por atraso",
+    body: "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.",
   });
   const generico = titulosECorposPorTipo("cancelamento", {});
-  assert(generico.title !== "Turno cancelado por atraso",
+  assert(generico.title !== "Participação cancelada por atraso",
     "cancelamento comum não pode dizer que foi atraso");
 });
 
@@ -1003,8 +1003,8 @@ Deno.test("Envio: cancelamento com ocorrência reabertura_por_atraso sai com o t
 
   assertEquals(res.status, 200);
   assert(consultouOcorrencia, "o motivo do cancelamento é lido do banco no envio");
-  assertEquals(enviado.title, "Turno cancelado por atraso");
-  assertEquals(enviado.body, "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.");
+  assertEquals(enviado.title, "Participação cancelada por atraso");
+  assertEquals(enviado.body, "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.");
 });
 
 Deno.test("Lembretes 24h e 3h: interpolação Opção A homologada (k5R4tzjC)", async () => {
@@ -1290,6 +1290,62 @@ Deno.test("Ciclo do token: depois de sair da conta, nenhuma notificação sai pa
   assertEquals(relatorio.status, "falhou");
   assertEquals(relatorio.detalhe, "sem_dispositivo");
   assertEquals(enviados, [], "Aparelho que saiu da conta não recebe push");
+});
+
+// ── D-19: a leitura dos aparelhos falhou não é "sem aparelho" ─────────────────
+//
+// No frila-dev (13/11, 01:30), o avaliacao_disponivel da casa falhou como sem_dispositivo,
+// permanente, com 1 aparelho registrado: a leitura de `dispositivo` falhou e a função seguiu com a
+// lista vazia. Falha da leitura é erro passageiro: nada sai agora e o aviso volta com backoff.
+
+function mockLeituraDeAparelhoFalha(
+  modo: "http_503" | "rede",
+  enviados: string[],
+): typeof fetch {
+  const base = mockCicloDoToken(
+    [{ usuario_id: CONTA_A, token_fcm: TOKEN_COMPARTILHADO }],
+    { "a3000000-0000-4000-8000-0000000000d1": CONTA_A },
+    enviados,
+  );
+  return (input: RequestInfo | URL, init?: RequestInit) => {
+    if (input.toString().includes("/rest/v1/dispositivo?")) {
+      return modo === "rede"
+        ? Promise.reject(new TypeError("error sending request: connection reset"))
+        : Promise.resolve(new Response('{"message":"upstream"}', { status: 503 }));
+    }
+    return base(input, init);
+  };
+}
+
+for (const modo of ["http_503", "rede"] as const) {
+  Deno.test(`D-19: leitura de aparelhos falhou (${modo}): nada sai e o aviso volta como erro transitório`, async () => {
+    const enviados: string[] = [];
+    const chamadasFalha: GravarFalhaPushParams[] = [];
+    const item = await enviarNotificacao(
+      "a3000000-0000-4000-8000-0000000000d1",
+      mockLeituraDeAparelhoFalha(modo, enviados),
+      criarMockSqlClient({ chamadasFalha }),
+    );
+    assertEquals(item.status, "pendente");
+    assertEquals(item.detalhe, "erro_transitorio: leitura_de_aparelho");
+    assertEquals(enviados, []);
+    assertEquals(chamadasFalha.length, 1);
+    assertEquals(chamadasFalha[0].permanente, false, "não vira sem_dispositivo permanente");
+    assertEquals(chamadasFalha[0].motivo, "erro_transitorio: leitura_de_aparelho");
+    assert(typeof chamadasFalha[0].proximaTentativaEm === "string", "volta com backoff");
+  });
+}
+
+Deno.test("D-19: a leitura que responde lista vazia continua sendo sem_dispositivo permanente", async () => {
+  const enviados: string[] = [];
+  const chamadasFalha: GravarFalhaPushParams[] = [];
+  const item = await enviarNotificacao(
+    "a3000000-0000-4000-8000-0000000000d2",
+    mockCicloDoToken([], { "a3000000-0000-4000-8000-0000000000d2": CONTA_B }, enviados),
+    criarMockSqlClient({ chamadasFalha }),
+  );
+  assertEquals(item.detalhe, "sem_dispositivo");
+  assertEquals(chamadasFalha[0]?.permanente, true);
 });
 
 // ── Textos de vaga e teto da RN23 (cartão ee3MT3fH) ───────────────────────────
@@ -2037,6 +2093,29 @@ Deno.test("0.2.62: turno_nao_verificado tem titulo e corpo conforme contrato e c
   assert(!notif.body.includes("+55"), "não contém telefone");
 });
 
+// Contrato 0.2.77 / RN15, RN22: Lembretes à casa sobre chegada não confirmada (30min antes e no fim)
+Deno.test("0.2.77: lembrete_30min_fim_turno e lembrete_fim_turno tem titulo e corpo conforme contrato e cabem na tela bloqueada", () => {
+  const lembrete30 = titulosECorposPorTipo("lembrete_30min_fim_turno", {});
+  assertEquals(lembrete30, {
+    title: "Chegada a confirmar",
+    body: "Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos.",
+  });
+  assert(lembrete30.title.length <= 40, "título de lembrete_30min_fim_turno cabe no iPhone SE");
+  assert(lembrete30.body.length <= 110, "corpo de lembrete_30min_fim_turno cabe no iPhone SE");
+  assert(!lembrete30.body.includes("@"), "não contém e-mail");
+  assert(!lembrete30.body.includes("+55"), "não contém telefone");
+
+  const lembreteFim = titulosECorposPorTipo("lembrete_fim_turno", {});
+  assertEquals(lembreteFim, {
+    title: "Turno encerrado",
+    body: "O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas.",
+  });
+  assert(lembreteFim.title.length <= 40, "título de lembrete_fim_turno cabe no iPhone SE");
+  assert(lembreteFim.body.length <= 110, "corpo de lembrete_fim_turno cabe no iPhone SE");
+  assert(!lembreteFim.body.includes("@"), "não contém e-mail");
+  assert(!lembreteFim.body.includes("+55"), "não contém telefone");
+});
+
 // Hardening de Produção (cartão kT7NhMGV): B7, B5, B4, B3
 Deno.test("kT7NhMGV / B7: processarEnvioPush recusa notificacao_id invalido com 422 campo_invalido", async () => {
   const req = new Request("http://localhost/functions/v1/enviar-push", {
@@ -2464,6 +2543,8 @@ Deno.test("RN15 / LGPD: nenhum título ou corpo vaza dados pessoais mesmo com va
     "suspensao",
     "reativacao",
     "turno_nao_verificado",
+    "lembrete_30min_fim_turno",
+    "lembrete_fim_turno",
     "tipo_desconhecido_fallback",
   ];
 

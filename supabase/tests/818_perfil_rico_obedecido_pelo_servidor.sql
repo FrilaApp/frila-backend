@@ -7,6 +7,11 @@
 -- Massa sintética; o arquivo desfaz tudo no rollback.
 
 begin;
+-- 20261113220000 liga foto, chamada direta e perfil rico para todos; este teste parte das chaves
+-- desligadas, como nasceram, e liga o que precisar.
+update privado.recurso set ligado = false where chave in ('chamada_direta', 'perfil_rico');
+update privado.configuracao_app set foto_de_perfil = false;
+delete from privado.recurso_versao_minima where recurso in ('foto_de_perfil', 'chamada_direta', 'perfil_rico');
 insert into privado.ambiente values (true, true) on conflict (id) do update set eh_teste = true;
 set local frila.agora = '2027-01-11 09:00:00+00';
 select plan(28);

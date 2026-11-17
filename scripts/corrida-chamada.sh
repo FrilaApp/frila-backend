@@ -11,9 +11,17 @@
 #   2. Aceite do profissional x cancelamento da casa na mesma chamada: um desfecho só, e o
 #      estado final combina com quem venceu.
 #   3. Duas chamar_profissional simultâneas no mesmo par: uma chamada aberta só (RN34).
+#      3b. Duas simultâneas sem vaga_id para o MESMO trabalho (segundos diferentes, o mesmo minuto),
+#          a profissionais diferentes: uma vaga só; a outra recebe 409 trabalho_ja_aberto com o
+#          vaga_id que a primeira criou, e nenhuma erro de concorrência (0.2.95, #520).
+#      3c. A mesma chave enviada duas vezes ao mesmo tempo: as duas devolvem a mesma chamada
+#          (a chave é relida depois da trava da casa; antes, a 2ª recebia chamada_ja_aberta).
 #   4. Exclusão da conta do profissional x aceite da chamada: a vaga direta nunca vai à fila
 #      do despacho nem é despachada a terceiro, mesmo com um terceiro elegível (conserto do
 #      #434). O motor é chamado no fim para provar que nada sai.
+#   5. A mesma disputa com a ordem forçada por uma terceira conexão, nas três ordens em que o
+#      impasse fechava (#522): nenhum 40P01, e a conta excluída termina sem chamada aberta e
+#      sem turno confirmado.
 #
 # Uso: ./scripts/corrida-chamada.sh        RODADAS=4 ./scripts/corrida-chamada.sh
 set -uo pipefail
@@ -286,6 +294,94 @@ for i in $(seq 1 "$RODADAS"); do
 done
 [ "$erros" = 0 ] && ok "em $RODADAS de $RODADAS rodadas, uma chamada aberta só no par"
 
+# ── 3b e 3c. O mesmo trabalho e a mesma chave ao mesmo tempo (0.2.95) ─────────
+# Os mundos vão de 71 a 90 (RODADAS até 10, como os outros cenários). O horário é calculado uma
+# vez, aqui, e vai literal nas duas conexões: as duas caem no mesmo minuto com segundos diferentes.
+# lado_det: como `lado`, e devolve "code details" (ou 'ok' e o id da chamada criada).
+AUX_DET=$(cat <<'SQL'
+create function pg_temp.tentar_det(conta uuid, q text) returns text language plpgsql as $f$
+declare m text; r jsonb;
+begin
+  perform set_config('request.jwt.claims', json_build_object('sub', conta, 'role', 'authenticated')::text, true);
+  execute 'set local role authenticated';
+  execute q into r;
+  execute 'reset role';
+  return 'ok ' || coalesce(r->>'id', '');
+exception when others then
+  get stacked diagnostics m = message_text;
+  return case when m ~ '^\s*\{' then coalesce(m::jsonb->>'code', 'sem_code') || ' ' || coalesce(m::jsonb->>'details', '')
+              else 'sqlstate:' || sqlstate end;
+end $f$;
+SQL
+)
+lado_det() {
+  local saida=$1 conta=$2 sql=$3
+  (
+    psql <<SQL > "$saida" 2>&1
+$AUX_DET
+begin;
+select pg_temp.tentar_det('$conta', \$q\$ $sql \$q\$);
+select pg_sleep(1);
+commit;
+SQL
+  ) &
+}
+resultado_det() { grep -E '^(ok|[a-z_]+|sqlstate:[^ ]*)( [0-9a-f-]*)?$' "$1" | head -1; }
+# sql_trabalho <mundo> <prof_usuario> <segundos> <chave>: chamada sem vaga_id para o trabalho do mundo.
+sql_trabalho() {
+  local m=$1 prof_usuario=$2 seg=$3 chave=$4 prof
+  prof=$(prof_id "$prof_usuario")
+  cat <<SQL
+select public.chamar_profissional(chave => '$chave', profissional_id => '$prof',
+  estabelecimento_id => '$(id "$m" 10)', funcao_id => (select id from public.funcao where nome = 'garçom'),
+  inicio_em => '$INICIO_3B'::timestamptz + interval '$seg seconds', fim_em => '$INICIO_3B'::timestamptz + interval '5 hours $seg seconds',
+  local => 'CLN 201', regiao_administrativa => 'Plano Piloto', ponto => '{"latitude":-15.7942,"longitude":-47.8822}',
+  valor_centavos => 15000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false,
+  responsavel_local => 'Maitre')
+SQL
+}
+INICIO_3B=$(psql -c "select date_trunc('minute', now()) + interval '3 days';")
+
+echo "▸ 3b. duas chamadas sem vaga_id ao mesmo tempo para o mesmo trabalho, a profissionais diferentes"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  m=$((70 + i)); montar_mundo "$m"
+  lado_det "$TMP/3b-$i-a" "$(id "$m" 1)" "$(sql_trabalho "$m" "$(id "$m" 2)" 5 "$(id "$m" 901)")"
+  lado_det "$TMP/3b-$i-b" "$(id "$m" 1)" "$(sql_trabalho "$m" "$(id "$m" 3)" 41 "$(id "$m" 902)")"
+  wait
+  ra=$(resultado_det "$TMP/3b-$i-a"); rb=$(resultado_det "$TMP/3b-$i-b")
+  vagas=$(psql -c "select count(*) from public.vaga where estabelecimento_id = '$(id "$m" 10)';")
+  vaga=$(psql -c "select string_agg(id::text, ',') from public.vaga where estabelecimento_id = '$(id "$m" 10)';")
+  abertas=$(psql -c "select count(*) from public.chamada where estabelecimento_id = '$(id "$m" 10)' and estado = 'aberta';")
+  # Um lado criou ('ok <chamada>'), o outro recebeu o 409 com a vaga que existe.
+  case "${ra%% *} ${rb%% *}" in
+    "ok trabalho_ja_aberto") recusa=${rb#* } ;;
+    "trabalho_ja_aberto ok") recusa=${ra#* } ;;
+    *) recusa=x ;;
+  esac
+  if [ "$vagas" != 1 ] || [ "$abertas" != 1 ] || [ "$recusa" != "$vaga" ]; then
+    falhou "rodada $i: respostas '$ra'/'$rb', vagas $vagas ($vaga), chamadas abertas $abertas"; erros=$((erros + 1))
+  fi
+done
+[ "$erros" = 0 ] && ok "em $RODADAS de $RODADAS rodadas, uma vaga só e um 409 trabalho_ja_aberto com o vaga_id dela"
+
+echo "▸ 3c. a mesma chave enviada duas vezes ao mesmo tempo"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  m=$((80 + i)); montar_mundo "$m"
+  sql=$(sql_trabalho "$m" "$(id "$m" 2)" 5 "$(id "$m" 903)")
+  lado_det "$TMP/3c-$i-a" "$(id "$m" 1)" "$sql"
+  lado_det "$TMP/3c-$i-b" "$(id "$m" 1)" "$sql"
+  wait
+  ra=$(resultado_det "$TMP/3c-$i-a"); rb=$(resultado_det "$TMP/3c-$i-b")
+  chamadas=$(psql -c "select count(*) from public.chamada where estabelecimento_id = '$(id "$m" 10)';")
+  vagas=$(psql -c "select count(*) from public.vaga where estabelecimento_id = '$(id "$m" 10)';")
+  if [ "${ra%% *}" != ok ] || [ "$ra" != "$rb" ] || [ "$chamadas" != 1 ] || [ "$vagas" != 1 ]; then
+    falhou "rodada $i: respostas '$ra'/'$rb', chamadas $chamadas, vagas $vagas"; erros=$((erros + 1))
+  fi
+done
+[ "$erros" = 0 ] && ok "em $RODADAS de $RODADAS rodadas, as duas devolvem a mesma chamada, e só ela existe"
+
 # ── 4. Exclusão de conta x aceite ──────────────────────────────────────────────
 echo "▸ 4. exclusão da conta do profissional x aceite da chamada"
 erros=0
@@ -311,5 +407,135 @@ for i in $(seq 1 "$RODADAS"); do
   fi
 done
 [ "$erros" = 0 ] && ok "em $RODADAS de $RODADAS rodadas, conta excluída e nada foi à fila nem a terceiro"
+
+# ── 5. Exclusão x aceite, com a ordem forçada (#522) ──────────────────────────
+# O cenário 4 sorteia quem chega primeiro e quase nunca cai na janela do impasse (B-027: 0 em
+# 30 rodadas com o sorteio dele; na CI, 1 em 4). Aqui uma terceira conexão (X) segura uma trava
+# do caminho, e o script só a solta depois de ver em pg_stat_activity cada lado parado na
+# espera em que o ciclo fechava. Nada depende de tempo: a ordem é a mesma em toda rodada, e
+# antes da 20261117010000 toda rodada das três ordens terminava em 40P01.
+#   a. a exclusão primeiro: X segura o aparelho do profissional; a exclusão para no delete do
+#      aparelho com as travas dela tomadas, e o aceite chega depois.
+#   b. o aceite primeiro: X segura a posição da vaga; o aceite para no update dela com a vaga e
+#      a chamada travadas, e a exclusão chega depois. Ela tem de reabrir o turno confirmado.
+#   c. outro profissional aceita a mesma vaga: X segura o aparelho do excluído; o aceite do
+#      outro encerraria a chamada dele e o avisaria.
+# Os mundos vão de 41 a 69 (RODADAS até 9, como os outros cenários até 10).
+
+# segurar <nome> <sql>: a conexão X. Trava e fica parada até `soltar` cancelar a espera dela,
+# o que desfaz a transação e libera a trava na hora.
+segurar() {
+  local nome=$1 sql=$2
+  ( psql <<SQL > "$TMP/$nome" 2>&1
+set application_name = '$nome';
+begin;
+$sql;
+select pg_sleep(60);
+commit;
+SQL
+  ) &
+}
+soltar() { psql >/dev/null -c "select pg_cancel_backend(pid) from pg_stat_activity where application_name like '$1';"; }
+
+# lado_nomeado <nome> <conta|''> <sql>: como `lado`, sem atraso nem espera, com nome visível
+# em pg_stat_activity para o script saber onde ele parou.
+lado_nomeado() {
+  local nome=$1 conta=$2 sql=$3 conta_sql=null
+  [ -n "$conta" ] && conta_sql="'$conta'"
+  ( psql <<SQL > "$TMP/$nome" 2>&1
+set application_name = '$nome';
+$AUX
+begin;
+select pg_temp.tentar($conta_sql, \$q\$ $sql \$q\$);
+commit;
+SQL
+  ) &
+}
+
+# aguardar <nome> <segurando|travado>: até X estar no pg_sleep (com a trava tomada) ou até o
+# lado estar parado numa trava. Desiste em 15 s.
+aguardar() {
+  local nome=$1 onde=$2 cond n=0
+  case "$onde" in
+    segurando) cond="query like 'select pg_sleep%'" ;;
+    travado)   cond="wait_event_type = 'Lock'" ;;
+  esac
+  until [ "$(psql -c "select count(*) from pg_stat_activity where application_name = '$nome' and $cond;")" = 1 ]; do
+    n=$((n + 1)); [ "$n" -ge 150 ] && return 1
+    sleep 0.1
+  done
+}
+
+# Conta as posições confirmadas de quem foi excluído: a exclusão reabre todas.
+confirmadas_de() { psql -c "select count(*) from public.posicao p join public.profissional f on f.id = p.profissional_id where f.usuario_id = '$1' and p.estado = 'confirmada';"; }
+
+echo "▸ 5. exclusão x aceite com a ordem forçada (a: exclusão primeiro, b: aceite primeiro, c: outro aceita a mesma vaga)"
+erros=0; impasses=0
+for i in $(seq 1 "$RODADAS"); do
+  for ordem in a b c; do
+    case "$ordem" in a) m=$((40 + i)) ;; b) m=$((50 + i)) ;; c) m=$((60 + i)) ;; esac
+    montar_mundo "$m"
+    p1=$(id "$m" 2); p2=$(id "$m" 3)
+    read -r c1 vaga < <(chamar_serial "$m" "$p1")
+    c2=
+    [ "$ordem" = c ] && [ -n "${vaga:-}" ] && read -r c2 _ < <(chamar_serial "$m" "$p2" "$vaga")
+    if [ -z "${c1:-}" ] || { [ "$ordem" = c ] && [ -z "${c2:-}" ]; }; then
+      falhou "rodada $i ($ordem): não montei a chamada"; erros=$((erros + 1)); continue
+    fi
+    n="cc-$RUN-$m"
+    case "$ordem" in
+      a)
+        segurar "$n-x" "select 1 from public.dispositivo where usuario_id = '$p1' for update"
+        passos=("$n-x segurando" "excluir" "$n-b travado" "aceitar1" "$n-a travado") ;;
+      b)
+        segurar "$n-x" "select 1 from public.posicao where vaga_id = '$vaga' for update"
+        passos=("$n-x segurando" "aceitar1" "$n-a travado" "excluir" "$n-b travado") ;;
+      c)
+        segurar "$n-x" "select 1 from public.dispositivo where usuario_id = '$p1' for update"
+        passos=("$n-x segurando" "excluir" "$n-b travado" "aceitar2" "$n-a travado") ;;
+    esac
+    parou=
+    for passo in "${passos[@]}"; do
+      case "$passo" in
+        excluir)  lado_nomeado "$n-b" "" "select privado.excluir_conta('$p1')" ;;
+        aceitar1) lado_nomeado "$n-a" "$p1" "select public.responder_chamada('$c1', 'aceitar')" ;;
+        aceitar2) lado_nomeado "$n-a" "$p2" "select public.responder_chamada('$c2', 'aceitar')" ;;
+        *) aguardar ${passo% *} ${passo#* } || { parou=$passo; break; } ;;
+      esac
+    done
+    if [ -n "$parou" ]; then
+      # A ordem não se formou: solta todo mundo da rodada, para o `wait` não ficar no pg_sleep.
+      soltar "$n-%"; wait
+      falhou "rodada $i ($ordem): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+      erros=$((erros + 1)); continue
+    fi
+    soltar "$n-x"
+    wait
+    ra=$(resultado "$TMP/$n-a"); rb=$(resultado "$TMP/$n-b")
+    conta=$(psql -c "select estado from public.usuario where id = '$p1';")
+    e1=$(psql -c "select estado from public.chamada where id = '$c1';")
+    conf1=$(confirmadas_de "$p1")
+    case "$ra$rb" in *40P01*) impasses=$((impasses + 1)) ;; esac
+    case "$ordem" in
+      a) esperado="aceite 'chamada_indisponivel', exclusão 'ok', conta 'anonimizada', chamada 'cancelada', confirmadas 0"
+         obtido="aceite '$ra', exclusão '$rb', conta '$conta', chamada '$e1', confirmadas $conf1" ;;
+      b) fila=$(psql -c "select count(*) from pgmq.q_despacho where message->>'vaga_id' = '$vaga';")
+         esperado="aceite 'ok', exclusão 'ok', conta 'anonimizada', chamada 'aceita', confirmadas 0, fila 0"
+         obtido="aceite '$ra', exclusão '$rb', conta '$conta', chamada '$e1', confirmadas $conf1, fila $fila" ;;
+      c) e2=$(psql -c "select estado from public.chamada where id = '$c2';")
+         conf2=$(confirmadas_de "$p2")
+         esperado="aceite do outro 'ok', exclusão 'ok', conta 'anonimizada', chamada 'cancelada', a do outro 'aceita', confirmadas 0 e 1"
+         obtido="aceite do outro '$ra', exclusão '$rb', conta '$conta', chamada '$e1', a do outro '$e2', confirmadas $conf1 e $conf2" ;;
+    esac
+    if [ "$obtido" != "$esperado" ]; then
+      falhou "rodada $i ($ordem): $obtido"; erros=$((erros + 1))
+    fi
+  done
+done
+if [ "$erros" = 0 ]; then
+  ok "em $RODADAS de $RODADAS rodadas das três ordens, nenhum 40P01 e a conta excluída sem chamada aberta nem turno confirmado"
+else
+  printf '  (%s das rodadas com 40P01)\n' "$impasses" >&2
+fi
 
 exit "$falha"

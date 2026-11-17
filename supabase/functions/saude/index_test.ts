@@ -3,11 +3,12 @@
 //   deno test --allow-all supabase/functions/saude/
 
 import { assertEquals, assertThrows } from "jsr:@std/assert@1.0.19";
-import { criarSqlProbe, getDbUrl, processarSaude, SqlProbe } from "./index.ts";
+import { criarSqlProbe, getDbUrl, InfoSaudeCron, processarSaude, SqlProbe } from "./index.ts";
 
 function probeMock(opcoes: {
   ok?: boolean;
   erro?: boolean;
+  jobs?: InfoSaudeCron;
   onRegistrarFalha?: (origem: string, codigo: string) => void;
 } = {}): SqlProbe {
   return {
@@ -17,6 +18,9 @@ function probeMock(opcoes: {
       }
       return opcoes.ok ?? true;
     },
+    consultarJobs: opcoes.jobs !== undefined
+      ? async () => opcoes.jobs!
+      : undefined,
     registrarFalha: async (origem: string, codigo: string) => {
       opcoes.onRegistrarFalha?.(origem, codigo);
     },
@@ -259,6 +263,134 @@ Deno.test("saude: metodos OPTIONS, PUT, DELETE, PATCH retornam 405 metodo_nao_pe
     assertEquals(json.erro, "metodo_nao_permitido");
   }
 });
+
+Deno.test("bB0tV5R8: GET retorna 200 com metricas de idade quando jobs cron estao saudaveis", async () => {
+  const req = new Request("http://localhost/functions/v1/saude", { method: "GET" });
+  const res = await processarSaude(req, {
+    sqlProbe: probeMock({
+      ok: true,
+      jobs: {
+        saudavel: true,
+        status: "saudavel",
+        despacho_idade_segundos: 24.5,
+        vigia_idade_segundos: 110.0,
+        despacho_ativo: true,
+        vigia_ativo: true,
+      },
+    }),
+  });
+
+  assertEquals(res.status, 200);
+  const json = await res.json();
+  assertEquals(json.ok, true);
+  assertEquals(json.status, "saudavel");
+  assertEquals(typeof json.timestamp, "string");
+  assertEquals(json.despacho_idade_segundos, 24.5);
+  assertEquals(json.vigia_idade_segundos, 110.0);
+
+  // RN15 e Condição b: Sem vazamento de nomes internos de jobs ou tabelas
+  assertEquals(json.reprocessar_despacho, undefined);
+  assertEquals(json.verificar_saude, undefined);
+  assertEquals(json.jobname, undefined);
+  assertEquals(json.tabela, undefined);
+  assertEquals(json.usuario_id, undefined);
+});
+
+Deno.test("bB0tV5R8: GET retorna 503 com status atrasado quando jobs cron estao atrasados", async () => {
+  let falhaRegistrada: { origem: string; codigo: string } | null = null;
+  const req = new Request("http://localhost/functions/v1/saude", { method: "GET" });
+  const res = await processarSaude(req, {
+    sqlProbe: probeMock({
+      ok: true,
+      jobs: {
+        saudavel: false,
+        status: "atrasado",
+        despacho_idade_segundos: 620.0,
+        vigia_idade_segundos: 120.0,
+        despacho_ativo: true,
+        vigia_ativo: true,
+      },
+      onRegistrarFalha: (origem, codigo) => {
+        falhaRegistrada = { origem, codigo };
+      },
+    }),
+  });
+
+  assertEquals(res.status, 503);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.status, "atrasado");
+  assertEquals(typeof json.timestamp, "string");
+  assertEquals(json.despacho_idade_segundos, 620.0);
+  assertEquals(json.vigia_idade_segundos, 120.0);
+  assertEquals((falhaRegistrada as any)?.origem, "saude");
+  assertEquals((falhaRegistrada as any)?.codigo, "jobs_cron_atrasados");
+});
+
+Deno.test("bB0tV5R8: HEAD retorna 503 quando jobs cron estao atrasados", async () => {
+  const req = new Request("http://localhost/functions/v1/saude", { method: "HEAD" });
+  const res = await processarSaude(req, {
+    sqlProbe: probeMock({
+      ok: true,
+      jobs: {
+        saudavel: false,
+        status: "atrasado",
+        despacho_idade_segundos: 400.0,
+        vigia_idade_segundos: 200.0,
+        despacho_ativo: true,
+        vigia_ativo: true,
+      },
+    }),
+  });
+
+  assertEquals(res.status, 503);
+  const text = await res.text();
+  assertEquals(text, "");
+});
+
+Deno.test("bB0tV5R8: HEAD retorna 200 quando ping e jobs cron estao saudaveis", async () => {
+  const req = new Request("http://localhost/functions/v1/saude", { method: "HEAD" });
+  const res = await processarSaude(req, {
+    sqlProbe: probeMock({
+      ok: true,
+      jobs: {
+        saudavel: true,
+        status: "saudavel",
+        despacho_idade_segundos: 15.0,
+        vigia_idade_segundos: 60.0,
+        despacho_ativo: true,
+        vigia_ativo: true,
+      },
+    }),
+  });
+
+  assertEquals(res.status, 200);
+  const text = await res.text();
+  assertEquals(text, "");
+});
+
+Deno.test("bB0tV5R8: GET retorna 503 quando job esta inativo (active = false)", async () => {
+  const req = new Request("http://localhost/functions/v1/saude", { method: "GET" });
+  const res = await processarSaude(req, {
+    sqlProbe: probeMock({
+      ok: true,
+      jobs: {
+        saudavel: false,
+        status: "atrasado",
+        despacho_idade_segundos: 10.0,
+        vigia_idade_segundos: 10.0,
+        despacho_ativo: false,
+        vigia_ativo: true,
+      },
+    }),
+  });
+
+  assertEquals(res.status, 503);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.status, "atrasado");
+});
+
 
 
 

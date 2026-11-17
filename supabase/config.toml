@@ -482,6 +482,13 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
+# Abre a foto de perfil por um link temporário (B-020, contrato 0.2.82): confere o token opaco de 1 h
+# no banco e serve os bytes da miniatura (image/jpeg, private, no-store). O app abre a imagem sem sessão
+# (AsyncImage), por desenho: quem autoriza é o token. verify_jwt ligado recusaria a imagem no gateway.
+[functions.ler-midia]
+enabled = true
+verify_jwt = false
+
 
 
 

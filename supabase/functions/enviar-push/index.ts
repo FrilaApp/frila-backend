@@ -419,11 +419,11 @@ export function titulosECorposPorTipo(
         body: "Check-in manual registrado, aguardando confirmação do contratante.",
       };
     case "cancelamento":
-      // Caso 17 da planilha: a casa reabriu a vaga por falta de check-in.
+      // Caso 17 da planilha (alinhado ao D-13, decisão JP 15/11/2026): falta por atraso declarada pela casa.
       if (variaveis.reaberturaPorAtraso) {
         return {
-          title: "Turno cancelado por atraso",
-          body: "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.",
+          title: "Participação cancelada por atraso",
+          body: "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.",
         };
       }
       return {
@@ -489,6 +489,17 @@ export function titulosECorposPorTipo(
       return {
         title: "Turno não verificado",
         body: "A presença no turno não foi confirmada dentro do prazo. O turno foi encerrado como não verificado.",
+      };
+    // 0.2.77: Lembretes à casa sobre chegada não confirmada (RN15, RN22)
+    case "lembrete_30min_fim_turno":
+      return {
+        title: "Chegada a confirmar",
+        body: "Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos.",
+      };
+    case "lembrete_fim_turno":
+      return {
+        title: "Turno encerrado",
+        body: "O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas.",
       };
     default:
       return {
@@ -561,7 +572,7 @@ export function criarSqlClient(deps?: Dependencias): SqlClient {
         const lista = aparelhos.map((a) => ({ id: a.id, plataforma: a.plataforma, versao_app: a.versao_app ?? null }));
         const res = await sql`
           select x.id
-            from jsonb_to_recordset(${JSON.stringify(lista)}::jsonb) as x(id text, plataforma text, versao_app text)
+            from jsonb_to_recordset(${sql.json(lista)}) as x(id text, plataforma text, versao_app text)
            where privado.recurso_na_versao('chamada_direta', x.plataforma, x.versao_app)
         `;
         return res.map((r) => String(r.id));
@@ -833,14 +844,38 @@ export async function processarEnvioPush(
       continue;
     }
 
-    // 2. Busca todos os aparelhos registrados da conta destinatária
-    const dispRes = await fetchFn(
-      `${supabaseUrl}/rest/v1/dispositivo?usuario_id=eq.${n.usuario_id}&select=id,token_fcm,plataforma,vinculo_id,versao_app`,
-      { headers: dbHeaders },
-    );
-
-    let aparelhos: Array<{ id: string; token_fcm: string; plataforma: string; vinculo_id?: string; versao_app?: string | null }> =
-      dispRes.ok ? await dispRes.json() : [];
+    // 2. Busca todos os aparelhos registrados da conta destinatária. Se a LEITURA falha (rede, 5xx),
+    // não se sabe se há aparelho: é erro passageiro, com backoff, e não "sem_dispositivo" permanente
+    // (D-19: no frila-dev o aviso da casa falhou assim com 1 aparelho registrado).
+    let aparelhos: Array<{ id: string; token_fcm: string; plataforma: string; vinculo_id?: string; versao_app?: string | null }>;
+    try {
+      const dispRes = await fetchFn(
+        `${supabaseUrl}/rest/v1/dispositivo?usuario_id=eq.${n.usuario_id}&select=id,token_fcm,plataforma,vinculo_id,versao_app`,
+        { headers: dbHeaders },
+      );
+      if (!dispRes.ok) throw new Error(`dispositivo_http_${dispRes.status}`);
+      const lidos = await dispRes.json();
+      if (!Array.isArray(lidos)) throw new Error("dispositivo_resposta_invalida");
+      aparelhos = lidos;
+    } catch (_e) {
+      const novaTentativa = n.tentativas + 1;
+      const teto = 5;
+      const atingiuTeto = novaTentativa >= teto;
+      const proximaTentativa = atingiuTeto ? null : calcularProximaTentativa(novaTentativa);
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: "erro_transitorio: leitura_de_aparelho",
+        permanente: false,
+        teto: teto,
+        proximaTentativaEm: proximaTentativa ? proximaTentativa.toISOString() : null,
+      });
+      relatorio.push({
+        notificacao_id: n.id,
+        status: atingiuTeto ? "falhou" : "pendente",
+        detalhe: "erro_transitorio: leitura_de_aparelho",
+      });
+      continue;
+    }
 
     // B5e / CD-RF13, revisto na 0.2.66 (portão (c) do corte por versão): o aviso de chamada direta só
     // sai para aparelho cuja versao_app alcança o mínimo de chamada_direta da plataforma, o mesmo que

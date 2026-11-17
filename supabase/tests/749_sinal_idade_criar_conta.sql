@@ -92,18 +92,18 @@ select is(
 
 -- ── 2. Nada de idade volta para a tela ─────────────────────────────────────────
 --
--- O schema `Usuario` do contrato tem sete campos. A faixa, o método e o instante são
+-- O schema `Usuario` do contrato tem oito campos (o oitavo, `termos_versao`, veio na 0.2.90). A faixa, o método e o instante são
 -- prova de conformidade, não dado do perfil: nem o dono os recebe por aqui.
 select is(
   (select count(*)::int from jsonb_object_keys((select j from r1)) k
-    where k not in ('id','perfil','nome','telefone','email','nascimento','estado')),
+    where k not in ('id','perfil','nome','telefone','email','nascimento','estado','termos_versao')),
   0,
-  'a resposta de criar_conta com sinal_idade traz só os sete campos do schema Usuario');
+  'a resposta de criar_conta com sinal_idade traz só os oito campos do schema Usuario');
 
 select is(
   (select count(*)::int from jsonb_object_keys(
      pg_temp.como('f0000000-0000-4000-8000-0000000007a1', 'select public.minha_conta()')) k
-    where k not in ('id','perfil','nome','telefone','email','nascimento','estado')),
+    where k not in ('id','perfil','nome','telefone','email','nascimento','estado','termos_versao')),
   0,
   'e minha_conta também não devolve sinal_idade, idade_aferida_por nem idade_aferida_em');
 

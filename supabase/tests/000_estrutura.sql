@@ -5,7 +5,7 @@
 -- três clientes, e é o tipo de mudança que passa numa revisão apressada.
 
 begin;
-select plan(37);
+select plan(38);
 
 -- ── As dezoito tabelas marcadas v1, mais `evento` ──────────────────────────────
 --
@@ -41,8 +41,8 @@ select columns_are('public', 'vaga', array[
   'valor_centavos','posicoes','inclui_refeicao','inclui_transporte','exige_material_proprio',
   'responsavel_local','traje','participa_rateio','observacoes','modo','alerta_antecedencia',
   'estado','publicado_em','chave_cliente','publicado_por','regiao_administrativa',
-  'rodada_despacho','republicada_de','origem','vaga_origem_id'
-], 'vaga tem exatamente as colunas da Modelagem, mais quem publicou, regiao_administrativa, rodada_despacho, republicada_de, origem e vaga_origem_id');
+  'rodada_despacho','republicada_de','origem','vaga_origem_id','regiao_id'
+], 'vaga tem exatamente as colunas da Modelagem, mais quem publicou, regiao_administrativa, rodada_despacho, republicada_de, origem, vaga_origem_id e regiao_id (0.2.88)');
 
 -- `checkin_recebido_em` e `checkout_recebido_em` não estão na Modelagem: nasceram com
 -- o registro de presença. `checkin_em` é a hora do toque e `checkin_recebido_em` a hora
@@ -63,6 +63,10 @@ select columns_are('public', 'posicao', array[
   'id','vaga_id','estado','profissional_id','confirmado_em','falta','inicio_em','fim_em',
   'reaberta_por_atraso_de'
 ], 'posicao tem exatamente as colunas da Modelagem, mais a marca da reabertura por atraso');
+
+select columns_are('privado', 'anulacao_falta', array[
+  'posicao_id','operador_id','motivo','ocorrencia_origem_id','ocorrencia_auditoria_id','anulada_em'
+], 'privado.anulacao_falta tem as colunas de auditoria da anulação de falta (RN12)');
 
 -- `termos_versao` e `termos_aceite_em` não estão na Modelagem: vieram do cartão da
 -- entrada por código, que manda gravar o aceite. Guardar "aceitou" como booleano não

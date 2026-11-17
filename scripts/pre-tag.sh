@@ -4,7 +4,7 @@
 # Executa 5 conferências obrigatórias antes de qualquer corte ou publicação
 # de tag no frila-prod (RNF12 e padrões operacionais do projeto):
 #   1. Ancestralidade: a tag (ou commit alvo) DEVE ser ancestral de origin/develop (sem fallback para HEAD silencioso).
-#   2. Janela RNF12: não permite corte dentro da janela proibida (quinta a domingo, 16h-02h SP).
+#   2. Janela RNF12, quando ativa (RNF12_ATIVA=1): não permite corte dentro da janela proibida (quinta a domingo, 16h-02h SP).
 #   3. CHANGELOG: a versão semântica da tag deve estar documentada no commit alvo (git show <commit>:CHANGELOG.md).
 #   4. Migrações imutáveis: nenhuma migração já existente em origin/main pode ter sido alterada (sem falso verde).
 #   5. Migrações sem colisão: nenhuma migração com timestamp duplicado ou formato inválido.

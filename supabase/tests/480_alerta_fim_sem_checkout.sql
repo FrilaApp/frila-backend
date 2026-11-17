@@ -159,8 +159,8 @@ select is(
 
 select is(
   (select valor from privado.parametro_notificacao where chave = 'fim_sem_checkout_janela'),
-  interval '6 hours',
-  'a janela do aviso é parâmetro, e não número solto no meio da função');
+  interval '60 minutes',
+  'a janela do aviso é parâmetro (60 min, a janela do check-out desde a 20261113200000), e não número solto');
 
 -- ── 2. Antes do fim, nada ─────────────────────────────────────────────────────
 

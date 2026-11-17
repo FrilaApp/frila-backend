@@ -1,18 +1,30 @@
 // Probe operacional de saúde para monitoramento externo de disponibilidade (RNF12).
-// Cartão 5bPJvMIo · RNF02, RNF03, RNF12 · RN15.
+// Cartão 5bPJvMIo · RNF02, RNF03, RNF12 · RN15 · Cartão bB0tV5R8.
 //
-// Invocado periodicamente (ex.: a cada 5 minutos) por serviço externo de monitoramento.
-// Executa probe de conectividade e integridade do banco sem expor dados sensíveis ou pessoais.
+// Invocado periodicamente (ex.: a cada ≤15 minutos) por serviço externo de monitoramento.
+// Executa probe de conectividade e monitoramento de idade dos jobs do pg_cron
+// sem expor dados sensíveis, pessoais ou nomes internos de infraestrutura (RN15, condição b).
 //
-//   GET  /functions/v1/saude  -> 200 { "ok": true, "status": "saudavel", ... }
-//   HEAD /functions/v1/saude  -> 200 (sem corpo)
+//   GET  /functions/v1/saude  -> 200 { "ok": true, "status": "saudavel", "timestamp": "...", "despacho_idade_segundos": ..., "vigia_idade_segundos": ... }
+//   HEAD /functions/v1/saude  -> 200 (sem corpo quando saudável) / 503 (sem corpo quando atrasado ou fora)
 //   POST /functions/v1/saude  -> 405 { "ok": false, "erro": "metodo_nao_permitido" }
+//   Jobs cron atrasados       -> 503 { "ok": false, "status": "atrasado", "despacho_idade_segundos": ..., "vigia_idade_segundos": ... }
 //   Falha de banco            -> 503 { "ok": false, "status": "indisponivel", ... }
 
 import postgres from "npm:postgres@3.4.4";
 
+export interface InfoSaudeCron {
+  saudavel: boolean;
+  status: string;
+  despacho_idade_segundos: number | null;
+  vigia_idade_segundos: number | null;
+  despacho_ativo: boolean;
+  vigia_ativo: boolean;
+}
+
 export interface SqlProbe {
   ping: () => Promise<boolean>;
+  consultarJobs?: () => Promise<InfoSaudeCron>;
   registrarFalha?: (origem: string, codigo: string) => Promise<void>;
 }
 
@@ -54,6 +66,39 @@ export function criarSqlProbe(dbUrl?: string): SqlProbe {
         return Boolean(res && res.length > 0);
       });
     },
+    consultarJobs: async () => {
+      return await com(async (sql) => {
+        const rows = await sql`
+          select
+            saudavel,
+            status,
+            despacho_idade_segundos,
+            vigia_idade_segundos,
+            despacho_ativo,
+            vigia_ativo
+          from privado.consultar_saude_cron()
+        `;
+        if (!rows || rows.length === 0) {
+          return {
+            saudavel: false,
+            status: "atrasado",
+            despacho_idade_segundos: null,
+            vigia_idade_segundos: null,
+            despacho_ativo: false,
+            vigia_ativo: false,
+          };
+        }
+        const r = rows[0];
+        return {
+          saudavel: Boolean(r.saudavel),
+          status: String(r.status),
+          despacho_idade_segundos: r.despacho_idade_segundos !== null ? Number(r.despacho_idade_segundos) : null,
+          vigia_idade_segundos: r.vigia_idade_segundos !== null ? Number(r.vigia_idade_segundos) : null,
+          despacho_ativo: Boolean(r.despacho_ativo),
+          vigia_ativo: Boolean(r.vigia_ativo),
+        };
+      });
+    },
     registrarFalha: async (origem: string, codigo: string) => {
       try {
         await com(async (sql) => {
@@ -89,7 +134,16 @@ export async function processarSaude(
     const probe = deps.sqlProbe ?? criarSqlProbe(deps.dbUrl);
     try {
       const ok = await probe.ping();
-      return new Response(null, { status: ok ? 200 : 503 });
+      if (!ok) {
+        return new Response(null, { status: 503 });
+      }
+      if (probe.consultarJobs) {
+        const jobs = await probe.consultarJobs();
+        if (!jobs.saudavel) {
+          return new Response(null, { status: 503 });
+        }
+      }
+      return new Response(null, { status: 200 });
     } catch {
       return new Response(null, { status: 503 });
     }
@@ -114,10 +168,32 @@ export async function processarSaude(
       }, 503);
     }
 
+    let jobs: InfoSaudeCron | undefined;
+    if (probe.consultarJobs) {
+      jobs = await probe.consultarJobs();
+    }
+
+    const agoraIso = new Date().toISOString();
+
+    if (jobs && !jobs.saudavel) {
+      if (probe.registrarFalha) {
+        await probe.registrarFalha("saude", "jobs_cron_atrasados");
+      }
+      return json({
+        ok: false,
+        status: jobs.status || "atrasado",
+        timestamp: agoraIso,
+        despacho_idade_segundos: jobs.despacho_idade_segundos,
+        vigia_idade_segundos: jobs.vigia_idade_segundos,
+      }, 503);
+    }
+
     return json({
       ok: true,
       status: "saudavel",
-      timestamp: new Date().toISOString(),
+      timestamp: agoraIso,
+      despacho_idade_segundos: jobs?.despacho_idade_segundos ?? null,
+      vigia_idade_segundos: jobs?.vigia_idade_segundos ?? null,
     }, 200);
   } catch (_e) {
     if (probe.registrarFalha) {

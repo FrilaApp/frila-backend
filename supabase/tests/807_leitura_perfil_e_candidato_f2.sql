@@ -281,8 +281,8 @@ create temp table perf_estranho as
 
 select is(
   (select res ->> 'nome' from perf_estranho),
-  'Prof Rico',
-  'Critério 3: leitor sem vinculo recebe o nome publico'
+  'Prof R.',
+  'Critério 3: leitor sem vinculo recebe o nome publico, curto: sem candidatura, turno nem equipe só vê "Prof R." (contrato 0.2.89)'
 );
 select is(
   (select res ? 'apresentacao' from perf_estranho),

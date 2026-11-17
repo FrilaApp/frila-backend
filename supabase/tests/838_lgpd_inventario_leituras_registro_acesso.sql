@@ -254,11 +254,11 @@ select throws_ok(pg_temp.linha(ini => '2026-11-09 10:00:01', fi => '2026-11-09 1
   'registro_acesso_leitura_duracao: o fim da leitura não vem antes do início');
 
 -- ─── 10. A rotina diária: um passo que falha não para os outros (decisão da Central, análise do pacote 6) ───
--- Caminho normal: nenhum passo falha, e o resultado tem as 14 chaves dos passos (um passo tirado da lista reprova).
+-- Caminho normal: nenhum passo falha, e o resultado tem as 15 chaves dos passos (a 15ª, a foto e o perfil rico da conta excluída, vem da 20261113210000) (um passo tirado da lista reprova).
 create temp table r838n as select privado.executar_retencao_diaria() as r;
 select is((select r->'falhas' from r838n), '[]'::jsonb, 'caminho normal: nenhum passo falha (falhas = [])');
-select is((select count(*)::int from jsonb_object_keys((select r from r838n)) k where k not in ('executado_em', 'falhas')), 14,
-  'o resultado tem as 14 chaves dos passos');
+select is((select count(*)::int from jsonb_object_keys((select r from r838n)) k where k not in ('executado_em', 'falhas')), 15,
+  'o resultado tem as 15 chaves dos passos');
 -- O passo novo do #459 é forçado a falhar, só dentro desta transação.
 create or replace function privado.limpar_checkin_por_codigo(p_dias integer default 90, p_limite integer default 500)
 returns integer language plpgsql as $$ begin raise exception 'falha forçada no 838' using errcode = 'U0838'; end $$;

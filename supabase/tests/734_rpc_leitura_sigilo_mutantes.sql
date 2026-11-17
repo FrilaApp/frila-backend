@@ -529,7 +529,7 @@ end $$;
 select is(
   (pg_temp.como('c7320000-0000-4000-8000-000000000012',
     $$ select public.perfil_publico('c7320000-0000-4000-8000-000000000021'::uuid) $$))->>'nome',
-  'Pedro Garçom',
+  'Pedro G.',
   'mutante P1 (sem sentido inverso): bloqueado passaria a ver perfil de quem o bloqueou; discriminado'
 );
 

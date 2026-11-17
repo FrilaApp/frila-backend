@@ -5,7 +5,16 @@
 -- `foto_de_perfil` chegava, e só quando ligada.
 
 begin;
+-- 20261113220000 liga foto, chamada direta e perfil rico para todos; este teste parte das chaves
+-- desligadas, como nasceram, e liga o que precisar.
+update privado.recurso set ligado = false where chave in ('chamada_direta', 'perfil_rico');
+update privado.configuracao_app set foto_de_perfil = false;
+delete from privado.recurso_versao_minima where recurso in ('foto_de_perfil', 'chamada_direta', 'perfil_rico');
 select plan(14);
+
+-- Este arquivo mede as outras três chaves. O check-in por código nasce ligado desde 20261112230000 (vale
+-- para todos; a prova é o 852 e o 819), então aqui se desliga para ele ficar false como nas asserções.
+update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
 -- Desde 0.2.65 (20261108150000), um recurso só liga com a chave e um mínimo por plataforma, para
 -- a versao_app que o app manda. Este arquivo mede as chaves com o mínimo alcançado (1.2.0 nas
@@ -23,8 +32,8 @@ select is((select ligado from privado.recurso where chave = 'chamada_direta'), f
 
 -- 2. Tudo desligado: os quatro chegam, e chegam false.
 update privado.configuracao_app set foto_de_perfil = false;
-select is(pg_temp.recursos(), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false}'::jsonb,
-  'tudo desligado: os quatro vêm false (checkin_por_codigo desde a 0.2.68)');
+select is(pg_temp.recursos(), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false, "busca_profissionais": false}'::jsonb,
+  'tudo desligado: os cinco vêm false (checkin_por_codigo desde a 0.2.68, busca_profissionais desde a 0.2.88)');
 
 -- 3. Cada chave, sozinha, chega ao app; as outras continuam false.
 update privado.recurso set ligado = true where chave = 'perfil_rico';
@@ -50,7 +59,7 @@ update privado.configuracao_app set foto_de_perfil = false;
 -- 4. Desligar de novo volta a false (nada fica em cache).
 update privado.recurso set ligado = true where chave in ('perfil_rico', 'chamada_direta');
 update privado.recurso set ligado = false where chave in ('perfil_rico', 'chamada_direta');
-select is(pg_temp.recursos(), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false}'::jsonb,
+select is(pg_temp.recursos(), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false, "busca_profissionais": false}'::jsonb,
   'religar e desligar volta a false');
 
 -- 5. Sem a linha da chave, o app recebe false, e não erro.

@@ -320,6 +320,15 @@ VIGIADAS = {
     ("definirPreferenciaChamadas", "403"): "sem_permissao",
     ("definirPreferenciaChamadas", "404"): "nao_encontrado",
     ("definirPreferenciaChamadas", "422"): "campo_obrigatorio",
+    # Busca de profissionais (0.2.88): vigiada desde o nascimento.
+    ("buscarProfissionais", "401"): "nao_autenticado",
+    ("buscarProfissionais", "403"): "sem_permissao",
+    ("buscarProfissionais", "422"): "campo_obrigatorio",
+    ("buscarProfissionais", "429"): "limite_excedido",
+    # aceitar_termos (0.2.90): 401 sem sessão, 404 login sem conta, 422 versão vazia (campo_obrigatorio) ou não publicada.
+    ("aceitarTermos", "401"): "nao_autenticado",
+    ("aceitarTermos", "404"): "nao_encontrado",
+    ("aceitarTermos", "422"): "campo_invalido",
     ("responderChamada", "401"): "nao_autenticado",
     ("responderChamada", "403"): "sem_permissao",
     ("responderChamada", "404"): "nao_encontrado",
@@ -386,6 +395,13 @@ ISENTAS = {
     ("excluirConta", "401"): "validação de credencial JWT é feita pela Edge Function excluir-conta",
     ("excluirConta", "405"): "método não permitido é decidido pela Edge Function excluir-conta",
     ("excluirConta", "422"): "confirmação explícita no corpo ({ confirmar: true }) é exigida pela Edge Function excluir-conta",
+    # A ler-midia (0.2.82) é chamada pela URL que a leitura entrega, sem sessão; as recusas são da
+    # Edge Function e estão em supabase/functions/ler-midia/index_test.ts. A decisão do banco que
+    # vira o 404 (privado.resolver_link_leitura_midia) está no pgTAP 858.
+    ("lerMidia", "404"): "link inválido, vencido, esgotado ou sem vínculo: o 404 único é decidido pela Edge Function ler-midia (Deno + pgTAP 858)",
+    ("lerMidia", "405"): "método não permitido é decidido pela Edge Function ler-midia",
+    ("lerMidia", "502"): "falha do Storage ao servir a miniatura, tratada pela Edge Function ler-midia",
+    ("lerMidia", "503"): "banco indisponível para a Edge Function ler-midia",
 }
 
 

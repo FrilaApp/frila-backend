@@ -50,7 +50,7 @@ PR se ajusta, ou o contrato muda primeiro, num PR próprio, no repositório do F
 
 ## 3. As políticas de acesso
 
-Contra `frila-docs/banco-de-dados/Modelagem de Banco de Dados.md`, seção
+Contra `frila-documentacao/banco-de-dados/Modelagem de Banco de Dados.md`, seção
 *Políticas de acesso (RLS)*. Três frases, e todas valem:
 
 1. **Escrita só por função.** Nenhuma tabela ganha política de `insert`, `update` ou

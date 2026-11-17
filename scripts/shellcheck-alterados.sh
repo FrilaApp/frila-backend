@@ -87,7 +87,7 @@ fi
 
 status=0
 for f in "${ARQUIVOS[@]}"; do
-  if ! shellcheck "${SC_ARGS[@]}" "$f"; then
+  if ! shellcheck ${SC_ARGS[@]+"${SC_ARGS[@]}"} "$f"; then
     status=1
   fi
 done

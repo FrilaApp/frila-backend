@@ -87,7 +87,7 @@ function segredoValido(req: Request, segredoEsperado: string): boolean {
   return segredoAgendadorValido(req, segredoEsperado, { permitirBearer: false });
 }
 
-function criarSqlClient(deps?: HandlerDeps): SqlClient {
+export function criarSqlClient(deps?: HandlerDeps): SqlClient {
   if (deps?.sqlClient) {
     return deps.sqlClient;
   }
@@ -130,7 +130,7 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
             select privado.validar_expurgo_midia_perfil(
               ${verificacaoId}::uuid,
               ${bucket ?? "midia-perfil"},
-              ${JSON.stringify(caminhos ?? [])}::jsonb
+              ${sql.json(caminhos ?? [])}
             ) as ok
           `;
           return res[0]?.ok === true;

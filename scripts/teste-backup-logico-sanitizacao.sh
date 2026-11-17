@@ -151,15 +151,19 @@ mkdir -p "$pasta_backup"
 bin_mock="$diretorio_teste/bin"
 mkdir -p "$bin_mock"
 
+# Os mocks guardam a linha de comando e o PGPASSWORD que receberam (B-027.j); o teste confere no fim.
 cat << 'EOF' > "$bin_mock/psql"
 #!/bin/bash
+printf 'psql %s\n' "$*" >> "$BACKUP_TESTE_LINHAS"
+printf '%s\n' "${PGPASSWORD-<ausente>}" >> "$BACKUP_TESTE_SENHAS"
 if [[ "$*" == *"server_version_num"* ]]; then
   printf '170006\n'
   exit 0
 fi
 if [[ -n "${BACKUP_WORK_DIR:-}" ]]; then
+  # Como o \! do psql de verdade: o pg_dump herda o ambiente do psql e recebe a URL sem a senha.
   export BACKUP_SNAPSHOT="00000003-00000001-1"
-  pg_dump --dbname "$BACKUP_DB_URL" 2>"$BACKUP_WORK_DIR/pg_dump.err" || true
+  pg_dump --dbname "$BACKUP_DB_URL_SEM_SENHA" 2>"$BACKUP_WORK_DIR/pg_dump.err" || true
 fi
 exit 0
 EOF
@@ -172,6 +176,8 @@ if [[ "$*" == *"--version"* ]]; then
   printf 'pg_dump (PostgreSQL) 17.6\n'
   exit 0
 fi
+printf 'pg_dump %s\n' "$*" >> "$BACKUP_TESTE_LINHAS"
+printf '%s\n' "${PGPASSWORD-<ausente>}" >> "$BACKUP_TESTE_SENHAS"
 printf 'pg_dump: error: connection to server at "54.232.123.45", port 5432 failed\n' >&2
 printf 'FATAL: password authentication failed for user "postgres.abcdefghijklmnop"\n' >&2
 printf 'psql: error: token "SenhaDecodificada@123#ComArroba" unexpected\n' >&2
@@ -204,11 +210,30 @@ export BACKUP_DB_URL="postgresql://backup_ro:SenhaDecodificada%40123%23ComArroba
 export BACKUP_PUBLIC_KEY="age1mockdestinationkey000000000000000000000000000000000000000000000"
 export BACKUP_DIR="$pasta_backup"
 export BACKUP_CIPHER="age"
+export BACKUP_TESTE_LINHAS="$diretorio_teste/linhas-de-comando.txt"
+export BACKUP_TESTE_SENHAS="$diretorio_teste/pgpassword.txt"
+: > "$BACKUP_TESTE_LINHAS"
+: > "$BACKUP_TESTE_SENHAS"
 
 set +e
 saida_exec=$("$script_backup" 2>&1)
 codigo_exec=$?
 set -e
+
+# A senha (codificada ou decodificada) nunca vai na linha de comando do psql nem do pg_dump: elas recebem a URL
+# sem a senha, e a senha chega decodificada só em PGPASSWORD (B-027.j). Os arquivos não são impressos.
+grep -q '^psql ' "$BACKUP_TESTE_LINHAS" || falhar "o psql de mentira não foi chamado."
+grep -q '^pg_dump ' "$BACKUP_TESTE_LINHAS" || falhar "o pg_dump de mentira não foi chamado pelo psql."
+if grep -F -q 'SenhaDecodificada' "$BACKUP_TESTE_LINHAS"; then
+  falhar "a senha foi na linha de comando do psql ou do pg_dump."
+fi
+if grep -v -F -q -- '--dbname postgresql://backup_ro@AWS-0-SA-EAST-1.POOLER.SUPABASE.COM:5432/postgres' "$BACKUP_TESTE_LINHAS"; then
+  falhar "algum psql ou pg_dump não recebeu a URL sem a senha."
+fi
+if grep -v -x -F -q 'SenhaDecodificada@123#ComArroba' "$BACKUP_TESTE_SENHAS"; then
+  falhar "algum psql ou pg_dump não recebeu a senha decodificada em PGPASSWORD."
+fi
+printf '   ✓ Senha fora da linha de comando: psql e pg_dump recebem a URL sem senha e a senha decodificada em PGPASSWORD.\n'
 
 # Asserções de segurança na saída da execução
 if (( codigo_exec != 1 )); then

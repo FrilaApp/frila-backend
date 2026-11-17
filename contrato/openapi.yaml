@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.75
+  version: 0.2.95
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -22,7 +22,8 @@ info:
       parte (perfil público, contato) também sai por função, só com as colunas permitidas. As políticas
       estão na Modelagem de Banco de Dados.
     - **Três portas.** `rest/v1` (tabelas e RPC), `auth/v1` (Supabase Auth, pelo SDK) e `functions/v1`
-      (Edge Functions, só onde o Postgres não basta: arquivos de exportação e exclusão de conta).
+      (Edge Functions, só onde o Postgres não basta: arquivos de exportação, exclusão de conta e os
+      bytes da foto de perfil, que entram por `enviar-midia` e saem por `ler-midia`).
     - **O despacho não aparece aqui.** Notificar os elegíveis, agrupar, respeitar o teto, lembrar,
       alertar e fechar o modo seleção é trabalho do agendador (`pg_cron` + fila `pgmq` + Edge
       Function), fora da requisição (B15). Os clientes só registram o dispositivo e recebem o push.
@@ -83,11 +84,13 @@ info:
     | 422 | `campo_obrigatorio` | Falta campo exigido; `details` diz qual (na vaga, RN02) |
     | 422 | `cursor_invalido` | Cursor de outra lista, vencido ou adulterado (0.2.56) |
     | 409 | `chamada_ja_aberta` | O par estabelecimento e profissional já tem chamada aberta (0.2.55, RN34) |
+    | 409 | `trabalho_ja_aberto` | `chamar_profissional`: a casa já tem vaga direta com chamada aberta para o mesmo trabalho (mesma função, mesmo início e mesmo fim). `details` traz o `vaga_id` dela, e o app repete a chamada com esse `vaga_id` (0.2.95) |
     | 409 | `chamada_indisponivel` | Responder ou cancelar chamada que não está aberta; `details`: `aceita`, `recusada`, `expirada`, `cancelada` ou `encerrada` (0.2.55) |
     | 409 | `recorrencia_nao_confirmada` | 3ª chamada da mesma casa pessoa física ao mesmo profissional em 7 dias sem `confirmo_recorrencia: true` (0.2.55, RN45) |
     | 422 | `profissional_indisponivel` | A chamada fura preferência ou limite do profissional; `details`: `nao_aceita_chamadas`, `antecedencia_insuficiente`, `agenda_cheia`, `pausado`, `par_em_pausa` ou `par_bloqueado_temporariamente` (0.2.55, RN30, RN33, RN34; os três últimos listados na 0.2.67). `pausa_por_recusas` foi listado na 0.2.55, mas o servidor não o devolve |
     | 422 | `limite_de_chamadas` | Limite do estabelecimento; `details`: `por_vaga`, `abertas`, `por_dia` ou `conta_nova` (0.2.55, RN34) |
     | 403 | `sem_permissao` + `recurso_desligado` | O recurso está desligado no servidor (`ConfiguracaoDoApp.recursos`, 0.2.54, RN46) |
+    | 403 | `sem_permissao` + `termos_pendentes` | A busca de profissionais (e o caminho da busca em `chamar_profissional`) exige os Termos 1.1 ou mais novos aceitos; o app pede o aceite em `aceitar_termos` (0.2.90) |
     | 409 | `midia_indisponivel` | `pedir_nova_analise_midia` em mídia que não está `recusada` nem `nao_publicada`; `details: estado_invalido` ou `expurgada` (0.2.54) |
     | 422 | `midia_invalida` | Mídia recusada na entrada; `details`: `formato`, `tamanho`, `metadados` (tipo pelo cabeçalho ou EXIF presente), `limite_atingido` ou `tipo_indisponivel` (0.2.54) |
     | 422 | `funcao_nao_marcada` | `definir_servicos` com função que o profissional não marcou no perfil (0.2.53, RN27) |
@@ -101,8 +104,10 @@ info:
     | 422 | `horario_invalido` | Fim antes do início, ou turno no passado |
     | 422 | `inelegivel` | `details`: `turno_sobreposto` (RN21), `perfil_suspenso` (RN13) ou `funcao_incompativel` (RN05) |
     | 422 | `avaliacao_indisponivel` | `details`: `antes_do_fim` ou `sem_presenca_verificada` (RN07) |
-    | 422 | `fora_da_janela` | Check-in ou check-out fora da janela que a regra permite para o turno (RN22) |
-    | 422 | `codigo_invalido` | Código de check-in recusado (0.2.68): errado, vencido, de outro turno, sem localização ou lido a mais de 50 m (raio provisório de validação). Um código só, sem `details`, para não dizer a quem tenta qual foi o motivo |
+    | 422 | `fora_da_janela` | Check-in ou check-out fora da janela que a regra permite para o turno (RN22); desde a 0.2.80 (check-in) e a 0.2.83 (check-out), inclui toques que chegam ao servidor depois do limite (fim previsto para check-in, fim previsto + 60 min para check-out) |
+    | 422 | `fora_do_raio` | Leitura do código de check-in com distância superior ao raio de validação (50 m provisório). Não conta como tentativa errada (0.2.76) |
+    | 422 | `sem_localizacao` | Leitura do código de check-in sem posição do aparelho (`distancia_m` nulo). Não conta como tentativa errada; orienta confirmação manual (0.2.76) |
+    | 422 | `codigo_invalido` | Código de check-in recusado (0.2.68): errado, vencido ou de outro turno lido dentro do raio de validação (0.2.76). Um código só, sem `details`. Conta como tentativa errada |
     | 422 | `a_caminho_fora_da_janela` | Chamada de `avisar_a_caminho` fora da janela permitida (de 3 h antes até 15 min depois do início do turno) (US14, RF12) |
     | 422 | `registro_no_futuro` | Instante de check-in ou check-out adiante do relógio do servidor. O relógio que vale é o do servidor, nunca o do aparelho |
     | 422 | `reabertura_antes_da_tolerancia` | Reabrir por atraso antes dos 15 minutos (D06) |
@@ -111,6 +116,222 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.95, de 16/11/2026.** Uma casa não abre duas vagas diretas para o mesmo trabalho
+    (frila-backend#520, achado da revisão do app na bateria da busca). Adição compatível: um código
+    de erro novo em `chamar_profissional` e uma frase em `publicar_a_partir_da_chamada`. Nenhum campo,
+    operação ou resposta de sucesso muda. Os números 0.2.92 a 0.2.94 foram pulados: os PRs abertos
+    #256 a #258 sobem para 0.2.96 ou mais ao entrar depois desta (a CI recusa versão menor).
+    - **O problema:** pela busca, a 1ª chamada sem `vaga_id` cria a vaga direta, e a 2ª e a 3ª usam
+      o `vaga_id` dela. O servidor não impedia outra chamada sem `vaga_id` para o mesmo trabalho:
+      nascia uma segunda vaga direta, e duas pessoas podiam aceitar o que a casa via como um
+      trabalho só. A `chave` só cobre o reenvio da mesma chamada.
+    - **A decisão: recusar, e não reaproveitar.** A chamada recebe `409 trabalho_ja_aberto`, com o
+      `vaga_id` do trabalho aberto em `details`, e o app a repete com esse `vaga_id`. A 2ª chamada
+      vai sempre com os termos da vaga aberta; se o valor ou os inclusos digitados forem
+      diferentes, o app mostra os da vaga e pede a confirmação da casa antes de repetir. Reaproveitar
+      a vaga em silêncio foi descartado por dois motivos:
+      1. a chamada sem `vaga_id` traz os próprios termos (valor, local, inclusos). Reaproveitar
+         jogaria esses termos fora sem a casa saber, ou mudaria os da vaga com chamada aberta, o
+         que a CD-C04 proíbe. Com a recusa, a diferença aparece na tela;
+      2. reaproveitar mudaria o que o sucesso quer dizer numa operação que já existe (chamada sem
+         `vaga_id` deixaria de criar vaga). A recusa é só um código a mais.
+    - **Mesmo trabalho:** a mesma casa, a mesma função, o mesmo início e o mesmo fim, comparados
+      **até o minuto** (os apps mandam os segundos do relógio). O valor, o local, a região e os
+      inclusos não entram: são termos do trabalho, e não o que o identifica.
+    - **Trabalho aberto:** a vaga direta `publicada`, com início no futuro, posição livre e pelo
+      menos uma chamada `aberta` e ainda no prazo. Sem chamada aberta, ninguém pode aceitar, e a casa pode chamar de
+      novo com outros termos (CD-C04, CD-C10): aí a chamada sem `vaga_id` cria vaga nova, como antes.
+    - **Ordem, corrida e `chave`:** a recusa sai logo depois de `409 chamada_ja_aberta`, antes de
+      qualquer conferência sobre o profissional, e não revela nada dele. Duas chamadas ao mesmo
+      tempo para o mesmo trabalho, a profissionais diferentes: uma cria a vaga, a outra recebe a
+      recusa com o `vaga_id` criado.
+      Reenviar a mesma `chave` continua devolvendo a mesma chamada. O texto completo está em
+      `chamar_profissional`.
+    - **App que não conhece o código:** o iOS 1.2.0 (TestFlight) mostra o erro genérico da tela da
+      chamada ("Não foi possível concluir a chamada. Verifique sua conexão e tente novamente.") e
+      segue. O Android e as telas da busca do iOS tratam código desconhecido como resultado incerto
+      e travam a folha ou a busca até a pessoa fechar a tela. Por isso os dois apps têm de tratar
+      `trabalho_ja_aberto` como recusa definitiva e repetir com o `vaga_id` no mesmo ciclo, antes de
+      a regra chegar ao ambiente deles, e a versão que for à loja tem de conhecer o código. O iOS 1.2.0
+      nunca manda `vaga_id`, então só vê a recusa ao chamar outra pessoa para a mesma função e o
+      mesmo horário (até o minuto) **enquanto** a primeira chamada está aberta. Respondida, expirada
+      ou cancelada a primeira, a chamada passa. O caminho em sequência (um recusou, chama outro) não
+      muda. Limite que fica: quem não mexe no horário manda "agora + 24 h", que muda a cada
+      abertura da folha; nenhuma regra de igualdade pega isso, e quem segura é o app.
+    - **`publicar_a_partir_da_chamada`:** ao converter uma vaga direta, encerra também as outras
+      vagas diretas da casa para o mesmo trabalho (até o minuto) que ainda estão `publicada`, com ou
+      sem chamada aberta, e as chamadas abertas delas, com o mesmo aviso. A vaga `preenchida` não é
+      tocada (é a outra pessoa do mesmo horário, já confirmada). Assim "Publicar para todos" numa vaga antiga, sem chamada aberta, não deixa uma vaga
+      normal despachada ao lado de uma chamada aberta em outra vaga direta (CD-C15).
+    - **Fica para outra versão:** não há campo para a casa dizer que quer duas pessoas da mesma
+      função no mesmo horário por chamada direta (hoje: um trabalho de cada vez, ou vaga normal com
+      duas posições), e uma chamada direta nova ao lado de uma vaga normal aberta para o mesmo
+      horário não é recusada.
+
+    **Versão 0.2.91, de 16/11/2026.** Só descrição: a versão `2026-11-16` (Termos de Uso 1.2 e Política
+    de Privacidade 1.3, no ar em frilabr.com desde 16/11/2026 às 17:48) entra na lista de versões
+    publicadas. Nenhum campo, operação ou código muda.
+    - **O que o app manda:** a versão que a tela mostra, hoje `2026-11-16`, tanto em `aceitar_termos`
+      quanto em `criar_conta.termos_versao`. Assim o aceite aponta para o texto que está na página.
+    - **O que a busca exige não muda:** `2026-11-13` (Termos 1.1) ou mais nova. A 1.2 não muda o que
+      foi aceito, e quem já aceitou a `2026-11-13` não precisa aceitar de novo.
+
+    **Versão 0.2.90, de 16/11/2026.** A busca de profissionais exige os Termos 1.1 aceitos (decisão do
+    Cauê, pedido 2026-11-16-12, item 2; parecer do Juiz I6 no P-026J). Adição compatível: uma
+    operação nova, um campo opcional em `Usuario`, dois em `CartaoProfissional` e um `details` novo em
+    `403 sem_permissao`.
+    - **Por quê:** quem tem conta de antes de 13/11/2026 e não aceitou os Termos 1.1 no app não está
+      preso à regra de uso dos dados do profissional (Termos, seção 10.1), e a busca abre o perfil de
+      quem ligou "Aceito chamadas diretas" a qualquer contratante.
+    - **`buscar_profissionais`** responde `403 sem_permissao` (`termos_pendentes`) ao contratante cuja
+      última versão aceita é anterior a `2026-11-13`. O app pede o aceite e repete a busca.
+    - **Pela busca**, sem o aceite: `chamar_profissional` responde a mesma recusa quando o vínculo de
+      trabalho falta, e `perfil_publico` não conta a busca como vínculo de leitura.
+    - **`POST /rpc/aceitar_termos`** (nova): registra o aceite de uma versão dos Termos e da Política
+      por quem já tem conta, com o instante carimbado pelo servidor.
+    - **`Usuario.termos_versao`** (opcional, em `minha_conta`): a última versão aceita, para o app
+      saber se precisa pedir o aceite.
+    - **Foto na busca** (decisão do Cauê, pedido 2026-11-16-13, CD-B07): `CartaoProfissional` ganha
+      `foto_url` e `foto_id` opcionais (foto aprovada, se houver), e o vínculo de leitura pela busca
+      passa a abrir também a foto em `perfil_publico`. A foto nunca filtra nem ordena (RN39).
+
+    **Versão 0.2.89, de 16/11/2026.** Só descrição: a regra do nome do profissional fica fechada
+    para todo leitor (pedido da Forja, B-027 PR 2, parecer do Lince Opus). Nenhum campo, operação ou
+    código muda, e o app não precisa mudar.
+    - **`PerfilPublico.nome` de profissional** vem inteiro só para o próprio profissional e para o
+      contratante membro de uma casa com vínculo com ele: candidatura numa vaga da casa, turno entre
+      eles ou equipe de confiança. Qualquer outro leitor recebe o primeiro nome e a inicial do
+      sobrenome ("Maria L."). Isso inclui outro profissional, o contratante sem casa e o contratante
+      de casa sem vínculo. A 0.2.88 dizia só o caso do contratante sem vínculo.
+    - **`ItemBloqueio.nome`** segue a mesma regra.
+
+    **Versão 0.2.88, de 16/11/2026.** Busca de profissionais (pedido do Cauê 2026-11-16-03;
+    `historico/produto/contratacao-direta/01-especificacao.md`, CD-B01 a CD-B11, e
+    `historico/requisitos/contratacao-direta-v1.1.md`, RN39 e RN40), com os filtros reduzidos aos
+    três do fluxo aprovado: serviço, região e horário. Adição compatível: uma operação e um schema
+    novos, um campo opcional em `RecursosDoApp`, dois em `definir_preferencia_chamadas`, dois em
+    `PreferenciaChamadas` e um em `MeusDados`. Nenhum código de erro novo, e o app 1.2 não precisa mudar.
+    - **`POST /rpc/buscar_profissionais`** (leitura em `POST`, porque grava o contador do limite): o contratante procura por serviço (obrigatório), região
+      e horário. Só aparece quem a chamada aceitaria. A reputação não ordena (D2). Com horário, quem
+      tem a grade livre nesse horário vem primeiro, com o selo `disponivel_no_horario`.
+    - **"Aceito chamadas diretas"**: `definir_preferencia_chamadas` ganha `aceita_chamadas`
+      (desligado por padrão) e `versao_texto_busca`, a versão do texto que o profissional viu ao
+      ligar. É o registro do pedido do titular (LGPD, art. 7º, V, parecer J1), e não consentimento.
+      A resposta diz o que ainda falta para aparecer (`pendencias_para_busca`). O registro vai à
+      exportação (`MeusDados.registros_aceita_chamadas`, opcional).
+    - **`chamar_profissional`** passa a aceitar também quem está na busca, sem vínculo de trabalho,
+      e ganha `regiao_id` opcional, copiado da busca. O caminho do vínculo continua igual.
+    - **`perfil_publico`**: para contratante, o profissional com `aceita_chamadas` ligado passa a
+      contar como vínculo de leitura do perfil rico, com ou sem pausa. Por esse vínculo, o nome vem
+      só com o primeiro nome e a inicial. A foto, não: ela segue só com o vínculo de leitura da
+      0.2.54 e não vem no cartão da busca.
+    - **`RecursosDoApp.busca_profissionais`**: chave por versão do app, na regra da 0.2.65. Só vem
+      `true` com `chamada_direta` também `true`.
+    - **"Publicar para todos"** não tem operação nova: com a busca vazia, o app abre `publicar_vaga`
+      já com o serviço, a região e o horário; depois de recusa ou expiração, usa
+      `publicar_a_partir_da_chamada` (0.2.56).
+    - **Fica para outra versão** (aditivo): os filtros de preço, "leva material", especialidades e
+      "já trabalhou comigo" (CD-B02 e CD-B05).
+
+    **Versão 0.2.84, de 15/11/2026.** Alinhamento do push de cancelamento por atraso com a falta (D-13, decisão JP 15/11/2026).
+    - **Push de cancelamento por atraso:** quando uma posição é reaberta por atraso (`public.reabrir_por_atraso`, motivo estável `reabertura_por_atraso`), a notificação `cancelamento` enviada exclusivamente ao profissional removido passa a ter título "Participação cancelada por atraso" e corpo "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.", explicitando a penalidade e refletindo com precisão que a saída decorreu de iniciativa do estabelecimento.
+
+    **Versão 0.2.83, de 14/11/2026.** Check-out recebido depois de fim previsto + 60 min é recusado com tolerância zero (RN22, decisão JP 14/11/2026).
+    - **`POST /rpc/fazer_checkout`:** além da janela conferida pelo instante informado pelo aparelho (`registrado_em`), o servidor recusa com `422 fora_da_janela` qualquer check-out que ele **receber** após `fim_em + 60 min`, sem tolerância (mesmo desenho do check-in na 0.2.80), inclusive toques guardados offline e sincronizados após o limite.
+    - **Demonstração:** a conta de demonstração/revisão da App Store (`usuario.demonstracao`) continua isenta da janela de turno (atravessa sem recusa de `fora_da_janela`), mantendo a trava de `registro_no_futuro`.
+    - **Repetição:** reenvio de check-out após `fim_em + 60 min` num turno que já possui check-out é recusado com `422 fora_da_janela`, preservando intacto o registro anterior.
+
+    **Versão 0.2.82, de 14/11/2026.** A foto de perfil passa a ser lida por um link da Edge Function
+    `ler-midia`, e não mais por uma URL assinada pelo Storage. Nenhum campo, operação ou código muda, e
+    o app 1.2 não precisa mudar: `foto_url` e `Midia.url` continuam uma URL que devolve a imagem.
+    - **Por quê:** a URL assinada era montada no banco com o segredo JWT legado do Storage, que não
+      existe nos ambientes e cuja cópia foi vetada (parecer do Lince Codex, 08/11/2026). Por isso a
+      foto aprovada nunca aparecia.
+    - **`PerfilPublico.foto_url` e `Midia.url`:** `…/functions/v1/ler-midia?midia_id=…&token=…`, com
+      token opaco de 1 h, cunhado na leitura depois de conferir o vínculo. O `GET` dessa URL devolve
+      os bytes (`image/jpeg`, `Cache-Control: private, no-store`), sem redirecionar; qualquer recusa é
+      `404 nao_encontrado`. A cada `GET` o servidor confere de novo o vínculo, o bloqueio, a foto, os
+      titulares e o recurso. O link aceita no máximo 120 `GET`.
+    - **`minhas_midias`:** passa a trazer `url` para a foto `aprovada`, como a 0.2.54 já declarava.
+    - **Leitura em `GET`:** o PostgREST roda `GET` numa transação só-leitura, e ali o link não pode
+      ser gravado. Por isso `foto_url`/`foto_id` (de `perfil_publico`, `candidatos_da_vaga` e
+      `detalhe_chamada`) e `Midia.url` só vêm quando a RPC é chamada por `POST`. Por `GET`, ficam
+      ausentes, e o resto da resposta não muda.
+
+    **Versão 0.2.81, de 13/11/2026.** Só texto, sem mudança de comportamento, de RPC ou de esquema.
+    - **`POST /rpc/fazer_checkout`:** passa a dizer os números da janela que o servidor já aplica desde
+      a migração 20261111180000 (`privado.exigir_janela_checkout`): de 60 minutos antes do início
+      previsto até 60 minutos depois do fim previsto (`fim_em`), pelo `registrado_em`. Fora disso,
+      `422 fora_da_janela`. O app usa a mesma conta para esconder "Fazer check-out" depois de
+      `fim_em + 60 min`; a conta de demonstração continua isenta.
+
+    **Versão 0.2.80, de 13/11/2026.** Check-in recebido depois do fim previsto do turno é recusado com tolerância zero (RN22).
+    - **`POST /rpc/fazer_checkin`:** além da janela aferida pelo relógio do aparelho (`registrado_em`), o servidor recusa com `422 fora_da_janela` qualquer toque que ele **receber** após o término previsto do turno (`fim_em`), sem tolerância, inclusive toques enfileirados offline e enviados após a volta da conectividade.
+    - **Demonstração:** a conta de demonstração/revisão da App Store (`usuario.demonstracao`) continua atravessando a janela de turno sem recusa de `fora_da_janela` (recebe 200 mesmo após o fim).
+
+    **Versão 0.2.79, de 13/11/2026.** Só texto, sem mudança de comportamento, de RPC ou de esquema.
+    - Saem as menções ao "piloto" que já não descrevem o Frila (`MeusDados`, Android, e-mail SMTP, canal
+      de versão e limite diário). "Plano Piloto", o nome da Região Administrativa, fica.
+    - `SinaisDoCheckin` deixa de dizer que o servidor usa os sinais na decisão: desde a 0.2.75 o toque
+      fica pendente com ou sem `sinais` (ver a 0.2.75). O servidor confere só o formato dos três.
+
+    **Versão 0.2.78, de 12/11/2026.** O check-in por código vale para todos os estabelecimentos (decisão do Cauê, 12/11/2026, RN22, RN46).
+    - **A chave `checkin_por_codigo` passa a ser só global:** ligada, vale para o turno de qualquer
+      estabelecimento; desligada, para nenhum. Acaba a lista de casas: `fazer_checkin`,
+      `gerar_codigo_checkin` e `validar_codigo_checkin` não olham mais o estabelecimento do turno
+      para decidir.
+    - **`403 sem_permissao` (`recurso_desligado`) nas duas operações do código só com a chave
+      desligada.** O código e o `details` não mudam.
+    - **`RecursosDoApp.checkin_por_codigo`** segue a regra da 0.2.65 (chave e versão mínima por
+      plataforma), sem a ressalva de casa fora da lista.
+    - **Efeito no app publicado (aceito na decisão):** com a chave ligada, o check-in do iOS 1.0 e
+      do 1.1 e do Android fica `manual` e `pendente` em qualquer casa, mesmo a até 200 m, e a casa
+      confirma (`confirmar_checkin_manual`). O fluxo do código só aparece no app que recebe
+      `checkin_por_codigo: true`.
+    - **Não muda:** nenhum campo, operação, status ou código de erro novo; o resto da 0.2.68 a 0.2.77.
+
+    **Versão 0.2.77, de 12/11/2026.** Lembretes à casa sobre chegada não confirmada (decisão JP 12/11/2026, RF20, RN15, RN22).
+    - **Dois momentos de lembrete por vaga:** quando há vaga com chegada registrada (`checkin` manual)
+      ainda pendente de confirmação pela casa (`verificacao = 'pendente'`), o sistema dispara avisos
+      aos membros do estabelecimento (administradores e operadores):
+      1. `lembrete_30min_fim_turno`: 30 minutos antes do término previsto do turno (janela `[fim_em - 30 min, fim_em)`).
+         Corpo: "Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos."
+      2. `lembrete_fim_turno`: no encerramento previsto do turno (janela curta `[fim_em, fim_em + 1 h)`).
+         Corpo: "O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas."
+    - **Agrupamento por vaga (`referencia_id = vaga_id`):** o aviso sai uma única vez por vaga e membro da
+      casa (payload com `vaga_id`), mesmo em vagas com múltiplas posições ou profissionais.
+    - **Condições negativas estritas:** os lembretes não são enviados se não houver check-in registrado,
+      se a presença já foi confirmada (`verificado`), se o turno já foi encerrado como `nao_verificado` ou se
+      a posição ou vaga estiver cancelada.
+    - **Disparo em `fechar_turnos_passados`:** ambos os lembretes são avaliados pelo job periódico
+      `privado.fechar_turnos_passados`. A janela curta de 1 hora no término evita o envio indevido para
+      turnos finalizados há mais tempo após reinicializações do agendador ou deploys.
+    - **Compatibilidade com apps antigos:** iOS e Android mostram o push com título e corpo do servidor.
+      No iOS o toque abre a tela inicial (`AvisoDePush` não reconhece o tipo); no Android cai no canal do
+      sistema e abre o app sem destino; não há lista de notificações nos apps.
+
+    **Versão 0.2.76, de 12/11/2026.** Recusa própria por distância na validação do check-in por código (decisão JP 12/11/2026, achado A2, RF13, RN22, RN46).
+    - **Bloqueio vigente vence antes da distância:** se o código já estiver bloqueado (temporário por 3
+      erros ou encerrado por 6 erros), a chamada responde `409 codigo_bloqueado` imediatamente antes
+      de qualquer checagem de localização ou distância.
+    - **Recusas próprias sem avanço de erro (`422 fora_do_raio` e `422 sem_localizacao`):** a validação
+      do código em `validar_codigo_checkin` confere a localização antes de comparar o código digitado.
+      Leitura sem localização (`distancia_m` nulo) recusa `422 sem_localizacao` (o app orienta pedir
+      confirmação manual); leitura com distância acima de 50 m recusa `422 fora_do_raio` (o app
+      orienta aproximar-se e tentar de novo). Nenhuma das duas recusas olha o código digitado, não
+      avançam o contador de tentativas erradas (3/6) e não provocam bloqueio temporário ou encerramento,
+      protegendo o profissional honesto com oscilação de GPS.
+    - **`422 codigo_invalido` restrito a código incorreto ou expirado:** a recusa `codigo_invalido`
+      ocorre apenas quando a leitura está dentro do raio de validação (até 50 m), mas o código digitado é
+      divergente, expirado ou de outro turno. Cada ocorrência avança o contador de tentativas erradas
+      (3 bloqueiam por 5 min, 6 encerram o código).
+    - **Registro de recusas em `MeusDados` com limite contra abuso:** para fins de medição e
+      transparência (LGPD), as recusas por distância ou sem localização são gravadas no histórico de
+      tentativas com o resultado `recusada_sem_conferir` e a respectiva `faixa` (`sem_posicao`, `ate_100_m` ou
+      `acima_de_100_m`). Como essa recusa não bloqueia a leitura, a gravação de nova linha
+      `recusada_sem_conferir` no histórico é limitada a no máximo uma a cada 60 s por turno contra
+      inundação, mantendo a resposta 422 em todas as chamadas.
 
     **Versão 0.2.75, de 12/11/2026.** Check-in por código com a chave ligada — Etapa 1 (direção JP 10/11/2026, RF13, RN22, RN46).
     - **Fim da auto-verificação unilateral com chave ligada:** com `checkin_por_codigo = true` para o
@@ -224,8 +445,7 @@ info:
       Nenhum tipo de aviso novo.
     - **Fica para depois:** a migração e as RPCs no backend, com o pgTAP dos critérios de aceite e o
       espelho deste contrato (as duas operações ficam em `PENDENTES` do `contrato_responde.py` até
-      existirem); a tela da casa e a leitura no iOS; o Android, antes de qualquer casa com Android
-      no piloto.
+      existirem); a tela da casa e a leitura no iOS; o Android, antes de qualquer casa usar Android.
 
     **Versão 0.2.67, de 08/11/2026.** Só formato e descrição. Nenhum campo, operação, status ou
     código de erro novo:
@@ -610,6 +830,8 @@ info:
       | `fim_sem_checkout` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Alerta de turno finalizado sem check-out |
       | `checkin` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Confirmação de check-in efetuado |
       | `checkin_manual_pendente` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Solicitação de check-in manual pendente |
+      | `lembrete_30min_fim_turno` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Lembrete de chegada pendente a 30 minutos do fim |
+      | `lembrete_fim_turno` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Lembrete de chegada pendente no término do turno |
       | `cancelamento` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Cancelamento de candidatura ou turno |
       | `avaliacao_disponivel` | `canal_turnos` | Padrão (`IMPORTANCE_DEFAULT`) | Liberação de avaliação mútua |
       | `vaga_vazia` | `canal_sistema` | Padrão (`IMPORTANCE_DEFAULT`) | Vaga expirada sem candidatos |
@@ -1700,7 +1922,7 @@ paths:
         Envia um código de uso único ao e-mail. Os apps chamam pelo SDK do Supabase (`signInWithOtp`
         com `email`); a rota está aqui para o contrato ficar completo. Cria a conta de autenticação se
         ela ainda não existir. O modelo de e-mail do Supabase leva o código (`{{ .Token }}`), e não o
-        link. O envio de e-mail embutido do Supabase serve só para teste; o piloto usa um provedor de
+        link. O envio de e-mail embutido do Supabase serve só para teste; o Prod usa um provedor de
         e-mail próprio (SMTP).
       security:
         - chaveDoProjeto: []
@@ -1822,7 +2044,7 @@ paths:
         Abaixo dela, a tela de bloqueio substitui o app inteiro e leva à loja; a partir de
         `versao_recomendada`, o aviso é dispensável e aparece uma vez por versão.
 
-        Existe porque a v1.1 sai com o piloto rodando e o app antigo continua nos aparelhos. Sem
+        Existe porque a v1.1 sai com o Frila em uso e o app antigo continua nos aparelhos. Sem
         este canal, um defeito grave não sai de circulação e o backend fica preso à compatibilidade
         com ele para sempre.
 
@@ -1942,8 +2164,10 @@ paths:
                     Guardar só um booleano não responde o que a pessoa aceitou, que é o que a
                     LGPD e a diretriz da App Store perguntam. **Não há campo de data**: o
                     instante é carimbado pelo servidor, porque data de aceite enviada pelo
-                    cliente é forjável e não vale como registro de consentimento.
-                  example: '2026-09-22'
+                    cliente é forjável e não vale como registro de consentimento. Desde a
+                    0.2.91, o app manda a versão publicada que a tela mostra, hoje `2026-11-16`
+                    (Termos 1.2 e Política 1.3), a mesma de `aceitar_termos`.
+                  example: '2026-11-16'
                 sinal_idade:
                   type: string
                   enum: [dezoito_ou_mais, recusou, indisponivel]
@@ -1994,6 +2218,61 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
+
+  /rpc/aceitar_termos:
+    post:
+      tags: [Cadastro e perfil]
+      operationId: aceitarTermos
+      summary: Aceitar uma versão nova dos Termos e da Política
+      description: |
+        0.2.90. Para quem já tem conta aceitar uma versão dos Termos de Uso e da Política de
+        Privacidade que a tela exibiu, como em `criar_conta.termos_versao`. O servidor carimba o
+        instante (data enviada pelo cliente não vale como registro) e guarda cada aceite, com a
+        versão e o instante; o mais novo é o que vale e volta em `Usuario.termos_versao`. Repetir a
+        mesma versão não cria outro registro e devolve o aceite que já existe. Só vale uma versão
+        **publicada**: o servidor mantém a lista (hoje, `2026-11-13` e `2026-11-16`, 0.2.91). O app
+        manda a versão que a tela mostra, hoje `2026-11-16`. Versão vazia,
+        `422 campo_obrigatorio` (`termos_versao`). Versão fora do formato `AAAA-MM-DD`, fora da lista
+        de publicadas ou anterior à que a conta já aceitou é `422 campo_invalido` (`termos_versao`):
+        o aceite não volta atrás. Sessão sem conta (antes de `criar_conta`) é `404 nao_encontrado`,
+        como em `minha_conta`.
+
+        O primeiro uso é a busca de profissionais (0.2.90): o contratante que recebe
+        `403 sem_permissao` (`termos_pendentes`) vê os Termos, aceita por aqui e repete a busca.
+        Os registros de aceite seguem a retenção do aceite do cadastro.
+      x-requisitos: [RF01, RF25]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [termos_versao]
+              properties:
+                termos_versao:
+                  type: string
+                  pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                  description: Versão publicada que a tela exibiu, no formato `AAAA-MM-DD`.
+                  example: '2026-11-16'
+      responses:
+        '200':
+          description: Aceite em vigor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [termos_versao, aceito_em]
+                properties:
+                  termos_versao:
+                    type: string
+                  aceito_em:
+                    $ref: '#/components/schemas/Instante'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/criar_perfil_profissional:
     post:
@@ -2457,6 +2736,8 @@ paths:
       description: |
         0.2.54. Todas as mídias do chamador, em qualquer estado, com o motivo genérico de recusa.
         Nunca traz o código fino da análise, o caminho no Storage nem o registro interno da decisão.
+        Desde a 0.2.82, a foto `aprovada` vem com `url` (link da `ler-midia`) quando a chamada é por
+        `POST`. Por `GET` (transação só-leitura), `url` fica ausente.
       x-requisitos: [RN37, RN46]
       responses:
         '200':
@@ -3820,6 +4101,154 @@ paths:
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
+  /rpc/buscar_profissionais:
+    post:
+      tags: [Vagas]
+      operationId: buscarProfissionais
+      summary: Buscar profissionais para chamar direto
+      description: |
+        0.2.88. O contratante procura profissionais por serviço, região e horário e chama direto
+        (`chamar_profissional`). É a segunda porta da contratação: a vaga continua sendo a saída
+        quando a busca não resolve (CD-B11).
+
+        **Quem busca (CD-B01):** membro ativo do `estabelecimento_id` (RN25). Profissional não busca
+        profissional, e quem não é membro da casa também não: `403 sem_permissao`. Conta suspensa:
+        `403 sem_permissao` (`conta_suspensa`, RN13). Com `recursos.busca_profissionais` desligado:
+        `403 sem_permissao` (`recurso_desligado`, RN46).
+
+        **Termos 1.1 aceitos (0.2.90):** quem busca tem de ter aceito a versão `2026-11-13` ou mais
+        nova dos Termos (`Usuario.termos_versao`; as versões são datas `AAAA-MM-DD` e se comparam
+        como data, ou como texto em `collate "C"` depois de conferir o formato; valor gravado fora do
+        formato conta como não aceito). Sem isso, `403 sem_permissao` (`termos_pendentes`), depois
+        das três recusas acima e antes da validação dos filtros (`422`); essa recusa não gasta o
+        limite de buscas (`429`). O app mostra os Termos, chama `aceitar_termos` e repete a busca. O motivo é a seção
+        10.1 dos Termos (uso dos dados do profissional), que só vale para quem a aceitou.
+
+        **Filtros (CD-B02, reduzidos aos três do fluxo aprovado pelo Cauê em 16/11/2026):**
+        `funcao_id` (obrigatório), `regiao_id` (padrão: a região do estabelecimento, achada pelo
+        `Estabelecimento.regiao_administrativa` igual ao `RegiaoAdministrativa.nome`; sem casamento,
+        `422 campo_obrigatorio`, `regiao_id`) e o horário (`inicio_em` e `fim_em`, sempre juntos). O app
+        copia o `regiao_id` da busca para `chamar_profissional`. Não existe filtro nem ordem por gênero,
+        idade, foto, nome, reputação ou qualquer atributo pessoal (RN39).
+
+        **Quem aparece (CD-B03, CD-B06, CD-B10).** Só o profissional que:
+        - ligou "Aceito chamadas diretas" (`aceita_chamadas`) e não está pausado (`pausado_ate`);
+        - tem um serviço com unidade de preço para a função buscada (`definir_servicos`);
+        - atende a região pedida (região marcada ou `atende_todo_df`); sem região marcada, não aparece;
+        - não está suspenso e não tem bloqueio com a casa, em nenhum sentido (RF26);
+        - tem menos de 5 chamadas abertas (CD-B10);
+        - aceita a casa pelas preferências (`aceita_de = so_cnpj` tira a casa de pessoa física) e não
+          está em pausa com ela (`par_em_pausa` e `par_bloqueado_temporariamente`, RN33 e RN34);
+        - tem um aparelho na versão mínima de `chamada_direta` (0.2.66);
+        - não tem chamada aberta desta casa (`409 chamada_ja_aberta`, RN34).
+
+        Com horário, sai também quem a chamada recusaria pelo prazo: o início tem de estar a pelo
+        menos o maior entre 2 h e a antecedência mínima do profissional (RN31). Assim a busca não
+        mostra quem `chamar_profissional` recusaria pelas regras do profissional. Os limites da casa
+        (`422 limite_de_chamadas`) não filtram a lista. Turno confirmado no horário não tira ninguém
+        da lista nem muda o selo, para a busca não revelar a agenda de trabalho; quem barra é o aceite
+        (`responder_chamada`, `422 inelegivel`, `turno_sobreposto`). Quem fica de fora simplesmente não
+        aparece, e o motivo não é dito.
+
+        **Ordem (CD-B03, RN40):**
+        1. com horário, primeiro quem tem na grade semanal (`JanelaDeDisponibilidade`, em
+           America/Sao_Paulo) uma janela que cobre o horário inteiro; esses vêm com
+           `disponivel_no_horario: true`;
+        2. a faixa de distância do ponto base ao local da casa (até 5 km, de 5 a 15 km, mais de 15 km);
+        3. dentro da faixa, uma ordem embaralhada por contratante e por dia, que não muda durante o dia.
+
+        **A reputação não ordena** (RN06, D2), e nenhuma posição é paga ou promovida (CD-B04).
+
+        **Por que `POST`, sendo uma leitura:** o PostgREST roda o `GET` numa transação só de
+        leitura, e a busca grava o contador do limite. É o mesmo caso do `perfil_publico` com a foto.
+        Assim os filtros também ficam fora da URL e dos registros de requisição. Reenviar o mesmo
+        corpo não muda nada além do contador.
+
+        **Página e limites (CD-B08):** até 20 por página, por cursor opaco (nunca `offset`), e no
+        máximo 200 resultados por busca. Cada primeira página conta como uma busca; as seguintes, pelo
+        cursor, não contam. Acima de 60 buscas por hora por conta, `429 limite_excedido`. Cursor de
+        outra busca, de outro dia ou adulterado é `422 cursor_invalido`, e o app refaz a busca.
+
+        **O que não se guarda (CD-B09):** os filtros e a lista de quem apareceu não ficam gravados.
+        Fica só o contador do limite, apagado no dia seguinte. Esta versão não cria evento de
+        telemetria.
+
+        **Busca vazia (CD-B11):** a lista vem vazia, e o app oferece **Publicar para todos**, que abre
+        `publicar_vaga` com o serviço, a região e o horário já preenchidos. Depois de recusa ou
+        expiração de uma chamada, a saída é `publicar_a_partir_da_chamada` (0.2.56).
+      x-requisitos: [RN06, RN13, RN25, RN31, RN33, RN34, RN39, RN40, RN46, RF26]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estabelecimento_id, funcao_id]
+              properties:
+                estabelecimento_id:
+                  description: A casa que busca. Dá o local de referência da distância e a região padrão.
+                  $ref: '#/components/schemas/Uuid'
+                funcao_id:
+                  description: O serviço buscado (função do catálogo, `GET /funcao` ou `resolver_servico`).
+                  $ref: '#/components/schemas/Uuid'
+                regiao_id:
+                  description: |
+                    Id de `GET /regiao_administrativa`. Ausente vale a região do estabelecimento (ver a
+                    descrição). Fora do catálogo ou inativo, `422 campo_invalido` (`regiao_id`).
+                  type: integer
+                  minimum: 1
+                inicio_em:
+                  description: |
+                    Início do trabalho. Vem sempre com `fim_em`; um sem o outro, fim antes do início ou
+                    início no passado é `422 campo_invalido` (`inicio_em` ou `fim_em`).
+                  $ref: '#/components/schemas/Instante'
+                fim_em:
+                  $ref: '#/components/schemas/Instante'
+                cursor:
+                  description: |
+                    O `proximo_cursor` da página anterior. Com ele, os demais campos têm de ser os
+                    mesmos.
+                  type: string
+                limite:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+                  default: 20
+      responses:
+        '200':
+          description: Uma página de resultados; lista vazia quando ninguém atende aos filtros.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [itens, proximo_cursor]
+                properties:
+                  itens:
+                    type: array
+                    maxItems: 20
+                    items:
+                      $ref: '#/components/schemas/CartaoProfissional'
+                  proximo_cursor:
+                    description: "`null` na última página ou ao chegar a 200 resultados."
+                    oneOf:
+                      - type: string
+                      - type: 'null'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          description: |
+            `sem_permissao`: `recurso_desligado` quando `recursos.busca_profissionais` está
+            desligado; `conta_suspensa`; quem busca não é membro do estabelecimento; ou
+            `termos_pendentes` (0.2.90), quando quem busca não aceitou os Termos 1.1 ou mais novos.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+        '429':
+          $ref: '#/components/responses/LimiteExcedido'
+
   /rpc/chamar_profissional:
     post:
       tags: [Vagas]
@@ -3837,6 +4266,25 @@ paths:
         comigo" nem está pausado. Tem de ter a função e não estar suspenso. Bloqueio entre as partes é
         `404 nao_encontrado` e tem precedência sobre qualquer outra recusa (RF26).
 
+        **Pela busca (0.2.88):** com `recursos.busca_profissionais` ligado, pode ser chamado também
+        quem está na busca, sem vínculo de trabalho com a casa: `aceita_chamadas` ligado, sem pausa,
+        com um serviço com unidade de preço para a função do trabalho e atendendo a região do
+        trabalho (região marcada ou `atende_todo_df`). A região do trabalho é o `regiao_id`, quando
+        vem (o app copia o da busca); sem ele, a `RegiaoAdministrativa` cujo `nome` é igual a
+        `regiao_administrativa`, e sem casamento a região conta como não atendida. Basta um dos dois caminhos, e as demais regras
+        desta operação valem igual para os dois. Quem não cumpre nenhum deles recebe a mesma recusa
+        genérica (`422 profissional_indisponivel`, `nao_aceita_chamadas`), sem saber qual faltou. Com
+        `vaga_id`, a função e a região são as da vaga direta, que guarda o `regiao_id` com que nasceu
+        (a 2ª e a 3ª chamada usam o mesmo id da 1ª).
+
+        **Termos (0.2.90):** com `recursos.busca_profissionais` ligado e quem chama sem os Termos 1.1
+        ou mais novos aceitos (como em `buscar_profissionais`), a busca não conta como caminho. Sem
+        turno cumprido com presença verificada nem equipe de confiança com o profissional (os fatos
+        que a casa já conhece, e não a preferência dele), a resposta é `403 sem_permissao`
+        (`termos_pendentes`), depois das recusas de permissão e do bloqueio (`404`) e antes de
+        qualquer conferência sobre o profissional. Com turno ou equipe, vale só o caminho do vínculo,
+        com as recusas de sempre. Com a busca desligada, `termos_pendentes` nunca sai.
+
         **Prazo:** o início tem de estar a pelo menos o maior entre 2 h e a antecedência mínima do
         profissional (`422 profissional_indisponivel`, `antecedencia_insuficiente`). O servidor calcula
         `expira_em` = menor entre envio + 12 h e início − 1 h; entre 22 h e 7 h (America/Sao_Paulo), o
@@ -3852,6 +4300,81 @@ paths:
         no profissional (`agenda_cheia`); por estabelecimento, somando os membros, 3 por trabalho, 10
         abertas e 20 por dia civil, ou 3 abertas e 5 em 7 dias sem turno cumprido
         (`422 limite_de_chamadas`). Cancelar não devolve cota de envio.
+
+        **Um trabalho, uma vaga direta (0.2.95).** A casa não abre uma segunda vaga direta para um
+        trabalho que já tem chamada aberta. O servidor recusa, em vez de reaproveitar a vaga, para
+        os termos nunca mudarem sem a casa ver (CD-C04).
+        - **Mesmo trabalho:** o mesmo `estabelecimento_id`, o mesmo `funcao_id`, o mesmo `inicio_em`
+          e o mesmo `fim_em`, comparados **truncados ao minuto** (os apps mandam os segundos do
+          relógio; o corte é só no servidor e não muda o que se grava). Com `vaga_id` de vaga direta da casa, valem
+          a função e o horário dessa vaga. O valor, o local, o ponto, a região
+          (`regiao_administrativa` e `regiao_id`), os inclusos, o responsável e o recado **não**
+          entram, por três motivos:
+          - são os termos do trabalho, e não o que o identifica. Se o valor entrasse, bastaria mudar
+            o valor para abrir a segunda vaga, e duas pessoas aceitariam o mesmo trabalho;
+          - `local` é texto livre e `ponto` é coordenada: uma letra ou um metro de diferença
+            passaria por outro trabalho;
+          - `regiao_id` é opcional, e só o caminho da busca o manda.
+        - **Trabalho aberto:** a vaga da casa com `origem = chamada_direta`, `publicada`, com início
+          no futuro, com a posição livre e com pelo menos uma chamada `aberta` e ainda no prazo
+          (`agora < expira_em`, pelo relógio do servidor, mesmo antes de a rotina de expiração
+          arrumar o estado). Vaga preenchida,
+          cancelada ou encerrada não conta. Vaga direta sem chamada aberta (todas recusadas,
+          expiradas ou canceladas, ou posição reaberta) também não: ninguém pode aceitá-la, e a
+          casa pode chamar de novo com outros termos (CD-C04, CD-C10). Nesse caso a chamada sem
+          `vaga_id` cria vaga nova, como antes. Se houver mais de um trabalho aberto igual (vagas
+          criadas antes desta versão), vale o da vaga criada primeiro.
+        - **A recusa:** havendo trabalho aberto, a chamada só entra nele. A chamada sem `vaga_id`
+          para o mesmo trabalho, ou com o `vaga_id` de outra vaga direta do mesmo trabalho, recebe
+          `409 trabalho_ja_aberto`, com o `vaga_id` do trabalho aberto em `details` (o uuid, em
+          texto). Nada é criado e nenhuma cota é gasta. Com `vaga_id` de vaga direta já preenchida
+          ou encerrada e outra vaga do mesmo trabalho aberta, vale `trabalho_ja_aberto` (ela vem
+          antes de `409 vaga_encerrada`).
+        - **O que o app faz:** repete a chamada com esse `vaga_id`, sem os campos do trabalho; pode
+          usar a mesma `chave`, que a recusa não consome. **A 2ª chamada vai sempre com os termos da
+          vaga que já existe** (valor, inclusos, local e quem recebe), e os do corpo recusado são
+          descartados: é o que o profissional vê e aceita. Por isso, quando o valor ou os inclusos
+          que a pessoa digitou forem diferentes dos da vaga, o app **não repete sozinho**: mostra os
+          termos da vaga (por exemplo, "Esta chamada vai com os termos da vaga já aberta: R$ …, …";
+          o texto da tela é do design) e só repete com a confirmação da casa. Iguais, pode repetir direto. A casa os lê pelas próprias chamadas, e não por `detalhe_vaga`
+          (que é leitura de profissional): `minhas_chamadas` com `estado=aberta` traz, no item com
+          esse `vaga_id`, a função, o início, o fim e o valor, e `detalhe_chamada` traz os inclusos e
+          a região. Em geral o item está na primeira página; o app segue o cursor e, se não achar o
+          item, **não repete sozinho**. `details` continua sendo só o `vaga_id` (texto),
+          porque `Erro.details` é `string`. Para mudar os termos, a casa cancela as
+          chamadas abertas do trabalho (`cancelar_chamada`) e chama de novo.
+        - **Ordem:** a recusa sai depois das recusas de permissão (`401`, `403`), do bloqueio
+          (`404`), de `termos_pendentes` e de `409 chamada_ja_aberta`. Sai antes de qualquer
+          conferência sobre o profissional (as recusas genéricas, as pausas, o prazo e a agenda) e
+          dos limites da casa. Entre as validações de campo, além dos três obrigatórios do topo
+          (`chave`, `profissional_id` e `estabelecimento_id`), só a do `regiao_id`
+          (`422 campo_invalido`) vem antes dela; as dos outros campos vêm depois. Só é conferida quando a função
+          e o horário são conhecidos: `funcao_id`, `inicio_em` e `fim_em` no corpo, ou `vaga_id` de
+          vaga direta da casa. Sem isso, seguem as recusas de sempre (`422 campo_obrigatorio`,
+          `404`). Ela depende só das vagas e das chamadas da própria casa: é a mesma para qualquer
+          profissional que passe pelo bloqueio, e não revela nada dele.
+        - **Corrida:** a conferência e a criação da vaga acontecem sob a mesma trava, por casa e
+          por trabalho (o servidor pode usar a trava da casa inteira, mais larga, que já serializa
+          as chamadas pelos limites da RN34). Duas chamadas sem `vaga_id` ao mesmo tempo para o
+          mesmo trabalho, com chaves diferentes e a profissionais diferentes (ao mesmo profissional,
+          a segunda recebe `409 chamada_ja_aberta`, que vem antes): uma cria a vaga e a chamada; a outra espera e
+          recebe `409 trabalho_ja_aberto` com o `vaga_id` que a primeira criou. Nunca nascem duas
+          vagas, e nenhuma das duas recebe erro de concorrência. Se a primeira for recusada por
+          outra regra, não há trabalho aberto, e a segunda segue normalmente.
+        - **`chave`:** é conferida antes. Reenviar a chamada que criou o trabalho devolve a mesma
+          chamada, e nunca `trabalho_ja_aberto`. Vale também para dois envios simultâneos da mesma
+          `chave`: um cria, e o outro devolve a mesma chamada.
+        - **Duas pessoas no mesmo horário:** a vaga direta tem uma posição. A casa que precisa de
+          duas pessoas da mesma função no mesmo horário preenche um trabalho de cada vez (com o
+          primeiro preenchido, a chamada seguinte sem `vaga_id` cria outra vaga) ou publica uma
+          vaga normal com duas posições (`publicar_vaga`).
+        - **App que não conhece o código:** o iOS 1.2.0 mostra o texto genérico da tela e segue. O
+          Android e as telas da busca do iOS tratam código desconhecido como resultado incerto e
+          travam a folha ou a busca: por isso os dois apps têm de tratar `trabalho_ja_aberto` como
+          recusa definitiva e repetir com o `vaga_id`, antes de a regra chegar ao ambiente deles. O iOS
+          1.2.0 nunca manda `vaga_id`: nele, a recusa só aparece ao chamar outra pessoa para a mesma
+          função e o mesmo horário (até o minuto) enquanto a primeira chamada está aberta, e some
+          quando ela é respondida, expira ou é cancelada.
 
         **Recorrência (J7, RN45):** se o estabelecimento é pessoa física (CPF) e esta seria a 3ª
         chamada ao mesmo profissional em 7 dias corridos, sem `confirmo_recorrencia: true` a resposta é
@@ -3869,7 +4392,7 @@ paths:
 
         **Pausas que o servidor já aplicava (listadas na 0.2.67).** `pausado`: o profissional pausou as
         chamadas nas preferências. Só aparece para quem passa pelas três recusas genéricas
-        (preferência só-CNPJ, versão e vínculo), para a casa sem vínculo não descobrir a pausa.
+        (preferência só-CNPJ, versão e vínculo ou busca), para a casa sem vínculo não descobrir a pausa.
         `par_em_pausa`: o profissional recusou uma chamada desta casa há menos de 24 h.
         `par_bloqueado_temporariamente`: nos últimos 30 dias, as três últimas chamadas desta casa a
         este profissional que foram respondidas ou expiraram (cancelada não conta) foram recusadas ou
@@ -3895,7 +4418,10 @@ paths:
                     Para chamar mais alguém para um trabalho já criado. Exclui os campos abaixo. Tem
                     de ser vaga do mesmo `estabelecimento_id`, com `origem = chamada_direta`, uma
                     posição e ainda aberta; vaga de outra casa é `404`, e vaga normal, preenchida ou
-                    encerrada é `409 vaga_encerrada`.
+                    encerrada é `409 vaga_encerrada`. Se outra vaga direta da casa, para o mesmo
+                    trabalho, tem chamada aberta, é `409 trabalho_ja_aberto` com o `vaga_id` dela
+                    em `details` (0.2.95). Sem `vaga_id`, a mesma recusa vale quando o trabalho do
+                    corpo já está aberto.
                   $ref: '#/components/schemas/Uuid'
                 funcao_id:
                   $ref: '#/components/schemas/Uuid'
@@ -3907,6 +4433,15 @@ paths:
                   type: string
                 regiao_administrativa:
                   type: string
+                regiao_id:
+                  description: |
+                    0.2.88. Opcional. Id de `GET /regiao_administrativa` do local do trabalho, que o
+                    app copia da busca. Só o caminho da busca o usa (ver a descrição), e a vaga direta
+                    o guarda para as chamadas seguintes pelo `vaga_id`. O `nome` dessa região tem
+                    de ser igual a `regiao_administrativa`; diferente, fora do catálogo ou inativo,
+                    `422 campo_invalido` (`regiao_id`).
+                  type: integer
+                  minimum: 1
                 ponto:
                   $ref: '#/components/schemas/Coordenada'
                 valor_centavos:
@@ -3941,7 +4476,9 @@ paths:
         '403':
           description: |
             `sem_permissao`: `recurso_desligado` quando `recursos.chamada_direta` está desligado;
-            `conta_suspensa`; ou quem chama não é membro do estabelecimento.
+            `conta_suspensa`; quem chama não é membro do estabelecimento; ou `termos_pendentes`
+            (0.2.90), com `busca_profissionais` ligado, sem vínculo de trabalho e sem os Termos 1.1
+            aceitos.
           content:
             application/json:
               schema:
@@ -4164,6 +4701,14 @@ paths:
         qualquer vaga, com os mesmos termos. A direta e as chamadas abertas dela vão a `encerrada`,
         com aviso aos chamados. Nunca há duas posições contratáveis para o mesmo trabalho.
 
+        0.2.95. Na mesma transação, e sob a mesma trava de `chamar_profissional`, as **outras** vagas
+        diretas da casa para o mesmo trabalho (mesma função, mesmo início e mesmo fim, até o minuto,
+        como em `chamar_profissional`) **que ainda estão `publicada`**, com ou sem chamada aberta, vão a
+        `encerrada`, e as chamadas abertas delas também, com o mesmo aviso. Vaga `preenchida` não é
+        tocada: é a outra pessoa do mesmo horário, já confirmada. Sem isso, "Publicar para todos" numa
+        vaga direta antiga, sem chamada aberta, deixaria uma vaga normal despachada ao lado de uma
+        chamada aberta noutra vaga direta do mesmo trabalho (CD-C15).
+
         Vale antes do início e, para posição reaberta por atraso, até `fim_em − 1 h`, a mesma janela de
         `reabrir_por_atraso`. Fora disso, ou com a direta já preenchida sem posição reaberta, ou
         cancelada, é `409 vaga_encerrada`. `modo` opcional, padrão `urgencia`; `selecao` segue a RN24
@@ -4221,7 +4766,18 @@ paths:
         caminho; `null` tira a pausa. Chamadas já recebidas continuam respondíveis. Sem nenhum campo,
         `422 campo_obrigatorio` (`nenhum_campo`); data no passado, `422 campo_invalido`
         (`pausado_ate`). Conta de contratante, `422 perfil_incompativel` (RN25).
-      x-requisitos: [RN30, RN43, RN46, RN25]
+
+        **"Aceito chamadas diretas" (0.2.88, CD-P10 a CD-P12, RN40):** `aceita_chamadas: true` põe o
+        profissional na busca e o deixa receber chamadas de qualquer contratante; o padrão é `false`.
+        Ligar exige `versao_texto_busca`, a versão do texto da tela ("Quero aparecer na busca e receber
+        chamadas de contratantes", CD-P11); sem ela, `422 campo_obrigatorio` (`versao_texto_busca`). O
+        servidor guarda a versão e o instante de cada vez que liga, como registro do pedido do titular
+        (LGPD, art. 7º, V, parecer J1); não é consentimento. O registro fica enquanto a conta existir,
+        é apagado na exclusão (RF25) e sai na exportação (`MeusDados.registros_aceita_chamadas`). Desligar ou pausar tira da busca na hora.
+        Ligar não exige o perfil completo: a resposta traz em `pendencias_para_busca` o que ainda
+        impede de aparecer. Com `recursos.busca_profissionais` desligado, mandar `aceita_chamadas` é
+        `403 sem_permissao` (`recurso_desligado`).
+      x-requisitos: [RN30, RN40, RN43, RN46, RN25]
       requestBody:
         required: true
         content:
@@ -4243,6 +4799,17 @@ paths:
                 aceita_de:
                   type: string
                   enum: [todos, so_cnpj]
+                aceita_chamadas:
+                  description: 0.2.88. "Aceito chamadas diretas" (CD-P10). Ver a descrição.
+                  type: boolean
+                versao_texto_busca:
+                  description: |
+                    0.2.88. Versão do texto que o profissional viu ao ligar `aceita_chamadas`.
+                    Obrigatória com `aceita_chamadas: true`; ignorada nos outros casos.
+                  type: string
+                  minLength: 1
+                  maxLength: 20
+                  example: busca-v1
       responses:
         '200':
           description: Preferências em vigor.
@@ -4450,21 +5017,24 @@ paths:
 
         Toque com `registrado_em` adiantado em mais de 2 minutos em relação ao relógio do servidor é
         recusado com `422 registro_no_futuro`. Toque fora da janela permitida (de 60 minutos antes do
-        início até o fim previsto do turno) é recusado com `422 fora_da_janela` (RN22). A conta de
+        início até o fim previsto do turno) é recusado com `422 fora_da_janela` (RN22). Além da conferência
+        da janela pelo instante informado pelo aparelho (`registrado_em`), o servidor recusa com `422 fora_da_janela`
+        qualquer toque que ele receber após o término previsto do turno (`fim_em`), sem tolerância
+        (tolerância zero, 0.2.80), inclusive toques guardados offline e sincronizados após o fim. A conta de
         demonstração/revisão da App Store (`usuario.demonstracao`) atravessa a janela de turno sem recusa
         de `fora_da_janela` para permitir inspeção assíncrona da diretriz 2.1, mas mantém a trava de
         `registro_no_futuro`.
 
         **Check-in por código (0.2.68, Etapa 1).** O app 1.2 manda também `sinais`, o que o aparelho
-        diz sobre a leitura de localização. Com a chave `checkin_por_codigo` ligada para o
-        estabelecimento do turno, o toque nunca verifica sozinho pelo GPS: o check-in fica `manual`,
+        diz sobre a leitura de localização. Com a chave `checkin_por_codigo` ligada (global,
+        para todos os estabelecimentos, 0.2.78), o toque nunca verifica sozinho pelo GPS: o check-in fica `manual`,
         a presença fica `pendente`, a resposta traz `codigo_exigido: true`, e `codigo_disponivel: true`
         se a chegada ocorreu a até 50 m (raio provisório de proximidade) recebida nos últimos 900 s
         (15 minutos provisórios) pelo relógio do servidor. Isso vale com ou sem `sinais`, incluindo
-        apps legados 1.0, 1.1 e Android na casa participante. A casa recebe o aviso
+        apps legados 1.0, 1.1 e Android. A casa recebe o aviso
         `checkin_manual_pendente` e atesta a presença pelo código (`gerar_codigo_checkin` e
         `validar_codigo_checkin`) ou por confirmação manual (`confirmar_checkin_manual`). Com a chave
-        desligada para o estabelecimento, nada muda: o toque a até 200 m verifica na hora por
+        desligada, nada muda: o toque a até 200 m verifica na hora por
         geolocalização (`tipo: geolocalizado`, `verificacao: verificado`), exatamente como acima.
       x-requisitos: [RF13, RN11, RN22, RN46, UC05]
       requestBody:
@@ -4561,7 +5131,7 @@ paths:
 
         Só membro do estabelecimento dono do turno gera: o profissional do turno recebe
         `403 sem_permissao`, como em `confirmar_checkin_manual`. Chave `checkin_por_codigo`
-        desligada para o estabelecimento: `403 sem_permissao` (`recurso_desligado`), sem tocar em
+        desligada (global, 0.2.78): `403 sem_permissao` (`recurso_desligado`), sem tocar em
         dado. Conta excluída (token de conta já anonimizada, RF25): `401 nao_autenticado`. Conta
         suspensa: `403 sem_permissao` (`conta_suspensa`). Turno que não existe, ou com bloqueio
         entre as partes: `404 nao_encontrado`. Sem check-in, com chegada a mais de 50 m (raio
@@ -4609,36 +5179,43 @@ paths:
         manda só a distância até o endereço da vaga, nunca a coordenada. A hora que vale é a do
         servidor.
 
-        - Código certo, em vigor, deste turno, com `distancia_m` informada de até 50 m (raio
-          provisório de validação): presença `verificado`, `tipo: codigo`, e `checkin_confirmado_em`
-          é a hora da validação. O código não serve de novo. Os membros da casa recebem o aviso
-          `checkin`. A distância registrada na chegada elegível (`checkin_distancia_m`) é preservada no
-          turno e retornada em `distancia_m`.
-        - Leitura sem posição (`distancia_m` nulo) ou a mais de 50 m: não confirma presença. É
-          recusada com `422 codigo_invalido` (ou `409 codigo_bloqueado` no 3º/6º erro) e grava
-          tentativa recusada com a faixa correspondente (`sem_posicao`, `ate_100_m` para leituras
-          entre 51 e 100 m, ou `acima_de_100_m`).
-        - Qualquer outro caso: `422 codigo_invalido`, um código só, sem dizer se o código estava
-          errado, vencido, era de outro turno, sem posição ou se a distância passou de 50 m. Cada
-          recusa conta como tentativa errada. O código já usado não chega aqui: com a presença
-          verificada, a resposta é `409 checkin_ja_confirmado`.
+        - Bloqueio vigente vence antes da distância: se o código já estiver bloqueado por tentativas erradas
+          anteriores (3 erros = bloqueio temporário de 5 min; 6 erros = encerramento definitivo), responde
+          `409 codigo_bloqueado` imediatamente, antes de conferir a posição ou comparar o código.
+        - A localização é conferida ANTES de comparar o código digitado (0.2.76):
+          - Leitura sem posição (`distancia_m` nulo): recusa com `422 sem_localizacao`. Não olha o código,
+            não avança o contador de erros e não bloqueia. O aplicativo orienta o profissional a solicitar a
+            confirmação manual de presença pela casa.
+          - Leitura com distância acima de 50 m (raio provisório de validação): recusa com `422 fora_do_raio`.
+            Não olha o código, não avança o contador de erros e não bloqueia. O aplicativo orienta o
+            profissional a aproximar-se do local e tentar novamente.
+        - Leitura com localização informada a até 50 m:
+          - Código certo, em vigor, deste turno: presença `verificado`, `tipo: codigo`, e
+            `checkin_confirmado_em` é a hora da validação. O código não serve de novo. Os membros da casa
+            recebem o aviso `checkin`. A distância registrada na chegada elegível (`checkin_distancia_m`) é
+            preservada no turno e retornada em `distancia_m`.
+          - Código errado, vencido ou de outro turno: recusa com `422 codigo_invalido` (ou
+            `409 codigo_bloqueado` no 3º/6º erro). Cada ocorrência conta como tentativa errada no turno.
 
         A resposta é o registro do check-in: `registrado_em` é a hora do toque em `fazer_checkin`, e
         `distancia_m` traz a distância registrada na chegada elegível (preservada no turno).
 
-        Tentativas: 3 erradas no turno bloqueiam a leitura pelo tempo configurado (hoje 5 minutos;
-        faixa de 2 a 5), e a terceira já responde `409 codigo_bloqueado` (`temporario`). A sexta
-        errada é o segundo bloqueio e fecha o caminho do código para o turno: ela e toda leitura
-        depois dela respondem `409 codigo_bloqueado` (`encerrado`), sem novo tempo de espera, e vale
-        a confirmação manual. O contador é do servidor, por turno, e não zera quando a casa gera
-        código novo.
+        Tentativas: as leituras do código são registradas no turno (LGPD). O resultado distingue as que
+        contaram como tentativa errada (`recusada`) das recusas prévias por GPS/posição
+        (`recusada_sem_conferir`). Para prevenir inundação, a gravação de `recusada_sem_conferir` é
+        limitada a uma a cada 60 s por turno. No caminho de código incorreto dentro do raio: 3 erradas
+        no turno bloqueiam a leitura pelo tempo configurado (hoje 5 minutos; faixa de 2 a 5), e a
+        terceira já responde `409 codigo_bloqueado` (`temporario`). A sexta errada é o segundo bloqueio
+        e fecha o caminho do código para o turno: ela e toda leitura depois dela respondem
+        `409 codigo_bloqueado` (`encerrado`), sem novo tempo de espera, e vale a confirmação manual. O
+        contador é do servidor, por turno, e não zera quando a casa gera código novo.
 
         Duas leituras ao mesmo tempo do mesmo código: uma só vence, e a outra recebe
         `409 checkin_ja_confirmado`, como toda leitura que chega com a presença já verificada por
         qualquer caminho; o app trata como presença verificada e relê o turno. Sem check-in:
         `409 checkin_pendente`. Fora da janela do check-in: `422 fora_da_janela`. Turno que não
         existe, que não é de quem chama ou com bloqueio entre as partes: `404 nao_encontrado`. Chave
-        desligada para o estabelecimento do turno: `403 sem_permissao` (`recurso_desligado`), sem
+        desligada (global, 0.2.78): `403 sem_permissao` (`recurso_desligado`), sem
         tocar em dado nem no contador. Conta excluída (token de conta já anonimizada, RF25):
         `401 nao_autenticado`. Conta suspensa: `403 sem_permissao` (`conta_suspensa`). Conta de
         contratante: `422 perfil_incompativel` (RN25). `codigo` fora do formato de 6 dígitos é
@@ -4666,10 +5243,9 @@ paths:
                   description: |
                     Distância em metros até o endereço da vaga, medida no aparelho no momento da
                     leitura. Exige distância informada e a até 50 m (raio provisório de validação) para
-                    confirmar o check-in; nulo (sem localização) ou acima de 50 m recusa com 422
-                    codigo_invalido e grava tentativa recusada com a faixa correspondente (sem_posicao,
-                    ate_100_m para distâncias entre 51 e 100 m, ou acima_de_100_m). A distância da
-                    leitura em si não substitui a distância da chegada gravada no turno.
+                    confirmar o check-in; nulo (sem localização) recusa com 422 sem_localizacao e acima
+                    de 50 m recusa com 422 fora_do_raio (ambas sem contar como erro; 0.2.76). A
+                    distância da leitura em si não substitui a distância da chegada gravada no turno.
                   oneOf:
                     - type: integer
                       minimum: 0
@@ -4707,8 +5283,16 @@ paths:
         Check-out de um turno que ainda não teve check-in registrado é recusado com `409 checkin_pendente`
         (indica o passo que falta para a tela direcionar a pessoa). Toque com `registrado_em` adiantado
         em mais de 2 minutos em relação ao relógio do servidor recusa `422 registro_no_futuro`, e fora da
-        janela permitida do turno recusa `422 fora_da_janela` (RN22). A conta de demonstração/revisão
-        da App Store é isenta da janela de turno, mantendo a trava de `registro_no_futuro`.
+        janela permitida do turno recusa `422 fora_da_janela` (RN22). A janela do check-out vai de
+        **60 minutos antes do início previsto até 60 minutos depois do fim previsto** (`fim_em`),
+        conferida pelo `registrado_em` (0.2.81). Além da conferência da janela pelo instante informado pelo
+        aparelho (`registrado_em`), o servidor recusa com `422 fora_da_janela` qualquer check-out que ele
+        **receber** após `fim_em + 60 min`, sem tolerância (tolerância zero, 0.2.83; mesmo desenho da 0.2.80 no
+        check-in), inclusive toques guardados offline e sincronizados após o limite. Reenvios após o limite em
+        turno já com check-out também são recusados com `422 fora_da_janela`, mantendo o check-out anterior intacto.
+        Para a tela, "Fazer check-out" só faz sentido até `fim_em + 60 min`; depois disso o servidor recusa. A conta
+        de demonstração/revisão da App Store (`usuario.demonstracao`) é isenta da janela de turno (atravessa sem
+        recusa de `fora_da_janela`), mantendo a trava de `registro_no_futuro`.
       x-requisitos: [RF13, RN11, RN22, UC05]
       requestBody:
         required: true
@@ -5083,7 +5667,7 @@ paths:
 
         **Limite diário (0.2.40):** no máximo 5 chamados novos por conta por dia (dia de
         America/Sao_Paulo). O 5 é um valor inicial, ajustável sem mudar o contrato, a reavaliar com
-        dados do piloto. O seguinte recebe `429 limite_excedido`. O limite por minuto de toda
+        dados de uso. O seguinte recebe `429 limite_excedido`. O limite por minuto de toda
         escrita (RNF07) continua valendo à parte.
 
         Recusas: `campo_obrigatorio` com o campo em `details` (`turno_id`, `categoria` ou `chave`);
@@ -5200,7 +5784,7 @@ paths:
                   value:
                     - alvo_tipo: profissional
                       alvo_id: 7c1d2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d
-                      nome: Carlos Mendes
+                      nome: Carlos M.
                       criado_em: '2026-11-03T14:20:00Z'
                     - alvo_tipo: estabelecimento
                       alvo_id: 0b8a7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
@@ -5744,6 +6328,74 @@ paths:
         '405':
           $ref: '#/components/responses/MetodoNaoPermitido'
 
+  /ler-midia:
+    servers:
+      - url: https://{projeto}.supabase.co/functions/v1
+        variables:
+          projeto:
+            default: frila
+    get:
+      tags: [Cadastro e perfil]
+      operationId: lerMidia
+      summary: Abrir a foto de perfil por um link de leitura
+      description: |
+        0.2.82. É a URL que `PerfilPublico.foto_url` e `Midia.url` já trazem prontas. O app não monta
+        esta URL: abre a que recebeu, sem sessão e sem cabeçalho (`AsyncImage`). Quem autoriza é o
+        token opaco de 1 h, cunhado na leitura depois de conferir o vínculo.
+
+        A cada `GET`, o servidor confere de novo o token (preso àquela mídia, dentro da hora e com
+        no máximo 120 usos), quem recebeu o link (conta ativa, na casa e com vínculo, sem bloqueio,
+        RF26), a foto (`aprovada`, com o titular ativo) e `recursos.foto_de_perfil`. Se tudo vale,
+        responde com os bytes da miniatura. Sem redirecionar: nem o caminho no Storage nem uma URL
+        assinada saem (RN15). Qualquer recusa é o mesmo `404 nao_encontrado`: token errado, vencido
+        ou esgotado, foto removida, vínculo perdido. Toda resposta vem com
+        `Cache-Control: private, no-store`.
+
+        **Vínculo pela busca (0.2.90):** conta também o vínculo pela busca
+        (`PerfilPublico.apresentacao`). Ele vale com `recursos.busca_profissionais` ligado, o
+        profissional com `aceita_chamadas` ligado e quem lê com os Termos 1.1 ou mais novos aceitos,
+        tudo reconferido a cada `GET`. Desligada a opção ou a chave, o link deixa de abrir
+        (`404 nao_encontrado`).
+
+        O token é portador: quem o tiver vê a miniatura até vencer, como acontecia com a URL
+        assinada. Ele vai na query, e os registros de requisição do provedor podem guardá-lo.
+      security: []
+      x-requisitos: [RN15, RF26]
+      parameters:
+        - name: midia_id
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uuid'
+        - name: token
+          in: query
+          required: true
+          description: Token opaco de 64 caracteres hexadecimais, vindo da leitura.
+          schema:
+            type: string
+            pattern: '^[0-9a-f]{64}$'
+      responses:
+        '200':
+          description: A miniatura da foto.
+          headers:
+            Cache-Control:
+              description: Sempre `private, no-store`.
+              schema:
+                type: string
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '405':
+          $ref: '#/components/responses/MetodoNaoPermitido'
+        '502':
+          description: O Storage não respondeu ou devolveu um arquivo inválido. O app mostra o marcador de foto.
+        '503':
+          description: O banco não respondeu. O app mostra o marcador de foto.
+
   /entrar-demonstracao:
     servers:
       - url: https://{projeto}.supabase.co/functions/v1
@@ -6004,6 +6656,13 @@ components:
                 message: codigo_bloqueado
                 details: temporario
                 hint: null
+            trabalho_ja_aberto:
+              summary: A casa já tem vaga direta com chamada aberta para o mesmo trabalho (0.2.95)
+              value:
+                code: trabalho_ja_aberto
+                message: trabalho_ja_aberto
+                details: 7c1f0c1e-5b0a-4a53-9d1e-2f6c8f0a4b11
+                hint: null
             verificacao_indisponivel:
               value:
                 code: verificacao_indisponivel
@@ -6076,6 +6735,20 @@ components:
               value:
                 code: fora_da_janela
                 message: fora_da_janela
+                details: null
+                hint: null
+            fora_do_raio:
+              summary: Leitura do código de check-in fora do raio permitido (0.2.76)
+              value:
+                code: fora_do_raio
+                message: fora_do_raio
+                details: null
+                hint: null
+            sem_localizacao:
+              summary: Leitura do código de check-in sem localização do aparelho (0.2.76)
+              value:
+                code: sem_localizacao
+                message: sem_localizacao
                 details: null
                 hint: null
             registro_no_futuro:
@@ -6275,6 +6948,26 @@ components:
         |---|---|---|---|
         | `turno_nao_verificado` | Ambos os lados | Turno não verificado | A presença no turno não foi confirmada dentro do prazo. O turno foi encerrado como não verificado. |
 
+        **Lembretes de confirmação de presença à casa (0.2.77, RF20, RN15, RN22).** Disparados aos
+        membros do estabelecimento (administradores e operadores) quando há vaga com chegada
+        registrada e presença ainda pendente de confirmação. Enviados uma única vez por vaga e membro
+        (`referencia_id = vaga_id`, payload com `vaga_id`).
+
+        | Tipo | Quem recebe | Título | Corpo |
+        |---|---|---|---|
+        | `lembrete_30min_fim_turno` | Membros da casa | Chegada a confirmar | Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos. |
+        | `lembrete_fim_turno` | Membros da casa | Turno encerrado | O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas. |
+
+        **Cancelamento por atraso (0.2.84, D-13).** Disparado exclusivamente ao profissional quando a casa declara a falta por atraso (`reabrir_por_atraso`, RN12). Explicita que a saída decorreu de cancelamento da participação pelo estabelecimento e que conta como falta.
+
+        | Tipo | Quem recebe | Título | Corpo |
+        |---|---|---|---|
+        | `cancelamento` (com `reabertura_por_atraso`) | Profissional removido | Participação cancelada por atraso | O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta. |
+
+        Em versões antigas dos apps: iOS e Android mostram o push com título e corpo do servidor; no
+        iOS o toque abre a tela inicial (`AvisoDePush` não reconhece o tipo); no Android cai no canal
+        do sistema e abre o app sem destino; não há lista de notificações nos apps.
+
         **Check-in por código (0.2.68).** Nenhum tipo novo, e os textos não mudam. No app 1.2,
         `checkin_manual_pendente` abre a tela da casa já com o código; `checkin` também avisa os
         membros da presença verificada pelo código.
@@ -6288,7 +6981,8 @@ components:
              checkin_manual_pendente, cancelamento, avaliacao_disponivel, suspensao, reativacao,
              candidatura_recusada, selecao_encerrada, selecao_lembrete, midia_recusada,
              chamada_recebida, chamada_lembrete, chamada_aceita, chamada_recusada,
-             chamada_expirada, chamada_cancelada, chamada_encerrada, turno_nao_verificado]
+             chamada_expirada, chamada_cancelada, chamada_encerrada, turno_nao_verificado,
+             lembrete_30min_fim_turno, lembrete_fim_turno]
     EventoDeTelemetria:
       description: |
         Dicionário fechado. Acrescentar evento é mudança de contrato, com versão subindo — é o
@@ -6333,7 +7027,9 @@ components:
           description: Texto para log. Nunca exibir na tela.
         details:
           type: [string, 'null']
-          description: 'Motivo complementar estável, quando houver (por exemplo, `turno_sobreposto`).'
+          description: |
+            Motivo complementar estável, quando houver (por exemplo, `turno_sobreposto`). Em
+            `409 trabalho_ja_aberto` (0.2.95), é o `vaga_id` do trabalho aberto: um uuid em texto.
         hint:
           type: [string, 'null']
 
@@ -6381,6 +7077,12 @@ components:
           format: date
         estado:
           $ref: '#/components/schemas/EstadoConta'
+        termos_versao:
+          description: |
+            0.2.90. A última versão dos Termos e da Política que a conta aceitou (no cadastro ou em
+            `aceitar_termos`). Opcional nesta versão; ausente, o app trata como não aceita e, se
+            precisar, pede o aceite.
+          type: string
     JanelaDeDisponibilidade:
       type: object
       required: [dia_semana, hora_inicio, hora_fim]
@@ -6654,10 +7356,19 @@ components:
         checkin_por_codigo:
           description: |
             0.2.68. Check-in por código: a tela da casa com o código e a leitura no app do
-            profissional. Segue a regra da 0.2.65 (chave e versão mínima por plataforma). Mesmo com
-            `true`, o estabelecimento de um turno pode estar fora do piloto: aí as duas operações
-            respondem `403 sem_permissao` (`recurso_desligado`) e `fazer_checkin` devolve
-            `codigo_disponivel: false`. Ausente vale `false`.
+            profissional. Segue a regra da 0.2.65 (chave e versão mínima por plataforma). Desde a
+            0.2.78 a chave é só global: com `true`, vale para o turno de qualquer estabelecimento.
+            Ausente vale `false`.
+          type: boolean
+        busca_profissionais:
+          description: |
+            0.2.88. A busca de profissionais e o "Aceito chamadas diretas". Segue a regra da 0.2.65
+            (chave e versão mínima por plataforma) e só vem `true` quando `chamada_direta` também
+            vem `true`. Desligado: o app esconde "Encontrar profissional" e a preferência;
+            `buscar_profissionais` responde `403 sem_permissao` (`recurso_desligado`), e
+            `definir_preferencia_chamadas` recusa `aceita_chamadas` do mesmo jeito;
+            `chamar_profissional` aceita só quem tem vínculo de trabalho; e `perfil_publico` não
+            conta a busca como vínculo de leitura. Ausente vale `false`.
           type: boolean
     TipoMidia:
       type: string
@@ -6702,7 +7413,9 @@ components:
           type: boolean
           description: "`true` quando a mídia está `recusada` ou `nao_publicada`, a nova análise ainda não foi pedida e o arquivo ainda não foi expurgado; `false` depois do expurgo (o app oferece enviar outra foto)."
         url:
-          description: URL assinada por 1 h, só quando `aprovada`.
+          description: |
+            Link de leitura de 1 h da miniatura (`GET /ler-midia`, 0.2.82), só quando `aprovada` e
+            com `recursos.foto_de_perfil` ligado, e só quando `minhas_midias` é chamada por `POST`.
           type: string
           format: uri
         estabelecimento_id:
@@ -6799,6 +7512,21 @@ components:
         aceita_de:
           type: string
           enum: [todos, so_cnpj]
+        aceita_chamadas:
+          description: 0.2.88. "Aceito chamadas diretas". Ausente vale `false`.
+          type: boolean
+        pendencias_para_busca:
+          description: |
+            0.2.88. O que ainda impede o profissional de aparecer na busca; lista vazia quando ele
+            aparece. Só vem com `aceita_chamadas: true`. `sem_servico_com_preco`: nenhum serviço com
+            unidade de preço; `sem_regiao`: nenhuma região marcada nem `atende_todo_df`; `pausado`:
+            `pausado_ate` em vigor; `sem_aparelho_atualizado`: nenhum aparelho na versão mínima de
+            `chamada_direta` (0.2.66).
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [sem_servico_com_preco, sem_regiao, pausado, sem_aparelho_atualizado]
     ChamadaResumo:
       description: 0.2.56. A chamada com o essencial do trabalho, para listas.
       allOf:
@@ -7103,6 +7831,16 @@ components:
           type: string
           enum: [profissional, estabelecimento]
         nome:
+          description: |
+            0.2.89. Perfil de profissional: o nome vem **inteiro só** para o próprio profissional e
+            para o contratante membro de uma casa que tem com ele candidatura numa vaga da casa,
+            turno entre eles ou equipe de confiança. **Qualquer outro leitor** recebe o primeiro nome
+            e a inicial do sobrenome, como no `CartaoProfissional` ("Maria L."): outro profissional,
+            o contratante sem casa e o contratante de casa sem esse vínculo. Vale em toda leitura que
+            traz `PerfilPublico` (inclusive `ChamadaResumo.outra_parte`), esteja o profissional na
+            busca ou não, e tenha a casa chamado ou não. Assim uma chamada recusada, ou sair da busca,
+            não revela o nome completo. Perfil de estabelecimento: o nome vem como sempre veio. Conta
+            encerrada continua "Conta encerrada" (RF25).
           type: string
         funcoes:
           type: array
@@ -7116,6 +7854,14 @@ components:
             0.2.53. Os campos a partir daqui são opcionais e só vêm para contratante com vínculo de
             leitura com o profissional (candidatura numa vaga da casa, turno entre eles ou equipe de
             confiança). Para qualquer outra conta, e para estabelecimento, são omitidos.
+
+            0.2.88. Com `recursos.busca_profissionais` ligado, o profissional com `aceita_chamadas`
+            ligado também conta como vínculo de leitura para qualquer contratante, nestes campos.
+            Desde a 0.2.90, só para contratante com os Termos 1.1 ou mais novos aceitos
+            (`buscar_profissionais`). A
+            pausa não muda isso, para o perfil não revelar quando ele pausou. Até a 0.2.89 não valia
+            para `foto_url` e `foto_id`; desde a 0.2.90 vale também para eles (decisão do Cauê de
+            mostrar a foto na busca, CD-B07).
           oneOf:
             - type: string
               maxLength: 600
@@ -7150,13 +7896,17 @@ components:
           type: boolean
         foto_url:
           description: |
-            0.2.54. URL assinada por 1 h da foto `aprovada` (miniatura de 320 px). Só vem para
+            0.2.54; link da `ler-midia` desde a 0.2.82. Link de leitura de 1 h da foto `aprovada`
+            (miniatura de 320 px): o `GET` devolve a imagem (`GET /ler-midia`). Só vem quando a RPC
+            é chamada por `POST`, e para
             leitor com **vínculo de leitura**: foto de profissional, para contratante com
             candidatura numa vaga da casa, turno entre eles ou equipe de confiança; foto de
             estabelecimento, para profissional com candidatura, chamada ou turno com a casa. Sem
             vínculo, com `recursos.foto_de_perfil` desligado, sem foto aprovada, ou com o titular
             suspenso (RN13) ou com conta encerrada (RF25), o campo vem **ausente**, e os demais
-            campos do perfil respondem exatamente como antes da 0.2.54.
+            campos do perfil respondem exatamente como antes da 0.2.54. Desde a 0.2.90, o vínculo
+            pela busca (`apresentacao`, acima) também abre a foto do profissional, com as mesmas
+            condições.
           type: string
           format: uri
         foto_id:
@@ -7169,6 +7919,55 @@ components:
           type: string
           pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'
           example: 2026-10
+
+    CartaoProfissional:
+      type: object
+      required: [id, nome, servico, regioes, atende_todo_df, distancia_faixa, reputacao]
+      description: |
+        0.2.88. Um resultado de `buscar_profissionais` (CD-B07): só o que ajuda a decidir quem
+        chamar. Nunca telefone, e-mail, sobrenome completo, ponto base, grade ou data de nascimento.
+        Desde a 0.2.90, o cartão traz a foto aprovada, se houver (`foto_url` e `foto_id`, decisão do
+        Cauê, CD-B07). A foto nunca filtra nem ordena a lista (RN39). O perfil completo sai por
+        `perfil_publico`.
+      properties:
+        id:
+          description: O `id` do `PerfilPublico`, o mesmo de `chamar_profissional.profissional_id`.
+          $ref: '#/components/schemas/Uuid'
+        nome:
+          description: Primeiro nome e inicial do sobrenome.
+          type: string
+          example: Maria S.
+        servico:
+          description: O serviço da função buscada, com a unidade e o preço.
+          $ref: '#/components/schemas/ServicoNoPerfil'
+        regioes:
+          type: array
+          items:
+            $ref: '#/components/schemas/RegiaoAdministrativa'
+        atende_todo_df:
+          type: boolean
+        distancia_faixa:
+          description: Do ponto base do profissional ao local do estabelecimento.
+          type: string
+          enum: [ate_5_km, de_5_a_15_km, mais_de_15_km]
+        reputacao:
+          description: Com denominador e turnos realizados (RN08); não ordena a lista (RN06).
+          $ref: '#/components/schemas/Reputacao'
+        foto_url:
+          description: |
+            0.2.90. Link de leitura de 1 h da foto `aprovada` (miniatura de 320 px), pela `ler-midia`,
+            como `PerfilPublico.foto_url`. Vem **ausente** com `recursos.foto_de_perfil` desligado,
+            sem foto aprovada, ou com o titular suspenso (RN13) ou com conta encerrada (RF25).
+          type: string
+          format: uri
+        foto_id:
+          description: 0.2.90. Identificador opaco da foto, com as mesmas condições; é o que o app manda em `denunciar.midia_id`.
+          $ref: '#/components/schemas/Uuid'
+        disponivel_no_horario:
+          description: |
+            O selo "disponível nesse horário": a grade semanal cobre o horário pedido inteiro. Só
+            vem quando a busca tem horário.
+          type: boolean
 
     # ── Vagas
 
@@ -7523,6 +8322,10 @@ components:
     RegistroDePresenca:
       type: object
       required: [turno_id, distancia_m, registrado_em]
+      description: |
+        Corpo das ações de presença (`fazer_checkout` e base de `fazer_checkin`). Desde a 0.2.83,
+        check-out recebido pelo servidor após `fim_em + 60 min` é recusado com `422 fora_da_janela`
+        mesmo que `registrado_em` esteja dentro da janela permitida.
       properties:
         turno_id:
           $ref: '#/components/schemas/Uuid'
@@ -7537,7 +8340,9 @@ components:
     RegistroDeCheckin:
       description: |
         0.2.68. O corpo de `fazer_checkin`: `RegistroDePresenca` mais os `sinais` opcionais. O
-        check-out continua com `RegistroDePresenca` e não aceita `sinais`.
+        check-out continua com `RegistroDePresenca` e não aceita `sinais`. Desde a 0.2.80, toques
+        recebidos pelo servidor após o fim previsto do turno são recusados com `422 fora_da_janela`
+        mesmo que `registrado_em` esteja dentro da janela.
       allOf:
         - $ref: '#/components/schemas/RegistroDePresenca'
         - type: object
@@ -7549,9 +8354,9 @@ components:
       required: [localizacao_simulada, precisao_m, salto_de_posicao]
       description: |
         0.2.68. O que o aparelho diz da leitura de localização do toque, para a proteção por risco.
-        Nenhuma coordenada. O servidor usa os sinais na decisão e não os grava: guarda só se o código
-        foi exigido. O app que manda `sinais` manda os três; sem `sinais`, o servidor entende app sem
-        a proteção (1.0 e 1.1) e segue a regra de antes da 0.2.68.
+        Nenhuma coordenada. Desde a 0.2.75 os sinais não mudam a decisão: o toque fica pendente com ou
+        sem `sinais`, inclusive nos apps 1.0 e 1.1. O servidor confere só o formato (`422 campo_invalido`)
+        e não os grava: guarda só se o código foi exigido. O app que manda `sinais` manda os três.
       properties:
         localizacao_simulada:
           description: A leitura veio de fonte simulada por software (iOS `CLLocationSourceInformation.isSimulatedBySoftware`, Android `Location.isMock`).
@@ -7584,8 +8389,8 @@ components:
             - type: 'null'
         codigo_exigido:
           description: |
-            0.2.68 (Etapa 1). Só em `fazer_checkin`. Com a chave `checkin_por_codigo` ligada para o
-            estabelecimento, é `true` em todo toque: o check-in nunca verifica sozinho pelo GPS, a
+            0.2.68 (Etapa 1). Só em `fazer_checkin`. Com a chave `checkin_por_codigo` ligada (global,
+            0.2.78), é `true` em todo toque: o check-in nunca verifica sozinho pelo GPS, a
             presença fica `pendente` e exige confirmação da casa (por código ou manual). Com a chave
             desligada, o campo vem ausente (valendo `false`), e o toque segue a verificação por GPS
             legado (verificado a até 200 m). Em `validar_codigo_checkin`, vem ausente. O reenvio
@@ -8060,7 +8865,11 @@ components:
           $ref: '#/components/schemas/Uuid'
         nome:
           type: string
-          description: Nome público da outra parte, o mesmo de `PerfilPublico.nome`.
+          description: |
+            Nome público da outra parte, o mesmo de `PerfilPublico.nome`, com a mesma regra
+            (0.2.89), calculada na leitura: o nome do profissional vem inteiro só para quem tem com
+            ele candidatura, turno ou equipe de confiança; para os demais, primeiro nome e inicial do
+            sobrenome.
         criado_em:
           $ref: '#/components/schemas/Instante'
     SituacaoDaConta:
@@ -8388,6 +9197,21 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Chamada'
+        registros_aceita_chamadas:
+          description: |
+            0.2.88. Cada vez que o profissional ligou "Aceito chamadas diretas": a versão do texto que
+            ele viu e o instante. É o registro do pedido do titular (J1). Fica enquanto a conta
+            existir e é apagado com os dados da conta na exclusão (RF25). Lista vazia para quem nunca
+            ligou e para contratante. Opcional nesta versão, pelo mesmo motivo de `midias`.
+          type: array
+          items:
+            type: object
+            required: [versao_texto_busca, ligado_em]
+            properties:
+              versao_texto_busca:
+                type: string
+              ligado_em:
+                $ref: '#/components/schemas/Instante'
         checkins_por_codigo:
           description: |
             0.2.68, revisto na 0.2.70 e 0.2.75. O que o check-in por código registrou sobre o titular
@@ -8415,10 +9239,10 @@ components:
                 description: 'O servidor exigiu a confirmação da casa no check-in sob a chave ligada (Etapa 1: todo toque nasce manual e pendente, com código exigido).'
                 type: boolean
               confianca_baixa:
-                description: 'O código foi validado sem posição. Na Etapa 1 a validação sem posição é recusada com 422 codigo_invalido, mantendo este campo como false.'
+                description: 'O código foi validado sem posição. Com a 0.2.76, a validação sem posição é recusada com 422 sem_localizacao, mantendo este campo como false.'
                 type: boolean
               tentativas:
-                description: As leituras que contaram como tentativa, em ordem. Sem o motivo da recusa.
+                description: As leituras do código registradas no turno. O resultado distingue as que contaram como tentativa errada (recusada) daquelas recusadas previamente por falta de posição ou fora do raio (recusada_sem_conferir), com limite de uma gravação a cada 60 s por turno contra inundação (0.2.76).
                 type: array
                 items:
                   type: object
@@ -8427,8 +9251,9 @@ components:
                     em:
                       $ref: '#/components/schemas/Instante'
                     resultado:
+                      description: 'Resultado da leitura do código: aceita (validada com sucesso), recusada (código incorreto/expirado dentro do raio, conta para o bloqueio 3/6) ou recusada_sem_conferir (recusada antes de comparar o código por falta de posição ou fora do raio, não conta para bloqueio; a faixa indica se foi sem_posicao ou distância) (0.2.76).'
                       type: string
-                      enum: [aceita, recusada]
+                      enum: [aceita, recusada, recusada_sem_conferir]
                     faixa:
                       description: A faixa da distância medida na leitura (sem_posicao para leitura sem localização, ate_100_m para até 100 m inclusive recusadas de 51 a 100 m, ou acima_de_100_m), nunca os metros.
                       type: string

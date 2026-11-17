@@ -9,6 +9,11 @@
 -- A matriz inclui as três RPCs F2 nos quatro papéis (220 asserções no total).
 
 begin;
+-- 20261113220000 liga foto, chamada direta e perfil rico para todos; este teste parte das chaves
+-- desligadas, como nasceram, e liga o que precisar.
+update privado.recurso set ligado = false where chave in ('chamada_direta', 'perfil_rico');
+update privado.configuracao_app set foto_de_perfil = false;
+delete from privado.recurso_versao_minima where recurso in ('foto_de_perfil', 'chamada_direta', 'perfil_rico');
 
 create extension if not exists pgtap with schema extensions;
 set local search_path = extensions, public, pg_temp;
@@ -23,7 +28,7 @@ set local frila.agendador_secret = 'segredo-de-teste';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(281);
+select plan(282);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -31,8 +36,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  73::bigint,
-  'censo de RPCs: schema public contem exatamente 73 RPCs expostas'
+  75::bigint,
+  'censo de RPCs: schema public contem exatamente 75 RPCs expostas (com buscar_profissionais, 0.2.88, e aceitar_termos, 0.2.90)'
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -259,6 +264,9 @@ select is(pg_temp.testar_autorizacao('anon', null, 'select public.configuracao_d
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.configuracao_do_app(''ios'')'), 'AUTORIZADO', 'configuracao_do_app [profissional]: profissional acessa configuracao_do_app');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.configuracao_do_app(''ios'')'), 'AUTORIZADO', 'configuracao_do_app [outro contratante]: outro contratante acessa configuracao_do_app');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.configuracao_do_app(''ios'')'), 'AUTORIZADO', 'configuracao_do_app [dono]: dono acessa configuracao_do_app');
+
+-- --- aceitar_termos (0.2.90): anon sem EXECUTE (o resto da matriz dela está no 872) ---
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.aceitar_termos(''2026-11-13'')'), '42501_SEM_EXECUTE', 'aceitar_termos [anon]: anon nao possui EXECUTE');
 
 -- --- criar_conta ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.criar_conta(''profissional''::public.perfil_conta, ''Nome'', ''+5561999999999'', ''1990-01-01''::date, ''1.0'', ''maior_18'')'), '42501_SEM_EXECUTE', 'criar_conta [anon]: anon nao possui EXECUTE em criar_conta');

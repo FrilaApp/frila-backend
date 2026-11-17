@@ -1,0 +1,82 @@
+name: Avisos no Slack
+
+# Envio de notificações operacionais da equipe no Slack via Webhook (Cartões zYC0uhH2 e bB0tV5R8).
+#
+# Casos atendidos via workflow_run:
+#   - CI vermelha em develop, main e branches de teste (com link do run em ≤3 min).
+#   - Falha de Entrega (frila-dev ou frila-prod) e sucesso de tag de produção aplicada.
+#   - Backup diário do frila-prod (falha e sucesso diário resumido).
+#   - Mantém o Prod vivo (falha de disponibilidade / saude do frila-prod).
+#
+# Casos agendados / dispatch:
+#   - Checagem de backup ausente: se o backup-prod não tiver sucesso há mais de 30 h, emite alerta.
+#
+# Segredo:
+#   SLACK_WEBHOOK_URL (Repository secret, Settings > Secrets and variables > Actions).
+#   Caso o segredo não esteja configurado, o workflow emite um warning no log e não falha.
+
+on:
+  workflow_run:
+    workflows:
+      - "CI"
+      - "Entrega"
+      - "Backup diário do frila-prod"
+      - "Mantém o Prod vivo"
+    types:
+      - completed
+  schedule:
+    # A cada hora para monitorar a janela de 30h de backup ausente
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      acao:
+        description: "Ação a executar (checar_backup ou teste_ci)"
+        type: choice
+        options:
+          - checar_backup
+          - teste_ci
+        default: checar_backup
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: notifica-slack-${{ github.event_name }}-${{ github.event.workflow_run.id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  notificar-execucao:
+    name: Notificar resultado de workflow
+    if: github.event_name == 'workflow_run'
+    runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Processar resultado e notificar Slack se aplicável
+        run: |
+          ./scripts/notificar-slack.sh \
+            --evento-workflow-run \
+            --workflow-nome "${{ github.event.workflow_run.name }}" \
+            --conclusao "${{ github.event.workflow_run.conclusion }}" \
+            --branch "${{ github.event.workflow_run.head_branch }}" \
+            --sha "${{ github.event.workflow_run.head_sha }}" \
+            --url "${{ github.event.workflow_run.html_url }}"
+
+  checar-backup-30h:
+    name: Checar janela de 30h sem backup com sucesso
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.acao == 'checar_backup')
+    runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Verificar idade do último backup
+        run: |
+          ./scripts/notificar-slack.sh --checar-backup-30h

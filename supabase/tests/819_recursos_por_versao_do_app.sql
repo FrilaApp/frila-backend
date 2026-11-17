@@ -36,18 +36,20 @@ update privado.configuracao_app set foto_de_perfil = true;
 select pg_temp.minimo(r, p, '1.2.0') from unnest(array['foto_de_perfil','chamada_direta','perfil_rico']) r,
   unnest(array['ios','android']) p;
 
-select is(pg_temp.r('ios', '1.2'), '{"foto_de_perfil": true, "chamada_direta": true, "perfil_rico": true, "checkin_por_codigo": false}'::jsonb,
-  '"1.2" alcança o mínimo "1.2.0": os três vêm true; checkin_por_codigo, sem chave nem mínimo, false (0.2.68)');
-select is(pg_temp.r('ios', '1.10.0'), '{"foto_de_perfil": true, "chamada_direta": true, "perfil_rico": true, "checkin_por_codigo": false}'::jsonb,
+-- Desde 20261112230000 o check-in por código nasce com a chave ligada e o mínimo do iOS em 1.2.0
+-- (vale para todos): o quarto recurso também vem true quando a versão alcança 1.2.0.
+select is(pg_temp.r('ios', '1.2'), '{"foto_de_perfil": true, "chamada_direta": true, "perfil_rico": true, "checkin_por_codigo": true, "busca_profissionais": false}'::jsonb,
+  '"1.2" alcança o mínimo "1.2.0": os três vêm true; checkin_por_codigo também (chave ligada e mínimo do iOS, 20261112230000)');
+select is(pg_temp.r('ios', '1.10.0'), '{"foto_de_perfil": true, "chamada_direta": true, "perfil_rico": true, "checkin_por_codigo": true, "busca_profissionais": false}'::jsonb,
   '"1.10.0" passa do mínimo "1.2.0"');
-select is(pg_temp.r('ios', '1.1.9'), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false}'::jsonb,
+select is(pg_temp.r('ios', '1.1.9'), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false, "busca_profissionais": false}'::jsonb,
   'abaixo do mínimo ("1.1.9"): os três vêm false');
 select is(public.configuracao_do_app('ios')->'recursos',
-  '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false}'::jsonb,
+  '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false, "busca_profissionais": false}'::jsonb,
   'sem versao_app (o app 1.0, o 1.1 e o Android de hoje): os três vêm false');
-select is(pg_temp.r('ios', null), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false}'::jsonb,
+select is(pg_temp.r('ios', null), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false, "busca_profissionais": false}'::jsonb,
   'versao_app nula: os três vêm false');
-select is(pg_temp.r('ios', v), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false}'::jsonb,
+select is(pg_temp.r('ios', v), '{"foto_de_perfil": false, "chamada_direta": false, "perfil_rico": false, "checkin_por_codigo": false, "busca_profissionais": false}'::jsonb,
   'versao_app malformada (' || quote_literal(v) || '): vale como ausente, sem erro')
   from unnest(array['1.2.0.0.1', 'v1.2', '1..2', '1.2.', '', ' 1.2', '1.2 (20261108)', '1234567']) v;
 -- 0.2.67: até quatro partes, a mesma regra de registrar_dispositivo e de recurso_na_versao.
