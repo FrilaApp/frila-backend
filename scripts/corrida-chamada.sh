@@ -28,6 +28,9 @@
 #      posição).
 #   7. Mais uma chamada (com vaga_id) x cancelamento da vaga direta (B-040, #543): nunca nasce
 #      chamada aberta numa vaga cancelada, e ninguém recebe 40P01. Nas duas ordens, forçadas.
+#   8. Mais uma chamada (com vaga_id) x a expiração da 1ª chamada da vaga direta (B-053, #550):
+#      nunca sobra chamada aberta numa vaga encerrada, e ninguém recebe 40P01. Em ordem livre e
+#      com a ordem forçada em que a vaga encerrava (a chamada nova com a vaga, o job depois).
 #
 # Uso: ./scripts/corrida-chamada.sh        RODADAS=4 ./scripts/corrida-chamada.sh
 set -uo pipefail
@@ -671,6 +674,84 @@ for i in $(seq 1 "$RODADAS"); do
 done
 if [ "$erros" = 0 ]; then
   ok "em $RODADAS de $RODADAS rodadas das duas ordens, nenhum 40P01 e nenhuma chamada aberta na vaga cancelada"
+else
+  printf '  (%s das rodadas com 40P01)\n' "$impasses" >&2
+fi
+
+# ── 8. Mais uma chamada (com vaga_id) x a expiração da 1ª chamada (B-053, #550) ─
+# A casa chama o 2º profissional para a vaga direta enquanto o job privado.expirar_chamadas expira
+# a chamada do 1º. Antes da 20261117130000, o job conferia "sem chamada aberta" sem trava: não via
+# a chamada nova, ainda sem commit, esperava a vaga (que o chamar segura desde a 20261117080000) e
+# a encerrava com a chamada nova aberta dentro. Dois desfechos legítimos, e só eles:
+#   · a chamada chega antes: nasce aberta, e o job expira a 1ª e deixa a vaga publicada;
+#   · o job chega antes: encerra a vaga, e a chamada recebe 409 vaga_encerrada.
+#   a. ordem livre, quem chega primeiro alterna (mundos 141 a 150);
+#   b. ordem forçada (mundos 151 a 160): X segura a conta do 2º profissional; a chamada para no
+#      aviso, já com a vaga travada e a chamada inserida, e o job chega depois e para na vaga.
+# A 1ª chamada é vencida à mão (expira_em no passado) logo antes da disputa. O job do pg_cron roda
+# a mesma função a cada minuto: se ele passar no meio, o desfecho é um dos dois acima.
+echo "▸ 8. mais uma chamada x expiração da 1ª chamada (a: ordem livre, b: a chamada com a vaga, o job depois)"
+erros=0; impasses=0
+vencer() { psql >/dev/null -c "update public.chamada set expira_em = now() - interval '1 minute' where id = '$1';"; }
+desfecho_8() {   # desfecho_8 <rodada> <vaga> <chamada do 1º> <usuario do 2º> <chamar> <job> [só a chamada primeiro]
+  local i=$1 vaga=$2 c1=$3 p2=$4 rc=$5 re=$6 so_chamada=${7:-} gv e1 e2 abertas
+  gv=$(psql -c "select estado from public.vaga where id = '$vaga';")
+  e1=$(psql -c "select estado from public.chamada where id = '$c1';")
+  e2=$(psql -c "select coalesce((select c.estado from public.chamada c join public.profissional p on p.id = c.profissional_id
+                                  where c.vaga_id = '$vaga' and p.usuario_id = '$p2'), 'nenhuma');")
+  abertas=$(psql -c "select count(*) from public.chamada where vaga_id = '$vaga' and estado = 'aberta';")
+  case "$rc$re" in *40P01*) impasses=$((impasses + 1)) ;; esac
+  if [ "$re" = ok ] && [ "$e1" = expirada ] && [ "$rc" = ok ] && [ "$gv" = publicada ] && [ "$e2" = aberta ] && [ "$abertas" = 1 ]; then :
+  elif [ -z "$so_chamada" ] && [ "$re" = ok ] && [ "$e1" = expirada ] && [ "$rc" = vaga_encerrada ] && [ "$gv" = encerrada ] \
+       && [ "$e2" = nenhuma ] && [ "$abertas" = 0 ]; then :
+  else
+    falhou "rodada $i: chamada '$rc', job '$re', vaga '$gv', a do 1º '$e1', a do 2º '$e2', abertas $abertas"
+    erros=$((erros + 1))
+  fi
+}
+for i in $(seq 1 "$RODADAS"); do
+  m=$((140 + i)); montar_mundo "$m"
+  p2=$(id "$m" 3)
+  read -r c1 vaga < <(chamar_serial "$m" "$(id "$m" 2)")
+  [ -z "${c1:-}" ] && { falhou "rodada $i (a): não montei a chamada"; erros=$((erros + 1)); continue; }
+  chamar=$(sql_chamar "$m" "$p2" "$vaga")
+  a=0; b=0.2; [ $((i % 2)) = 0 ] && { a=0.2; b=0; }
+  vencer "$c1"
+  lado "$TMP/8a-$i-c" "$a" 1 "$(id "$m" 1)" "$chamar"
+  lado "$TMP/8a-$i-e" "$b" 1 "" "select privado.expirar_chamadas()"
+  wait
+  desfecho_8 "$i (a)" "$vaga" "$c1" "$p2" "$(resultado "$TMP/8a-$i-c")" "$(resultado "$TMP/8a-$i-e")"
+done
+for i in $(seq 1 "$RODADAS"); do
+  m=$((150 + i)); montar_mundo "$m"
+  p2=$(id "$m" 3)
+  read -r c1 vaga < <(chamar_serial "$m" "$(id "$m" 2)")
+  [ -z "${c1:-}" ] && { falhou "rodada $i (b): não montei a chamada"; erros=$((erros + 1)); continue; }
+  chamar=$(sql_chamar "$m" "$p2" "$vaga")
+  n="cc-$RUN-$m"
+  segurar "$n-x" "select 1 from public.usuario where id = '$p2' for update"
+  parou=
+  aguardar "$n-x" segurando || parou="$n-x segurando"
+  if [ -z "$parou" ]; then
+    lado_nomeado "$n-c" "$(id "$m" 1)" "$chamar"
+    aguardar "$n-c" travado || parou="$n-c travado"
+  fi
+  if [ -z "$parou" ]; then
+    vencer "$c1"
+    lado_nomeado "$n-e" "" "select privado.expirar_chamadas()"
+    aguardar "$n-e" travado || parou="$n-e travado"
+  fi
+  if [ -n "$parou" ]; then
+    soltar "$n-%"; wait
+    falhou "rodada $i (b): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    erros=$((erros + 1)); continue
+  fi
+  soltar "$n-x"
+  wait
+  desfecho_8 "$i (b)" "$vaga" "$c1" "$p2" "$(resultado "$TMP/$n-c")" "$(resultado "$TMP/$n-e")" so_chamada
+done
+if [ "$erros" = 0 ]; then
+  ok "em $RODADAS de $RODADAS rodadas das duas ordens, nenhum 40P01 e nenhuma chamada aberta numa vaga encerrada"
 else
   printf '  (%s das rodadas com 40P01)\n' "$impasses" >&2
 fi
