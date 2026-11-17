@@ -28,6 +28,16 @@
 -- depois a vaga (git grep nas migrações: a recusa, cancelar_chamada e o lembrete pegam só a
 -- chamada e não pedem a vaga depois).
 --
+-- O lembrete (privado.lembrar_chamadas, vigente na 20261107370000, outro job a cada minuto) também
+-- passa a pegar as chamadas em ordem de id (parecer do Lince no #563). Ele pegava por lembrete_em,
+-- inclusive as vencidas (o prazo só é olhado depois da trava). Com o expirar por id, duas chamadas
+-- em que a ordem de id é a inversa da de lembrete_em e expira_em (os jobs retomando depois de um
+-- atraso) fechavam ciclo entre os dois jobs: o lembrete com B esperando A, o expirar com A esperando
+-- B. Medido com a ordem forçada por uma terceira conexão (scripts/corrida-chamada.sh, cenário 19):
+-- 40P01 em 4 de 4 rodadas antes; os dois por id, nenhum. O lembrete não pede vaga (nem antes nem
+-- agora): fica chamada só. Corpo, regras (silêncio das 22h às 7h, um lembrete só, aviso só no
+-- prazo), retorno, assinatura e grants iguais; só o order by mudou.
+--
 -- Custo: o job passa a esperar trava de vaga que antes não pegava. Antes ele só pedia a vaga da
 -- direta que ia encerrar, e só no fim; agora pede, logo no começo, a vaga de toda chamada aberta e
 -- vencida (só essas vagas: nenhuma outra). Espera quem segura uma delas (um aceite, um
@@ -123,3 +133,54 @@ comment on function privado.expirar_chamadas() is
   'Expira chamadas cujo prazo venceu (expira_em <= now()), emitindo notificações chamada_expirada (RN31, RN33, B5c). A vaga direta sem chamada aberta nem turno é encerrada. Trava as vagas das chamadas vencidas antes delas, em ordem de id (vaga -> chamada -> usuario, como o aceite, o cancelamento, a exclusão e a suspensão), e a conferência das chamadas abertas roda com a vaga travada, para não encerrar a vaga que acabou de receber mais uma chamada (B-053, B-065).';
 revoke all on function privado.expirar_chamadas() from public, anon, authenticated;
 grant execute on function privado.expirar_chamadas() to service_role;
+
+-- O lembrete: corpo da 20261107370000 (a vigente: develop e PRs abertos, conferido com git grep e
+-- gh pr diff), com o FOR UPDATE das chamadas em ordem de id (era por lembrete_em), como o expirar.
+create or replace function privado.lembrar_chamadas()
+returns int
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  v_agora   timestamptz := privado.agora();
+  v_hora_sp int         := extract(hour from (v_agora at time zone 'America/Sao_Paulo'))::int;
+  v_count   int         := 0;
+  r         record;
+begin
+  -- Não dispara lembretes durante o horário de silêncio (22h às 7h horário de Brasília)
+  if v_hora_sp >= 22 or v_hora_sp < 7 then
+    return 0;
+  end if;
+
+  -- B-065 (#562): por id, a mesma ordem do expirar_chamadas, para os dois jobs não se cruzarem.
+  for r in
+    select c.id, c.vaga_id, c.expira_em, p.usuario_id as prof_usuario_id
+      from public.chamada c
+      join public.profissional p on p.id = c.profissional_id
+     where c.estado = 'aberta'
+       and c.lembrete_em is not null
+       and c.lembrete_em <= v_agora
+     order by c.id
+     for update of c
+  loop
+    update public.chamada
+       set lembrete_em = null
+     where id = r.id;
+
+    -- Só notifica se a chamada ainda não tiver expirado
+    if r.expira_em > v_agora then
+      insert into public.notificacao (usuario_id, tipo, referencia_id, payload)
+      values (r.prof_usuario_id, 'chamada_lembrete', r.id, jsonb_build_object('chamada_id', r.id, 'vaga_id', r.vaga_id))
+      on conflict do nothing;
+
+      v_count := v_count + 1;
+    end if;
+  end loop;
+
+  return v_count;
+end $$;
+
+comment on function privado.lembrar_chamadas() is
+  'Dispara lembrete único para chamadas com lembrete_em atingido (RN31, CD-RF11, B5c). Trava as chamadas em ordem de id, a mesma do expirar_chamadas, para os dois jobs não fecharem ciclo (B-065).';
+revoke all on function privado.lembrar_chamadas() from public, anon, authenticated;
+grant execute on function privado.lembrar_chamadas() to service_role;
