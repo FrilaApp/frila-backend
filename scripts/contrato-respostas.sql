@@ -903,6 +903,8 @@ select pg_temp.guarda('promete:avisarACaminho:403',
     $$ select public.avisar_a_caminho(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
 
 -- 35. configuracaoDoApp: 404 nao_encontrado (plataforma sem linha de configuração)
+-- As três plataformas têm linha desde 20261117060000; apaga a da web (tudo aqui termina em rollback).
+delete from privado.configuracao_app where plataforma = 'web';
 select pg_temp.guarda('promete:configuracaoDoApp:404',
   pg_temp.observado(null,
     $$ select public.configuracao_do_app('web') $$));
