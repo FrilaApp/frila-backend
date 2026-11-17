@@ -2,8 +2,6 @@
 
 Como a Equipe Frila atende o pedido de um titular sobre os próprios dados: acesso, exclusão e as conferências depois da exclusão. O modelo da resposta é o **Modelo D** de [`equipe-frila.md`](equipe-frila.md), seção 7. O texto jurídico do canal fica em `frila-docs/juridico/canal-do-titular.md`.
 
-**Encarregado:** o Frila é agente de tratamento de pequeno porte e não indicou encarregado (Resolução CD/ANPD nº 2/2022, art. 11; decisão do Cauê de 06/11/2026). O canal do titular é `suporte@frilabr.com`, que recebe tudo o que caberia ao encarregado (art. 11, § 1º). As respostas ao titular são assinadas por "Equipe Frila", sem nome de pessoa e sem o título de encarregado ou DPO.
-
 ---
 
 ## 1. Regras de uso

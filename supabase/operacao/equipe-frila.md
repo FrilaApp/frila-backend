@@ -269,8 +269,6 @@ Equipe Frila
 
 ### Modelo D: Atendimento a Solicitação de Dados Pessoais (LGPD art. 18 / RF25)
 
-**Encarregado:** o Frila é agente de tratamento de pequeno porte e não indicou encarregado (Resolução CD/ANPD nº 2/2022, art. 11; decisão do Cauê de 06/11/2026). O canal do titular é `suporte@frilabr.com`, que recebe tudo o que caberia ao encarregado (art. 11, § 1º). As respostas ao titular são assinadas por "Equipe Frila", sem nome de pessoa e sem o título de encarregado ou DPO.
-
 Passo a passo do atendimento: [`canal-do-titular.md`](canal-do-titular.md).
 
 ```
