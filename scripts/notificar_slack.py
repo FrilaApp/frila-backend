@@ -17,6 +17,7 @@ Casos atendidos:
   4. Mantém o Prod vivo / Alertas de banco (Fase 2 de bB0tV5R8, compatível com probe pg_cron):
      - Falha de integridade/jobs atrasados.
      - Recuperação ("voltou").
+  5. Aviso manual (--tipo aviso_manual): texto livre de quem dispara o workflow, limitado a 1000 caracteres.
 
 Segurança e Privacidade (RN15):
   - Zero PII: nenhuma mensagem transporta nome de usuário, telefone, e-mail ou dados pessoais.
@@ -35,6 +36,8 @@ import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+
+LIMITE_AVISO_MANUAL = 1000
 
 
 def obter_webhook_url(args_url: str | None) -> str | None:
@@ -461,6 +464,7 @@ def main() -> int:
         "backup_ausente",
         "alerta_banco",
         "alerta_banco_recuperado",
+        "aviso_manual",
         "generico",
     ], help="Tipo padronizado de mensagem")
     parser.add_argument("--status", choices=["sucesso", "falha", "aguardando", "aviso"], default="aviso")
@@ -533,6 +537,14 @@ def main() -> int:
         status = "sucesso"
         titulo = titulo or "🟢 Alerta de Banco Resolvido: Jobs pg_cron Normalizados"
         mensagem = mensagem or "Os jobs essenciais de despacho e vigia do pg_cron voltaram a responder dentro do prazo."
+    elif args.tipo == "aviso_manual":
+        status = "aviso"
+        titulo = titulo or "Aviso da equipe"
+        mensagem = mensagem.strip()
+        if not mensagem:
+            parser.error("--tipo aviso_manual exige --mensagem não vazia")
+        if len(mensagem) > LIMITE_AVISO_MANUAL:
+            mensagem = mensagem[: LIMITE_AVISO_MANUAL - 1] + "…"
 
     if not titulo:
         parser.error("Informe --titulo ou utilize --tipo padronizado (--tipo ci_falha, entrega, etc.)")
