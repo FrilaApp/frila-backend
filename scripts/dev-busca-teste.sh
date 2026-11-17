@@ -39,7 +39,7 @@
 #
 # ── Uso ───────────────────────────────────────────────────────────────────────────────────────────────────
 #
-#   ./scripts/dev-busca-teste.sh [--alvo local|dev] montar [--minimo-busca <versão>]
+#   ./scripts/dev-busca-teste.sh [--alvo local|dev] [--via https|psql] montar [--minimo-busca <versão>]
 #   ./scripts/dev-busca-teste.sh [--alvo local|dev] conferir        # 4 buscas como a casa, transação desfeita
 #   ./scripts/dev-busca-teste.sh [--alvo local|dev] http            # entra pelo Auth e busca pelo REST (4 logins)
 #   ./scripts/dev-busca-teste.sh [--alvo local|dev] codigo <e-mail> # o código de entrada, para o Prisma
@@ -48,9 +48,15 @@
 #   ./scripts/dev-busca-teste.sh --alvo local acesso --saida <arquivo>   # ensaio: a saída tem de ficar fora do repo
 #
 # O alvo padrão é o banco LOCAL (o ensaio). `--alvo dev` lê a conexão de ~/.config/frila/dev-db-url sem
-# imprimi-la, e o psql nunca a recebe na linha de comando (nada dela aparece no `ps`): a senha vai num
-# arquivo de senhas temporário (600, apagado na saída) e o resto em variáveis PG* só do psql.
-# Não existe alvo prod: o script não sabe falar com ele.
+# imprimi-la e confere o ref dela (trava abaixo). Não existe alvo prod: o script não sabe falar com ele.
+#
+# No dev, o SQL vai de dois jeitos (`--via`):
+#   https (padrão)  pela Management API (POST /v1/projects/<ref>/database/query), com o token de conta de
+#                   ~/.config/frila/supabase-token: nenhuma senha de banco e nenhuma porta do Postgres, então
+#                   funciona com a 5432/6543 barradas pela rede (B-027.k);
+#   psql            o psql pela conexão do dev, que nunca recebe a URL na linha de comando (nada dela aparece no
+#                   `ps`): a senha vai num arquivo de senhas temporário (600, apagado na saída) e o resto em
+#                   variáveis PG* só do psql.
 #
 # ── O que `montar` faz e o que NÃO faz com as chaves ──────────────────────────────────────────────────────
 #
@@ -67,6 +73,17 @@
 # deles, o FCM responde UNREGISTERED e o enviar-push APAGA a linha do aparelho (supabase/functions/enviar-push/
 # index.ts); sem aparelho, o profissional some da busca. É só rodar `montar` de novo.
 #
+# (Medido no dev em 16/11/2026: o token falso de hoje recebe INVALID_ARGUMENT, e com esse erro o enviar-push NÃO
+# apaga o aparelho; só 404/410 ou UNREGISTERED apagam.)
+#
+# Chamadas de teste (B-027.k): a busca tira da casa quem já tem chamada ABERTA dela (RN34) e quem recusou chamada
+# dela há menos de 24 h ou tem as 3 últimas recusadas/expiradas (CD-C13). Testar o chamar no app deixa isso para
+# trás: em 16/11 Bruno recusou às 17:51 e Clara ficou com uma aberta às 18:28, e os dois sumiram das buscas de
+# garçom. O `montar` limpa só entre a casa de teste e as 3 profissionais de teste: a aberta a casa cancela pelo
+# caminho do produto (cancelar_chamada, como a casa; cancelada não conta na busca), e as recusadas e expiradas
+# desse par saem (nenhum caminho do produto desfaz uma recusa; nada depende da linha da chamada). Aceitas (com
+# vaga e turno) não são tocadas.
+#
 # Pelo banco compartilhado: no local, rode pela fila (orquestracao/scripts/fila.sh rodar banco <dono> -- ...).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -76,6 +93,7 @@ DB_CONTAINER=${DB_CONTAINER:-supabase_db_frila-backend}
 PSQL=${PSQL:-/opt/homebrew/opt/postgresql@16/bin/psql}
 MINIMO_BUSCA=""
 SAIDA=""
+VIA=https
 # O checkout principal (Ground): é o caminho que o arquivo de acesso cita depois da mescla do #518.
 CAMINHO_GROUND="$HOME/Documents/Projetos/Frila/frila-backend"
 
@@ -99,12 +117,14 @@ while [ $# -gt 0 ]; do
     --alvo)          ALVO="${2:-}"; shift 2 || break ;;
     --minimo-busca)  MINIMO_BUSCA="${2:-}"; shift 2 || break ;;
     --saida)         SAIDA="${2:-}"; shift 2 || break ;;
+    --via)           VIA="${2:-}"; shift 2 || break ;;
     -h|--ajuda)      sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)              falhou "opção desconhecida: $1 (veja --ajuda)" ;;
     *)               if [ -z "$COMANDO" ]; then COMANDO="$1"; elif [ -z "$ARG1" ]; then ARG1="$1"; else falhou "argumento a mais: $1"; fi; shift ;;
   esac
 done
 case "$ALVO" in local|dev) ;; *) falhou "--alvo vale local ou dev (recebi \"$ALVO\"). Prod não existe aqui." ;; esac
+case "$VIA" in https|psql) ;; *) falhou "--via vale https ou psql (recebi \"$VIA\")" ;; esac
 case "$COMANDO" in montar|conferir|http|codigo|estado|acesso) ;; *) falhou "uso: dev-busca-teste.sh [--alvo local|dev] montar|conferir|http|codigo <e-mail>|estado|acesso (veja --ajuda)" ;; esac
 if [ -n "$MINIMO_BUSCA" ] && ! printf '%s' "$MINIMO_BUSCA" | grep -Eq '^[0-9]{1,6}(\.[0-9]{1,6}){0,2}$'; then
   falhou "--minimo-busca precisa ter de 1 a 3 partes numéricas (ex.: 1.2.0)"
@@ -268,18 +288,80 @@ if [ "$ALVO" = dev ]; then
     REF="$ref"
   done <<< "$(refs_da_url "$PGURL")"
   [ -n "$REF" ] || falhou "a conexão lida NÃO é a do frila-dev (nenhum ref reconhecível na URL). Nada foi conectado."
-  if usa_banco; then
+  if usa_banco && [ "$VIA" = psql ]; then
     [ -x "$PSQL" ] || falhou "não achei o psql em $PSQL (defina PSQL)"
     preparar_conexao_dev
+  elif usa_banco; then
+    [ -f "$HOME/.config/frila/supabase-token" ] || falhou "não achei ~/.config/frila/supabase-token (o SQL por HTTPS usa o token de conta)"
   fi
-  PGURL=""   # daqui em diante a URL (com a senha) não é usada: o psql lê o arquivo de senhas
+  PGURL=""   # daqui em diante a URL (com a senha) não é usada: o psql lê o arquivo de senhas; o https, o token
 elif usa_banco; then
   docker ps --format '{{.Names}}' | grep -qx "$DB_CONTAINER" \
     || falhou "o contêiner $DB_CONTAINER não está de pé (supabase start; ou defina DB_CONTAINER)"
 fi
 
+# SQL pela Management API (--via https, o padrão no dev). Aceita as mesmas opções que o psql_ recebe (-v nome=valor
+# e -c "sql"; sem -c, o SQL vem pela entrada), troca cada :'nome' pelo valor como literal SQL (aspas dobradas) e
+# imprime como o `psql -t -A`: uma linha por linha, colunas separadas por |, booleano t/f, nulo vazio. O endpoint
+# devolve só o resultado da ÚLTIMA instrução que tem linhas (medido em 16/11/2026), então cada SQL daqui tem no
+# máximo uma consulta que devolve linhas; begin/set/DO/commit em volta não atrapalham. E cada coluna precisa de nome
+# único: a resposta é JSON, e duas colunas `to_char` virariam uma só. O token é lido do arquivo pelo
+# python e o ref vai pelo ambiente: nenhum dos dois na linha de comando nem na saída. Erro do banco sai com o código
+# e a mensagem do Postgres, e o script para (como o ON_ERROR_STOP do psql).
+SQL_HTTPS_PY='import json, os, re, sys, urllib.error, urllib.request
+args, valores, sql = sys.argv[1:], {}, None
+i = 0
+while i < len(args):
+    if args[i] == "-v" and i + 1 < len(args):
+        k, _, v = args[i + 1].partition("=")
+        valores[k] = v
+        i += 2
+    elif args[i] == "-c" and i + 1 < len(args):
+        sql = args[i + 1]
+        i += 2
+    else:
+        i += 1
+if sql is None:
+    sql = sys.stdin.read()
+def literal(m):
+    if m.group(1) not in valores:
+        sys.exit("  ✗ SQL por HTTPS: a variável :" + chr(39) + m.group(1) + chr(39) + " não recebeu valor")
+    return chr(39) + valores[m.group(1)].replace(chr(39), chr(39) * 2) + chr(39)
+sql = re.sub(r":" + chr(39) + r"([A-Za-z_][A-Za-z0-9_]*)" + chr(39), literal, sql)
+token = re.sub(r"^[A-Za-z_]*=", "", open(os.environ["FRILA_TOKEN_ARQUIVO"], encoding="utf-8").read().strip())
+pedido = urllib.request.Request("https://api.supabase.com/v1/projects/" + os.environ["FRILA_REF_DEV"] + "/database/query",
+    data=json.dumps({"query": sql}).encode(), method="POST",
+    headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+try:
+    with urllib.request.urlopen(pedido, timeout=120) as r:
+        linhas = json.load(r)
+except urllib.error.HTTPError as e:
+    try:
+        msg = json.loads(e.read()).get("message", "")
+    except Exception:
+        msg = ""
+    sys.exit("  ✗ SQL por HTTPS (%d): %s" % (e.code, msg[:600]))
+except (urllib.error.URLError, OSError) as e:
+    sys.exit("  ✗ a Management API não respondeu: " + str(getattr(e, "reason", e))[:200])
+def texto(v):
+    if v is None:
+        return ""
+    if v is True or v is False:
+        return "t" if v else "f"
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, ensure_ascii=False)
+    return str(v)
+for linha in linhas if isinstance(linhas, list) else []:
+    print("|".join(texto(v) for v in linha.values()))'
+
+sql_https() {
+  FRILA_REF_DEV="$REF" FRILA_TOKEN_ARQUIVO="$HOME/.config/frila/supabase-token" python3 -I -c "$SQL_HTTPS_PY" "$@" 2> >(redigir >&2)
+}
+
 psql_() {
-  if [ "$ALVO" = dev ]; then
+  if [ "$ALVO" = dev ] && [ "$VIA" = https ]; then
+    sql_https "$@"
+  elif [ "$ALVO" = dev ]; then
     # Num subshell, para as PG* valerem só neste psql. Antes, sai toda PG* herdada do terminal (PGHOSTADDR,
     # PGSERVICE, PGPASSWORD, PGOPTIONS...): nenhuma desvia a conexão nem põe outra senha. O connect_timeout
     # padrão (15 s) faz a rede que barra a porta falhar logo, em vez de esperar o TCP desistir.
@@ -318,30 +400,39 @@ checar_migracoes() {
 # ── Resumo (chaves, versões mínimas, ids e o que cada um tem) ──────────────
 recursos() {
   echo "▸ Chaves e versões mínimas ($ALVO)"
+  # Uma consulta só (o SQL por HTTPS devolve só a última que tem linhas).
   psql_ <<'SQL' | sed 's/^/    /'
-select 'chave   ' || r.chave || ' = ' || r.ligado
-  from privado.recurso r where r.chave in ('busca_profissionais', 'chamada_direta', 'perfil_rico') order by r.chave;
-select 'mínimo  ' || m.recurso || ' / ' || m.plataforma || ' >= ' || m.versao_minima
-  from privado.recurso_versao_minima m where m.recurso in ('busca_profissionais', 'chamada_direta', 'perfil_rico') order by m.recurso, m.plataforma;
-select 'SEM mínimo para ' || x.recurso || ' no iOS: o app NÃO verá o recurso (configuracao_do_app dá false sem a linha)'
-  from (values ('busca_profissionais'), ('chamada_direta')) x(recurso)
- where not exists (select 1 from privado.recurso_versao_minima m where m.recurso = x.recurso and m.plataforma = 'ios');
-select 'SEM mínimo para ' || x.recurso || ' no Android: o app NÃO verá o recurso'
-  from (values ('busca_profissionais'), ('chamada_direta')) x(recurso)
- where not exists (select 1 from privado.recurso_versao_minima m where m.recurso = x.recurso and m.plataforma = 'android');
+select linha from (
+  select 1 as ordem, r.chave::text as k1, ''::text as k2, 'chave   ' || r.chave || ' = ' || r.ligado as linha
+    from privado.recurso r where r.chave in ('busca_profissionais', 'chamada_direta', 'perfil_rico')
+  union all
+  select 2, m.recurso::text, m.plataforma::text, 'mínimo  ' || m.recurso || ' / ' || m.plataforma || ' >= ' || m.versao_minima
+    from privado.recurso_versao_minima m where m.recurso in ('busca_profissionais', 'chamada_direta', 'perfil_rico')
+  union all
+  select 3, x.recurso, '', 'SEM mínimo para ' || x.recurso || ' no iOS: o app NÃO verá o recurso (configuracao_do_app dá false sem a linha)'
+    from (values ('busca_profissionais'), ('chamada_direta')) x(recurso)
+   where not exists (select 1 from privado.recurso_versao_minima m where m.recurso = x.recurso and m.plataforma = 'ios')
+  union all
+  select 4, x.recurso, '', 'SEM mínimo para ' || x.recurso || ' no Android: o app NÃO verá o recurso'
+    from (values ('busca_profissionais'), ('chamada_direta')) x(recurso)
+   where not exists (select 1 from privado.recurso_versao_minima m where m.recurso = x.recurso and m.plataforma = 'android')
+) t order by ordem, k1, k2;
 SQL
 }
 
 resumo() {
   echo "▸ Quem existe ($ALVO)"
+  # Uma consulta só (o SQL por HTTPS devolve só a última que tem linhas): a casa primeiro, depois as profissionais.
   psql_ <<'SQL' | sed 's/^/    /'
-select 'casa   usuario_id=' || u.id || '  estabelecimento_id=' || e.id || '  ' || u.email || '  (' || e.nome || ', ' || e.regiao_administrativa || ')'
-       || E'\n         termos aceitos: ' || u.termos_versao || ' (a busca exige 2026-11-13 ou mais nova)'
+select linha from (
+select 0 as ordem, ''::text as email, 'casa   usuario_id=' || u.id || '  estabelecimento_id=' || e.id || '  ' || u.email || '  (' || e.nome || ', ' || e.regiao_administrativa || ')'
+       || E'\n         termos aceitos: ' || u.termos_versao || ' (a busca exige 2026-11-13 ou mais nova)' as linha
   from public.usuario u
   join public.membro_estabelecimento m on m.usuario_id = u.id
   join public.estabelecimento e on e.id = m.estabelecimento_id
- where u.id = 'b027f000-0000-4000-8000-000000000001';
-select 'prof   usuario_id=' || u.id || '  profissional_id=' || p.id || '  ' || u.email
+ where u.id = 'b027f000-0000-4000-8000-000000000001'
+union all
+select 1, u.email::text, 'prof   usuario_id=' || u.id || '  profissional_id=' || p.id || '  ' || u.email
        || E'\n         nome curto: ' || privado.nome_curto(u.nome)
        || ' · faixa: ' || case when extensions.ST_DWithin(p.ponto_base, e.ponto, 5000) then 'até 5 km'
                                when extensions.ST_DWithin(p.ponto_base, e.ponto, 15000) then '5 a 15 km' else 'mais de 15 km' end
@@ -359,12 +450,14 @@ select 'prof   usuario_id=' || u.id || '  profissional_id=' || p.id || '  ' || u
        || E'\n         chamadas: ' || coalesce((select pc.aceita_chamadas::text from public.profissional_preferencia_chamada pc where pc.profissional_id = p.id), 'sem linha')
        || ' · pendências p/ busca: ' || privado.pendencias_para_busca(p.id)::text
        || ' · aparelho: ' || coalesce((select string_agg(d.plataforma || ' ' || d.versao_app, ', ') from public.dispositivo d where d.usuario_id = u.id), 'NENHUM')
+       || E'\n         foto de perfil: ' || coalesce((select m.estado from privado.midia m where m.dono_usuario_id = u.id and m.tipo = 'foto_perfil'
+                                                     order by (m.estado = 'aprovada') desc, m.atualizado_em desc limit 1), 'nenhuma') as linha
   from public.usuario u
   join public.profissional p on p.usuario_id = u.id
   cross join public.estabelecimento e
  where e.id = 'b027f000-0000-4000-8000-0000000000c1'
    and u.id in ('b027f000-0000-4000-8000-000000000011', 'b027f000-0000-4000-8000-000000000012', 'b027f000-0000-4000-8000-000000000013')
- order by u.email;
+) t order by ordem, email;
 SQL
 }
 
@@ -532,9 +625,30 @@ begin
   end loop;
 end $$;
 
+-- 7. As chamadas de teste não escondem ninguém da busca da casa de teste (B-027.k; ver o cabeçalho). Só entre a casa
+--    de teste e as 3 profissionais de teste. A ABERTA a casa cancela pelo caminho do produto (cancelar_chamada, como
+--    a casa): cancelada não conta na busca. As RECUSADAS e EXPIRADAS desse par saem: nenhum caminho do produto desfaz
+--    uma recusa, e nada depende da linha da chamada. Aceitas (com vaga e turno) ficam.
+do $$
+declare r record;
+begin
+  for r in select ch.id from public.chamada ch
+            where ch.estabelecimento_id = 'b027f000-0000-4000-8000-0000000000c1' and ch.estado = 'aberta'
+              and ch.profissional_id in ('b027f000-0000-4000-8000-000000000021', 'b027f000-0000-4000-8000-000000000022', 'b027f000-0000-4000-8000-000000000023')
+  loop
+    perform set_config('request.jwt.claims', json_build_object('sub', 'b027f000-0000-4000-8000-000000000001', 'role', 'authenticated')::text, true);
+    execute 'set local role authenticated';
+    perform public.cancelar_chamada(chamada_id => r.id);
+    execute 'reset role';
+  end loop;
+end $$;
+delete from public.chamada ch
+ where ch.estabelecimento_id = 'b027f000-0000-4000-8000-0000000000c1' and ch.estado in ('recusada', 'expirada')
+   and ch.profissional_id in ('b027f000-0000-4000-8000-000000000021', 'b027f000-0000-4000-8000-000000000022', 'b027f000-0000-4000-8000-000000000023');
+
 commit;
 SQL
-  ok "contas, casa, profissionais, grade, aparelhos e preferência gravados"
+  ok "contas, casa, profissionais, grade, aparelhos e preferência gravados; chamadas de teste que escondiam alguém da busca limpas"
   recursos
   resumo
 }
@@ -548,12 +662,12 @@ conferir() {
   linha=$(psql_ <<'SQL'
 with sp as (select (privado.agora() at time zone 'America/Sao_Paulo')::date + 2 as d),
      dias as (select d + ((6 - extract(dow from d)::int + 7) % 7) as sab, d + ((1 - extract(dow from d)::int + 7) % 7) as seg from sp)
-select to_char(((sab + time '11:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-       to_char(((sab + time '15:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-       to_char(((seg + time '09:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-       to_char(((seg + time '13:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-       (select id from public.funcao where nome = 'garçom' and ativo),
-       (select id from public.funcao where nome = 'faxina residencial' and ativo)
+select to_char(((sab + time '11:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as sab_ini,
+       to_char(((sab + time '15:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as sab_fim,
+       to_char(((seg + time '09:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as seg_ini,
+       to_char(((seg + time '13:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as seg_fim,
+       (select id from public.funcao where nome = 'garçom' and ativo) as f_garcom,
+       (select id from public.funcao where nome = 'faxina residencial' and ativo) as f_faxina
   from dias;
 SQL
   )
@@ -562,10 +676,11 @@ SQL
   echo "    sábado $sab_ini a $sab_fim · segunda $seg_ini a $seg_fim (UTC)"
 
   local saida
-  saida=$(psql_ -v "casa=$CASA_USUARIO" -v "estab=$CASA_ESTAB" -v "sab_ini=$sab_ini" -v "sab_fim=$sab_fim" \
-                -v "seg_ini=$seg_ini" -v "seg_fim=$seg_fim" -v "f_garcom=$f_garcom" -v "f_faxina=$f_faxina" <<'SQL'
+  # As claims da casa vão por `set local` (e não por set_config + \gset, comando do psql que o SQL por HTTPS não tem).
+  saida=$(psql_ -v "claims={\"sub\":\"$CASA_USUARIO\",\"role\":\"authenticated\"}" -v "estab=$CASA_ESTAB" -v "sab_ini=$sab_ini" \
+                -v "sab_fim=$sab_fim" -v "seg_ini=$seg_ini" -v "seg_fim=$seg_fim" -v "f_garcom=$f_garcom" -v "f_faxina=$f_faxina" <<'SQL'
 begin;
-select set_config('request.jwt.claims', json_build_object('sub', :'casa', 'role', 'authenticated')::text, true) \gset
+set local request.jwt.claims = :'claims';
 set local role authenticated;
 with b(k, r) as (values
   ('B1', public.buscar_profissionais(estabelecimento_id => :'estab'::uuid, funcao_id => :'f_garcom'::uuid)),
@@ -751,7 +866,7 @@ acesso() {
       echo '<!-- gerado por dev-busca-teste.sh (B-027.f). Dados sintéticos; sem código nem segredo. Pode ser regerado. -->'
       echo "# Teste de ponta a ponta da busca de profissionais ($ALVO)"
       echo
-      echo "Gerado em $(date '+%Y-%m-%d %H:%M') pelo scripts/dev-busca-teste.sh (branch feat/busca-chamar-e-perfil, PR #518)."
+      echo "Gerado em $(date '+%Y-%m-%d %H:%M') pelo scripts/dev-busca-teste.sh (\`acesso\`; no dev, o SQL vai por HTTPS)."
       echo
       echo '## Contas (todas entram por e-mail + código; o e-mail @frila.test não recebe nada)'
       echo
@@ -792,6 +907,10 @@ acesso() {
       echo '3. faxina residencial, região Taguatinga, na próxima segunda das 9h às 13h → só Ana T. (atende todo o DF; na grade).'
       echo
       echo 'Extra: garçom em Guará → só Bruno T. Os horários precisam estar a mais de 6 horas do momento da busca.'
+      echo
+      echo 'Foto: a linha "foto de perfil" acima diz o estado de cada uma. Com "aprovada", o perfil_publico e o cartão da busca trazem foto_url (link do ler-midia, temporário). As fotos de teste são imagens sintéticas (cor e forma, sem pessoa).'
+      echo
+      echo "Se Bruno ou Clara sumirem da busca depois de testar o chamar no app: a busca esconde quem já tem chamada aberta desta casa e quem recusou chamada dela há menos de 24 h. O \`montar\` limpa essas chamadas de teste (só entre a casa de teste e as 3 profissionais de teste)."
       echo
       echo '## Refazer ou consertar'
       echo
