@@ -23,7 +23,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2030-03-04 15:00:00+00', true);   -- segunda, 12h em Brasília
 set local frila.agendador_secret = 'segredo-de-teste-876';
-select plan(56);
+select plan(57);
 
 -- ── Ajudantes ────────────────────────────────────────────────────────────────
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
@@ -73,7 +73,7 @@ create function pg_temp.sql(casa uuid, evento jsonb, vagas jsonb, chave uuid) re
 -- O evento da escala e um item válido (turno de 6 h, urgência).
 create function pg_temp.evento() returns jsonb language sql immutable as $$
   select '{"nome": "Formatura de Direito 876", "data": "2030-03-06", "local": "SHN Quadra 5, Salão Nobre",
-           "regiao_administrativa": "Plano Piloto", "ponto": {"latitude": -15.7840, "longitude": -47.8890}}'::jsonb $$;
+           "regiao_administrativa": "Taguatinga", "ponto": {"latitude": -15.7840, "longitude": -47.8890}}'::jsonb $$;
 create function pg_temp.item(p_funcao text, p_inicio timestamptz, p_posicoes int) returns jsonb language sql stable as $$
   select jsonb_build_object(
     'funcao_id', (select f.id from public.funcao f where f.nome = p_funcao),
@@ -161,7 +161,7 @@ select is(
     where v.evento_id = (select id from e1)
       and v.estabelecimento_id = pg_temp.casa(1)
       and v.local = 'SHN Quadra 5, Salão Nobre'
-      and v.regiao_administrativa = 'Plano Piloto'
+      and v.regiao_administrativa = 'Taguatinga'
       and extensions.st_astext(v.ponto::extensions.geometry) = 'POINT(-47.889 -15.784)'
       and v.publicado_por = pg_temp.u(1)
       and v.chave_cliente <> pg_temp.chave(1)
@@ -184,6 +184,8 @@ select is(
 select is(pg_temp.fila(), 5, 'B7 cinco mensagens na fila, nenhuma a mais');
 
 -- ── C. A chave da escala ──────────────────────────────────────────────────────
+select is(pg_temp.recusa(pg_temp.u(2), pg_temp.sql(pg_temp.casa(1), null, null, pg_temp.chave(1))),
+  '403 sem_permissao', 'A7 quem não é membro não recebe pela chave a escala de outra casa');
 select is(pg_temp.como(pg_temp.u(1), pg_temp.sql(pg_temp.casa(1), pg_temp.evento(), (select vagas from cinco), pg_temp.chave(1))),
   (select j from r1), 'C1 o reenvio com a mesma chave devolve a mesma escala');
 select is(pg_temp.fila(), 5, 'C2 e não despacha de novo');
