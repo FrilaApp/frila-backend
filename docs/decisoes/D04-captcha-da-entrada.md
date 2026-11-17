@@ -6,6 +6,8 @@
 
 **Captcha da entrada (decisão de 16/11/2026, pré-aprovada pelo Cauê, pela recomendação da Forja e da Bússola):** fica desligado no Prod. Ligar sem o widget nos apps tranca a entrada de todos. O abuso provável hoje é gastar o limite de e-mails do Auth (30 por hora, no projeto inteiro); ele fica coberto pelo alerta de uso da cota. Quando ligar: Cloudflare Turnstile, depois de os apps mandarem o token, com versão mínima dos apps e Política nova avisada aos cadastrados. Gatilhos para antecipar: cota de e-mail esgotada por pedidos sem entrada, contas falsas em série ou a web lançada.
 
+**Nota da Forja (16/11/2026):** o alerta de uso da cota citado acima **ainda não existe** (fica anotado no cartão `ohSt4dg2`). Até ele existir, o esgotamento da cota só aparece quando o Auth recusa o envio do código. O `conferir-auth-remoto.sh` confere o valor do limite, não o uso.
+
 ## Como isso é conferido
 
 `scripts/conferir-auth-remoto.sh` reprova se o captcha estiver ligado (`security_captcha_enabled`) ou se o
