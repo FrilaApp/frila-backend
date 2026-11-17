@@ -331,6 +331,20 @@ VIGIADAS = {
     ("aceitarTermos", "401"): "nao_autenticado",
     ("aceitarTermos", "404"): "nao_encontrado",
     ("aceitarTermos", "422"): "campo_invalido",
+    # convidar_membro e aceitar_convite_membro (0.2.73), chamadas pelos nomes do contrato (B-052).
+    # O 404 de convidarMembro está em ISENTAS: quem não é administrador da casa leva 403 antes.
+    ("convidarMembro", "401"): "nao_autenticado",
+    ("convidarMembro", "403"): "sem_permissao",
+    ("convidarMembro", "422"): "campo_invalido",
+    ("aceitarConviteMembro", "401"): "nao_autenticado",
+    ("aceitarConviteMembro", "422"): "convite_invalido",
+    ("removerMembro", "401"): "nao_autenticado",
+    ("removerMembro", "403"): "sem_permissao",
+    ("removerMembro", "404"): "nao_encontrado",
+    ("removerMembro", "422"): "ultimo_administrador",
+    ("transferirAdministracao", "401"): "nao_autenticado",
+    ("transferirAdministracao", "403"): "sem_permissao",
+    ("transferirAdministracao", "404"): "nao_encontrado",
     ("responderChamada", "401"): "nao_autenticado",
     ("responderChamada", "403"): "sem_permissao",
     ("responderChamada", "404"): "nao_encontrado",
@@ -384,6 +398,7 @@ ISENTAS = {
         }.items()
         for status in statuses
     },
+    ("transferirAdministracao", "422"): "inalcançável: o contrato declara RegraRecusou, mas o corpo só recusa com 401, 403 e 404 (membro que não é da casa, inclusive id nulo, leva 404)",
     # Supabase Auth (GoTrue), fora do Postgres
     ("entrarDemonstracao", "429"): "limite de tentativas do Supabase Auth, fora do Postgres",
     ("pedirCodigo", "429"): "limite de reenvio do Supabase Auth, fora do Postgres",
@@ -421,10 +436,9 @@ ISENTAS = {
 PENDENTES = {
     **{op: "contratação direta, ainda sem implementação" for op in (
         "listarEspecialidades", "listarRegioesAdministrativas")},
-    # Múltiplos membros de estabelecimento (0.2.73): o espelho entra antes das RPCs, que chegam
-    # no PR #472. Cada uma sai daqui no PR que a implementa.
-    **{op: "múltiplos membros de estabelecimento, fatias seguintes" for op in (
-        "aceitarConviteMembro", "convidarMembro", "removerMembro", "transferirAdministracao")},
+    # Múltiplos membros de estabelecimento (0.2.73): as quatro operações (convidarMembro,
+    # aceitarConviteMembro, removerMembro, transferirAdministracao) saíram daqui no B-052, com os
+    # nomes de parâmetro do contrato.
     # Escala de evento (0.2.96): o espelho 0.2.100 entra antes da RPC, que chega no PR #537. Sai daqui
     # no PR que a implementa.
 }

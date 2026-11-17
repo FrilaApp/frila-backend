@@ -2078,6 +2078,78 @@ select pg_temp.guarda('promete:aceitarTermos:422', pg_temp.observado('cc000000-0
 select pg_temp.guarda('promete:aceitarTermos:401', pg_temp.observado(null,
   $$ select public.aceitar_termos('2026-11-13') $$));
 
+-- convidar_membro, aceitar_convite_membro, remover_membro e transferir_administracao (0.2.73, B-052): chamadas pelos NOMES do contrato
+-- (estabelecimento_id, email, papel; token), como o PostgREST faz. Contas próprias, ativas: ...00a1 é
+-- contratante que ainda não é membro da casa (aceitar o convite a faz membro, por isso este trecho é o
+-- último) e ...00a2 é profissional.
+insert into auth.users (id, email) values
+  ('ee000000-0000-4000-8000-0000000000a1', 'convite_contratante@frila.test'),
+  ('ee000000-0000-4000-8000-0000000000a2', 'convite_profissional@frila.test')
+on conflict do nothing;
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado) values
+  ('ee000000-0000-4000-8000-0000000000a1', 'contratante',  'Convidada Contratante', '+5561999990161', 'convite_contratante@frila.test',  '1990-01-01', '1.0', now(), 'ativa'),
+  ('ee000000-0000-4000-8000-0000000000a2', 'profissional', 'Convidada Profissional', '+5561999990162', 'convite_profissional@frila.test', '1990-01-01', '1.0', now(), 'ativa')
+on conflict (id) do update set estado = 'ativa';
+create temp table convite_colhido as
+  select pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'Novo.Membro@frila.test', papel => 'operador') $$,
+    (select casa_id from ids))) as r;
+select pg_temp.guarda('convidarMembro', (select r from convite_colhido));
+
+select pg_temp.guarda('promete:convidarMembro:401', pg_temp.observado(null, format(
+  $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'x@frila.test', papel => 'operador') $$,
+  (select casa_id from ids))));
+select pg_temp.guarda('promete:convidarMembro:403', pg_temp.observado('ee000000-0000-4000-8000-0000000000a1', format(
+  $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'x@frila.test', papel => 'operador') $$,
+  (select casa_id from ids))));
+select pg_temp.guarda('promete:convidarMembro:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'sem-arroba', papel => 'operador') $$,
+  (select casa_id from ids))));
+select pg_temp.guarda('promete:convidarMembro:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'x@frila.test', papel => null) $$,
+  (select casa_id from ids))));
+
+select pg_temp.guarda('promete:aceitarConviteMembro:401', pg_temp.observado(null,
+  $$ select public.aceitar_convite_membro(token => 'qualquer') $$));
+select pg_temp.guarda('promete:aceitarConviteMembro:422', pg_temp.observado('ee000000-0000-4000-8000-0000000000a2', format(
+  $$ select public.aceitar_convite_membro(token => %L) $$, (select r->>'token' from convite_colhido))));
+select pg_temp.guarda('promete:aceitarConviteMembro:422', pg_temp.observado('ee000000-0000-4000-8000-0000000000a1',
+  $$ select public.aceitar_convite_membro(token => 'token-que-nao-existe') $$));
+select pg_temp.guarda('aceitarConviteMembro', pg_temp.como('ee000000-0000-4000-8000-0000000000a1', format(
+  $$ select public.aceitar_convite_membro(token => %L) $$, (select r->>'token' from convite_colhido))));
+
+-- remover_membro e transferir_administracao (0.2.73, B-052), pelos nomes do contrato. Aqui a casa tem
+-- um administrador (...0001) e um operador (...00a1, que acabou de aceitar o convite).
+select pg_temp.guarda('promete:transferirAdministracao:401', pg_temp.observado(null, format(
+  $$ select public.transferir_administracao(estabelecimento_id => %L::uuid, novo_admin_id => %L::uuid) $$,
+  (select casa_id from ids), 'ee000000-0000-4000-8000-0000000000a1'::uuid)));
+select pg_temp.guarda('promete:transferirAdministracao:403', pg_temp.observado('ee000000-0000-4000-8000-0000000000a1', format(
+  $$ select public.transferir_administracao(estabelecimento_id => %L::uuid, novo_admin_id => %L::uuid) $$,
+  (select casa_id from ids), 'ee000000-0000-4000-8000-0000000000a1'::uuid)));
+select pg_temp.guarda('promete:transferirAdministracao:404', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.transferir_administracao(estabelecimento_id => %L::uuid, novo_admin_id => %L::uuid) $$,
+  (select casa_id from ids), 'ee000000-0000-4000-8000-0000000000ff'::uuid)));
+
+select pg_temp.guarda('promete:removerMembro:401', pg_temp.observado(null, format(
+  $$ select public.remover_membro(estabelecimento_id => %L::uuid, membro_id => %L::uuid) $$,
+  (select casa_id from ids), 'cc000000-0000-4000-8000-000000000001'::uuid)));
+select pg_temp.guarda('promete:removerMembro:403', pg_temp.observado('ee000000-0000-4000-8000-0000000000a2', format(
+  $$ select public.remover_membro(estabelecimento_id => %L::uuid, membro_id => %L::uuid) $$,
+  (select casa_id from ids), 'cc000000-0000-4000-8000-000000000001'::uuid)));
+select pg_temp.guarda('promete:removerMembro:404', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.remover_membro(estabelecimento_id => %L::uuid, membro_id => %L::uuid) $$,
+  (select casa_id from ids), 'ee000000-0000-4000-8000-0000000000ff'::uuid)));
+select pg_temp.guarda('promete:removerMembro:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.remover_membro(estabelecimento_id => %L::uuid, membro_id => %L::uuid) $$,
+  (select casa_id from ids), 'cc000000-0000-4000-8000-000000000001'::uuid)));
+
+select pg_temp.guarda('transferirAdministracao', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.transferir_administracao(estabelecimento_id => %L::uuid, novo_admin_id => %L::uuid) $$,
+  (select casa_id from ids), 'ee000000-0000-4000-8000-0000000000a1'::uuid)));
+select pg_temp.guarda('removerMembro', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.remover_membro(estabelecimento_id => %L::uuid, membro_id => %L::uuid) $$,
+  (select casa_id from ids), 'ee000000-0000-4000-8000-0000000000a1'::uuid)));
+
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o
 \pset format unaligned
