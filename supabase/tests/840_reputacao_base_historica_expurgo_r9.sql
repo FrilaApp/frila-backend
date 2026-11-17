@@ -32,7 +32,7 @@ select has_table('privado', 'profissional_reputacao_expurgada',
 
 -- Validação estrita do schema: NÃO EXISTE id de turno, vaga, casa nem data do turno
 select columns_are('privado', 'profissional_reputacao_expurgada',
-  array['profissional_id', 'turnos_realizados', 'presencas', 'faltas', 'aval_positivas', 'aval_total'],
+  array['profissional_id', 'turnos_realizados', 'presencas', 'faltas', 'aval_positivas', 'aval_total', 'nao_compareceu', 'cancelou_menos_24h'],
   'schema estrito: colunas da base histórica contêm exclusivamente o id do profissional e contadores agregados'
 );
 
@@ -157,6 +157,9 @@ begin
   insert into public.turno (posicao_id, valor_acordado_centavos)
   values (v_pos_id, 15000);
 
+  insert into public.ocorrencia (tipo, posicao_id, usuario_id, autor_id, motivo)
+  values ('cancelamento', v_pos_id, v_p_user, v_c_user, 'no_show_sem_checkin');
+
   -- Vaga recente (< 5 anos, ex: 10 dias)
   insert into public.vaga (estabelecimento_id, funcao_id, inicio_em, fim_em, local, ponto,
     valor_centavos, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio,
@@ -200,6 +203,8 @@ begin
 
   insert into public.turno (posicao_id, valor_acordado_centavos)
   values (v_pos_id, 15000);
+  insert into public.ocorrencia (tipo, posicao_id, usuario_id, autor_id, motivo)
+  values ('cancelamento', v_pos_id, v_p_user, v_c_user, 'no_show_sem_checkin');
 end $$;
 
 -- Reconciliação inicial para alinhar os contadores canônicos no cache antes do expurgo
@@ -383,8 +388,8 @@ begin
   values (v_u, 'profissional', 'POINT(-47.88 -15.77)'::extensions.geography)
   returning id into v_p;
   insert into ids values ('dummy_prof', v_p);
-  insert into privado.profissional_reputacao_expurgada (profissional_id, turnos_realizados, presencas, faltas, aval_positivas, aval_total)
-  values (v_p, 5, 5, 1, 4, 4);
+  insert into privado.profissional_reputacao_expurgada (profissional_id, turnos_realizados, presencas, faltas, aval_positivas, aval_total, nao_compareceu)
+  values (v_p, 5, 5, 1, 4, 4, 1);
 end $$;
 
 delete from public.profissional
