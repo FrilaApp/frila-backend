@@ -18,7 +18,7 @@
 create or replace function public.membros_do_estabelecimento(estabelecimento_id uuid)
 returns jsonb
 language plpgsql
-stable
+volatile
 security definer
 set search_path = ''
 as $$
