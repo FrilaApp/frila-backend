@@ -15,7 +15,7 @@ Qualquer um destes:
 - Checagem diária (`scripts/checagem-diaria.sh`) amarela ou vermelha em notificações.
 - A fila de notificações `pendente` só cresce.
 
-**Armadilha de leitura:** o alerta de e-mail depende do próprio `pg_cron`, do `pg_net` e do SMTP (`docs/RUNBOOK-INCIDENTES.md`, seção 2). Se esses caírem, o alerta pode não chegar. Ausência de e-mail de alerta **não** prova que o push está bom. Não há monitor externo (buscado em `.github/workflows/` e `scripts/`: só `mantem-prod-vivo.yml`, que testa a função `saude`, não o push).
+**Armadilha de leitura:** o alerta de e-mail depende do próprio `pg_cron`, do `pg_net` e do SMTP (`docs/RUNBOOK-INCIDENTES.md`, seção 2). Se esses caírem, o alerta pode não chegar. Ausência de e-mail de alerta **não** prova que o push está bom. Não há monitor externo que chame a `saude` em intervalo curto (buscado em `.github/workflows/` e `scripts/`: só `mantem-prod-vivo.yml`, uma vez por dia). Desde `25f475a` (#514) a `saude` mede também a idade dos jobs `reprocessar_despacho` e `verificar_saude`; **não** mede `processar_fila_push`, então push parado por job de push parado continua sem alerta nem probe.
 
 ### Como o push funciona (LIDO)
 

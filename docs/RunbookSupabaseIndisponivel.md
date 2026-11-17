@@ -14,7 +14,7 @@ Convenção (a mesma de `docs/RunbookRotacaoDeSegredos.md`): **MEDIDO** é o que
 - O app não carrega vagas, não entra, não recebe aviso: todas as chamadas à API falham ao mesmo tempo.
 - O workflow `Mantém o Prod vivo` (`.github/workflows/mantem-prod-vivo.yml`) fica vermelho. O próprio arquivo diz: "Se o projeto estiver pausado, só Owner ou Admin o reativa no painel do Supabase", e "um job vermelho aqui quer dizer que o Prod não respondeu 200: abra o projeto no painel antes de supor pausa".
 - Os passos de Entrega, backup ou conferência de Auth falham ao falar com a API do Supabase.
-- O e-mail de alerta **não chega**, mesmo com o problema evidente. É esperado: o alerta nasce dentro do banco (`pg_cron`, `pgmq`, `pg_net`) e sai por uma Edge Function (`docs/RUNBOOK-INCIDENTES.md`, seção 2). Se o banco caiu, o vigia caiu junto. Não há monitor externo de disponibilidade (buscado em `.github/workflows/` e `scripts/`: o único probe externo é o GET diário de `mantem-prod-vivo.yml`). Quem percebe primeiro hoje é o usuário ou o GitHub Actions.
+- O e-mail de alerta **não chega**, mesmo com o problema evidente. É esperado: o alerta nasce dentro do banco (`pg_cron`, `pgmq`, `pg_net`) e sai por uma Edge Function (`docs/RUNBOOK-INCIDENTES.md`, seção 2). Se o banco caiu, o vigia caiu junto. Não há monitor externo que chame a `saude` em intervalo curto (buscado em `.github/workflows/` e `scripts/`, 16/11/2026: o único chamador agendado é o GET diário de `mantem-prod-vivo.yml`). Desde `731824c` (#512) o repositório tem aviso no Slack para a falha desse workflow (`.github/workflows/notifica-slack.yml`, mensagem "Prod Vivo Falhou"), mas ele só sai se o segredo `SLACK_WEBHOOK_URL` existir, e **MEDIDO em 16/11/2026** que a listagem de secrets do repositório não o inclui (só `FRILA_DOCS_TOKEN`); sem o segredo o script sai 0 em silêncio. Quem percebe primeiro hoje é o usuário ou o GitHub Actions.
 
 ### O que o repositório diz sobre pausa (LIDO)
 
@@ -30,7 +30,7 @@ Convenção (a mesma de `docs/RunbookRotacaoDeSegredos.md`): **MEDIDO** é o que
 
 ### 2.1 De fora para dentro (sem credencial)
 
-O endereço da função `saude` do Prod é público e está na variável de repositório `FRILA_PROD_URL_SAUDE` (forma: `https://<ref>.supabase.co/functions/v1/saude`; `mantem-prod-vivo.yml`). A função responde (`supabase/functions/saude/index.ts`, cabeçalho): `200` com `{"ok": true, "status": "saudavel"}` quando o banco responde; `503` com `status: "indisponivel"` quando o banco não responde; `405` para POST.
+O endereço da função `saude` do Prod é público e está na variável de repositório `FRILA_PROD_URL_SAUDE` (forma: `https://<ref>.supabase.co/functions/v1/saude`; `mantem-prod-vivo.yml`). A função responde (`supabase/functions/saude/index.ts`, cabeçalho): `200` com `{"ok": true, "status": "saudavel", ...}` quando o banco responde **e** os jobs `reprocessar_despacho` e `verificar_saude` estão ativos com último sucesso dentro da tolerância (300 s e 900 s, padrão de `privado.consultar_saude_cron`, que devolve também `despacho_idade_segundos` e `vigia_idade_segundos`); `503` com `status: "atrasado"` quando o banco responde mas um desses jobs está inativo, sem sucesso registrado ou atrasado; `503` com `status: "indisponivel"` quando o banco não responde; `405` para POST; `HEAD` devolve 200 ou 503 sem corpo. Essa versão da função e a migração `20261116130000_probe_saude_cron.sql` vêm de `25f475a` (#514). **NAO MEDIDO:** se já estão no `frila-prod`. Uma função `saude` antiga devolve só `200` ou `503 indisponivel`, sem os campos de idade.
 
 ```bash
 # Leitura. NAO EXECUTADO. Sem credencial, sem corpo, sem dado pessoal.
@@ -41,6 +41,7 @@ curl -sS --max-time 20 -o /dev/null -w '%{http_code}\n' "https://hbjkkcenbudiezm
 |---|---|---|
 | `200` | O projeto vive. O problema é outro (função específica, migração, push): `docs/RunbookPushParado.md`, `docs/RunbookRollbackEdgeFunction.md` | Fora deste runbook |
 | `503` `indisponivel` | A plataforma de funções responde, o **banco não**. Pode ser banco sobrecarregado, em manutenção ou conexões esgotadas | 2.2 e 3.2 |
+| `503` `atrasado` | O banco responde, mas `reprocessar_despacho` ou `verificar_saude` está inativo ou sem rodar. **Não é pausa nem queda**, embora o aviso do Slack para `Mantém o Prod vivo` diga "o banco pode estar pausado ou instável" (texto genérico de `notificar_slack.py`) | 2.3 (consulta de jobs) e `docs/RUNBOOK-INCIDENTES.md`, seção 3 |
 | Timeout, erro de conexão, `5xx` do gateway | Projeto pausado, ou plataforma fora do ar | 2.2 |
 
 ### 2.2 Painel e página de status (leitura)
@@ -66,7 +67,20 @@ select date_trunc('hour', d.start_time) as hora,
  order by 1 desc;
 ```
 
-**Os jobs do `pg_cron` voltaram? Quando cada um rodou pela última vez.** O número esperado de jobs não está fixo aqui: o texto antigo de 13 jobs envelheceu (`docs/ChecagemDiariaProd.md`, seção de jobs, e relatório do mapa; `scripts/checagem-diaria.sh` conta de forma dinâmica). Compare com `scripts/desvio.sh <ref>` (que confere os jobs do `pg_cron`: `README.md`, parágrafo "Desvio."; precisa de banco local, humano).
+**O que o probe de saúde enxerga (a mesma função que a `saude` chama).** Só leitura, sem dado pessoal. Só existe depois que a migração `20261116130000` estiver aplicada: **NAO MEDIDO** no Prod.
+NAO EXECUTADO: sem banco local. Colunas de `privado.consultar_saude_cron()`: `20261116130000_probe_saude_cron.sql`.
+
+```sql
+select saudavel,
+       status,
+       despacho_idade_segundos,
+       vigia_idade_segundos,
+       despacho_ativo,
+       vigia_ativo
+  from privado.consultar_saude_cron();
+```
+
+**Os jobs do `pg_cron` voltaram? Quando cada um rodou pela última vez.** O número esperado de jobs não está fixo aqui: o pgTAP `supabase/tests/390_agendamentos_do_pg_cron.sql` lista 26 nomes conhecidos na `develop` em `a55aab0` (contagem por `awk`, 16/11/2026), e `scripts/checagem-diaria.sh` conta de forma dinâmica (`SELECT count(*) FROM cron.job`). O "13" que havia em `docs/ChecagemDiariaProd.md` foi corrigido nesta mesma entrega. Compare com `scripts/desvio.sh <ref>` (que confere os jobs do `pg_cron`: `README.md`, parágrafo "Desvio."; precisa de banco local, humano).
 NAO EXECUTADO: sem banco local.
 
 ```sql
@@ -130,7 +144,7 @@ select count(*) as vagas_publicadas_ja_iniciadas
 ### 3.3 Comunicação
 
 - **Para usuários:** não existe canal de status (buscado em `docs/` e `supabase/operacao/`). **A DEFINIR (Caue)**: onde e quem avisa.
-- **Para os sócios:** o canal e a pessoa de plantão estão em `docs/RunbookPlantao.md`. O aviso por e-mail (`scripts/notificar-equipe.sh`, `docs/NotificacaoDaEquipe.md`) usa SMTP e roda na máquina de quem opera; funciona com o Supabase fora do ar, porque não depende do banco.
+- **Para os sócios:** o canal e a pessoa de plantão estão em `docs/RunbookPlantao.md`. O aviso por e-mail (`scripts/notificar-equipe.sh`, `docs/NotificacaoDaEquipe.md`) usa SMTP e roda na máquina de quem opera; funciona com o Supabase fora do ar, porque não depende do banco. O aviso por Slack (`notifica-slack.yml`, #512) também não depende do banco, mas só sai com o segredo `SLACK_WEBHOOK_URL`, ausente em 16/11/2026 (seção 1).
 
 ---
 
