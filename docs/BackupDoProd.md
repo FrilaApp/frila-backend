@@ -323,7 +323,7 @@ deixou de receber envios e não é mais usado.
 | Item | Valor |
 | --- | --- |
 | Bucket | `frila-backup-prod`, classe Standard |
-| Regra de ciclo de vida | `expira-14-dias`: apaga o objeto 14 dias depois do envio e aborta upload multipart incompleto após 1 dia |
+| Regra de ciclo de vida | `expira-14-dias`: apaga o objeto 14 dias depois do envio. O upload multipart incompleto é abortado por outra regra, a padrão do R2, após 7 dias |
 | Chave `backup-prod-escrita` | R2 API Token com **Object Read & Write**, limitado ao bucket `frila-backup-prod`. Alimenta os segredos `BACKUP_S3_ACCESS_KEY_ID` e `BACKUP_S3_SECRET_ACCESS_KEY` do Environment `frila-backup`. Só o GitHub Actions a usa |
 | Chave `backup-prod-leitura` | R2 API Token com **Object Read only**, limitado ao mesmo bucket. Serve para restaurar: lista e baixa, e recusa gravação (`AccessDenied` num `PutObject` de teste). Não está no GitHub |
 
