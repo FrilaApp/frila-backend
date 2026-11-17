@@ -559,9 +559,11 @@ function quebrar(mundo: Mundo, nome: keyof NonNullable<Mundo["falhaBanco"]>): bo
 }
 
 function criarDeps(mundo: Mundo, extra: Partial<HandlerDeps> = {}): HandlerDeps {
+  // O Storage falso responde na URL que o handler recebe; o resto é "provedor externo".
+  const urlStorage = extra.supabaseUrl ?? MOCK_URL;
   const fetchFn = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (!url.startsWith(MOCK_URL)) {
+    if (!url.startsWith(urlStorage)) {
       mundo.chamadasProvedor += 1;
       if (!mundo.apiExterna) return Promise.reject(new Error(`chamada externa inesperada: ${url}`));
       return Promise.resolve(mundo.apiExterna(url, init));
@@ -1275,6 +1277,103 @@ Deno.test("configuração inválida não vaza a chave no alerta", async () => {
   const mundo = novoMundo();
   await rodar(criarDeps(mundo, { env: { MODERACAO_PROVEDOR: "azure", AZURE_CONTENT_SAFETY_KEY: "chave-secreta-azure" } }));
   assertFalse(JSON.stringify(mundo.alertas).includes("chave-secreta-azure"));
+});
+
+// Guarda contra o provedor `local` fora do ambiente local (cartão Trello yPhXgTCY, item 1).
+// `local` aprova toda foto sem olhar para ela; em hospedagem real isso é moderação de mentira.
+// O sinal de ambiente é o host de SUPABASE_URL, que a hospedagem define e o código já exige.
+const URL_HOSPEDADA = "https://abcdefghijklmnopqrst.supabase.co";
+
+Deno.test("guarda: fora do ambiente local, sem provedor real, recusa com erro_configuracao e não toca na fila", async () => {
+  const envs: Array<Record<string, string>> = [
+    {},
+    { MODERACAO_PROVEDOR: "" },
+    { MODERACAO_PROVEDOR: "  " },
+    { MODERACAO_PROVEDOR: "local" },
+    { MODERACAO_PROVEDOR: " LOCAL " },
+  ];
+  for (const env of envs) {
+    const mundo = novoMundo();
+    semear(mundo, MIDIA_1, IMAGEM_BOA);
+    const { resp, corpo } = await rodar(criarDeps(mundo, { env, supabaseUrl: URL_HOSPEDADA }));
+    const rotulo = JSON.stringify(env);
+    assertEquals(resp.status, 500, rotulo);
+    assertEquals(corpo.code, "erro_configuracao", rotulo);
+    assertEquals(corpo.aprovadas, undefined, rotulo);
+    assertEquals(mundo.lerLoteArgs.length, 0, rotulo);
+    assertEquals(mundo.removidosDaFila.length, 0, rotulo);
+    assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise", rotulo);
+    assertEquals(mundo.alertas.length, 1, rotulo);
+    assertEquals(mundo.alertas[0].evento, "moderacao_configuracao_invalida", rotulo);
+    assert(String(mundo.alertas[0].detalhe).includes("MODERACAO_PROVEDOR"), rotulo);
+  }
+});
+
+Deno.test("guarda: o alerta da recusa não carrega a URL nem o valor de segredo", async () => {
+  const mundo = novoMundo();
+  await rodar(criarDeps(mundo, {
+    env: { MODERACAO_PROVEDOR: "local", AZURE_CONTENT_SAFETY_KEY: "chave-secreta-azure" },
+    supabaseUrl: URL_HOSPEDADA,
+  }));
+  const serializado = JSON.stringify(mundo.alertas);
+  assertEquals(mundo.alertas.length, 1);
+  assertFalse(serializado.includes("chave-secreta-azure"));
+  assertFalse(serializado.includes("abcdefghijklmnopqrst"));
+});
+
+Deno.test("guarda: SUPABASE_URL ilegível ou desconhecida conta como fora do ambiente local", async () => {
+  for (const supabaseUrl of ["isto-nao-e-url", "https://frila-dev.exemplo.com.br", "http://127.0.0.1.exemplo.com"]) {
+    const mundo = novoMundo();
+    const { resp, corpo } = await rodar(criarDeps(mundo, { env: {}, supabaseUrl }));
+    assertEquals(resp.status, 500, supabaseUrl);
+    assertEquals(corpo.code, "erro_configuracao", supabaseUrl);
+    assertEquals(mundo.lerLoteArgs.length, 0, supabaseUrl);
+  }
+});
+
+Deno.test("guarda: fora do ambiente local, com provedor real sintético configurado, segue e modera por ele", async () => {
+  const casos: Array<{ env: Record<string, string>; nome: string; resposta: unknown }> = [
+    {
+      env: { MODERACAO_PROVEDOR: "openai", OPENAI_API_KEY: "k-sintetica" },
+      nome: "openai",
+      resposta: { results: [{ flagged: false }] },
+    },
+    {
+      env: {
+        MODERACAO_PROVEDOR: "azure",
+        AZURE_CONTENT_SAFETY_KEY: "k-sintetica",
+        AZURE_CONTENT_SAFETY_ENDPOINT: "https://azure-sintetico.exemplo.test",
+      },
+      nome: "azure",
+      resposta: { categoriesAnalysis: [{ category: "Sexual", severity: 0 }, { category: "Violence", severity: 0 }] },
+    },
+  ];
+  for (const { env, nome, resposta } of casos) {
+    const mundo = novoMundo();
+    semear(mundo, MIDIA_1, IMAGEM_BOA);
+    mundo.apiExterna = () => json(resposta);
+    const { resp, corpo } = await rodar(criarDeps(mundo, { env, supabaseUrl: URL_HOSPEDADA }));
+    assertEquals(resp.status, 200, nome);
+    assertEquals(corpo.aprovadas, 1, nome);
+    assertEquals(mundo.chamadasProvedor, 1, nome);
+    assertEquals(mundo.reservas, [{ midia_id: MIDIA_1, provedor: nome, mes: "2026-11" }], nome);
+    assertEquals(mundo.alertas.length, 0, nome);
+  }
+});
+
+Deno.test("guarda: em ambiente local o provedor local segue valendo, sem variável e com MODERACAO_PROVEDOR=local", async () => {
+  const urls = ["http://127.0.0.1:54321", "http://localhost:54321", "http://[::1]:54321", "http://kong:8000", "http://host.docker.internal:54321"];
+  for (const supabaseUrl of urls) {
+    for (const env of [{}, { MODERACAO_PROVEDOR: "local" }]) {
+      const mundo = novoMundo();
+      semear(mundo, MIDIA_1, IMAGEM_BOA);
+      const { resp, corpo } = await rodar(criarDeps(mundo, { env, supabaseUrl }));
+      const rotulo = `${supabaseUrl} ${JSON.stringify(env)}`;
+      assertEquals(resp.status, 200, rotulo);
+      assertEquals(corpo.aprovadas, 1, rotulo);
+      assertEquals(mundo.chamadasProvedor, 0, rotulo);
+    }
+  }
 });
 
 Deno.test("MODERACAO_PROVEDOR=openai: uma chamada por foto, aprova quando não sinalizada", async () => {

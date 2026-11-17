@@ -486,6 +486,36 @@ export function criarProvedor(env: FonteEnv, fetchFn: typeof fetch): ProvedorMod
   }
 }
 
+/** Hosts em que a pilha local do Supabase (CLI e contêineres) serve a API. */
+const HOSTS_AMBIENTE_LOCAL = new Set(["localhost", "127.0.0.1", "[::1]", "kong", "host.docker.internal"]);
+
+/**
+ * O código não tem flag de ambiente; o que a hospedagem e a pilha local definem de forma
+ * diferente é o host de SUPABASE_URL. Só host conhecido de pilha local conta como local:
+ * URL ilegível ou desconhecida conta como hospedagem real (falha fechada).
+ */
+export function ambienteLocal(supabaseUrl: string): boolean {
+  try {
+    return HOSTS_AMBIENTE_LOCAL.has(new URL(supabaseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `local` aprova toda foto sem olhar para ela. Fora da pilha local isso seria moderação de
+ * mentira, então a função recusa subir com ele (ErroConfiguracao, que o handler devolve como
+ * 500 antes de tocar na fila). A mensagem cita só nomes de variável, nunca valor.
+ */
+export function exigirProvedorReal(provedor: ProvedorModeracao, supabaseUrl: string): void {
+  if (provedor.nome === "local" && !ambienteLocal(supabaseUrl)) {
+    throw new ErroConfiguracao(
+      "MODERACAO_PROVEDOR=local só é aceito em ambiente local: configure MODERACAO_PROVEDOR=azure " +
+        "(com AZURE_CONTENT_SAFETY_KEY e AZURE_CONTENT_SAFETY_ENDPOINT) ou openai (com OPENAI_API_KEY)",
+    );
+  }
+}
+
 export function lerTetoMensal(env: FonteEnv): number {
   const bruto = env.MODERACAO_TETO_MENSAL?.trim();
   if (!bruto) return TETO_MENSAL_PADRAO;
@@ -845,7 +875,13 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
       ["MODERACAO_PROVEDOR", "MODERACAO_TETO_MENSAL", "OPENAI_API_KEY", "AZURE_CONTENT_SAFETY_KEY",
         "AZURE_CONTENT_SAFETY_ENDPOINT"].map((k) => [k, Deno.env.get(k)]),
     );
-    provedor = deps?.provedor ?? criarProvedor(env, fetchFn);
+    // Provedor injetado só existe nos testes (o entrypoint não passa deps); a guarda vale para o do ambiente.
+    if (deps?.provedor) {
+      provedor = deps.provedor;
+    } else {
+      provedor = criarProvedor(env, fetchFn);
+      exigirProvedorReal(provedor, supabaseUrl);
+    }
     tetoMensal = lerTetoMensal(env);
   } catch (err) {
     alerta({ evento: "moderacao_configuracao_invalida", detalhe: err instanceof Error ? err.message : "erro" });
