@@ -5,7 +5,7 @@
 -- e chamados pelo prazo legal (5 dias úteis).
 --
 -- Exibe protocolo curto (8 hexadecimais), origem ('app'/'operacao'), turno_id,
--- categoria/motivo e prazo regulamentar calculado (SU-RF06, P6).
+-- chamada_id (denúncia feita na chamada direta, CD-S13), categoria/motivo e prazo regulamentar calculado (SU-RF06, P6).
 --
 -- Uso no psql:
 --   psql -f supabase/operacao/consultar-ocorrencias.sql
@@ -24,6 +24,7 @@ select o.id as ocorrencia_id,
        o.origem,
        o.motivo,
        o.turno_id,
+       o.chamada_id,
        o.criada_em,
        privado.prazo_de_resposta(o.criada_em) as prazo_limite,
        case
