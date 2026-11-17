@@ -232,6 +232,10 @@ select pg_temp.guarda('vagasAbertas', pg_temp.como('cc000000-0000-4000-8000-0000
 select pg_temp.guarda('detalheVaga', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
   $$ select public.detalhe_vaga(%L::uuid) $$, ((select r from vaga1)->>'vaga_id')::uuid)));
 
+-- vagaPublica (0.2.100): a mesma vaga pelo link. Com sessão, o corpo é o mesmo de anon (pgTAP 879).
+select pg_temp.guarda('vagaPublica', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
+  $$ select public.vaga_publica(%L) $$, (select r from vaga1)->>'vaga_id')));
+
 create temp table cand as
   select pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
     $$ select public.candidatar(%L::uuid) $$, ((select r from vaga1)->>'vaga_id')::uuid)) as r;
@@ -966,6 +970,11 @@ select pg_temp.guarda('promete:detalheVaga:403',
 select pg_temp.guarda('promete:detalheVaga:404',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002',
     $$ select public.detalhe_vaga('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+
+-- 45b. vagaPublica: 404 nao_encontrado (id que não é uuid: o mesmo 404 da vaga inexistente, 0.2.100)
+select pg_temp.guarda('promete:vagaPublica:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.vaga_publica('nao-e-uuid') $$));
 
 -- 46. candidatosDaVaga: 403 sem_permissao (contratante de outro estabelecimento tentando listar candidatos)
 select pg_temp.guarda('promete:candidatosDaVaga:403',

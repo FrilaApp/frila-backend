@@ -359,6 +359,8 @@ VIGIADAS = {
     ("validarCodigoCheckin", "404"): "nao_encontrado",
     ("validarCodigoCheckin", "409"): "checkin_ja_confirmado",
     ("validarCodigoCheckin", "422"): "codigo_invalido",
+    # Vaga pelo link, sem login (0.2.100, web B5; B-037): vigiada desde o nascimento.
+    ("vagaPublica", "404"): "nao_encontrado",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
@@ -415,6 +417,9 @@ PENDENTES = {
     # no PR #472. Cada uma sai daqui no PR que a implementa.
     **{op: "múltiplos membros de estabelecimento, fatias seguintes" for op in (
         "aceitarConviteMembro", "convidarMembro", "removerMembro", "transferirAdministracao")},
+    # Escala de evento (0.2.96): o espelho 0.2.100 entra antes da RPC, que chega no PR #537. Sai daqui
+    # no PR que a implementa.
+    "publicarEscala": "escala de evento (0.2.96), RPC no PR #537",
 }
 
 def recusas_declaradas(doc):
