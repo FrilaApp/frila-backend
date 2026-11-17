@@ -1,6 +1,6 @@
 // B-038 (web B6): o corpo enviado ao FCM HTTP v1 por plataforma.
-// Web leva o bloco `webpush` (WebpushConfig) e nada de `apns` nem `android`; iOS e Android ficam
-// byte a byte como antes. Referência do formato:
+// Web leva só `data` (B-054: sem título nem corpo) e nada de `apns` nem `android`; iOS e Android
+// ficam byte a byte como antes. Referência do formato:
 // https://firebase.google.com/docs/reference/fcm/rest/v1/projects.messages#WebpushConfig
 
 import "./test_setup.ts";
@@ -25,7 +25,7 @@ const DATA_BASE = {
   vaga_id: "d0000000-0000-4000-8000-000000000001",
 };
 
-Deno.test("B-038: plataforma web leva webpush com notification e data, sem apns nem android", async () => {
+Deno.test("B-054: plataforma web leva só data (tipo e ids), sem título nem corpo em lugar nenhum", async () => {
   const corpo = await corpoEnviado({
     token: "token-teste-web",
     title: "Nova vaga no Frila",
@@ -38,12 +38,15 @@ Deno.test("B-038: plataforma web leva webpush com notification e data, sem apns 
     message: {
       token: "token-teste-web",
       data: { ...DATA_BASE },
-      webpush: {
-        notification: { title: "Nova vaga no Frila", body: "Confira a vaga" },
-        data: { ...DATA_BASE },
-      },
+      webpush: { data: { ...DATA_BASE } },
     },
   });
+  // O sw.js da web mostra texto neutro (#886, decisão A): título e corpo não viajam pelo FCM.
+  const json = JSON.stringify(corpo);
+  assertEquals(json.includes("Nova vaga no Frila"), false);
+  assertEquals(json.includes("Confira a vaga"), false);
+  assertEquals(corpo.message.notification, undefined);
+  assertEquals(corpo.message.webpush.notification, undefined);
   // Sem link de destino no payload, não há fcm_options (não se inventa URL).
   assertEquals(corpo.message.webpush.fcm_options, undefined);
   assertEquals(corpo.message.apns, undefined);

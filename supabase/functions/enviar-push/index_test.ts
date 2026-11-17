@@ -3703,6 +3703,106 @@ Deno.test("RN15 / Android data-only: aparelho Android recebe titulo e corpo em d
   }
 });
 
+Deno.test("B-054: aparelho web recebe só data (tipo e ids), sem título nem corpo no corpo enviado ao FCM", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  // deno-lint-ignore no-explicit-any
+  let corpoEnviado: any = null;
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    if (url.includes("/token")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "b5400000-0000-4000-8000-000000000001",
+              usuario_id: "c5400000-0000-4000-8000-000000000001",
+              tipo: "vaga",
+              referencia_id: "d5400000-0000-4000-8000-000000000001",
+              payload: {
+                vaga_id: "d5400000-0000-4000-8000-000000000001",
+                funcao: "garcom",
+                regiao: "Asa Sul",
+              },
+              tentativas: 0,
+              estado_entrega: "pendente",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "disp-web-1",
+              token_fcm: "fcm_token_navegador_web_12345",
+              plataforma: "web",
+              vinculo_id: "54545454-5454-4000-8000-000000000001",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    if (url.includes("/messages:send") && init?.body) {
+      corpoEnviado = JSON.parse(init.body as string);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ name: "projects/frila-test/messages/msg-web-so-data" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.reject(new Error(`URL não tratada no mock: ${url}`));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+    body: JSON.stringify({ notificacao_id: "b5400000-0000-4000-8000-000000000001" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient: criarMockSqlClient(),
+  });
+
+  assertEquals(res.status, 200);
+  assert(corpoEnviado !== null, "mensagem FCM deve ter sido enviada");
+
+  const dataEsperado = {
+    tipo: "vaga",
+    vaga_id: "d5400000-0000-4000-8000-000000000001",
+    vinculo_id: "54545454-5454-4000-8000-000000000001",
+  };
+  assertEquals(corpoEnviado, {
+    message: {
+      token: "fcm_token_navegador_web_12345",
+      data: dataEsperado,
+      webpush: { data: dataEsperado },
+    },
+  });
+
+  // Nem o título, nem o corpo, nem a função ou a região (que só servem para montar o texto) viajam.
+  const json = JSON.stringify(corpoEnviado);
+  for (const proibido of ["Nova vaga no Frila", "Garçom", "garcom", "Asa Sul", "\"title\"", "\"body\"", "titulo", "corpo"]) {
+    assert(!json.includes(proibido), `'${proibido}' não pode ir no corpo enviado ao aparelho web`);
+  }
+});
+
 Deno.test("sendFcmMessage: data-only puro para plataforma android injeta titulo e corpo em data se ausentes", async () => {
   const sa = await gerarContaDeServicoTeste();
   // deno-lint-ignore no-explicit-any
