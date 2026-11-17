@@ -280,7 +280,7 @@ Recebemos em [DATA DO PEDIDO] o seu pedido de [acesso / correção / exclusão /
 
 — Acesso: segue em anexo o arquivo com os dados ligados à sua conta, no mesmo formato da opção "Perfil → Exportar meus dados" do app. Ele mostra o que guardamos, para que usamos cada dado e por quanto tempo, como está na nossa Política de Privacidade (frilabr.com/privacidade).
 — Correção: corrigimos [DADO] para [VALOR NOVO]. A mudança já aparece no app.
-— Exclusão: encerramos a sua conta em [DATA]. O acesso acabou na hora; o seu nome, e-mail e telefone foram apagados, e o restante sai em até 15 dias, menos o que a lei manda guardar, como explica a seção 6 da Política. As avaliações e os turnos ficam sem o seu nome, para não prejudicar a outra parte.
+— Exclusão: encerramos a sua conta em [DATA]. O acesso acabou na hora; o seu nome, e-mail e telefone foram apagados, e o restante sai depois de 15 dias, na limpeza diária seguinte, menos o que a lei manda guardar, como explica a seção 6 da Política. As avaliações e os turnos ficam sem o seu nome, para não prejudicar a outra parte.
 — Informação: [RESPOSTA OBJETIVA].
 
 Para proteger os seus dados, só respondemos ao e-mail cadastrado na conta. Se você não fez este pedido, responda a este e-mail.
