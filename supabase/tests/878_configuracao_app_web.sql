@@ -31,7 +31,7 @@ select is(
     'plataforma',         'web',
     'versao_minima',      '0.1.0',
     'versao_recomendada', '0.1.0',
-    'url_da_loja',        'https://frilabr.com',
+    'url_da_loja',        'https://frilabr.com/app',
     'mensagem',           null,
     'recursos',           jsonb_build_object(
       'foto_de_perfil', false,
