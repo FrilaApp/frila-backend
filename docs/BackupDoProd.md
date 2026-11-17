@@ -312,7 +312,7 @@ Segredos configurados no Environment `frila-backup` (sem valores reais no reposi
 | `BACKUP_PUBLIC_KEY` | Destinatário público `age` (`age1...`). Apenas a chave pública é necessária para cifrar. A chave privada correspondente **nunca** entra no repositório nem no GitHub Actions, devendo permanecer sob custódia offline segura dos administradores. |
 | `BACKUP_S3_ENDPOINT` | URL do endpoint da API S3-compatível (ex.: `https://<account_id>.r2.cloudflarestorage.com` no Cloudflare R2 ou `https://s3.<region>.backblazeb2.com` no Backblaze B2). |
 | `BACKUP_S3_BUCKET` | Nome do bucket dedicado no storage S3. |
-| `BACKUP_S3_ACCESS_KEY_ID` | Chave de acesso (Access Key ID) da chave `backup-prod-escrita` (R2 Object Read & Write, limitada ao bucket; ela também lista e apaga, ver "Onde fica o bucket e as chaves"). |
+| `BACKUP_S3_ACCESS_KEY_ID` | Chave de acesso (Access Key ID) da chave `backup-prod-escrita` (R2 Object Read & Write, limitada ao bucket; esse nível apaga, mas a trava do bucket segura os objetos por 14 dias, ver "Onde fica o bucket e as chaves"). |
 | `BACKUP_S3_SECRET_ACCESS_KEY` | Chave secreta de acesso (Secret Access Key) correspondente. |
 
 ### Onde fica o bucket e as chaves
@@ -324,6 +324,7 @@ deixou de receber envios e não é mais usado.
 | --- | --- |
 | Bucket | `frila-backup-prod`, classe Standard |
 | Regra de ciclo de vida | `expira-14-dias`: apaga o objeto 14 dias depois do envio. O upload multipart incompleto é abortado por outra regra, a padrão do R2, após 7 dias |
+| Trava do bucket (Bucket Lock) | Regra `retencao-14-dias`, no bucket inteiro, com Lock Duration de 14 dias, ligada em 17/11/2026 (painel da Cloudflare, sem custo). Nenhum objeto pode ser apagado nem sobrescrito antes de 14 dias, nem pela chave de escrita. Convive com a `expira-14-dias`: a trava segura o objeto, e passados os 14 dias a regra de ciclo de vida o remove. Como provar: ver "Como provar a trava" |
 | Chave `backup-prod-escrita` | R2 API Token com **Object Read & Write**, limitado ao bucket `frila-backup-prod`. Esse nível **grava, lê, lista e apaga** objetos do bucket: o R2 não oferece token só de gravação. Alimenta os segredos `BACKUP_S3_ACCESS_KEY_ID` e `BACKUP_S3_SECRET_ACCESS_KEY` do Environment `frila-backup`. É usada pelo GitHub Actions todo dia e foi usada também, uma vez, em 17/11, no envio manual de ensaio feito a partir do Mac de custódia |
 | Chave `backup-prod-leitura` | R2 API Token com **Object Read only**, limitado ao mesmo bucket. Serve para restaurar: lista e baixa, e recusa gravação (`AccessDenied` num `PutObject` de teste). Não está no GitHub |
 
@@ -331,11 +332,45 @@ Nível das chaves, limite ao bucket, classe Standard e a regra do multipart: con
 em 17/11/2026 (não por comando). Provado por comando: o `AccessDenied` da chave de leitura num `PutObject`, o
 `x-amz-expiration` de cada objeto e o `AccessDenied` de `GetBucketLifecycleConfiguration` na chave de escrita.
 
-**O que a chave de escrita pode fazer.** Quem tiver o segredo `BACKUP_S3_SECRET_ACCESS_KEY` (o GitHub Actions
-e o Mac de custódia) consegue apagar ou sobrescrever os backups do bucket, não só gravar. Se a esteira de CI
-for comprometida, os objetos do bucket estão em risco. Hoje a defesa é a **cópia local diária no Mac de
-custódia** (guarda 14 dias, independente do bucket). A regra de 14 dias só limita quanto tempo os objetos ficam;
-ela não impede apagar antes. Não há, hoje, outra proteção documentada contra deleção no bucket.
+**O que a chave de escrita pode fazer.** O nível Object Read & Write inclui apagar e sobrescrever, e quem tiver o
+segredo `BACKUP_S3_SECRET_ACCESS_KEY` (o GitHub Actions e o Mac de custódia) tem esse nível. O que segura os
+backups é a **trava do bucket**: enquanto o objeto tem menos de 14 dias, nem essa chave o apaga nem o
+sobrescreve (`ObjectLockedByBucketPolicy`); só se cria objeto novo, e é isso que o envio diário faz. Passados os 14
+dias, a `expira-14-dias` tira o objeto. Consequência: um objeto enviado por engano também fica 14 dias. A 2ª
+defesa é a **cópia local diária no Mac de custódia**, fora do bucket, com `BACKUP_KEEP=14` (o log do roteiro mostra
+`retidos=14`, conferido em 17/11).
+
+**Como provar a trava.** Com a chave de escrita (lida do teclado, como em "Como restaurar a partir do bucket"),
+use um objeto de teste e **nunca um backup real**: se a trava estivesse desligada, o delete apagaria o objeto.
+O nome começa por `0-` para ficar antes dos backups na listagem.
+
+```bash
+set +x
+printf 'Access Key ID (backup-prod-escrita): '; read -rs AWS_ACCESS_KEY_ID; echo
+printf 'Secret Access Key (backup-prod-escrita): '; read -rs AWS_SECRET_ACCESS_KEY; echo
+printf 'Endpoint S3 da conta do Frila: '; read -r R2_ENDPOINT; echo
+export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY R2_ENDPOINT AWS_DEFAULT_REGION=auto
+TESTE="$(mktemp)"; echo "teste da trava" > "$TESTE"
+CHAVE_TESTE="0-teste-trava-$(date +%Y%m%d%H%M%S).txt"
+
+# 1. Objeto NOVO entra (tem de dar certo)
+aws s3api put-object --bucket frila-backup-prod --key "$CHAVE_TESTE" --body "$TESTE" --endpoint-url "$R2_ENDPOINT"
+# 2. Sobrescrever o mesmo objeto (tem de falhar com ObjectLockedByBucketPolicy)
+aws s3api put-object --bucket frila-backup-prod --key "$CHAVE_TESTE" --body "$TESTE" --endpoint-url "$R2_ENDPOINT"
+# 3. Apagar o mesmo objeto (tem de falhar com ObjectLockedByBucketPolicy)
+aws s3api delete-object --bucket frila-backup-prod --key "$CHAVE_TESTE" --endpoint-url "$R2_ENDPOINT"
+
+rm -f "$TESTE"
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY R2_ENDPOINT
+```
+
+O passo 1 grava e os passos 2 e 3 têm de dar erro com `ObjectLockedByBucketPolicy`. Se o 3 apagar o objeto, a trava
+**não está valendo**: avise os sócios. O objeto de teste (1 linha) sai sozinho em 14 dias.
+
+**Prova feita (17/11/2026, 19:37 UTC, com a chave de escrita).** Objeto novo: entrou. Sobrescrever o mesmo objeto:
+`ObjectLockedByBucketPolicy`. `DeleteObject` nele: `ObjectLockedByBucketPolicy`. `DeleteObject` num backup real
+anterior à trava (`...070106Z-OoHaLp`): `ObjectLockedByBucketPolicy`. O envio diário segue entrando: o run
+44160577046 fechou verde e deixou `frila-backup-20261117T194121Z-Iz0Y0p.tar.age` no bucket.
 
 Os valores das chaves e o endpoint nunca entram no repositório. O endpoint (`BACKUP_S3_ENDPOINT`) e o nome
 do bucket (`BACKUP_S3_BUCKET`) também ficam só no Environment `frila-backup`.
@@ -357,9 +392,9 @@ A política de retenção dos backups é implementada em duas camadas:
 1. **No bucket S3 (primária):** Há uma regra de ciclo de vida (Lifecycle Rule) no bucket,
    `expira-14-dias`, com expiração e exclusão automática de objetos após 14 dias
    (`Delete after 14 days`). Assim nenhuma rotina precisa apagar objeto à mão. A regra
-   **não protege** contra deleção: a credencial do GitHub Actions (Object Read & Write) também
-   apaga e lista (ver "Onde fica o bucket e as chaves"). A defesa contra perda é a cópia local
-   diária no Mac de custódia.
+   **sozinha não impede** apagar antes: quem impede é a trava do bucket `retencao-14-dias` (14 dias, ver
+   "Onde fica o bucket e as chaves"). A credencial do GitHub Actions (Object Read & Write) tem nível de
+   apagar, mas a trava o recusa até o objeto completar 14 dias; depois disso a `expira-14-dias` o remove.
 
    **Prova da regra (17/11/2026).** O R2 devolve a expiração em cada objeto. `HeadObject` do objeto enviado
    às 18:08:54 UTC trouxe `x-amz-expiration: expiry-date="Tue, 01 Dec 2026 18:08:54 GMT", rule-id="expira-14-dias"`,
