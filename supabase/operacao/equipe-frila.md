@@ -268,19 +268,28 @@ Equipe Frila
 ```
 
 ### Modelo D: Atendimento a Solicitação de Dados Pessoais (LGPD art. 18 / RF25)
+
+Passo a passo do atendimento: [`canal-do-titular.md`](canal-do-titular.md).
+
 ```
-Assunto: [Frila] Resposta à sua solicitação de dados (LGPD)
+Assunto: [Frila] Resposta ao seu pedido sobre dados pessoais (protocolo [PROTOCOLO])
 
-Olá, [Nome do Titular].
+Olá, [primeiro nome].
 
-Em atendimento à sua solicitação registrada sob o protocolo [Protocolo/ID], em conformidade com o artigo 18 da Lei Geral de Proteção de Dados (Lei nº 13.709/2018), disponibilizamos o extrato de dados cadastrais e histórico de turnos vinculados ao seu CPF/Telefone.
+Recebemos em [DATA DO PEDIDO] o seu pedido de [acesso / correção / exclusão / informação] dos seus dados pessoais no Frila (LGPD, art. 18). [UMA DAS RESPOSTAS ABAIXO]
 
-Informamos que seus dados são mantidos com base nas finalidades contratuais e nos prazos regulamentares da nossa Política de Privacidade. Caso deseje a exclusão definitiva, você também pode solicitar diretamente pelo menu "Configurações > Excluir Conta" do aplicativo.
+— Acesso: segue em anexo o arquivo com os dados ligados à sua conta, no mesmo formato da opção "Perfil → Exportar meus dados" do app. Ele mostra o que guardamos, para que usamos cada dado e por quanto tempo, como está na nossa Política de Privacidade (frilabr.com/privacidade).
+— Correção: corrigimos [DADO] para [VALOR NOVO]. A mudança já aparece no app.
+— Exclusão: encerramos a sua conta em [DATA]. O acesso acabou na hora; o seu nome, e-mail e telefone foram apagados, e o restante sai depois de 15 dias, na limpeza diária seguinte, menos o que a lei manda guardar, como explica a seção 6 da Política. As avaliações e os turnos ficam sem o seu nome, para não prejudicar a outra parte.
+— Informação: [RESPOSTA OBJETIVA].
 
-Permanecemos à disposição para eventuais dúvidas.
+Para proteger os seus dados, só respondemos ao e-mail cadastrado na conta. Se você não fez este pedido, responda a este e-mail.
+
+Se tiver qualquer outra dúvida sobre os seus dados, é só responder. Você também pode peticionar à Autoridade Nacional de Proteção de Dados (ANPD).
 
 Atenciosamente,
-Encarregado de Dados (DPO) / Equipe Frila
+Equipe Frila
+suporte@frilabr.com
 ```
 
 ### Modelo E: Resposta a Suporte de Turno (`suporte@frilabr.com`)
