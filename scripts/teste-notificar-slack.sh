@@ -568,6 +568,60 @@ else
   falha "código $cod, stderr: $(cat "$TMP/err29")"
 fi
 
+texto_de_aviso_no_topo() {
+  python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).read().splitlines()[-1])["payload"]["text"], end="")' "$MOCK_LOG"
+}
+
+echo "▸ 30. Aviso manual: <!channel>, <!here>, <!everyone>, <!subteam^S123> e <@U123> chegam sem a forma interpretável"
+limpar_mock_log
+# shellcheck disable=SC2016
+env SLACK_WEBHOOK_URL="$MOCK_URL" MENSAGEM='a <!channel> b <!here> c <!everyone> d <!subteam^S123> e <@U123> f <#C123> g' bash -c "$COMANDO_AVISO" >/dev/null 2>&1
+cod=$?
+esperado='a &lt;!channel&gt; b &lt;!here&gt; c &lt;!everyone&gt; d &lt;!subteam^S123&gt; e &lt;@U123&gt; f &lt;#C123&gt; g'
+if [ "$cod" -eq 0 ]; then ok "código 0"; else falha "esperava 0, veio $cod"; fi
+if [ "$(texto_enviado)" = "$esperado" ]; then
+  ok "bloco mrkdwn com < e > escapados"
+else
+  falha "bloco: $(texto_enviado)"
+fi
+if [ "$(texto_de_aviso_no_topo)" = "⚠️ Aviso da equipe: $esperado" ]; then
+  ok "campo text de topo (usado na notificação) também escapado"
+else
+  falha "text de topo: $(texto_de_aviso_no_topo)"
+fi
+if grep -q -e '<!' -e '<@' -e '<#' "$MOCK_LOG"; then
+  falha "forma interpretável (<! <@ <#) presente no que o mock recebeu"
+else
+  ok "nenhum <! <@ <# no que o mock recebeu"
+fi
+
+echo "▸ 31. Aviso manual: link <url|rótulo> e & também ficam inertes; texto comum não muda"
+limpar_mock_log
+# shellcheck disable=SC2016
+env SLACK_WEBHOOK_URL="$MOCK_URL" MENSAGEM='<https://exemplo.com/x|PRs> e PRs #530 & #532 esperam leitura de sócio.' bash -c "$COMANDO_AVISO" >/dev/null 2>&1
+if [ "$(texto_enviado)" = '&lt;https://exemplo.com/x|PRs&gt; e PRs #530 &amp; #532 esperam leitura de sócio.' ]; then
+  ok "link e & escapados, resto idêntico"
+else
+  falha "bloco: $(texto_enviado)"
+fi
+
+echo "▸ 32. Aviso manual: limite de 1000 conta o texto escapado e não parte uma entidade"
+limpar_mock_log
+MENSAGEM_ESCAPAVEL="$(python3 -c 'print("<" * 2000, end="")')"
+env SLACK_WEBHOOK_URL="$MOCK_URL" MENSAGEM="$MENSAGEM_ESCAPAVEL" bash -c "$COMANDO_AVISO" >/dev/null 2>&1
+if texto_enviado | python3 -c '
+import re, sys
+t = sys.stdin.read()
+corpo = t[:-1]
+assert len(t) <= 1000, len(t)
+assert t.endswith("…")
+assert re.fullmatch(r"(&lt;)+", corpo), corpo[-8:]
+'; then
+  ok "até 1000 caracteres, só entidades inteiras, terminado em …"
+else
+  falha "bloco truncado fora do esperado"
+fi
+
 echo "=========================================================="
 if [ "$falhas" -eq 0 ]; then
   echo "✓ Todos os testes do Notificador do Slack passaram com sucesso!"
