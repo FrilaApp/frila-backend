@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.105
+  version: 0.2.106
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -108,7 +108,7 @@ info:
     | 422 | `fora_do_raio` | Leitura do código de check-in com distância superior ao raio de validação (50 m provisório). Não conta como tentativa errada (0.2.76) |
     | 422 | `sem_localizacao` | Leitura do código de check-in sem posição do aparelho (`distancia_m` nulo). Não conta como tentativa errada; orienta confirmação manual (0.2.76) |
     | 422 | `codigo_invalido` | Código de check-in recusado (0.2.68): errado, vencido ou de outro turno lido dentro do raio de validação (0.2.76). Um código só, sem `details`. Conta como tentativa errada |
-    | 422 | `a_caminho_fora_da_janela` | Chamada de `avisar_a_caminho` fora da janela permitida (de 3 h antes até 15 min depois do início do turno) (US14, RF12) |
+    | 422 | `a_caminho_fora_da_janela` | Chamada de `avisar_a_caminho` fora da janela permitida (de 3 h antes do início até greatest(inicio_em, confirmado_em) + 15 min) (US14, RF12) |
     | 422 | `registro_no_futuro` | Instante de check-in ou check-out adiante do relógio do servidor. O relógio que vale é o do servidor, nunca o do aparelho |
     | 422 | `reabertura_antes_da_tolerancia` | Reabrir por atraso antes dos 15 minutos (D06) |
     | 422 | `sem_suspensao_ativa` | Contestação sem suspensão em vigor (RF24) |
@@ -116,6 +116,15 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.106, de 22/11/2026.** Correção simétrica do aviso a caminho para substitutos
+    confirmados após o início (decisão do JP de 22/11/2026). A janela de `avisar_a_caminho`
+    termina em `greatest(inicio_em, confirmado_em) + 15 min`, mantendo a abertura em
+    `inicio_em - 3 h`, autorização e idempotência. `Turno.confirmado_em` passa a informar o
+    instante da confirmação; é opcional para compatibilidade com servidores anteriores.
+    Não altera carência, falta, cancelamento ou política de aceite.
+
+    ---
 
     **Versão 0.2.105, de 17/11/2026.** Só descrição: o `403 sem_permissao` (`recurso_desligado`) de
     `solicitar_upload_midia`, `confirmar_upload_midia` e `pedir_nova_analise_midia` vale quando
@@ -190,6 +199,8 @@ info:
     "BlendOps — Challenge 18", nome da equipe na Academy (pedido do Cauê 16-26). Nenhum campo,
     operação ou código muda.
 
+    ---
+
     **Versão 0.2.96, de 16/11/2026.** Operação nova `POST /rpc/publicar_escala` (RF19, cartão
     `6mi66YDp`, pedido do Cauê de 16/11/2026): o estabelecimento publica de uma vez um **evento** e
     as vagas dele (uma por função e horário). Esquemas novos `NovaEscala`, `ItemEscala` e
@@ -206,6 +217,8 @@ info:
       o Cauê pode mudar). Acima disso, publicam-se escalas separadas.
     - **Fica para outra versão:** ler a escala (painel), cancelar a escala inteira (hoje, cada vaga com
       `cancelar_vaga`), editar, vaga da escala em outro endereço e o `evento_id` nas leituras de vaga.
+
+    ---
 
     **Versão 0.2.95, de 16/11/2026.** Uma casa não abre duas vagas diretas para o mesmo trabalho
     (frila-backend#520, achado da revisão do app na bateria da busca). Adição compatível: um código
@@ -5280,7 +5293,8 @@ paths:
         do turno (`painel_estabelecimento`).
 
         Só o profissional confirmado no turno pode chamar (`403 sem_permissao`). A janela permitida
-        vai de 3 horas antes do início previsto até 15 minutos depois do início; fora dessa janela,
+        vai de 3 horas antes do início previsto até `greatest(inicio_em, confirmado_em) + 15 min`,
+        com ambas as bordas inclusivas; confirmação ausente usa o início. Fora dessa janela,
         a chamada é recusada com `422 a_caminho_fora_da_janela`.
 
         Idempotente: chamar uma segunda vez não altera o instante já gravado e devolve o mesmo
@@ -8949,6 +8963,14 @@ components:
             servidor atual ainda manda o fim previsto do turno mais 7 dias; o servidor que parar de
             entregar o contato omite o campo ou manda `null`. O cliente trata ausente e nulo do
             mesmo jeito: não há prazo a mostrar nem botão de contato a oferecer.
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
+        confirmado_em:
+          description: |
+            Instante da confirmação da posição deste turno. Usado no limite superior do aviso
+            a caminho: greatest(vaga.inicio_em, confirmado_em) + 15 min. Opcional para servidores
+            antigos; ausente ou nulo preserva o limite baseado no início. Não altera regra de falta.
           oneOf:
             - $ref: '#/components/schemas/Instante'
             - type: 'null'
