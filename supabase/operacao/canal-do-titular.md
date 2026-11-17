@@ -10,9 +10,9 @@ Como a Equipe Frila atende o pedido de um titular sobre os próprios dados: aces
 - **Prazos:** triagem em até 5 dias úteis. O acesso completo sai em até 15 dias corridos, contados do pedido (LGPD, art. 19, II). Correção e exclusão também saem em até 15 dias corridos, pelo SLA do Frila.
 - O anexo de acesso é gerado pela `exportar-meus-dados` da própria conta. Nunca copiar dado à mão para o corpo do e-mail.
 - Não citar dado de outra pessoa. Também não citar quem denunciou, quem bloqueou nem o motivo de suspensão (RN15).
-- Guardar o e-mail do pedido e a resposta por 5 anos (`canal-do-titular.md`, 2.9).
+- Guardar o pedido e a resposta, que vão na mesma conversa, por 5 anos (`canal-do-titular.md`, 2.9). **Se a pessoa excluir a conta**, vale o 2.9: os e-mails dela saem 15 dias depois da anonimização, e fica só o pedido de exclusão, com a resposta, por 5 anos (decisão da Bússola, 17/11/2026: o 2.9 prevalece sobre esta regra geral).
 
-> **Divergência aberta:** a regra dos 5 anos acima conflita com a seção 6, item 2, de `equipe-frila.md` (apagar o e-mail ao fechar o chamado). Até a decisão, o pedido do titular e a resposta ficam guardados.
+> **Divergência aberta:** a regra geral dos 5 anos acima conflita com a seção 6 de `equipe-frila.md`: o item 2 manda apagar o e-mail ao fechar o chamado, e o item 3 manda purgar tudo o que for da conta excluída (o 2.9 guarda o pedido de exclusão e a resposta). O caso da conta excluída já está decidido no item acima. Até a decisão da regra geral, o pedido do titular e a resposta ficam guardados.
 
 ---
 
@@ -48,8 +48,9 @@ Como a Equipe Frila atende o pedido de um titular sobre os próprios dados: aces
 - **Pelo app** (o caminho normal): "Perfil → Excluir conta". A Edge Function `excluir-conta` registra o pedido (`privado.registrar_pedido_de_exclusao`), anonimiza (`privado.excluir_conta`) e apaga a credencial no Auth.
 - **Pelo e-mail:** a equipe faz os mesmos três passos, na mesma ordem, depois de conferir no passo 2 que a conta não é de demonstração:
   ```bash
-  # 1 e 2, cada um na sua transação (como a Edge Function): o registro do pedido fica mesmo se a exclusão falhar.
-  psql -v uid="<uuid da conta>" <<'SQL'
+  # 1 e 2, cada um na sua transação (como a Edge Function): o registro do pedido fica mesmo se a exclusão falhar,
+  # e o ON_ERROR_STOP para tudo se o registro falhar (a exclusão não roda sem o registro).
+  psql -v ON_ERROR_STOP=1 -v uid="<uuid da conta>" <<'SQL'
   select privado.registrar_pedido_de_exclusao(:'uid'::uuid);
   select privado.excluir_conta(:'uid'::uuid);
   SQL
