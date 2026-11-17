@@ -513,8 +513,9 @@ printf 'Secret Access Key (backup-prod-leitura): '; read -rs AWS_SECRET_ACCESS_K
 printf 'Endpoint S3 da conta do Frila: '; read -r R2_ENDPOINT; echo
 export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY R2_ENDPOINT AWS_DEFAULT_REGION=auto
 
-# 1. Escolher o objeto mais novo (o nome leva a data e a hora; o último da lista é o mais novo)
-aws s3 ls "s3://frila-backup-prod/" --endpoint-url "$R2_ENDPOINT"
+# 1. Escolher o backup mais novo: o nome leva a data e a hora, e o filtro tira objetos que não são backup
+#    (como os de teste da trava), que também ficam no bucket por 14 dias
+aws s3 ls "s3://frila-backup-prod/" --endpoint-url "$R2_ENDPOINT" | grep 'frila-backup-.*\.tar\.age$' | tail -1
 
 # 2. Baixar (troque <arquivo> pelo nome inteiro, sem o .tar.age)
 aws s3 cp "s3://frila-backup-prod/<arquivo>.tar.age" "$SAIDA/" --endpoint-url "$R2_ENDPOINT"
