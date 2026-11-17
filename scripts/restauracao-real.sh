@@ -208,6 +208,7 @@ awk -F '\t' -v OFS='\t' '
       else if (p == "-" && r == "0") s = "vazia_sem_dados_no_pacote"
       else if (p == "-" && r == "-") s = "so_no_prod"
       else if ((t in ext) && r == q && p + 0 < r + 0) s = "linhas_do_create_extension"
+      else if ((t in ext) && q == "-" && p + 0 < r + 0) s = "linhas_do_create_extension_sem_prod"
       else s = "DIFERENTE"
       if (t in sup) s = s "(suplemento)"
       print t, p, r, q, s, (q == "-" ? "-" : (q == r ? "igual" : "difere"))
