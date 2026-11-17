@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.103
+  version: 0.2.104
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -116,6 +116,14 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.104, de 17/11/2026.** Só descrição, para o servidor obedecer ao que já estava escrito
+    (B-052 da Forja; `frila-backend` #553 e o que vier para `remover_membro` e `transferir_administracao`). Nas quatro operações da equipe da casa (`convidar_membro`,
+    `aceitar_convite_membro`, `remover_membro` e `transferir_administracao`), o corpo usa os nomes deste
+    contrato, sem o prefixo `p_` (`estabelecimento_id`, `email`, `papel`, `token`, `membro_id` e
+    `novo_admin_id`). Até agora, o servidor só achava a função pelos nomes com `p_` e respondia `404
+    PGRST202`. `convidar_membro` deixa de declarar o `404`: quem não é administrador da casa, e a casa que
+    não existe, recebem o mesmo `403 sem_permissao`, como em `remover_membro`. Nenhum campo muda.
 
     **Versão 0.2.103, de 17/11/2026.** Operação nova de leitura: **`GET /rpc/membros_do_estabelecimento`**
     lista os membros de uma casa, para a tela da equipe da casa (web 3.16; o iOS e o Android usam os
@@ -3194,9 +3202,11 @@ paths:
         e expira automaticamente.
 
         Recusas: `401 nao_autenticado` se sem sessão; `403 sem_permissao` se o chamador não for
-        administrador do estabelecimento; `404 nao_encontrado` se o estabelecimento não existir;
-        `422 campo_obrigatorio` (`details: papel`) quando ausente; `422 campo_invalido` (`details: email`)
+        administrador do estabelecimento, e também quando a casa não existe (0.2.104: a resposta não diz
+        se a casa existe); `422 campo_obrigatorio` (`details: papel`) quando ausente; `422 campo_invalido` (`details: email`)
         quando o formato do e-mail for inválido.
+
+        Os nomes do corpo são os deste contrato, sem `p_` (`estabelecimento_id`, `email` e `papel`), desde o B-052 da Forja (0.2.104).
       x-requisitos: [RF21, US24]
       requestBody:
         required: true
@@ -3241,8 +3251,6 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           $ref: '#/components/responses/SemPermissao'
-        '404':
-          $ref: '#/components/responses/NaoEncontrado'
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
@@ -3257,6 +3265,8 @@ paths:
 
         Recusas: `401 nao_autenticado` se sem sessão; `422 perfil_incompativel` se a conta for de profissional;
         `422 convite_invalido` se o token não existir, já tiver sido usado ou estiver expirado.
+
+        Os nomes do corpo são os deste contrato, sem `p_` (`token`), desde o B-052 da Forja (0.2.104).
       x-requisitos: [RF21, US24]
       requestBody:
         required: true
@@ -3367,6 +3377,8 @@ paths:
         Recusas: `401 nao_autenticado` se sem sessão; `403 sem_permissao` se o chamador não for
         administrador do estabelecimento; `404 nao_encontrado` se o membro não pertencer ao estabelecimento;
         `422 ultimo_administrador` se tentar remover o único administrador restante.
+
+        Os nomes do corpo são os deste contrato, sem `p_` (`estabelecimento_id` e `membro_id`), desde o B-052 da Forja (0.2.104).
       x-requisitos: [RF21, US24]
       requestBody:
         required: true
@@ -3420,6 +3432,8 @@ paths:
 
         Recusas: `401 nao_autenticado` se sem sessão; `403 sem_permissao` se o chamador não for
         administrador do estabelecimento; `404 nao_encontrado` se o membro indicado não pertencer ao estabelecimento.
+
+        Os nomes do corpo são os deste contrato, sem `p_` (`estabelecimento_id` e `novo_admin_id`), desde o B-052 da Forja (0.2.104).
       x-requisitos: [RF21, US24]
       requestBody:
         required: true

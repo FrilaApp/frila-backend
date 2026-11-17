@@ -398,7 +398,6 @@ ISENTAS = {
         }.items()
         for status in statuses
     },
-    ("convidarMembro", "404"): "inalcançável: o corpo exige ser administrador da casa antes de procurá-la, e quem não é (inclusive de casa inexistente) leva 403 sem_permissao, para a casa não vazar",
     ("transferirAdministracao", "422"): "inalcançável: o contrato declara RegraRecusou, mas o corpo só recusa com 401, 403 e 404 (membro que não é da casa, inclusive id nulo, leva 404)",
     # Supabase Auth (GoTrue), fora do Postgres
     ("entrarDemonstracao", "429"): "limite de tentativas do Supabase Auth, fora do Postgres",
