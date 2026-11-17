@@ -112,7 +112,7 @@ visível em PR).
 11. **Registrar** no PR: SHA, tag, hora, resultado do `desvio.sh`.
 
 Smoke depois da publicação: `GET` na função `saude` do Prod só lê no caminho de sucesso
-(`select 1`, `supabase/functions/saude/index.ts`); no de falha, grava uma linha em
+(`select 1` e, desde `25f475a` (#514), a idade dos jobs `reprocessar_despacho` e `verificar_saude` em `cron.job_run_details`; `supabase/functions/saude/index.ts`); no de falha, grava uma linha em
 `registrar_falha_execucao` (`mantem-prod-vivo.yml:9`). Não rode `ciclo-completo.sh` nem `demonstracao.sh`
 contra o Prod, porque gravam dados; a decisão de gravar em produção é do `[DONO]`.
 
@@ -136,7 +136,8 @@ na CI: `scripts/migracoes-imutaveis.sh:12` lista os arquivos modificados ou remo
    mantendo `set search_path = ''` e os `grant`/`revoke`.
 4. **Dado não volta.** `drop column` apaga o conteúdo. Mudança destrutiva em duas fases
    (acrescenta e escreve nos dois; só depois remove), por `AGENTS.md`, "Banco e migrações". Backup
-   do Prod: ver seção 7, ainda não configurado.
+   do Prod: existe backup lógico diário (`.github/workflows/backup-prod.yml`); o que ele garante e o que
+   não garante está na seção 7. Sem restaurar esse backup, `drop column` em Prod não tem volta.
 5. **pgTAP** que prova o estado revertido e as regras de negócio intactas;
    `supabase db reset` e `supabase test db` verdes.
 6. **PR → `develop` → `frila-dev` → tag → `frila-prod`**, o mesmo caminho da seção 3, sob a
@@ -223,12 +224,19 @@ Medido em 28/10/2026 com `gh` e `git ls-remote` (só leitura), salvo indicação
   deploy` (`entrega.yml:165-166`) publica o código da tag. Se o Supabase guarda versões anteriores para voltar: não
   encontrado (buscado em: `entrega.yml`, `scripts/`, `docs/`, e na página de deploy da documentação do Supabase, lida em 16/11/2026).
   Nunca se executou um rollback de função em Prod.
-- **Backup do Prod não está configurado.** `docs/BackupDoProd.md:282-296`: "Não foi criado/
-  carregado plist nem configurado serviço ou segredo do prod". Sem backup, `drop column`
-  em Prod não tem volta.
+- **Backup do Prod existe, com limites** (corrigido em 16/11/2026; o texto anterior dizia "não
+  está configurado"). MEDIDO com `gh api` em `backup-prod.yml`: 13 execuções agendadas, 12 com
+  sucesso e 1 com falha (04/11, a estreia); a última execução agendada com sucesso foi a de 16/11; cada execução começa entre 6,8 e 10,3 h depois do
+  horário `0 7 * * *` UTC. Descrição do fluxo: `docs/BackupDoProd.md`, seção "Configuração do prod e
+  agendamento diário". DEDUZIDO: o backup mais novo pode ter até ~34 h (24 h + o atraso máximo
+  medido). NAO MEDIDO: restauração de um arquivo real do bucket (os ensaios restauram o script em
+  banco local), custódia da chave privada `age`, ciclo de vida de 14 dias do bucket, RPO e RTO
+  declarados. `drop column` em Prod só volta com a restauração desse backup, em banco novo, e perde
+  o que entrou depois dele.
 - **Nunca se executou um rollback real em Prod**, nem um hotfix de ponta a ponta.
-- **`mantem-prod-vivo.yml`:** a variável `FRILA_PROD_URL_SAUDE` não existe (nenhuma variável
-  de repositório, medido em 28/10), então o job falha até alguém criá-la. Que a chamada
+- **`mantem-prod-vivo.yml`:** a variável `FRILA_PROD_URL_SAUDE` existe (MEDIDO em 16/11/2026
+  com `gh api repos/FrilaApp/frila-backend/actions/variables`: é a única variável de repositório,
+  `total_count` 1; em 28/10 não existia). Que a chamada
   diária impeça a pausa do projeto só se comprova esperando mais de sete dias; que o
   Supabase conte uma chamada à função como "uso": não encontrado.
 - **`renova-contas-de-revisao.yml`:** o script chamado, `scripts/renovar-demonstracao.sh`,
