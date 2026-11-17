@@ -132,7 +132,11 @@ select is(privado.expirar_chamadas(), 0, 'rodar de novo não expira nada');
 -- Sem a 20261117130000, a função encerra a vaga pelo que leu antes de esperar a trava.
 create temp table fonte as
 select f.src,
-       strpos(f.src, 'for no key update') as trava,
+       -- A 20261117170000 pôs outra trava de vaga no começo: vale a que vem depois deste select.
+       case when strpos(substr(f.src, strpos(f.src, 'from public.vaga g where g.id = r.vaga_id')), 'for no key update') > 0
+            then strpos(f.src, 'from public.vaga g where g.id = r.vaga_id')
+                 + strpos(substr(f.src, strpos(f.src, 'from public.vaga g where g.id = r.vaga_id')), 'for no key update') - 1
+            else 0 end as trava,
        strpos(f.src, 'update public.vaga set estado = ''encerrada''') as encerra
   from (select regexp_replace(p.prosrc, '\s+', ' ', 'g') as src
           from pg_proc p where p.oid = 'privado.expirar_chamadas()'::regprocedure) f;
