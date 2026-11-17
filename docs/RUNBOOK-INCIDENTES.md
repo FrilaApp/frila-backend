@@ -165,7 +165,7 @@ Falhas no segredo do agendador, queda do servidor SMTP ou credenciais inválidas
 - Notificações periódicas de atraso ou fim de turno sem checkout não disparam.
 
 ### Causa Raiz
-O banco possui 13 jobs ativos agendados no `pg_cron` (`supabase/tests/390_agendamentos_do_pg_cron.sql`). Todos invocam funções no formato canônico `select privado.<funcao>()`. Se uma migração revogar privilégios, alterar a assinatura da função sem valor default para argumentos, fixar um `search_path` que oculte tipos de dados ou introduzir uma exceção não tratada, o job falha em silêncio no background sem notificar o app.
+O banco possui jobs ativos agendados no `pg_cron`. O número cresce com cada job novo: o pgTAP `supabase/tests/390_agendamentos_do_pg_cron.sql` lista 26 nomes conhecidos na `develop` em `a55aab0` (contagem por `awk`, 16/11/2026) e falha se um job novo entrar sem entrar no teste. Todos invocam funções no formato canônico `select privado.<funcao>()`. Se uma migração revogar privilégios, alterar a assinatura da função sem valor default para argumentos, fixar um `search_path` que oculte tipos de dados ou introduzir uma exceção não tratada, o job falha em silêncio no background sem notificar o app.
 
 ### Diagnóstico (Somente Leitura)
 1. **Identificar jobs desativados no catálogo do cron:**
@@ -191,7 +191,7 @@ O banco possui 13 jobs ativos agendados no `pg_cron` (`supabase/tests/390_agenda
     limit 20;
    ```
 
-3. **Verificar integridade da assinatura de todas as 13 funções agendadas:**
+3. **Verificar integridade da assinatura de todas as funções agendadas:**
    ```sql
    select j.jobname,
           j.command,

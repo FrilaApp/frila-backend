@@ -61,7 +61,7 @@ O script executa 7 blocos estruturados de checagem:
 
 ### Bloco 1 · Saúde Geral e Agendador do Sistema (pg_cron / RNF12)
 - **O que verifica:**
-  - Status dos **13 jobs cadastrados no pg_cron** (`cron.job`). Todos devem estar com `active = true`.
+  - Status de **todos os jobs cadastrados no pg_cron** (`cron.job`). Todos devem estar com `active = true`. O script conta os jobs de forma dinâmica (`SELECT count(*) FROM cron.job`, `scripts/checagem-diaria.sh`, bloco 1), então o número cresce com cada job novo. Para referência, o pgTAP `supabase/tests/390_agendamentos_do_pg_cron.sql` lista **26** nomes conhecidos na `develop` em `a55aab0` (contagem por `awk` em 16/11/2026); quem confere o Prod compara com `cron.job`, não com um número escrito aqui.
   - Histórico de execuções nas últimas 24h (`cron.job_run_details`). Identifica jobs com `status != 'succeeded'`.
   - Alertas emitidos em `privado.alerta_emitido` nas últimas 24h (ex: transporte pgnet, filas retidas).
 - **Tempo de leitura:** 1 minuto.
