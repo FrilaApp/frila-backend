@@ -1,7 +1,7 @@
 -- 879_vaga_publica.sql
 --
 -- A vaga pelo link, sem login (migração 20261117070000, contrato 0.2.100, web B5).
---   A  a função: security definer, stable, search_path vazio; anon e authenticated executam, PUBLIC não
+--   A  a função: security definer, search_path vazio; anon e authenticated executam, PUBLIC não
 --   B  a vaga normal: anon e authenticated leem com exatamente as chaves de VagaPublica, os mesmos valores
 --      para os dois; nada do estabelecimento, do endereço, do ponto, do texto livre ou de quem publicou
 --   C  os 404: vaga direta, vaga oculta, vaga de conta de demonstração (também para quem é de
@@ -105,9 +105,9 @@ values (pg_temp.id(33), pg_temp.id(90), '2026-11-16 16:05:00+00');
 update public.regiao_administrativa set ativo = false where nome = 'Taguatinga';
 
 -- ── A: a função ───────────────────────────────────────────────────────────────
-select ok((select p.prosecdef and p.provolatile = 's' and p.proconfig @> array['search_path=""']
+select ok((select p.prosecdef and p.proconfig @> array['search_path=""']
              from pg_proc p where p.oid = 'public.vaga_publica(text)'::regprocedure),
-          'A: vaga_publica(text) é security definer, stable e com search_path vazio');
+          'A: vaga_publica(text) é security definer e com search_path vazio');
 select ok(has_function_privilege('anon', 'public.vaga_publica(text)', 'execute'), 'A: anon executa vaga_publica');
 select ok(has_function_privilege('authenticated', 'public.vaga_publica(text)', 'execute'), 'A: authenticated executa vaga_publica');
 select is((select count(*)::int from information_schema.routine_privileges

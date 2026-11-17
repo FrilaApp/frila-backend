@@ -10,7 +10,10 @@
 --     ocultada pela Equipe Frila, vaga de conta de demonstração, id que não é uuid e vaga que não
 --     existe respondem o MESMO 404 nao_encontrado, sem `details`: nada no corpo diz qual foi o caso;
 --   - o parâmetro é `text`, para o que não for uuid cair nesse 404 em vez do 400 22P02 do PostgREST;
---   - `stable`: é GET no contrato, e o PostgREST roda o GET em transação só de leitura;
+--   - volatile, e não stable, como configuracao_do_app (também GET): a função chama public.erro, que
+--     é volatile porque levanta exceção, e stable faz o plpgsql_check da CI acusar "routine is marked
+--     as STABLE, but expression is VOLATILE" (20260922235000). O GET do PostgREST roda em transação só
+--     de leitura, e a função só lê;
 --   - fora dos 404, responde 200 com o estado real (preenchida, encerrada, cancelada ou já passada):
 --     o link antigo diz que a vaga fechou em vez de parecer quebrado.
 -- Sem bloqueio (RF26): sem sessão não há quem bloquear, e com sessão a resposta é a mesma (decisão
@@ -19,7 +22,7 @@
 create function public.vaga_publica(vaga_id text)
 returns jsonb
 language plpgsql
-stable
+volatile
 security definer set search_path = ''
 as $$
 declare
