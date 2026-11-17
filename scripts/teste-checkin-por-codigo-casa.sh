@@ -3,13 +3,16 @@
 # Roda contra o banco local (contêiner supabase_db_frila-backend ou DATABASE_URL).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+# A senha da DATABASE_URL vai só no ambiente do psql, nunca na linha de comando (B-027.j).
+# shellcheck source=/dev/null
+. scripts/pg-sem-senha.sh
 
 SCRIPT="./scripts/checkin-por-codigo-casa.sh"
 DB_CONTAINER="${DB_CONTAINER:-supabase_db_frila-backend}"
 
 psql_q() {
   if [ -n "${DATABASE_URL:-}" ]; then
-    psql "$DATABASE_URL" -X -q -t -A -v ON_ERROR_STOP=1 "$@"
+    psql_url "$DATABASE_URL" -X -q -t -A -v ON_ERROR_STOP=1 "$@"
   else
     docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -X -q -t -A -v ON_ERROR_STOP=1 "$@"
   fi

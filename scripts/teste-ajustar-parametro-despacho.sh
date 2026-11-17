@@ -10,6 +10,9 @@
 #   ./scripts/teste-ajustar-parametro-despacho.sh
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+# A senha da DATABASE_URL vai só no ambiente do psql, nunca na linha de comando (B-027.j).
+# shellcheck source=/dev/null
+. scripts/pg-sem-senha.sh
 
 ALVO=scripts/ajustar-parametro-despacho.sh
 DB_CONTAINER="${DB_CONTAINER:-supabase_db_frila-backend}"
@@ -63,7 +66,7 @@ rodar() {
 }
 
 valor_no_banco() {
-  psql "$DATABASE_URL" -X -q -t -A -v ON_ERROR_STOP=1 \
+  psql_url "$DATABASE_URL" -X -q -t -A -v ON_ERROR_STOP=1 \
     -c "select valor_metros from privado.parametro_despacho where chave = 'raio_maximo_metros'"
 }
 
@@ -154,7 +157,7 @@ saida="$(cat "$TMP/saida")"
 
 # ── 6. Tabela ausente é erro claro ───────────────────────────────────────────
 echo "▸ 6. banco sem a migração"
-psql "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -c "alter table privado.parametro_despacho rename to parametro_despacho_guardado" >/dev/null
+psql_url "$DATABASE_URL" -X -q -v ON_ERROR_STOP=1 -c "alter table privado.parametro_despacho rename to parametro_despacho_guardado" >/dev/null
 rodar ler raio_maximo_metros
 [ "$codigo" -eq 1 ] && ok "sem a tabela, sai 1" || falha "sem a tabela: esperava 1, veio $codigo"
 case "$saida" in

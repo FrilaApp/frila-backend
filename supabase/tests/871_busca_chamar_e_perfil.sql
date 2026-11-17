@@ -48,15 +48,20 @@ create function pg_temp.casa(n int) returns uuid language sql immutable as $$
 create function pg_temp.garcom() returns uuid language sql stable as $$ select id from public.funcao where nome = 'garçom' $$;
 
 -- chamar_profissional como a conta, para o profissional n, em casa. Corpo válido; extra acrescenta ou troca argumentos.
+-- 0.2.95: sem inicio, cada profissional vai a um minuto próprio a partir de 17/11 18:00, um trabalho próprio
+-- (no mesmo minuto, a chamada a outra pessoa receberia trabalho_ja_aberto, que vem antes das outras recusas).
+create function pg_temp.inicio_padrao(prof int) returns timestamptz language sql stable as $$
+  select '2026-11-17 18:00+00'::timestamptz + prof * interval '1 minute' $$;
 create function pg_temp.chamar(conta uuid, casa uuid, prof int, regiao text default 'Plano Piloto',
-                               extra text default '', inicio text default '2026-11-17 18:00+00') returns text
+                               extra text default '', inicio text default null) returns text
 language sql as $$
   select pg_temp.tenta(conta, format($a$ select public.chamar_profissional(chave => gen_random_uuid(),
     profissional_id => %L, estabelecimento_id => %L, funcao_id => %L, inicio_em => %L, fim_em => %L,
     local => 'CLN 201', regiao_administrativa => %L, ponto => '{"latitude":-15.7942,"longitude":-47.8822}',
     valor_centavos => 15000, inclui_refeicao => true, inclui_transporte => false,
     exige_material_proprio => false, responsavel_local => 'Maitre' %s) $a$,
-    pg_temp.p(prof), casa, pg_temp.garcom(), inicio::timestamptz, inicio::timestamptz + interval '5 hours', regiao, extra)) $$;
+    pg_temp.p(prof), casa, pg_temp.garcom(), coalesce(inicio::timestamptz, pg_temp.inicio_padrao(prof)),
+    coalesce(inicio::timestamptz, pg_temp.inicio_padrao(prof)) + interval '5 hours', regiao, extra)) $$;
 -- A 2ª ou 3ª chamada pela vaga direta.
 create function pg_temp.chamar_vaga(conta uuid, casa uuid, prof int, vaga uuid) returns text language sql as $$
   select pg_temp.tenta(conta, format($a$ select public.chamar_profissional(chave => gen_random_uuid(),
