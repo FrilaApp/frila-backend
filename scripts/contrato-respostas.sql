@@ -219,6 +219,25 @@ create temp table vaga1 as
     (select casa_id from ids), (select id from f), gen_random_uuid())) as r;
 select pg_temp.guarda('publicarVaga', (select r from vaga1));
 
+-- A escala de um evento com duas vagas (publicar_escala, 0.2.96). Colhida sem rastro: as vagas dela não
+-- entram nas leituras nem nos despachos que o resto deste arquivo colhe.
+select pg_temp.guarda('publicarEscala', pg_temp.sem_rastro('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.publicar_escala(%L::uuid,
+       '{"nome": "Formatura do Contrato", "data": "2027-01-20", "local": "CLN 108",
+         "regiao_administrativa": "Plano Piloto", "ponto": {"latitude": -15.7905, "longitude": -47.8855}}'::jsonb,
+       jsonb_build_array(
+         jsonb_build_object('funcao_id', %L::uuid, 'inicio_em', '2027-01-20T21:00:00Z',
+           'fim_em', '2027-01-21T03:00:00Z', 'valor_centavos', 16000, 'posicoes', 2,
+           'inclui_refeicao', true, 'inclui_transporte', false, 'exige_material_proprio', false,
+           'responsavel_local', 'Gerente', 'modo', 'urgencia'),
+         jsonb_build_object('funcao_id', %L::uuid, 'inicio_em', '2027-01-20T19:00:00Z',
+           'fim_em', '2027-01-21T01:00:00Z', 'valor_centavos', 15000, 'posicoes', 1,
+           'inclui_refeicao', true, 'inclui_transporte', false, 'exige_material_proprio', false,
+           'responsavel_local', 'Gerente', 'modo', 'urgencia', 'traje', 'camisa preta',
+           'participa_rateio', true, 'observacoes', 'porta dos fundos')),
+       gen_random_uuid()) $$,
+  (select casa_id from ids), (select id from f), (select id from f))));
+
 create temp table vaga2 as
   select pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
     $$ select public.republicar_vaga(%L::uuid, '2027-01-25 21:00:00+00'::timestamptz,
@@ -832,6 +851,12 @@ select pg_temp.guarda('promete:publicarVaga:403',
          gen_random_uuid()) $$,
     (select casa_id from ids), (select id from f))));
 
+-- publicarEscala: 403 sem_permissao (o mesmo não membro; quem pode vem antes do corpo)
+select pg_temp.guarda('promete:publicarEscala:403',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000099', format(
+    $$ select public.publicar_escala(%L::uuid, '{}'::jsonb, '[]'::jsonb, gen_random_uuid()) $$,
+    (select casa_id from ids))));
+
 -- 21. candidatar: 404 nao_encontrado (vaga inexistente)
 select pg_temp.guarda('promete:candidatar:404',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002',
@@ -907,6 +932,8 @@ select pg_temp.guarda('promete:avisarACaminho:403',
     $$ select public.avisar_a_caminho(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
 
 -- 35. configuracaoDoApp: 404 nao_encontrado (plataforma sem linha de configuração)
+-- As três plataformas têm linha desde 20261117060000; apaga a da web (tudo aqui termina em rollback).
+delete from privado.configuracao_app where plataforma = 'web';
 select pg_temp.guarda('promete:configuracaoDoApp:404',
   pg_temp.observado(null,
     $$ select public.configuracao_do_app('web') $$));
@@ -1189,6 +1216,19 @@ select pg_temp.guarda('promete:publicarVaga:422',
          'Gerente', 'urgencia'::public.modo_preenchimento, gen_random_uuid()) $$,
     (select casa_id from ids))));
 
+-- publicarEscala: 422 campo_invalido ([150] sozinho: o item passa do teto de 100 posições, vagas[0].posicoes)
+select pg_temp.guarda('promete:publicarEscala:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.publicar_escala(%L::uuid,
+         '{"nome": "Formatura do Contrato", "data": "2027-01-20", "local": "CLN 108",
+           "regiao_administrativa": "Plano Piloto", "ponto": {"latitude": -15.7905, "longitude": -47.8855}}'::jsonb,
+         jsonb_build_array(jsonb_build_object('funcao_id', %L::uuid, 'inicio_em', '2027-01-20T21:00:00Z',
+           'fim_em', '2027-01-21T03:00:00Z', 'valor_centavos', 16000, 'posicoes', 150,
+           'inclui_refeicao', true, 'inclui_transporte', false, 'exige_material_proprio', false,
+           'responsavel_local', 'Gerente', 'modo', 'urgencia')),
+         gen_random_uuid()) $$,
+    (select casa_id from ids), (select id from f))));
+
 -- 76. escolherCandidato: 422 campo_obrigatorio (candidatura_id nula)
 select pg_temp.guarda('promete:escolherCandidato:422',
   pg_temp.observado('cc000000-0000-4000-8000-000000000001',
@@ -1223,6 +1263,11 @@ select pg_temp.guarda('promete:publicarVaga:401',
          '2027-01-18 21:00:00+00'::timestamptz, '2027-01-19 03:00:00+00'::timestamptz,
          'CLN 108', '{"latitude":-15.7905,"longitude":-47.8855}'::jsonb, 16000::bigint, 1, true, false, false,
          'Gerente', 'urgencia'::public.modo_preenchimento, gen_random_uuid(), 'camisa preta', true, 'porta dos fundos', 180) $$));
+
+-- publicarEscala: 401 nao_autenticado (chamador sem sessão)
+select pg_temp.guarda('promete:publicarEscala:401',
+  pg_temp.observado(null,
+    $$ select public.publicar_escala('00000000-0000-0000-0000-000000000001'::uuid, '{}'::jsonb, '[]'::jsonb, gen_random_uuid()) $$));
 
 -- 82. cancelarVaga: 401 nao_autenticado (chamador sem sessão / anonimo)
 select pg_temp.guarda('promete:cancelarVaga:401',

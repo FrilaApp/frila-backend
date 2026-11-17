@@ -41,8 +41,8 @@ $$;
 -- Total de rotinas existentes em public (67 RPCs + 1 event trigger + 3 helpers)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace),
-  80::bigint,
-  'censo de catalogo: schema public contem exatamente 80 rotinas catalogadas (com buscar_profissionais, 0.2.88, aceitar_termos, 0.2.90, e vaga_publica, 0.2.100)'
+  81::bigint,
+  'censo de catalogo: schema public contem exatamente 81 rotinas catalogadas (com buscar_profissionais, 0.2.88, aceitar_termos, 0.2.90, publicar_escala, 0.2.96, e vaga_publica, 0.2.100)'
 );
 
 -- Total de rotinas declaradas como SECURITY DEFINER (67 RPCs + 1 event trigger rls_auto_enable)
@@ -85,8 +85,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and not has_function_privilege('anon', p.oid, 'execute')),
-  78::bigint,
-  'superficie anonima blindada: 78 de 80 rotinas negam execucao para o papel anon'
+  79::bigint,
+  'superficie anonima blindada: 79 de 81 rotinas negam execucao para o papel anon'
 );
 
 -- Papel authenticated possui EXECUTE concedido em exatamente 67 RPCs

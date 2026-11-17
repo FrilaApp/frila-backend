@@ -359,6 +359,8 @@ select throws_ok(
 );
 
 -- ── 20. configuracaoDoApp: 404 nao_encontrado ──────────────────────────────────
+-- As três plataformas têm linha desde 20261117060000; apaga a da web na transação.
+delete from privado.configuracao_app where plataforma = 'web';
 select throws_ok(
   $$ select public.configuracao_do_app('web') $$,
   'PGRST',
