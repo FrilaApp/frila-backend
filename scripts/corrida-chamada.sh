@@ -35,6 +35,9 @@
 #      forçada por uma terceira conexão, como no 5: nenhum 40P01, e cada desfecho é o de quem
 #      chegou primeiro. 9: suspensão x aceite; 10: suspensão x exclusão; 11: bloqueio x
 #      exclusão; 12: bloqueio x aceite (este não fechava ciclo; fica como guarda).
+#  13. Suspensão da casa (único membro, depois de remover o administrador antigo) x bloqueio da
+#      casa pelo profissional que o antigo chamou (#526): nenhum 40P01, a vaga cancelada e a
+#      chamada do ex-membro encerrada.
 #
 # Uso: ./scripts/corrida-chamada.sh        RODADAS=4 ./scripts/corrida-chamada.sh
 set -uo pipefail
@@ -989,6 +992,49 @@ if [ "$erros" = 0 ]; then
   ok "em $RODADAS de $RODADAS rodadas das duas ordens, nenhum 40P01 e o desfecho de quem chegou primeiro"
 else
   printf '  (40P01 por ordem: %s)\n' "$r12" >&2
+fi
+
+# ── 13. Suspensão da casa x bloqueio, com a chamada de um ex-membro (#526, Lince) ─
+# Mundos 241 a 250, e 251 a 260 só para a conta do administrador novo. A chamada é do
+# administrador antigo; o novo (a casa do mundo 250 + i) entra, remove o antigo e fica como único
+# membro. X segura a posição da vaga: a suspensão do novo para no update dela, e o profissional
+# bloqueia a casa depois. Na 1ª versão da 20261117140000, a suspensão não pré-travava a chamada
+# do ex-membro (ela não é da conta suspensa), o bloqueio a pegava e parava na chave estrangeira do
+# usuario, e o gatilho vaga_cancelada_fecha_chamadas pedia a chamada a ele: 40P01 no bloqueio.
+echo "▸ 13. suspensão da casa x bloqueio, com a chamada do ex-membro, com a ordem forçada (a suspensão primeiro)"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  m=$((240 + i)); montar_mundo "$m"; montar_mundo $((250 + i))
+  antigo=$(id "$m" 1); novo=$(id $((250 + i)) 1); p1=$(id "$m" 2); p2=$(id "$m" 3); estab=$(id "$m" 10)
+  read -r c1 vaga < <(chamar_serial "$m" "$p1")
+  [ -z "${c1:-}" ] && { falhou "rodada $i: não montei a chamada"; erros=$((erros + 1)); continue; }
+  troca=$(psql <<SQL
+$AUX
+insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel) values ('$novo', '$estab', 'administrador');
+select pg_temp.tentar('$novo', \$q\$ select public.remover_membro('$estab', '$antigo') \$q\$);
+select string_agg(usuario_id::text, ',') from public.membro_estabelecimento where estabelecimento_id = '$estab';
+SQL
+)
+  [ "$troca" != "$(printf 'ok\n%s' "$novo")" ] && { falhou "rodada $i: a troca de administrador não deixou o novo sozinho ($troca)"; erros=$((erros + 1)); continue; }
+  n="cc-$RUN-$m"
+  CONTA_s=;    SQL_s=$(sql_suspender "$novo" "$p2")
+  CONTA_b=$p1; SQL_b="select public.bloquear('estabelecimento', '$estab')"
+  segurar "$n-x" "select 1 from public.posicao where vaga_id = '$vaga' for update"
+  if ! forcar "$n" "x segurando" s "s travado" b "b travado"; then
+    falhou "rodada $i: '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    erros=$((erros + 1)); continue
+  fi
+  rs=$(resultado "$TMP/$n-s"); rb=$(resultado "$TMP/$n-b")
+  impasse a "$rs" "$rb"
+  obtido="suspensão '$rs', bloqueio '$rb', conta '$(estado_de "$novo")', chamada '$(psql -c "select estado from public.chamada where id = '$c1';")', vaga '$(psql -c "select estado from public.vaga where id = '$vaga';")', bloqueios $(bloqueios_de "$novo")"
+  esperado="suspensão 'ok', bloqueio 'ok', conta 'suspensa', chamada 'encerrada', vaga 'cancelada', bloqueios 1"
+  [ "$obtido" != "$esperado" ] && { falhou "rodada $i: $obtido"; erros=$((erros + 1)); }
+done
+resumo_impasses r13 a
+if [ "$erros" = 0 ]; then
+  ok "em $RODADAS de $RODADAS rodadas, nenhum 40P01, a vaga cancelada com a chamada do ex-membro encerrada e o bloqueio gravado"
+else
+  printf '  (40P01: %s)\n' "$r13" >&2
 fi
 
 exit "$falha"

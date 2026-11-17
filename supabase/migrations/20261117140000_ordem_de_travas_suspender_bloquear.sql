@@ -22,10 +22,14 @@
 --   11b. o profissional bloqueia a casa que se exclui ................. 40P01 em 4 de 4
 --   12a/12b. bloqueio × aceite, nas duas ordens ....................... 0 de 4 (não há ciclo: o
 --        aceite não pede nada que o bloqueio segure; fica como guarda)
+--   13. suspensão da casa x bloqueio, com a chamada de um ex-membro ... 0 de 4 na develop; 40P01
+--        em 4 de 4 na 1ª versão desta migração, que pré-travava só as chamadas da conta (achado
+--        da revisão); 0 de 4 com a pré-trava das chamadas das vagas recolhidas
 --
 -- O conserto é o da 20261117010000: antes do usuario, cada função trava por id o que o gatilho
 -- dela vai mexer, no predicado do próprio gatilho, copiado. A suspensão trava as vagas (as que o
--- caminho do contratante recolhe e as das chamadas abertas) e depois as chamadas; o bloqueio
+-- caminho do contratante recolhe e as das chamadas abertas) e depois as chamadas (as da conta e
+-- as que o cancelamento dessas vagas encerra, inclusive a de um ex-membro da casa); o bloqueio
 -- trava as chamadas abertas entre as partes (ele não mexe em vaga). Quem chega com o outro em
 -- voo espera na vaga ou na chamada, sem segurar a conta, e o desfecho é o de quem chegou
 -- primeiro: a suspensão que chega depois do aceite reabre o turno que ele confirmou; o aceite
@@ -185,10 +189,28 @@ begin
    order by g.id
      for update;
 
+  --
+  -- Nas chamadas, também as que o cancelamento das vagas recolhidas encerra (o predicado do
+  -- gatilho vaga_cancelada_fecha_chamadas, copiado: abertas e no prazo). Numa casa que trocou de
+  -- administrador, a chamada que o ex-membro criou não é da conta suspensa, e o gatilho só a
+  -- pedia depois do usuario; o bloqueio que a segurava (pré-trava dele, acima) esperava a chave
+  -- estrangeira desse usuario, e a suspensão esperava a chamada (40P01, cenário 13 da corrida).
   perform 1 from public.chamada c
-   where (c.criada_por = v_uid
-          or c.profissional_id = (select p.id from public.profissional p where p.usuario_id = v_uid))
-     and c.estado = 'aberta'
+   where c.estado = 'aberta'
+     and (c.criada_por = v_uid
+          or c.profissional_id = (select p.id from public.profissional p where p.usuario_id = v_uid)
+          or (c.expira_em > v_agora
+              and c.vaga_id in (
+                select g.id from public.vaga g
+                 where g.inicio_em > v_agora
+                   and g.estado in ('publicada', 'preenchida')
+                   and g.estabelecimento_id in (
+                     select m.estabelecimento_id from public.membro_estabelecimento m
+                      where m.usuario_id = v_uid
+                        and not exists (
+                          select 1 from public.membro_estabelecimento x
+                           where x.estabelecimento_id = m.estabelecimento_id
+                             and x.usuario_id <> v_uid)))))
    order by c.id
      for update;
 
