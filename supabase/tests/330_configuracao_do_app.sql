@@ -52,15 +52,15 @@ select ok(
   has_function_privilege('authenticated', 'public.configuracao_do_app(text, text)', 'execute'),
   'authenticated também: o app com sessão aberta faz a mesma pergunta');
 
--- A exceção é por nome. Se uma segunda função de public aparecer liberada para anon,
--- este teste acusa — a regra "anon não lê nada" tem exatamente uma exceção.
+-- A exceção é por nome. Se outra função de public aparecer liberada para anon, este teste
+-- acusa: a regra "anon não lê nada" tem exatamente duas exceções (vaga_publica, 0.2.100).
 select is(
   (select array_agg(p.proname::text order by p.proname)
      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
       and has_function_privilege('anon', p.oid, 'execute')),
-  array['configuracao_do_app'],
-  'configuracao_do_app é a única função de public que anon executa');
+  array['configuracao_do_app', 'vaga_publica'],
+  'configuracao_do_app e vaga_publica (0.2.100) são as únicas funções de public que anon executa');
 
 -- O auxiliar de versão é privado: nem o app, com ou sem sessão, nem o PostgREST o chamam.
 -- O `service_role` recebe o execute explícito, como toda função `privado.*`.
