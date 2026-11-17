@@ -41,7 +41,7 @@
 
 select set_config('lock_timeout', '2s', true);
 
--- contrato: corpo-sem-mudanca-de-superficie public.chamar_profissional 0.2.96
+-- contrato: corpo-sem-mudanca-de-superficie public.chamar_profissional 0.2.100
 create or replace function public.chamar_profissional(
   chave uuid default null, profissional_id uuid default null, estabelecimento_id uuid default null,
   vaga_id uuid default null, funcao_id uuid default null, inicio_em timestamptz default null,
