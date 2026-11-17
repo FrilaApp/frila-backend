@@ -8,7 +8,7 @@
 -- 4. Denúncia sem chamada_id continua funcionando normalmente (regressão).
 
 begin;
-select plan(18);
+select plan(20);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -119,7 +119,7 @@ select is(
 select is(
   (select count(*) from public.ocorrencia o
     where o.chamada_id = '84100000-0000-4000-8000-0000000000c1'::uuid
-      and o.relato like '%Recado confidencial%'),
+      and to_jsonb(o)::text like '%Recado confidencial%'),
   0::bigint,
   'RN15: recado da chamada não é gravado na ocorrencia');
 
@@ -238,5 +238,24 @@ select is(
   ))->>'details'),
   'chamada_id',
   'detalhe da recusa profissional alheio é chamada_id');
+
+-- ── 10. Chamada do próprio denunciante com outro alvo ─────────────────────────
+-- O denunciante é uma ponta da ch1, mas o alvo não é a outra ponta dela.
+
+select is(
+  pg_temp.erro('84100000-0000-4000-8000-000000000001',
+    $$ select public.denunciar('profissional', '84100000-0000-4000-8000-000000000014'::uuid, 'outro',
+                              'Casa 1 tenta denunciar Prof 2 usando a ch1', gen_random_uuid(), null, null,
+                              '84100000-0000-4000-8000-0000000000c1'::uuid) $$) - 'headers' - 'hint' - 'message',
+  '{"status": 422, "code": "campo_invalido", "details": "chamada_id"}'::jsonb,
+  'casa da ch1 com outro profissional como alvo: 422 campo_invalido (chamada_id)');
+
+select is(
+  pg_temp.erro('84100000-0000-4000-8000-000000000002',
+    $$ select public.denunciar('estabelecimento', '84100000-0000-4000-8000-0000000000e2'::uuid, 'outro',
+                              'Prof 1 tenta denunciar Casa 2 usando a ch1', gen_random_uuid(), null, null,
+                              '84100000-0000-4000-8000-0000000000c1'::uuid) $$) - 'headers' - 'hint' - 'message',
+  '{"status": 422, "code": "campo_invalido", "details": "chamada_id"}'::jsonb,
+  'profissional da ch1 com outra casa como alvo: 422 campo_invalido (chamada_id)');
 
 rollback;
