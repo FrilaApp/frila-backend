@@ -31,6 +31,13 @@
 #   8. Mais uma chamada (com vaga_id) x a expiração da 1ª chamada da vaga direta (B-053, #550):
 #      nunca sobra chamada aberta numa vaga encerrada, e ninguém recebe 40P01. Em ordem livre e
 #      com a ordem forçada em que a vaga encerrava (a chamada nova com a vaga, o job depois).
+#   9 a 12. Suspensão e bloqueio contra o aceite e a exclusão da mesma conta (#526), com a ordem
+#      forçada por uma terceira conexão, como no 5: nenhum 40P01, e cada desfecho é o de quem
+#      chegou primeiro. 9: suspensão x aceite; 10: suspensão x exclusão; 11: bloqueio x
+#      exclusão; 12: bloqueio x aceite (este não fechava ciclo; fica como guarda).
+#  13. Suspensão da casa (único membro, depois de remover o administrador antigo) x bloqueio da
+#      casa pelo profissional que o antigo chamou (#526): nenhum 40P01, a vaga cancelada e a
+#      chamada do ex-membro encerrada.
 #
 # Uso: ./scripts/corrida-chamada.sh        RODADAS=4 ./scripts/corrida-chamada.sh
 set -uo pipefail
@@ -97,6 +104,7 @@ delete from public.candidatura where profissional_id in (select id from profs) o
 delete from public.chamada where id in (select id from chamadas);
 delete from public.posicao where vaga_id in (select id from vagas);
 delete from public.vaga where id in (select id from vagas);
+delete from public.bloqueio where autor_id in (select id from contas) or bloqueado_id in (select id from contas);
 delete from public.equipe_confianca where estabelecimento_id in (select id from casas) or profissional_id in (select id from profs);
 delete from public.membro_estabelecimento where usuario_id in (select id from contas) or estabelecimento_id in (select id from casas);
 delete from public.estabelecimento where id in (select id from casas);
@@ -203,7 +211,7 @@ prof_id() { psql -c "select id from public.profissional where usuario_id = '$1';
 # SQL de chamar_profissional para o mundo m, ao profissional (usuario) dado, numa vaga nova ou existente.
 sql_chamar() {
   local m=$1 prof_usuario=$2 vaga=${3:-} prof
-  local dia=$(( 2 + m ))
+  local dia=${4:-$(( 2 + m ))}
   prof=$(prof_id "$prof_usuario")
   if [ -n "$vaga" ]; then
     # Com vaga_id, a RPC recusa (422 vaga_id) quem repete os campos da vaga.
@@ -224,14 +232,15 @@ select public.chamar_profissional(chave => gen_random_uuid(),
 SQL
 }
 
-# Chama de forma serial (montagem) e devolve "chamada_id vaga_id".
+# Chama de forma serial (montagem) e devolve "chamada_id vaga_id". O 4º argumento, opcional, é o
+# dia da vaga nova (padrão: 2 + mundo).
 chamar_serial() {
-  local m=$1 prof_usuario=$2 vaga=${3:-}
+  local m=$1 prof_usuario=$2 vaga=${3:-} dia=${4:-}
   psql <<SQL | grep -E '^[0-9a-f-]{36} [0-9a-f-]{36}$'
 begin;
 select set_config('request.jwt.claims', json_build_object('sub', '$(id "$m" 1)', 'role', 'authenticated')::text, true) is null;
 set local role authenticated;
-create temp table r on commit drop as $(sql_chamar "$m" "$prof_usuario" "$vaga") as j;
+create temp table r on commit drop as $(sql_chamar "$m" "$prof_usuario" "$vaga" "$dia") as j;
 reset role;
 select (j->>'id') || ' ' || (j->>'vaga_id') from r;
 commit;
@@ -754,6 +763,278 @@ if [ "$erros" = 0 ]; then
   ok "em $RODADAS de $RODADAS rodadas das duas ordens, nenhum 40P01 e nenhuma chamada aberta numa vaga encerrada"
 else
   printf '  (%s das rodadas com 40P01)\n' "$impasses" >&2
+fi
+
+# ── 9 a 12. Suspensão e bloqueio x aceite e exclusão, com a ordem forçada (#526) ─
+# O molde é o do 5: X segura uma trava do caminho, e o script só solta X depois de ver cada lado
+# parado onde o ciclo fechava. A regra de travas é a do aceite, vaga -> chamada -> usuario; antes
+# da 20261117140000, privado.operacao_suspender_conta pegava o usuario (FOR UPDATE) antes da vaga
+# e da chamada, e public.bloquear pegava o usuario (FOR KEY SHARE, a chave estrangeira do
+# bloqueio) antes da chamada que o gatilho dele encerra.
+#
+# forcar <prefixo> <passo...>: "<lado> segurando|travado" espera o lado chegar lá; "<lado>"
+# sozinho abre a conexão dele, com a conta em CONTA_<lado> e o SQL em SQL_<lado>. Se a ordem
+# não se formar em 15 s, solta todo mundo e devolve 1 (o passo fica em $parou); senão solta X e
+# espera os lados terminarem.
+forcar() {
+  local n=$1 passo c s; shift
+  parou=
+  for passo in "$@"; do
+    case "$passo" in
+      *" "*) aguardar "$n-${passo% *}" "${passo#* }" || { parou=$passo; break; } ;;
+      *) c="CONTA_$passo"; s="SQL_$passo"; lado_nomeado "$n-$passo" "${!c}" "${!s}" ;;
+    esac
+  done
+  if [ -n "$parou" ]; then soltar "$n-%"; wait; return 1; fi
+  soltar "$n-x"; wait
+}
+# impasse <ordem> <respostas...>: conta a rodada da ordem que terminou em 40P01.
+impasse() {
+  local o=$1; shift
+  case "$*" in *40P01*) eval "IMP_$o=\$(( \${IMP_$o:-0} + 1 ))" ;; esac
+}
+# resumo_impasses <variável> <ordens...>: grava "a 4/4, b 0/4" na variável e zera as contagens.
+resumo_impasses() {
+  local var=$1 o v r=; shift
+  for o in "$@"; do v="IMP_$o"; r+="$o ${!v:-0}/$RODADAS, "; eval "IMP_$o=0"; done
+  printf -v "$var" '%s' "${r%, }"
+}
+# turno_confirmado <mundo> <usuario do profissional>: outra vaga direta da casa, um dia antes da
+# do mundo, aceita pelo profissional. Devolve a posição confirmada. É o que a suspensão do
+# profissional reabre depois de pegar o usuario: segurando essa posição, X para a suspensão com
+# o usuario já travado e antes do gatilho dela chegar na chamada.
+turno_confirmado() {
+  local m=$1 prof=$2 c0 v0 r
+  read -r c0 v0 < <(chamar_serial "$m" "$prof" "" $(( 1 + m )))
+  [ -n "${c0:-}" ] || return 1
+  r=$(psql <<SQL
+$AUX
+select pg_temp.tentar('$prof', \$q\$ select public.responder_chamada('$c0', 'aceitar') \$q\$);
+SQL
+)
+  [ "$r" = ok ] || return 1
+  psql -c "select id from public.posicao where vaga_id = '$v0' and estado = 'confirmada';"
+}
+estado_de()    { psql -c "select estado from public.usuario where id = '$1';"; }
+bloqueios_de() { psql -c "select count(*) from public.bloqueio where bloqueado_id = '$1' or autor_id = '$1';"; }
+sql_suspender() { echo "select privado.operacao_suspender_conta('$1', 'Corrida da suspensão', '$2')"; }
+
+# ── 9. Suspensão x aceite ─────────────────────────────────────────────────────
+#   a. o aceite primeiro (mundos 161 a 170): X segura a posição; o aceite para nela com a vaga e a
+#      chamada, e a suspensão do profissional chega depois. Ela tem de reabrir o turno confirmado.
+#   b. a suspensão primeiro (mundos 171 a 180): o profissional já tem outro turno confirmado, e X
+#      segura essa posição; a suspensão para nela com o usuario travado, e o aceite chega depois.
+#   c. a casa suspensa (mundos 181 a 190): X segura a posição; o aceite para nela com a vaga e a
+#      chamada, e a suspensão da casa (único membro) chega depois e recolhe a vaga.
+# Quem assina a suspensão é o 2º profissional (qualquer conta ativa que não seja a suspensa).
+echo "▸ 9. suspensão x aceite com a ordem forçada (a: o aceite primeiro, b: a suspensão primeiro, c: a casa suspensa)"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  for ordem in a b c; do
+    case "$ordem" in a) m=$((160 + i)) ;; b) m=$((170 + i)) ;; c) m=$((180 + i)) ;; esac
+    montar_mundo "$m"
+    casa=$(id "$m" 1); p1=$(id "$m" 2); p2=$(id "$m" 3); p0=
+    [ "$ordem" = b ] && p0=$(turno_confirmado "$m" "$p1")
+    read -r c1 vaga < <(chamar_serial "$m" "$p1")
+    if [ -z "${c1:-}" ] || { [ "$ordem" = b ] && [ -z "$p0" ]; }; then
+      falhou "rodada $i ($ordem): não montei a chamada"; erros=$((erros + 1)); continue
+    fi
+    n="cc-$RUN-$m"
+    CONTA_a=$p1; SQL_a="select public.responder_chamada('$c1', 'aceitar')"
+    CONTA_s=;    SQL_s=$(sql_suspender "$p1" "$p2"); alvo=$p1
+    case "$ordem" in
+      a) segurar "$n-x" "select 1 from public.posicao where vaga_id = '$vaga' for update"
+         passos=("x segurando" a "a travado" s "s travado") ;;
+      b) segurar "$n-x" "select 1 from public.posicao where id = '$p0' for update"
+         passos=("x segurando" s "s travado" a "a travado") ;;
+      c) segurar "$n-x" "select 1 from public.posicao where vaga_id = '$vaga' for update"
+         SQL_s=$(sql_suspender "$casa" "$p2"); alvo=$casa
+         passos=("x segurando" a "a travado" s "s travado") ;;
+    esac
+    if ! forcar "$n" "${passos[@]}"; then
+      falhou "rodada $i ($ordem): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+      erros=$((erros + 1)); continue
+    fi
+    ra=$(resultado "$TMP/$n-a"); rs=$(resultado "$TMP/$n-s")
+    impasse "$ordem" "$ra" "$rs"
+    obtido="aceite '$ra', suspensão '$rs', conta '$(estado_de "$alvo")', chamada '$(psql -c "select estado from public.chamada where id = '$c1';")', confirmadas $(confirmadas_de "$p1")"
+    case "$ordem" in
+      a) esperado="aceite 'ok', suspensão 'ok', conta 'suspensa', chamada 'aceita', confirmadas 0" ;;
+      b) esperado="aceite 'chamada_indisponivel', suspensão 'ok', conta 'suspensa', chamada 'cancelada', confirmadas 0" ;;
+      c) obtido+=", vaga '$(psql -c "select estado from public.vaga where id = '$vaga';")'"
+         esperado="aceite 'ok', suspensão 'ok', conta 'suspensa', chamada 'aceita', confirmadas 0, vaga 'cancelada'" ;;
+    esac
+    [ "$obtido" != "$esperado" ] && { falhou "rodada $i ($ordem): $obtido"; erros=$((erros + 1)); }
+  done
+done
+resumo_impasses r9 a b c
+if [ "$erros" = 0 ]; then
+  ok "em $RODADAS de $RODADAS rodadas das três ordens, nenhum 40P01 e o desfecho de quem chegou primeiro"
+else
+  printf '  (40P01 por ordem: %s)\n' "$r9" >&2
+fi
+
+# ── 10. Suspensão x exclusão da mesma conta ───────────────────────────────────
+# Mundos 191 a 200. O profissional tem outro turno confirmado, e X segura essa posição: a
+# suspensão para nela com o usuario travado, e a exclusão da mesma conta chega depois. A
+# suspensão termina, e a exclusão anonimiza a conta suspensa.
+echo "▸ 10. suspensão x exclusão da mesma conta com a ordem forçada (a suspensão primeiro)"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  m=$((190 + i)); montar_mundo "$m"
+  p1=$(id "$m" 2); p2=$(id "$m" 3)
+  p0=$(turno_confirmado "$m" "$p1")
+  read -r c1 vaga < <(chamar_serial "$m" "$p1")
+  if [ -z "${c1:-}" ] || [ -z "$p0" ]; then falhou "rodada $i: não montei a chamada"; erros=$((erros + 1)); continue; fi
+  n="cc-$RUN-$m"
+  CONTA_s=; SQL_s=$(sql_suspender "$p1" "$p2")
+  CONTA_e=; SQL_e="select privado.excluir_conta('$p1')"
+  segurar "$n-x" "select 1 from public.posicao where id = '$p0' for update"
+  if ! forcar "$n" "x segurando" s "s travado" e "e travado"; then
+    falhou "rodada $i: '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    erros=$((erros + 1)); continue
+  fi
+  rs=$(resultado "$TMP/$n-s"); re=$(resultado "$TMP/$n-e")
+  impasse a "$rs" "$re"
+  obtido="suspensão '$rs', exclusão '$re', conta '$(estado_de "$p1")', chamada '$(psql -c "select estado from public.chamada where id = '$c1';")', confirmadas $(confirmadas_de "$p1")"
+  esperado="suspensão 'ok', exclusão 'ok', conta 'anonimizada', chamada 'cancelada', confirmadas 0"
+  [ "$obtido" != "$esperado" ] && { falhou "rodada $i: $obtido"; erros=$((erros + 1)); }
+done
+resumo_impasses r10 a
+if [ "$erros" = 0 ]; then
+  ok "em $RODADAS de $RODADAS rodadas, nenhum 40P01, e a conta suspensa e depois anonimizada sem chamada aberta"
+else
+  printf '  (40P01: %s)\n' "$r10" >&2
+fi
+
+# ── 11. Bloqueio x exclusão da conta bloqueada ────────────────────────────────
+# X segura o usuario da conta que se exclui em FOR KEY SHARE (o modo da chave estrangeira): a
+# exclusão para no FOR UPDATE do usuario com a vaga e a chamada já travadas, e o bloqueio, que
+# não conflita com X, chega depois. Antes, o bloqueio ganhava o FOR KEY SHARE e parava na
+# chamada; ao soltar X, a exclusão esperava o bloqueio.
+#   a. a casa bloqueia o profissional que se exclui (mundos 201 a 210): a exclusão cancela a chamada;
+#   b. o profissional bloqueia a casa que se exclui (mundos 211 a 220): a exclusão cancela a vaga,
+#      e o gatilho da vaga cancelada encerra a chamada antes.
+# Nos dois, a exclusão termina primeiro e o bloqueio fica gravado contra a conta anonimizada.
+echo "▸ 11. bloqueio x exclusão da conta bloqueada com a ordem forçada (a: a casa bloqueia, b: o profissional bloqueia)"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  for ordem in a b; do
+    case "$ordem" in a) m=$((200 + i)) ;; b) m=$((210 + i)) ;; esac
+    montar_mundo "$m"
+    casa=$(id "$m" 1); p1=$(id "$m" 2)
+    read -r c1 vaga < <(chamar_serial "$m" "$p1")
+    [ -z "${c1:-}" ] && { falhou "rodada $i ($ordem): não montei a chamada"; erros=$((erros + 1)); continue; }
+    n="cc-$RUN-$m"
+    case "$ordem" in
+      a) alvo=$p1;   CONTA_b=$casa; SQL_b="select public.bloquear('profissional', '$(prof_id "$p1")')"; fim=cancelada ;;
+      b) alvo=$casa; CONTA_b=$p1;   SQL_b="select public.bloquear('estabelecimento', '$(id "$m" 10)')"; fim=encerrada ;;
+    esac
+    CONTA_e=; SQL_e="select privado.excluir_conta('$alvo')"
+    segurar "$n-x" "select 1 from public.usuario where id = '$alvo' for key share"
+    if ! forcar "$n" "x segurando" e "e travado" b "b travado"; then
+      falhou "rodada $i ($ordem): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+      erros=$((erros + 1)); continue
+    fi
+    re=$(resultado "$TMP/$n-e"); rb=$(resultado "$TMP/$n-b")
+    impasse "$ordem" "$re" "$rb"
+    obtido="exclusão '$re', bloqueio '$rb', conta '$(estado_de "$alvo")', chamada '$(psql -c "select estado from public.chamada where id = '$c1';")', bloqueios $(bloqueios_de "$alvo")"
+    esperado="exclusão 'ok', bloqueio 'ok', conta 'anonimizada', chamada '$fim', bloqueios 1"
+    [ "$obtido" != "$esperado" ] && { falhou "rodada $i ($ordem): $obtido"; erros=$((erros + 1)); }
+  done
+done
+resumo_impasses r11 a b
+if [ "$erros" = 0 ]; then
+  ok "em $RODADAS de $RODADAS rodadas das duas ordens, nenhum 40P01, a conta anonimizada sem chamada aberta e o bloqueio gravado"
+else
+  printf '  (40P01 por ordem: %s)\n' "$r11" >&2
+fi
+
+# ── 12. Bloqueio x aceite (guarda: não fechava ciclo) ─────────────────────────
+#   a. o aceite primeiro (mundos 221 a 230): X segura a posição; o aceite para nela com a vaga e a
+#      chamada, e o bloqueio da casa chega depois. O turno confirmado sobrevive ao bloqueio.
+#   b. o bloqueio primeiro (mundos 231 a 240): X segura o perfil do profissional; o bloqueio para
+#      nele (o gatilho que tira da equipe) com a chamada já encerrada, e o aceite chega depois.
+echo "▸ 12. bloqueio x aceite com a ordem forçada (a: o aceite primeiro, b: o bloqueio primeiro)"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  for ordem in a b; do
+    case "$ordem" in a) m=$((220 + i)) ;; b) m=$((230 + i)) ;; esac
+    montar_mundo "$m"
+    casa=$(id "$m" 1); p1=$(id "$m" 2)
+    read -r c1 vaga < <(chamar_serial "$m" "$p1")
+    [ -z "${c1:-}" ] && { falhou "rodada $i ($ordem): não montei a chamada"; erros=$((erros + 1)); continue; }
+    n="cc-$RUN-$m"
+    CONTA_a=$p1;   SQL_a="select public.responder_chamada('$c1', 'aceitar')"
+    CONTA_b=$casa; SQL_b="select public.bloquear('profissional', '$(prof_id "$p1")')"
+    case "$ordem" in
+      a) segurar "$n-x" "select 1 from public.posicao where vaga_id = '$vaga' for update"
+         passos=("x segurando" a "a travado" b "b travado") ;;
+      b) segurar "$n-x" "select 1 from public.profissional where usuario_id = '$p1' for update"
+         passos=("x segurando" b "b travado" a "a travado") ;;
+    esac
+    if ! forcar "$n" "${passos[@]}"; then
+      falhou "rodada $i ($ordem): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+      erros=$((erros + 1)); continue
+    fi
+    ra=$(resultado "$TMP/$n-a"); rb=$(resultado "$TMP/$n-b")
+    impasse "$ordem" "$ra" "$rb"
+    obtido="aceite '$ra', bloqueio '$rb', chamada '$(psql -c "select estado from public.chamada where id = '$c1';")', confirmadas $(confirmadas_de "$p1"), bloqueios $(bloqueios_de "$p1")"
+    case "$ordem" in
+      a) esperado="aceite 'ok', bloqueio 'ok', chamada 'aceita', confirmadas 1, bloqueios 1" ;;
+      b) esperado="aceite 'chamada_indisponivel', bloqueio 'ok', chamada 'encerrada', confirmadas 0, bloqueios 1" ;;
+    esac
+    [ "$obtido" != "$esperado" ] && { falhou "rodada $i ($ordem): $obtido"; erros=$((erros + 1)); }
+  done
+done
+resumo_impasses r12 a b
+if [ "$erros" = 0 ]; then
+  ok "em $RODADAS de $RODADAS rodadas das duas ordens, nenhum 40P01 e o desfecho de quem chegou primeiro"
+else
+  printf '  (40P01 por ordem: %s)\n' "$r12" >&2
+fi
+
+# ── 13. Suspensão da casa x bloqueio, com a chamada de um ex-membro (#526, Lince) ─
+# Mundos 241 a 250, e 251 a 260 só para a conta do administrador novo. A chamada é do
+# administrador antigo; o novo (a casa do mundo 250 + i) entra, remove o antigo e fica como único
+# membro. X segura a posição da vaga: a suspensão do novo para no update dela, e o profissional
+# bloqueia a casa depois. Na 1ª versão da 20261117140000, a suspensão não pré-travava a chamada
+# do ex-membro (ela não é da conta suspensa), o bloqueio a pegava e parava na chave estrangeira do
+# usuario, e o gatilho vaga_cancelada_fecha_chamadas pedia a chamada a ele: 40P01 no bloqueio.
+echo "▸ 13. suspensão da casa x bloqueio, com a chamada do ex-membro, com a ordem forçada (a suspensão primeiro)"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  m=$((240 + i)); montar_mundo "$m"; montar_mundo $((250 + i))
+  antigo=$(id "$m" 1); novo=$(id $((250 + i)) 1); p1=$(id "$m" 2); p2=$(id "$m" 3); estab=$(id "$m" 10)
+  read -r c1 vaga < <(chamar_serial "$m" "$p1")
+  [ -z "${c1:-}" ] && { falhou "rodada $i: não montei a chamada"; erros=$((erros + 1)); continue; }
+  troca=$(psql <<SQL
+$AUX
+insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel) values ('$novo', '$estab', 'administrador');
+select pg_temp.tentar('$novo', \$q\$ select public.remover_membro('$estab', '$antigo') \$q\$);
+select string_agg(usuario_id::text, ',') from public.membro_estabelecimento where estabelecimento_id = '$estab';
+SQL
+)
+  [ "$troca" != "$(printf 'ok\n%s' "$novo")" ] && { falhou "rodada $i: a troca de administrador não deixou o novo sozinho ($troca)"; erros=$((erros + 1)); continue; }
+  n="cc-$RUN-$m"
+  CONTA_s=;    SQL_s=$(sql_suspender "$novo" "$p2")
+  CONTA_b=$p1; SQL_b="select public.bloquear('estabelecimento', '$estab')"
+  segurar "$n-x" "select 1 from public.posicao where vaga_id = '$vaga' for update"
+  if ! forcar "$n" "x segurando" s "s travado" b "b travado"; then
+    falhou "rodada $i: '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    erros=$((erros + 1)); continue
+  fi
+  rs=$(resultado "$TMP/$n-s"); rb=$(resultado "$TMP/$n-b")
+  impasse a "$rs" "$rb"
+  obtido="suspensão '$rs', bloqueio '$rb', conta '$(estado_de "$novo")', chamada '$(psql -c "select estado from public.chamada where id = '$c1';")', vaga '$(psql -c "select estado from public.vaga where id = '$vaga';")', bloqueios $(bloqueios_de "$novo")"
+  esperado="suspensão 'ok', bloqueio 'ok', conta 'suspensa', chamada 'encerrada', vaga 'cancelada', bloqueios 1"
+  [ "$obtido" != "$esperado" ] && { falhou "rodada $i: $obtido"; erros=$((erros + 1)); }
+done
+resumo_impasses r13 a
+if [ "$erros" = 0 ]; then
+  ok "em $RODADAS de $RODADAS rodadas, nenhum 40P01, a vaga cancelada com a chamada do ex-membro encerrada e o bloqueio gravado"
+else
+  printf '  (40P01: %s)\n' "$r13" >&2
 fi
 
 exit "$falha"
