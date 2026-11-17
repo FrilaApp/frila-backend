@@ -1,19 +1,22 @@
 -- 883_convite_membro_nomes_do_contrato.sql
 --
--- convidar_membro e aceitar_convite_membro com os nomes de parâmetro do CONTRATO (B-052,
--- migração 20261117120000). O PostgREST chama a RPC pelos nomes do corpo JSON, como
--- `convidar_membro(estabelecimento_id := ..., email := ..., papel := ...)`; com p_estabelecimento_id,
--- p_email, p_papel e p_token a chamada dava 404 PGRST202. Aqui as duas são chamadas por nome (=>), do
--- jeito do PostgREST, e os nomes antigos não existem mais.
+-- convidar_membro, aceitar_convite_membro, remover_membro e transferir_administracao com os nomes de
+-- parâmetro do CONTRATO (B-052, migração 20261117120000). O PostgREST chama a RPC pelos nomes do corpo
+-- JSON, como `convidar_membro(estabelecimento_id := ..., email := ..., papel := ...)`; com
+-- p_estabelecimento_id, p_email, p_papel, p_token, p_membro_id e p_novo_admin_id a chamada dava 404
+-- PGRST202. Aqui as quatro são chamadas por nome (=>), do jeito do PostgREST, e os nomes antigos não
+-- existem mais.
 --
 --   assinatura: nomes e tipos dos parâmetros · os nomes antigos (p_*) não existem · chamada por p_* falha
 --   convidar_membro (nomeada): 200 com token · 401 sem sessão · 403 não administrador · 404 casa inexistente
 --                              · 422 e-mail inválido · 422 papel ausente
 --   aceitar_convite_membro (nomeada): 200 vira membro · 401 sem sessão · 422 perfil_incompativel
 --                              · 422 convite_invalido (token já usado e token vazio)
+--   remover_membro (nomeada): 401 · 403 · 404 · 422 ultimo_administrador · 200 removido
+--   transferir_administracao (nomeada): 401 · 403 · 404 · 200 promovido
 -- Só dados sintéticos.
 begin;
-select plan(18);
+select plan(31);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -85,16 +88,16 @@ select is(
 select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
-      and p.proname in ('convidar_membro', 'aceitar_convite_membro')
-      and p.proargnames && array['p_estabelecimento_id', 'p_email', 'p_papel', 'p_token']),
+      and p.proname in ('convidar_membro', 'aceitar_convite_membro', 'remover_membro', 'transferir_administracao')
+      and p.proargnames && array['p_estabelecimento_id', 'p_email', 'p_papel', 'p_token', 'p_membro_id', 'p_novo_admin_id']),
   0,
   'os nomes antigos (p_estabelecimento_id, p_email, p_papel, p_token) não existem mais em nenhuma versão'
 );
 
 select is(
   (select count(*)::int from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public' and p.proname in ('convidar_membro', 'aceitar_convite_membro')),
-  2,
+    where n.nspname = 'public' and p.proname in ('convidar_membro', 'aceitar_convite_membro', 'remover_membro', 'transferir_administracao')),
+  4,
   'sobrou uma função de cada, sem versão velha ao lado'
 );
 
@@ -109,6 +112,32 @@ select throws_ok(
   $$ select public.aceitar_convite_membro(p_token => 'qualquer') $$,
   '42883', null,
   'chamar aceitar_convite_membro pelo nome antigo falha: função inexistente'
+);
+
+select is(
+  (select proargnames from pg_proc where oid = 'public.remover_membro(uuid, uuid)'::regprocedure),
+  array['estabelecimento_id', 'membro_id'],
+  'remover_membro tem os parâmetros estabelecimento_id e membro_id (os do contrato)'
+);
+
+select is(
+  (select proargnames from pg_proc where oid = 'public.transferir_administracao(uuid, uuid)'::regprocedure),
+  array['estabelecimento_id', 'novo_admin_id'],
+  'transferir_administracao tem os parâmetros estabelecimento_id e novo_admin_id (os do contrato)'
+);
+
+select throws_ok(
+  $$ select public.remover_membro(p_estabelecimento_id => '88300000-0000-4000-8000-0000000000e1'::uuid,
+                                  p_membro_id => '88300000-0000-4000-8000-000000000001'::uuid) $$,
+  '42883', null,
+  'chamar remover_membro pelos nomes antigos falha: função inexistente'
+);
+
+select throws_ok(
+  $$ select public.transferir_administracao(p_estabelecimento_id => '88300000-0000-4000-8000-0000000000e1'::uuid,
+                                            p_novo_admin_id => '88300000-0000-4000-8000-000000000002'::uuid) $$,
+  '42883', null,
+  'chamar transferir_administracao pelos nomes antigos falha: função inexistente'
 );
 
 -- ── 2. convidar_membro, chamada nomeada como o PostgREST faz ──────────────────
@@ -221,6 +250,81 @@ select is(
     $$ select public.aceitar_convite_membro(token => '') $$))->>'code',
   'convite_invalido',
   '422: token vazio'
+);
+
+-- ── 4. transferir_administracao e remover_membro, chamada nomeada ─────────────
+-- Neste ponto: admin (...01) é o único administrador e o convidado (...02) é operador da casa.
+
+select is(
+  (pg_temp.erro(null,
+    $$ select public.transferir_administracao(estabelecimento_id => '88300000-0000-4000-8000-0000000000e1'::uuid,
+                                              novo_admin_id => '88300000-0000-4000-8000-000000000002'::uuid) $$))->>'status',
+  '401',
+  'transferir_administracao 401: sem sessão'
+);
+
+select is(
+  (pg_temp.erro('88300000-0000-4000-8000-000000000002',
+    $$ select public.transferir_administracao(estabelecimento_id => '88300000-0000-4000-8000-0000000000e1'::uuid,
+                                              novo_admin_id => '88300000-0000-4000-8000-000000000002'::uuid) $$))->>'code',
+  'sem_permissao',
+  'transferir_administracao 403: o operador não é administrador'
+);
+
+select is(
+  (pg_temp.erro('88300000-0000-4000-8000-000000000001',
+    $$ select public.transferir_administracao(estabelecimento_id => '88300000-0000-4000-8000-0000000000e1'::uuid,
+                                              novo_admin_id => '88300000-0000-4000-8000-00000000ffff'::uuid) $$))->>'code',
+  'nao_encontrado',
+  'transferir_administracao 404: o membro indicado não é da casa'
+);
+
+select is(
+  (pg_temp.erro(null,
+    $$ select public.remover_membro(estabelecimento_id => '88300000-0000-4000-8000-0000000000e1'::uuid,
+                                    membro_id => '88300000-0000-4000-8000-000000000001'::uuid) $$))->>'status',
+  '401',
+  'remover_membro 401: sem sessão'
+);
+
+select is(
+  (pg_temp.erro('88300000-0000-4000-8000-000000000004',
+    $$ select public.remover_membro(estabelecimento_id => '88300000-0000-4000-8000-0000000000e1'::uuid,
+                                    membro_id => '88300000-0000-4000-8000-000000000001'::uuid) $$))->>'code',
+  'sem_permissao',
+  'remover_membro 403: quem não é administrador da casa'
+);
+
+select is(
+  (pg_temp.erro('88300000-0000-4000-8000-000000000001',
+    $$ select public.remover_membro(estabelecimento_id => '88300000-0000-4000-8000-0000000000e1'::uuid,
+                                    membro_id => '88300000-0000-4000-8000-00000000ffff'::uuid) $$))->>'code',
+  'nao_encontrado',
+  'remover_membro 404: o membro indicado não é da casa'
+);
+
+select is(
+  (pg_temp.erro('88300000-0000-4000-8000-000000000001',
+    $$ select public.remover_membro(estabelecimento_id => '88300000-0000-4000-8000-0000000000e1'::uuid,
+                                    membro_id => '88300000-0000-4000-8000-000000000001'::uuid) $$))->>'code',
+  'ultimo_administrador',
+  'remover_membro 422: o único administrador não sai'
+);
+
+select is(
+  (pg_temp.como('88300000-0000-4000-8000-000000000001',
+    $$ select public.transferir_administracao(estabelecimento_id => '88300000-0000-4000-8000-0000000000e1'::uuid,
+                                              novo_admin_id => '88300000-0000-4000-8000-000000000002'::uuid) $$))->>'papel',
+  'administrador',
+  'transferir_administracao 200: o operador vira administrador'
+);
+
+select is(
+  (pg_temp.como('88300000-0000-4000-8000-000000000002',
+    $$ select public.remover_membro(estabelecimento_id => '88300000-0000-4000-8000-0000000000e1'::uuid,
+                                    membro_id => '88300000-0000-4000-8000-000000000001'::uuid) $$))->>'removido',
+  'true',
+  'remover_membro 200: com outro administrador na casa, o primeiro sai'
 );
 
 select * from finish();

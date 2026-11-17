@@ -1,15 +1,16 @@
--- convidar_membro e aceitar_convite_membro com os nomes de parâmetro do CONTRATO (B-052).
+-- convidar_membro, aceitar_convite_membro, remover_membro e transferir_administracao com os nomes
+-- de parâmetro do CONTRATO (B-052).
 --
--- A 20261109210000 criou as duas com p_estabelecimento_id, p_email, p_papel e p_token. O contrato
--- (contrato/openapi.yaml, /rpc/convidar_membro e /rpc/aceitar_convite_membro) e a web mandam
--- estabelecimento_id, email, papel e token: o PostgREST procura a função pelos NOMES do corpo e
--- responde 404 PGRST202 (nenhum app chamava ainda). O código passa a obedecer ao contrato; o
--- contrato não muda.
+-- A 20261109210000 criou as quatro com p_estabelecimento_id, p_email, p_papel, p_token, p_membro_id e
+-- p_novo_admin_id. O contrato (contrato/openapi.yaml, /rpc/convidar_membro, /rpc/aceitar_convite_membro,
+-- /rpc/remover_membro e /rpc/transferir_administracao) e a web mandam estabelecimento_id, email, papel,
+-- token, membro_id e novo_admin_id: o PostgREST procura a função pelos NOMES do corpo e responde 404
+-- PGRST202 (nenhum app chamava ainda). O código passa a obedecer ao contrato; o contrato não muda.
 --
--- Trocar nome de parâmetro não cabe em create or replace: derruba as duas assinaturas antigas e
+-- Trocar nome de parâmetro não cabe em create or replace: derruba as quatro assinaturas antigas e
 -- recria com o MESMO corpo, os mesmos comentários e as mesmas permissões. Só as referências aos
 -- parâmetros mudam, qualificadas pelo nome da função (convidar_membro.estabelecimento_id) para não
--- colidirem com colunas. Nenhuma outra função depende destas duas (plpgsql liga o nome na chamada).
+-- colidirem com colunas. Nenhuma outra função depende destas quatro (plpgsql liga o nome na chamada).
 -- Os nomes antigos deixam de existir: ninguém chamava por eles.
 
 select set_config('lock_timeout', '2s', true);
@@ -174,3 +175,120 @@ comment on function public.aceitar_convite_membro(text) is
 revoke all on function public.aceitar_convite_membro(text) from public, anon;
 grant execute on function public.aceitar_convite_membro(text) to authenticated;
 
+-- ── 3. Remover membro ─────────────────────────────────────────────────────────
+
+drop function if exists public.remover_membro(uuid, uuid);
+
+create or replace function public.remover_membro(
+  estabelecimento_id uuid,
+  membro_id          uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid    uuid := (select auth.uid());
+  v_membro public.membro_estabelecimento%rowtype;
+begin
+  if v_uid is null then
+    perform public.erro(401, 'nao_autenticado');
+  end if;
+  perform privado.exigir_conta_ativa();
+
+  if not privado.eh_administrador(remover_membro.estabelecimento_id) then
+    perform public.erro(403, 'sem_permissao');
+  end if;
+
+  -- Dois administradores removendo um ao outro ao mesmo tempo passariam os dois pela contagem
+  -- abaixo e zerariam os administradores. A linha trancada serializa as chamadas; a contagem
+  -- que vem depois lê o que a primeira já gravou (READ COMMITTED, uma foto por comando).
+  perform 1 from public.estabelecimento e where e.id = remover_membro.estabelecimento_id for no key update;
+
+  select * into v_membro
+    from public.membro_estabelecimento m
+   where m.estabelecimento_id = remover_membro.estabelecimento_id
+     and (m.id = remover_membro.membro_id or m.usuario_id = remover_membro.membro_id);
+
+  if not found then
+    perform public.erro(404, 'nao_encontrado');
+  end if;
+
+  if v_membro.papel = 'administrador' then
+    if (select count(*) from public.membro_estabelecimento m
+         where m.estabelecimento_id = remover_membro.estabelecimento_id
+           and m.papel = 'administrador') <= 1 then
+      perform public.erro(422, 'ultimo_administrador');
+    end if;
+  end if;
+
+  delete from public.membro_estabelecimento where id = v_membro.id;
+
+  return jsonb_build_object(
+    'estabelecimento_id', remover_membro.estabelecimento_id,
+    'membro_id',          v_membro.id,
+    'usuario_id',         v_membro.usuario_id,
+    'removido',           true
+  );
+end $$;
+
+comment on function public.remover_membro(uuid, uuid) is
+  'Remove membro do estabelecimento (RF21). Exige administrador. Impede remoção do último administrador.';
+revoke all on function public.remover_membro(uuid, uuid) from public, anon;
+grant execute on function public.remover_membro(uuid, uuid) to authenticated;
+
+-- ── 5. Transferir administração ───────────────────────────────────────────────
+
+-- ── 4. Transferir administração ───────────────────────────────────────────────
+
+drop function if exists public.transferir_administracao(uuid, uuid);
+
+create or replace function public.transferir_administracao(
+  estabelecimento_id uuid,
+  novo_admin_id      uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid  uuid := (select auth.uid());
+  v_novo public.membro_estabelecimento%rowtype;
+begin
+  if v_uid is null then
+    perform public.erro(401, 'nao_autenticado');
+  end if;
+  perform privado.exigir_conta_ativa();
+
+  if not privado.eh_administrador(transferir_administracao.estabelecimento_id) then
+    perform public.erro(403, 'sem_permissao');
+  end if;
+
+  select * into v_novo
+    from public.membro_estabelecimento m
+   where m.estabelecimento_id = transferir_administracao.estabelecimento_id
+     and (m.id = transferir_administracao.novo_admin_id or m.usuario_id = transferir_administracao.novo_admin_id);
+
+  if not found then
+    perform public.erro(404, 'nao_encontrado');
+  end if;
+
+  update public.membro_estabelecimento
+     set papel = 'administrador'
+   where id = v_novo.id
+  returning * into v_novo;
+
+  return jsonb_build_object(
+    'estabelecimento_id',    transferir_administracao.estabelecimento_id,
+    'novo_admin_id',         v_novo.id,
+    'novo_admin_usuario_id', v_novo.usuario_id,
+    'papel',                 v_novo.papel
+  );
+end $$;
+
+comment on function public.transferir_administracao(uuid, uuid) is
+  'Promove membro do estabelecimento a administrador (RF21). Exige ser administrador atual.';
+revoke all on function public.transferir_administracao(uuid, uuid) from public, anon;
+grant execute on function public.transferir_administracao(uuid, uuid) to authenticated;

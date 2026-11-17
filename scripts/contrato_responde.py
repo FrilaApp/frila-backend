@@ -338,6 +338,13 @@ VIGIADAS = {
     ("convidarMembro", "422"): "campo_invalido",
     ("aceitarConviteMembro", "401"): "nao_autenticado",
     ("aceitarConviteMembro", "422"): "convite_invalido",
+    ("removerMembro", "401"): "nao_autenticado",
+    ("removerMembro", "403"): "sem_permissao",
+    ("removerMembro", "404"): "nao_encontrado",
+    ("removerMembro", "422"): "ultimo_administrador",
+    ("transferirAdministracao", "401"): "nao_autenticado",
+    ("transferirAdministracao", "403"): "sem_permissao",
+    ("transferirAdministracao", "404"): "nao_encontrado",
     ("responderChamada", "401"): "nao_autenticado",
     ("responderChamada", "403"): "sem_permissao",
     ("responderChamada", "404"): "nao_encontrado",
@@ -392,6 +399,7 @@ ISENTAS = {
         for status in statuses
     },
     ("convidarMembro", "404"): "inalcançável: o corpo exige ser administrador da casa antes de procurá-la, e quem não é (inclusive de casa inexistente) leva 403 sem_permissao, para a casa não vazar",
+    ("transferirAdministracao", "422"): "inalcançável: o contrato declara RegraRecusou, mas o corpo só recusa com 401, 403 e 404 (membro que não é da casa, inclusive id nulo, leva 404)",
     # Supabase Auth (GoTrue), fora do Postgres
     ("entrarDemonstracao", "429"): "limite de tentativas do Supabase Auth, fora do Postgres",
     ("pedirCodigo", "429"): "limite de reenvio do Supabase Auth, fora do Postgres",
@@ -429,10 +437,9 @@ ISENTAS = {
 PENDENTES = {
     **{op: "contratação direta, ainda sem implementação" for op in (
         "listarEspecialidades", "listarRegioesAdministrativas")},
-    # Múltiplos membros de estabelecimento (0.2.73): convidarMembro e aceitarConviteMembro saíram
-    # daqui no B-052 (nomes de parâmetro do contrato). Cada outra sai daqui no PR que a cobrir.
-    **{op: "múltiplos membros de estabelecimento, fatias seguintes" for op in (
-        "removerMembro", "transferirAdministracao")},
+    # Múltiplos membros de estabelecimento (0.2.73): as quatro operações (convidarMembro,
+    # aceitarConviteMembro, removerMembro, transferirAdministracao) saíram daqui no B-052, com os
+    # nomes de parâmetro do contrato.
     # Escala de evento (0.2.96): o espelho 0.2.100 entra antes da RPC, que chega no PR #537. Sai daqui
     # no PR que a implementa.
 }
