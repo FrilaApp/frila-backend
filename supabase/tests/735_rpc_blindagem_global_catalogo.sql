@@ -48,8 +48,8 @@ select is(
 -- Total de rotinas declaradas como SECURITY DEFINER (67 RPCs + 1 event trigger rls_auto_enable)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prosecdef = true),
-  77::bigint,
-  'seguranca de privilegios: exatamente 77 rotinas sao SECURITY DEFINER (76 RPCs + rls_auto_enable)'
+  78::bigint,
+  'seguranca de privilegios: exatamente 78 rotinas sao SECURITY DEFINER (77 RPCs + rls_auto_enable)'
 );
 
 -- 100% das rotinas de public possuem search_path="" estrito configurado em proconfig
@@ -57,8 +57,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and p.proconfig @> array['search_path=""']),
-  80::bigint,
-  'mitigacao de sequestro de schema: 100% das rotinas (80 de 80) possuem search_path="" estrito'
+  81::bigint,
+  'mitigacao de sequestro de schema: 100% das rotinas (81 de 81) possuem search_path="" estrito'
 );
 
 -- Apenas 2 funções possuem privilégio de execução concedido ao papel anon
@@ -94,8 +94,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and has_function_privilege('authenticated', p.oid, 'execute')),
-  76::bigint,
-  'superficie autenticada: exatamente 76 RPCs publicas concedem execucao a authenticated'
+  77::bigint,
+  'superficie autenticada: exatamente 77 RPCs publicas concedem execucao a authenticated'
 );
 
 -- Papel authenticated NÃO possui privilégio em rotinas internas (erro, conta_em_json, perfil_profissional_em_json, rls_auto_enable)
