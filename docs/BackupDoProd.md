@@ -289,7 +289,8 @@ O fluxo executa `scripts/backup-logico.sh` num diretório temporário isolado do
 fora do checkout (`BACKUP_DIR="${RUNNER_TEMP}/frila-backup-prod"`), empacota o dump
 lógico v2 (`banco.dump`, `extensoes.sql` e `formato.txt`), cifra com `age` utilizando
 a chave pública configurada, e transfere o pacote `.tar.age` diretamente para um bucket
-de armazenamento S3-compatível (Cloudflare R2 ou Backblaze B2) utilizando `aws-cli` com
+de armazenamento S3-compatível (hoje, o Cloudflare R2 da conta do Frila, ver
+[Onde fica o bucket](#onde-fica-o-bucket-e-as-chaves)) utilizando `aws-cli` com
 `--endpoint-url`. O repositório é público: nenhum dump é publicado como artefato do
 GitHub Actions (`upload-artifact` desativado), e todo dado claro em disco é apagado
 pelo próprio script antes da publicação do arquivo cifrado.
@@ -311,8 +312,74 @@ Segredos configurados no Environment `frila-backup` (sem valores reais no reposi
 | `BACKUP_PUBLIC_KEY` | Destinatário público `age` (`age1...`). Apenas a chave pública é necessária para cifrar. A chave privada correspondente **nunca** entra no repositório nem no GitHub Actions, devendo permanecer sob custódia offline segura dos administradores. |
 | `BACKUP_S3_ENDPOINT` | URL do endpoint da API S3-compatível (ex.: `https://<account_id>.r2.cloudflarestorage.com` no Cloudflare R2 ou `https://s3.<region>.backblazeb2.com` no Backblaze B2). |
 | `BACKUP_S3_BUCKET` | Nome do bucket dedicado no storage S3. |
-| `BACKUP_S3_ACCESS_KEY_ID` | Chave de acesso (Access Key ID) com permissão mínima para gravação (`PutObject`). |
+| `BACKUP_S3_ACCESS_KEY_ID` | Chave de acesso (Access Key ID) da chave `backup-prod-escrita` (R2 Object Read & Write, limitada ao bucket; esse nível apaga, mas a trava do bucket segura os objetos por 14 dias, ver "Onde fica o bucket e as chaves"). |
 | `BACKUP_S3_SECRET_ACCESS_KEY` | Chave secreta de acesso (Secret Access Key) correspondente. |
+
+### Onde fica o bucket e as chaves
+
+Desde 17/11/2026 o backup diário vai para a conta Cloudflare do Frila (frila.org). O destino anterior
+deixou de receber envios e não é mais usado.
+
+| Item | Valor |
+| --- | --- |
+| Bucket | `frila-backup-prod`, classe Standard |
+| Regra de ciclo de vida | `expira-14-dias`: apaga o objeto 14 dias depois do envio. O upload multipart incompleto é abortado por outra regra, a padrão do R2, após 7 dias |
+| Trava do bucket (Bucket Lock) | Regra `retencao-14-dias`, no bucket inteiro, com Lock Duration de 14 dias, ligada em 17/11/2026 (painel da Cloudflare, sem custo). Nenhum objeto pode ser apagado nem sobrescrito antes de 14 dias, nem pela chave de escrita. Convive com a `expira-14-dias`: a trava segura o objeto, e passados os 14 dias a regra de ciclo de vida o remove. Como provar: ver "Como provar a trava" |
+| Chave `backup-prod-escrita` | R2 API Token com **Object Read & Write**, limitado ao bucket `frila-backup-prod`. Esse nível **grava, lê, lista e apaga** objetos do bucket: o R2 não oferece token só de gravação. Alimenta os segredos `BACKUP_S3_ACCESS_KEY_ID` e `BACKUP_S3_SECRET_ACCESS_KEY` do Environment `frila-backup`. É usada pelo GitHub Actions todo dia e foi usada também, uma vez, em 17/11, no envio manual de ensaio feito a partir do Mac de custódia |
+| Chave `backup-prod-leitura` | R2 API Token com **Object Read only**, limitado ao mesmo bucket. Serve para restaurar: lista e baixa, e recusa gravação (`AccessDenied` num `PutObject` de teste). Não está no GitHub |
+
+Nível das chaves, limite ao bucket, classe Standard e a regra do multipart: conferidos no painel da Cloudflare
+em 17/11/2026 (não por comando). Provado por comando: o `AccessDenied` da chave de leitura num `PutObject`, o
+`x-amz-expiration` de cada objeto e o `AccessDenied` de `GetBucketLifecycleConfiguration` na chave de escrita.
+
+**O que a chave de escrita pode fazer.** O nível Object Read & Write inclui apagar e sobrescrever, e quem tiver o
+segredo `BACKUP_S3_SECRET_ACCESS_KEY` (o GitHub Actions e o Mac de custódia) tem esse nível. O que segura os
+backups é a **trava do bucket**: enquanto o objeto tem menos de 14 dias, nem essa chave o apaga nem o
+sobrescreve (`ObjectLockedByBucketPolicy`); só se cria objeto novo, e é isso que o envio diário faz. Passados os 14
+dias, a `expira-14-dias` tira o objeto. Consequência: um objeto enviado por engano também fica 14 dias. A 2ª
+defesa é a **cópia local diária no Mac de custódia**, fora do bucket, com `BACKUP_KEEP=14` (o log do roteiro mostra
+`retidos=14`, conferido em 17/11).
+
+**Como provar a trava.** Com a chave de escrita (lida do teclado, como em "Como restaurar a partir do bucket"),
+use um objeto de teste e **nunca um backup real**: se a trava estivesse desligada, o delete apagaria o objeto.
+O nome começa por `0-` para ficar antes dos backups na listagem.
+
+```bash
+set +x
+printf 'Access Key ID (backup-prod-escrita): '; read -rs AWS_ACCESS_KEY_ID; echo
+printf 'Secret Access Key (backup-prod-escrita): '; read -rs AWS_SECRET_ACCESS_KEY; echo
+printf 'Endpoint S3 da conta do Frila: '; read -r R2_ENDPOINT; echo
+export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY R2_ENDPOINT AWS_DEFAULT_REGION=auto
+TESTE="$(mktemp)"; echo "teste da trava" > "$TESTE"
+CHAVE_TESTE="0-teste-trava-$(date +%Y%m%d%H%M%S).txt"
+
+# 1. Objeto NOVO entra (tem de dar certo)
+aws s3api put-object --bucket frila-backup-prod --key "$CHAVE_TESTE" --body "$TESTE" --endpoint-url "$R2_ENDPOINT"
+# 2. Sobrescrever o mesmo objeto (tem de falhar com ObjectLockedByBucketPolicy)
+aws s3api put-object --bucket frila-backup-prod --key "$CHAVE_TESTE" --body "$TESTE" --endpoint-url "$R2_ENDPOINT"
+# 3. Apagar o mesmo objeto (tem de falhar com ObjectLockedByBucketPolicy)
+aws s3api delete-object --bucket frila-backup-prod --key "$CHAVE_TESTE" --endpoint-url "$R2_ENDPOINT"
+
+rm -f "$TESTE"
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY R2_ENDPOINT
+```
+
+O passo 1 grava e os passos 2 e 3 têm de dar erro com `ObjectLockedByBucketPolicy`. Se o 3 apagar o objeto, a trava
+**não está valendo**: avise os sócios. O objeto de teste (1 linha) sai sozinho em 14 dias.
+
+**Prova feita (17/11/2026, 19:37 UTC, com a chave de escrita).** Objeto novo: entrou. Sobrescrever o mesmo objeto:
+`ObjectLockedByBucketPolicy`. `DeleteObject` nele: `ObjectLockedByBucketPolicy`. `DeleteObject` num backup real
+anterior à trava (`...070106Z-OoHaLp`): `ObjectLockedByBucketPolicy`. O envio diário segue entrando: o run
+44160577046 fechou verde e deixou `frila-backup-20261117T194121Z-Iz0Y0p.tar.age` no bucket.
+
+Os valores das chaves e o endpoint nunca entram no repositório. O endpoint (`BACKUP_S3_ENDPOINT`) e o nome
+do bucket (`BACKUP_S3_BUCKET`) também ficam só no Environment `frila-backup`.
+
+**Quem pode abrir o backup.** O segredo `BACKUP_PUBLIC_KEY` é o destinatário público da identidade age guardada
+no Mac de custódia. Vale para os backups enviados a partir de **17/11/2026 18:16 UTC**: esses abrem com essa
+identidade. Os objetos que o GitHub Actions enviou antes das 18:16:38 UTC foram cifrados para outro
+destinatário, cuja chave privada o time não tem; no bucket novo há um só (`5CToxM`, do 1º run), que expira
+sozinho em 01/12/2026. Os envios do destino anterior ficam lá e não entram na restauração.
 
 Variável opcional (Action Variables):
 - `BACKUP_S3_REGION`: Região S3 (padrão: `auto`).
@@ -322,12 +389,19 @@ Variável opcional (Action Variables):
 
 A política de retenção dos backups é implementada em duas camadas:
 
-1. **No bucket S3 (Primária / Princípio do Menor Privilégio):** Deve ser configurada
-   uma regra de ciclo de vida (Lifecycle Rule) no bucket (R2 ou B2) com expiração e
-   exclusão automática de objetos após 14 dias (`Delete after 14 days`). Dessa forma,
-   a credencial fornecida ao GitHub Actions precisa apenas da permissão `s3:PutObject`,
-   **sem** permissão destrutiva de `s3:DeleteObject`. Isso protege os backups existentes
-   contra deleção acidental ou intencional em caso de comprometimento da esteira de CI.
+1. **No bucket S3 (primária):** Há uma regra de ciclo de vida (Lifecycle Rule) no bucket,
+   `expira-14-dias`, com expiração e exclusão automática de objetos após 14 dias
+   (`Delete after 14 days`). Assim nenhuma rotina precisa apagar objeto à mão. A regra
+   **sozinha não impede** apagar antes: quem impede é a trava do bucket `retencao-14-dias` (14 dias, ver
+   "Onde fica o bucket e as chaves"). A credencial do GitHub Actions (Object Read & Write) tem nível de
+   apagar, mas a trava o recusa até o objeto completar 14 dias; depois disso a `expira-14-dias` o remove.
+
+   **Prova da regra (17/11/2026).** O R2 devolve a expiração em cada objeto. `HeadObject` do objeto enviado
+   às 18:08:54 UTC trouxe `x-amz-expiration: expiry-date="Tue, 01 Dec 2026 18:08:54 GMT", rule-id="expira-14-dias"`,
+   isto é, envio + 14 dias exatos. O objeto que o GitHub Actions enviou no 1º run trouxe a mesma regra,
+   com vencimento em 01/12/2026 18:14:54 GMT. A chave de objeto **não lê a configuração** da regra
+   (`GetBucketLifecycleConfiguration` dá `AccessDenied`, esperado nesse tipo de token): para ver a regra em si,
+   use o painel da Cloudflare. Para conferir que ela vale, use `HeadObject` e procure `x-amz-expiration`.
 2. **No runner local:** O script `scripts/backup-logico.sh` define `BACKUP_KEEP=14`
    durante sua execução local, e o job limpa completamente o diretório temporário no
    runner ao final (`if: always()`).
@@ -343,9 +417,9 @@ O backup diário inclui uma verificação automatizada de consumo de armazenamen
 
 #### Restrição arquitetural: Projeção linear determinística (não é inventário nem medição)
 
-A credencial de acesso S3 configurada no GitHub Actions possui privilégio estritamente restrito a gravação (`s3:PutObject`), sem permissão de `s3:ListBucket` ou `s3:ListObjects`. Essa restrição é mandatória por segurança para evitar que o runner possa inspecionar outros objetos ou receber permissões destrutivas.
+A credencial de acesso S3 configurada no GitHub Actions (`backup-prod-escrita`, Object Read & Write) poderia listar o bucket, mas a verificação **não o lista**.
 
-Por não poder listar o bucket remotamente, a verificação adota **projeção linear determinística**: logo após o upload, o passo `Verificar limite de armazenamento do backup` no workflow lê o tamanho exato do arquivo `.tar.age` recém-enviado, multiplica pela retenção configurada (`BACKUP_KEEP=14`), e compara o resultado contra o limite em `BACKUP_LIMITE_GB`.
+Por isso a verificação adota **projeção linear determinística**: logo após o upload, o passo `Verificar limite de armazenamento do backup` no workflow lê o tamanho exato do arquivo `.tar.age` recém-enviado, multiplica pela retenção configurada (`BACKUP_KEEP=14`), e compara o resultado contra o limite em `BACKUP_LIMITE_GB`.
 
 > [!IMPORTANT]
 > **Distinção conceitual mandatória:**
@@ -381,28 +455,87 @@ Para complementar a projeção determinística da esteira sem conceder permissõ
 Cartão `U3RlsJF7` (pedido 16-28, item 7). Um backup real do `frila-prod` foi decifrado e restaurado num
 Postgres descartável, e as contagens de linhas foram conferidas. Roteiro: `scripts/restauracao-real.sh`.
 
-### De onde veio o arquivo: cópia local, não o bucket
+### De onde veio o arquivo
 
-**O arquivo restaurado veio da cópia local do Mac do Cauê (`~/Backups/frila-prod`), e não do bucket R2.**
-Nenhuma credencial guardada no Mac lê o bucket: o `cloudflare-token` e o `cloudflare-pages-token` recebem
-`Authentication error` (10000) em `GET /accounts/<id>/r2/buckets`, e a conta do login do wrangler não tem R2
-ligado (10042). A credencial do GitHub Actions só grava (`PutObject`). A credencial de leitura foi pedida ao
-Cauê no painel.
+Duas provas, uma por caminho.
+
+**1. Cópia local (16/11, 21:34 em Brasília).** O primeiro ensaio, em 17/11 de madrugada, usou a cópia local do
+Mac de custódia e não o bucket, porque ainda não havia credencial de leitura do R2.
 
 - Arquivo: `frila-backup-20261117T003409Z-jK1Mho.tar.age`, com 5.165.480 bytes. Gerado às 00:34:09 UTC de
   17/11 (21:34:09 em Brasília, 16/11). É o backup que o roteiro do Prod "ligar a busca" tira antes de aplicar,
   pelo `scripts/backup-logico.sh` da árvore do corte, e o mais novo da pasta local.
 - Formato: o mesmo do bucket. O pacote decifrado trouxe `formato.txt` = `frila-backup-v2`, `banco.dump`
   (5.156.906 bytes) e `extensoes.sql` (375 bytes).
-- Chave: o roteiro cifra para `~/.config/frila/backup/destinatario.age`, e a decifra usou a identidade
-  privada desse destinatário. Que o `BACKUP_PUBLIC_KEY` do GitHub é esse mesmo destinatário só se prova decifrando um
-  arquivo do bucket, e essa prova fica pendente junto com o download.
+- Chave: o roteiro cifra para o destinatário público do Mac de custódia, e a decifra usou a identidade
+  privada desse destinatário.
 
-**PENDENTES (falta a credencial de leitura do R2):**
+**2. Bucket do Frila (17/11, à tarde).** A pendência da primeira rodada está **FEITA**. Com a chave
+`backup-prod-leitura` e o bucket na conta do Frila:
 
-1. Baixar do bucket o `.tar.age` do dia anterior e medir o tempo de download.
-2. Conferir no R2 a regra de ciclo de vida de 14 dias. O `backup-prod.yml` e esta página dizem que ela
-   existe, mas ninguém do time a viu com prova.
+- **Envio manual.** O backup local das 04:00 foi enviado com a chave de escrita, baixado com a de leitura e
+  conferido: `sha256` igual ao do arquivo local. Restauração real: rc=0, 116 tabelas iguais + 1 igual pelo
+  suplemento + 2 vazias sem dados no pacote, RTO sem download de 7,46 s.
+- **Caminho diário do GitHub Actions.** O 1º run (44144914807, `workflow_dispatch` na `develop`) fechou verde, mas o
+  objeto dele **não abriu** com a identidade do Mac (`age não decifrou`): o `BACKUP_PUBLIC_KEY` gravado em
+  04/11 era de outro destinatário. Às 18:16:38 UTC o segredo passou a ser o destinatário público do Mac
+  (gravado por entrada padrão, a chave privada nunca saiu do Mac).
+- **Run 44146116086** (`workflow_dispatch` na `develop`, verde): objeto
+  `frila-backup-20261117T182044Z-ESX4mO.tar.age`, com 5.193.144 bytes. Baixado com a chave de leitura em
+  **3 s**. `scripts/restauracao-real.sh`: rc=0; 120 tabelas contadas, **116 iguais**, 1 igual pelo
+  suplemento (`pgmq.meta`) e 2 vazias sem dados no pacote (`net._http_response` e `net.http_request_queue`);
+  "OK: restaurado igual ao pacote em todas as tabelas contadas". **RTO sem download: 5,93 s** (com o download,
+  cerca de 9 s). O decifrado foi apagado e o contêiner removido.
+- O objeto do 1º run (`frila-backup-20261117T181453Z-5CToxM.tar.age`) segue no bucket, cifrado para o
+  destinatário antigo, e expira sozinho em 01/12/2026.
+
+Resultado: o caminho completo (Actions → R2 do Frila → download → decifra → restauração) está provado, e o
+`BACKUP_PUBLIC_KEY` do GitHub é, de fato, o destinatário do Mac de custódia.
+
+### Como restaurar a partir do bucket
+
+Precisa de: a chave `backup-prod-leitura` (endpoint, Access Key ID e Secret lidos do teclado para variáveis de
+ambiente, nunca escritos na linha de comando nem em arquivo dentro do Git), a identidade privada age do
+destinatário, `aws-cli`, `age`, Docker e `pg_restore` 17 ou mais novo no `PATH`.
+
+Rode a partir da **raiz do checkout** do `frila-backend` (o roteiro é `./scripts/restauracao-real.sh`). Execute
+o bloco por partes, não colado de uma vez: as linhas `read` esperam você digitar.
+
+```bash
+set +x
+# Pasta de saída nova, só sua (700), fora de qualquer repositório Git
+export SAIDA="$(mktemp -d "${TMPDIR:-/tmp}/frila-restauracao.XXXXXX")"
+chmod 700 "$SAIDA"
+
+# Credenciais lidas do teclado (não aparecem na tela nem no histórico do shell)
+printf 'Access Key ID (backup-prod-leitura): '; read -rs AWS_ACCESS_KEY_ID; echo
+printf 'Secret Access Key (backup-prod-leitura): '; read -rs AWS_SECRET_ACCESS_KEY; echo
+printf 'Endpoint S3 da conta do Frila: '; read -r R2_ENDPOINT; echo
+export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY R2_ENDPOINT AWS_DEFAULT_REGION=auto
+
+# 1. Escolher o backup mais novo: o nome leva a data e a hora, e o filtro tira objetos que não são backup
+#    (como os de teste da trava), que também ficam no bucket por 14 dias
+aws s3 ls "s3://frila-backup-prod/" --endpoint-url "$R2_ENDPOINT" | grep 'frila-backup-.*\.tar\.age$' | tail -1
+
+# 2. Baixar (troque <arquivo> pelo nome inteiro, sem o .tar.age)
+aws s3 cp "s3://frila-backup-prod/<arquivo>.tar.age" "$SAIDA/" --endpoint-url "$R2_ENDPOINT"
+
+# 3. Restaurar num Postgres descartável (contêiner sem rede)
+export PATH="/opt/homebrew/opt/postgresql@17/bin:$PATH"
+ARQUIVO_CIFRADO="$SAIDA/<arquivo>.tar.age" CHAVE_PRIVADA="<caminho da identidade age>" \
+  ./scripts/restauracao-real.sh
+
+# 4. Limpar
+rm -f "$SAIDA/<arquivo>.tar.age"
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY R2_ENDPOINT
+```
+
+- Só backups de **17/11/2026 18:16 UTC em diante** abrem com a identidade do Mac de custódia.
+- O roteiro exige `pg_restore` 17 ou mais novo e para antes de começar se a versão for menor.
+- O roteiro apaga o decifrado e o contêiner ao terminar, também na falha. O passo 4 apaga o `.tar.age`
+  baixado; na pasta de saída ficam só os tempos e as contagens (`tempos.tsv` e afins), sem linha de dado.
+- Esse caminho restaura só o banco. Auth, Edge Functions, segredos, Vault e os arquivos do Storage seguem
+  fora do backup (ver "Decifrar e restaurar em destino descartável").
 
 ### Destino descartável
 
@@ -428,7 +561,7 @@ inteira.
 
 | Etapa | Rodada 1 | Rodada 2 |
 | --- | ---: | ---: |
-| Baixar do bucket | pendente | pendente |
+| Baixar do bucket | n/a (arquivo local) | n/a (arquivo local) |
 | Subir o contêiner, criar o banco e reiniciar | 7,756 | 4,000 |
 | Decifrar com age | 0,047 | 0,024 |
 | Extrair o pacote | 0,030 | 0,019 |
@@ -437,7 +570,8 @@ inteira.
 | Suplemento `extensoes.sql` | 0,155 | 0,058 |
 | **Total, sem o download** | **10,910** | **5,843** |
 
-**RTO do banco, medido: cerca de 11 s** com o arquivo já no disco. Esse número vale só para o banco num
+**RTO do banco, medido: cerca de 11 s** com o arquivo já no disco (primeiro ensaio, cópia local). Com o objeto
+do GitHub Actions, em 17/11 à tarde: **5,93 s** sem download e cerca de 9 s com ele (download de 3 s). Esse número vale só para o banco num
 Postgres descartável. Uma volta de verdade, num projeto Supabase novo, soma etapas que não foram medidas:
 o download (5 MB), a criação do projeto, a configuração do Auth, as Edge Functions, os segredos e o Vault,
 e os arquivos do Storage, que ficam fora do backup (ver "Decifrar e restaurar em destino descartável").
@@ -524,4 +658,4 @@ as duas que os roteiros do Prod tiraram, às 00:27 e às 00:34 UTC de 17/11.
 ### Em aberto
 
 - **"2 pessoas com a chave": EM ABERTO**, por decisão do Cauê. Este ensaio não muda isso.
-- O download do bucket e a regra de 14 dias no R2 seguem pendentes, como descrito acima.
+- O download do bucket e a regra de 14 dias no R2 estão **FEITOS** (17/11/2026), como descrito acima.
