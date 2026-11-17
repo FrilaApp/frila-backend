@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.104
+  version: 0.2.105
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -116,6 +116,14 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.105, de 17/11/2026.** Só descrição: o `403 sem_permissao` (`recurso_desligado`) de
+    `solicitar_upload_midia`, `confirmar_upload_midia` e `pedir_nova_analise_midia` vale quando
+    `foto_de_perfil` está desligado em **todas** as plataformas. O servidor não recebe a plataforma nessas
+    operações: `privado.usuario_midia` liga a foto se alguma linha de `configuracao_app` a liga (`bool_or`;
+    medido pela Forja no dev, 17/11/2026). Desligar a foto numa plataforma, ou abaixo de uma versão, é o
+    que o app mostra e esconde, pela `configuracao_do_app` (RN46). Recusar por plataforma pediria uma
+    operação nova, que fica como ideia e não entra agora. Nenhum campo nem código muda.
 
     **Versão 0.2.104, de 17/11/2026.** Só descrição, para o servidor obedecer ao que já estava escrito
     (B-052 da Forja; `frila-backend` #553 e o que vier para `remover_membro` e `transferir_administracao`). Nas quatro operações da equipe da casa (`convidar_membro`,
@@ -2715,8 +2723,10 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           description: |
-            `sem_permissao` com `details: recurso_desligado` quando `recursos.foto_de_perfil` está
-            desligado; `conta_suspensa` quando a conta está suspensa.
+            `sem_permissao` com `details: recurso_desligado` quando `foto_de_perfil` está desligado em
+            todas as plataformas (0.2.105: o servidor não recebe a plataforma; o desligado por plataforma ou
+            por versão é o app que esconde, pela `configuracao_do_app`); `conta_suspensa` quando a conta está
+            suspensa.
           content:
             application/json:
               schema:
@@ -2759,8 +2769,10 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           description: |
-            `sem_permissao` com `details: recurso_desligado` quando `recursos.foto_de_perfil` está
-            desligado; `conta_suspensa` quando a conta está suspensa.
+            `sem_permissao` com `details: recurso_desligado` quando `foto_de_perfil` está desligado em
+            todas as plataformas (0.2.105: o servidor não recebe a plataforma; o desligado por plataforma ou
+            por versão é o app que esconde, pela `configuracao_do_app`); `conta_suspensa` quando a conta está
+            suspensa.
           content:
             application/json:
               schema:
@@ -2877,8 +2889,10 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           description: |
-            `sem_permissao` com `details: recurso_desligado` quando `recursos.foto_de_perfil` está
-            desligado; `conta_suspensa` quando a conta está suspensa.
+            `sem_permissao` com `details: recurso_desligado` quando `foto_de_perfil` está desligado em
+            todas as plataformas (0.2.105: o servidor não recebe a plataforma; o desligado por plataforma ou
+            por versão é o app que esconde, pela `configuracao_do_app`); `conta_suspensa` quando a conta está
+            suspensa.
           content:
             application/json:
               schema:
