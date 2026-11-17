@@ -6,6 +6,9 @@
 #   2. site_url_localhost: presença de localhost (exit 1)
 #   3. modelo_com_link: template contendo ConfirmationURL (exit 1)
 #   4. smtp_desligado: smtp_host vazio (exit 1)
+#   5. limite de e-mails por hora diferente do esperado ou ausente (exit 1)
+#   6. captcha ligado contra a decisão (exit 1); com AUTH_CAPTCHA_ESPERADO=turnstile, o
+#      turnstile passa e o hcaptcha reprova
 #
 # Uso:
 #   ./scripts/teste-conferir-auth-remoto.sh
@@ -46,6 +49,38 @@ conferir "cenário modelo_com_link: reprova ConfirmationURL e aponta runbook com
 conferir "cenário smtp_desligado: reprova smtp_host vazio e aponta runbook com exit 1" \
   1 "smtp_host: vazio ou não configurado" \
   ./scripts/conferir-auth-remoto.sh --fixture scripts/fixtures/auth_smtp_desligado.json
+
+conferir "limite de e-mails por hora diferente do esperado reprova com exit 1" \
+  1 "rate_limit_email_sent: 2 por hora (esperado 30)" \
+  ./scripts/conferir-auth-remoto.sh --fixture scripts/fixtures/auth_limite_email_diferente.json
+
+conferir "limite de e-mails por hora ausente reprova com exit 1" \
+  1 "rate_limit_email_sent: ausente ou não inteiro" \
+  ./scripts/conferir-auth-remoto.sh --fixture scripts/fixtures/auth_limite_email_ausente.json
+
+conferir "AUTH_LIMITE_EMAILS_HORA muda o esperado (2 passa)" \
+  0 "rate_limit_email_sent: 2 por hora (o esperado)" \
+  env AUTH_LIMITE_EMAILS_HORA=2 ./scripts/conferir-auth-remoto.sh --fixture scripts/fixtures/auth_limite_email_diferente.json
+
+conferir "captcha ligado contra a decisão reprova com exit 1" \
+  1 "captcha: security_captcha_enabled = True (esperado desligado)" \
+  ./scripts/conferir-auth-remoto.sh --fixture scripts/fixtures/auth_captcha_ligado.json
+
+conferir "com AUTH_CAPTCHA_ESPERADO=turnstile, o turnstile ligado passa" \
+  0 "captcha: ligado com turnstile (o esperado)" \
+  env AUTH_CAPTCHA_ESPERADO=turnstile ./scripts/conferir-auth-remoto.sh --fixture scripts/fixtures/auth_captcha_turnstile.json
+
+conferir "com AUTH_CAPTCHA_ESPERADO=turnstile, o hcaptcha reprova" \
+  1 "esperado turnstile" \
+  env AUTH_CAPTCHA_ESPERADO=turnstile ./scripts/conferir-auth-remoto.sh --fixture scripts/fixtures/auth_captcha_ligado.json
+
+conferir "com AUTH_CAPTCHA_ESPERADO=turnstile, o captcha desligado reprova" \
+  1 "esperado turnstile" \
+  env AUTH_CAPTCHA_ESPERADO=turnstile ./scripts/conferir-auth-remoto.sh --fixture scripts/fixtures/auth_bom.json
+
+conferir "o domínio do remetente sai, o endereço inteiro não" \
+  0 "domínio do remetente: 'frilabr.com'" \
+  ./scripts/conferir-auth-remoto.sh --fixture scripts/fixtures/auth_bom.json
 
 # Confere também que aponta para o runbook em caso de reprovação
 conferir "aponta para supabase/operacao/configurar-smtp-auth.md na falha" \
