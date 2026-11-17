@@ -42,6 +42,9 @@
 #      forçada por uma terceira conexão: 14, o aceite da mesma chamada; 15, o cancelamento da vaga
 #      direta; 16, mais uma chamada com vaga_id (guarda); 17, a exclusão da conta do profissional;
 #      18, a suspensão do profissional e a da casa. Nenhum 40P01, e o desfecho de quem chegou primeiro.
+#  19. Os dois jobs, privado.expirar_chamadas x privado.lembrar_chamadas, com duas chamadas vencidas
+#      e de lembrete pendente em que a ordem de id é a inversa da de lembrete_em e expira_em, e a
+#      ordem forçada por uma terceira conexão (#562): nenhum 40P01, e as duas chamadas expiradas.
 #
 # Uso: ./scripts/corrida-chamada.sh        RODADAS=4 ./scripts/corrida-chamada.sh
 set -uo pipefail
@@ -1188,5 +1191,71 @@ for i in $(seq 1 "$RODADAS"); do
   done
 done
 fim_job 18 "a conta suspensa sem chamada aberta" a b
+
+
+# ── 19. Os dois jobs: expirar_chamadas x lembrar_chamadas (#562, parecer do Lince) ─
+# Desde a 20261117170000 o expirar pega as chamadas por id. O lembrete pegava por lembrete_em,
+# inclusive as vencidas (o prazo só é olhado depois da trava). Com duas chamadas A e B, A.id < B.id
+# mas B com lembrete_em e expira_em antes dos de A (os jobs retomando depois de um atraso), X segura
+# B; o lembrete (L) para em B sem nada; o expirar (E) pega A e para em B, atrás de L. Ao soltar X, L
+# pega B e quer A, que é de E; E quer B, que é de L: o ciclo. Com os dois por id, L pega A primeiro
+# e E espera L em A sem segurar nada que L queira.
+# O lembrete não dispara no silêncio (22h às 7h de Brasília), e a CI roda a qualquer hora: a
+# conexão de L marca privado.ambiente como teste e congela frila.agora no meio-dia de amanhã, só
+# dentro da transação dela, que termina em rollback (como o scripts/contrato-respostas.sql). E segue
+# no relógio de verdade. Mundos 321 a 330.
+lado_lembrete() {
+  local nome=$1
+  ( psql <<SQL > "$TMP/$nome" 2>&1
+set application_name = '$nome';
+$AUX
+begin;
+insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
+do \$\$ begin
+  perform set_config('frila.agora', ((date_trunc('day', now() at time zone 'America/Sao_Paulo') + interval '1 day 12 hours') at time zone 'America/Sao_Paulo')::text, true);
+end \$\$;
+select pg_temp.tentar(null, \$q\$ select privado.lembrar_chamadas() \$q\$);
+rollback;
+SQL
+  ) &
+}
+
+echo "▸ 19. os dois jobs: expirar_chamadas x lembrar_chamadas, com a ordem de id inversa à do lembrete e à do prazo"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  m=$((320 + i))
+  montar_mundo "$m"
+  casa=$(id "$m" 1); p1=$(id "$m" 2); p2=$(id "$m" 3)
+  read -r c1 vaga < <(chamar_serial "$m" "$p1")
+  [ -z "${c1:-}" ] && { falhou "rodada $i (19): não montei a 1ª chamada"; erros=$((erros + 1)); continue; }
+  read -r c2 _ < <(chamar_serial "$m" "$p2" "$vaga")
+  [ -z "${c2:-}" ] && { falhou "rodada $i (19): não montei a 2ª chamada"; erros=$((erros + 1)); continue; }
+  # A é a de id menor; B, a de id maior, vence e lembra antes.
+  if [[ "$c1" < "$c2" ]]; then ca=$c1; cb=$c2; else ca=$c2; cb=$c1; fi
+  n="cc-$RUN-$m"
+  psql >/dev/null <<SQL
+update public.chamada set lembrete_em = now() - interval '2 minutes', expira_em = now() - interval '1 minute' where id = '$ca';
+update public.chamada set lembrete_em = now() - interval '3 minutes', expira_em = now() - interval '2 minutes' where id = '$cb';
+SQL
+  segurar "$n-x" "select 1 from public.chamada where id = '$cb' for update"
+  parou=
+  aguardar "$n-x" segurando || parou="x segurando"
+  if [ -z "$parou" ]; then lado_lembrete "$n-l"; aguardar "$n-l" travado || parou="l travado"; fi
+  if [ -z "$parou" ]; then
+    lado_nomeado "$n-e" "" "select privado.expirar_chamadas()"
+    aguardar "$n-e" travado || parou="e travado"
+  fi
+  if [ -n "$parou" ]; then
+    soltar "$n-%"; wait
+    falhou "rodada $i (19): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    erros=$((erros + 1)); continue
+  fi
+  soltar "$n-x"; wait
+  rl=$(resultado "$TMP/$n-l"); re=$(resultado "$TMP/$n-e")
+  impasse a "$rl" "$re"
+  confere_job "lembrete '$rl', job '$re', A '$(psql -c "select estado from public.chamada where id = '$ca';")', B '$(psql -c "select estado from public.chamada where id = '$cb';")', abertas $(abertas_vaga "$vaga")" \
+    "lembrete 'ok', job 'ok', A 'expirada', B 'expirada', abertas 0"
+done
+fim_job 19 "as duas chamadas expiradas" a
 
 exit "$falha"
