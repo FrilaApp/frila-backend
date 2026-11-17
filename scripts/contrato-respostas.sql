@@ -2079,8 +2079,17 @@ select pg_temp.guarda('promete:aceitarTermos:401', pg_temp.observado(null,
   $$ select public.aceitar_termos('2026-11-13') $$));
 
 -- convidar_membro e aceitar_convite_membro (0.2.73, B-052): chamadas pelos NOMES do contrato
--- (estabelecimento_id, email, papel; token), como o PostgREST faz. A conta ...0099 é contratante
--- ativa e, aqui, ainda não é membro da casa; por isso fica por último: aceitar o convite a faz membro.
+-- (estabelecimento_id, email, papel; token), como o PostgREST faz. Contas próprias, ativas: ...00a1 é
+-- contratante que ainda não é membro da casa (aceitar o convite a faz membro, por isso este trecho é o
+-- último) e ...00a2 é profissional.
+insert into auth.users (id, email) values
+  ('ee000000-0000-4000-8000-0000000000a1', 'convite_contratante@frila.test'),
+  ('ee000000-0000-4000-8000-0000000000a2', 'convite_profissional@frila.test')
+on conflict do nothing;
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado) values
+  ('ee000000-0000-4000-8000-0000000000a1', 'contratante',  'Convidada Contratante', '+5561999990161', 'convite_contratante@frila.test',  '1990-01-01', '1.0', now(), 'ativa'),
+  ('ee000000-0000-4000-8000-0000000000a2', 'profissional', 'Convidada Profissional', '+5561999990162', 'convite_profissional@frila.test', '1990-01-01', '1.0', now(), 'ativa')
+on conflict (id) do update set estado = 'ativa';
 create temp table convite_colhido as
   select pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
     $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'Novo.Membro@frila.test', papel => 'operador') $$,
@@ -2090,7 +2099,7 @@ select pg_temp.guarda('convidarMembro', (select r from convite_colhido));
 select pg_temp.guarda('promete:convidarMembro:401', pg_temp.observado(null, format(
   $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'x@frila.test', papel => 'operador') $$,
   (select casa_id from ids))));
-select pg_temp.guarda('promete:convidarMembro:403', pg_temp.observado('ee000000-0000-4000-8000-000000000099', format(
+select pg_temp.guarda('promete:convidarMembro:403', pg_temp.observado('ee000000-0000-4000-8000-0000000000a1', format(
   $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'x@frila.test', papel => 'operador') $$,
   (select casa_id from ids))));
 select pg_temp.guarda('promete:convidarMembro:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
@@ -2102,11 +2111,11 @@ select pg_temp.guarda('promete:convidarMembro:422', pg_temp.observado('cc000000-
 
 select pg_temp.guarda('promete:aceitarConviteMembro:401', pg_temp.observado(null,
   $$ select public.aceitar_convite_membro(token => 'qualquer') $$));
-select pg_temp.guarda('promete:aceitarConviteMembro:422', pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+select pg_temp.guarda('promete:aceitarConviteMembro:422', pg_temp.observado('ee000000-0000-4000-8000-0000000000a2', format(
   $$ select public.aceitar_convite_membro(token => %L) $$, (select r->>'token' from convite_colhido))));
-select pg_temp.guarda('promete:aceitarConviteMembro:422', pg_temp.observado('ee000000-0000-4000-8000-000000000099',
+select pg_temp.guarda('promete:aceitarConviteMembro:422', pg_temp.observado('ee000000-0000-4000-8000-0000000000a1',
   $$ select public.aceitar_convite_membro(token => 'token-que-nao-existe') $$));
-select pg_temp.guarda('aceitarConviteMembro', pg_temp.como('ee000000-0000-4000-8000-000000000099', format(
+select pg_temp.guarda('aceitarConviteMembro', pg_temp.como('ee000000-0000-4000-8000-0000000000a1', format(
   $$ select public.aceitar_convite_membro(token => %L) $$, (select r->>'token' from convite_colhido))));
 
 -- ── A colheita ────────────────────────────────────────────────────────────────
