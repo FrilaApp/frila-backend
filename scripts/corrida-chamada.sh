@@ -38,6 +38,10 @@
 #  13. Suspensão da casa (único membro, depois de remover o administrador antigo) x bloqueio da
 #      casa pelo profissional que o antigo chamou (#526): nenhum 40P01, a vaga cancelada e a
 #      chamada do ex-membro encerrada.
+#  14 a 18. O job privado.expirar_chamadas x quem pega a vaga antes da chamada (#562), com a ordem
+#      forçada por uma terceira conexão: 14, o aceite da mesma chamada; 15, o cancelamento da vaga
+#      direta; 16, mais uma chamada com vaga_id (guarda); 17, a exclusão da conta do profissional;
+#      18, a suspensão do profissional e a da casa. Nenhum 40P01, e o desfecho de quem chegou primeiro.
 #
 # Uso: ./scripts/corrida-chamada.sh        RODADAS=4 ./scripts/corrida-chamada.sh
 set -uo pipefail
@@ -1036,5 +1040,153 @@ if [ "$erros" = 0 ]; then
 else
   printf '  (40P01: %s)\n' "$r13" >&2
 fi
+
+# ── 14 a 18. O job privado.expirar_chamadas x quem pega a vaga antes da chamada (#562) ─
+# Antes da 20261117170000, o job pegava a chamada vencida (FOR UPDATE) e só depois a vaga, para
+# encerrar a vaga direta que ficou sem chamada aberta; o resto pega vaga -> chamada. Em todos, X
+# segura a vaga, e os dois lados param nela, sem sorteio:
+#   · o outro lado chega primeiro, sem nenhuma trava; a 1ª chamada vence; o job chega depois (antes
+#     da 20261117170000, já com a chamada vencida travada). Ao soltar X, o outro lado pega a vaga e
+#     quer a chamada que o job segura, e o job quer a vaga: era aqui que o ciclo fechava.
+#   · no 16, a ordem é a outra: o job primeiro.
+# Cada cenário diz o desfecho de quem chegou primeiro, e ninguém pode receber 40P01.
+#   14. o aceite da mesma chamada, que fez a conferência do prazo antes de ela vencer (mundos 261 a 270);
+#   15. o cancelamento da vaga direta, que começou antes do vencimento: o gatilho dele quer a chamada
+#       ainda no prazo (mundos 271 a 280). A chamada vence pelo relógio de parede, entre o começo do
+#       cancelamento e o do job;
+#   16. mais uma chamada (com vaga_id) ao 2º profissional, com o job na frente dela na fila da vaga: a
+#       outra ordem do 8b (mundos 281 a 290). Ela não pede a chamada do job; fica como guarda;
+#   17. a exclusão da conta do profissional da chamada (mundos 291 a 300);
+#   18. a suspensão: a. do profissional da chamada (mundos 301 a 310); b. da casa, único membro (311 a 320).
+# O job do pg_cron roda a mesma função a cada minuto: se ele passar no meio, é mais um na fila da vaga.
+vencer_agora() { psql >/dev/null -c "update public.chamada set expira_em = clock_timestamp() where id = '$1';"; }
+estado_vaga()  { psql -c "select estado from public.vaga where id = '$1';"; }
+abertas_vaga() { psql -c "select count(*) from public.chamada where vaga_id = '$1' and estado = 'aberta';"; }
+
+# corrida_job <cenário> <mundo> <aceitar|cancelar|chamar|excluir|suspender|suspender_casa>
+#             <vencer|vencer_agora> [job_primeiro]
+# Monta o mundo, força a ordem e espera os dois lados terminarem. Deixa c1, vaga, p1, p2, casa,
+# ro (o outro lado) e re (o job) prontos; devolve 1 se não montou ou se a ordem não se formou.
+corrida_job() {
+  local cen=$1 m=$2 tipo=$3 venc=$4 job_primeiro=${5:-}
+  montar_mundo "$m"
+  casa=$(id "$m" 1); p1=$(id "$m" 2); p2=$(id "$m" 3)
+  read -r c1 vaga < <(chamar_serial "$m" "$p1")
+  [ -z "${c1:-}" ] && { falhou "rodada $i ($cen): não montei a chamada"; erros=$((erros + 1)); return 1; }
+  n="cc-$RUN-$m"
+  # shellcheck disable=SC2034  # CONTA_* e SQL_* são lidas pelo nome, no laço abaixo
+  case "$tipo" in
+    aceitar)        CONTA_o=$p1;   SQL_o="select public.responder_chamada('$c1', 'aceitar')" ;;
+    cancelar)       CONTA_o=$casa; SQL_o="select public.cancelar_vaga('$vaga', 'Evento desmarcado')" ;;
+    chamar)         CONTA_o=$casa; SQL_o=$(sql_chamar "$m" "$p2" "$vaga") ;;
+    excluir)        CONTA_o=;      SQL_o="select privado.excluir_conta('$p1')" ;;
+    suspender)      CONTA_o=;      SQL_o=$(sql_suspender "$p1" "$p2") ;;
+    suspender_casa) CONTA_o=;      SQL_o=$(sql_suspender "$casa" "$p2") ;;
+  esac
+  # shellcheck disable=SC2034
+  CONTA_e=
+  # shellcheck disable=SC2034
+  SQL_e="select privado.expirar_chamadas()"
+  segurar "$n-x" "select 1 from public.vaga where id = '$vaga' for update"
+  if [ -n "$job_primeiro" ]; then
+    passos=("x segurando" vencer e "e travado" o "o travado")
+  else
+    passos=("x segurando" o "o travado" vencer e "e travado")
+  fi
+  # Como no forcar: cada lado abre pelo nome; o "vencer" entre eles vence a 1ª chamada.
+  parou=
+  local passo
+  for passo in "${passos[@]}"; do
+    case "$passo" in
+      vencer) "$venc" "$c1" ;;
+      *" "*)  aguardar "$n-${passo% *}" "${passo#* }" || { parou=$passo; break; } ;;
+      *)      local c="CONTA_$passo" s="SQL_$passo"; lado_nomeado "$n-$passo" "${!c}" "${!s}" ;;
+    esac
+  done
+  if [ -n "$parou" ]; then
+    soltar "$n-%"; wait
+    falhou "rodada $i ($cen): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    erros=$((erros + 1)); return 1
+  fi
+  soltar "$n-x"; wait
+  ro=$(resultado "$TMP/$n-o"); re=$(resultado "$TMP/$n-e")
+}
+# fim_job <cenário> <descrição do ok> <ordens...>: a linha de ok ou a contagem de 40P01 por ordem.
+fim_job() {
+  local v="r$1" d=$2; shift 2
+  resumo_impasses "$v" "$@"
+  if [ "$erros" = 0 ]; then
+    ok "em $RODADAS de $RODADAS rodadas, nenhum 40P01 e $d"
+  else
+    printf '  (40P01 por ordem: %s)\n' "${!v}" >&2
+  fi
+}
+# confere_job <obtido> <esperado...>: falha a rodada se o obtido não for nenhum dos esperados.
+confere_job() {
+  local obtido=$1 e; shift
+  for e in "$@"; do [ "$obtido" = "$e" ] && return 0; done
+  falhou "rodada $i: $obtido"; erros=$((erros + 1))
+}
+
+echo "▸ 14. job x aceite da mesma chamada, com a ordem forçada (o aceite antes do vencimento, o job depois)"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  corrida_job 14 $((260 + i)) aceitar vencer || continue
+  impasse a "$ro" "$re"
+  confere_job "aceite '$ro', job '$re', chamada '$(psql -c "select estado from public.chamada where id = '$c1';")', vaga '$(estado_vaga "$vaga")', confirmadas $(confirmadas_de "$p1")" \
+    "aceite 'ok', job 'ok', chamada 'aceita', vaga 'preenchida', confirmadas 1"
+done
+fim_job 14 "o aceite confirmado (ele começou no prazo)" a
+
+echo "▸ 15. job x cancelamento da vaga direta, com a ordem forçada (o cancelamento antes do vencimento, o job depois)"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  corrida_job 15 $((270 + i)) cancelar vencer_agora || continue
+  impasse a "$ro" "$re"
+  confere_job "cancelamento '$ro', job '$re', chamada '$(psql -c "select estado from public.chamada where id = '$c1';")', vaga '$(estado_vaga "$vaga")', abertas $(abertas_vaga "$vaga")" \
+    "cancelamento 'ok', job 'ok', chamada 'encerrada', vaga 'cancelada', abertas 0"
+done
+fim_job 15 "a vaga cancelada com a chamada encerrada" a
+
+echo "▸ 16. job x mais uma chamada (com vaga_id), com a ordem forçada (o job primeiro; guarda)"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  corrida_job 16 $((280 + i)) chamar vencer job_primeiro || continue
+  impasse a "$ro" "$re"
+  e2=$(psql -c "select coalesce((select c.estado from public.chamada c join public.profissional p on p.id = c.profissional_id
+                                  where c.vaga_id = '$vaga' and p.usuario_id = '$p2'), 'nenhuma');")
+  confere_job "chamada '$ro', job '$re', a do 1º '$(psql -c "select estado from public.chamada where id = '$c1';")', a do 2º '$e2', vaga '$(estado_vaga "$vaga")', abertas $(abertas_vaga "$vaga")" \
+    "chamada 'vaga_encerrada', job 'ok', a do 1º 'expirada', a do 2º 'nenhuma', vaga 'encerrada', abertas 0"
+done
+fim_job 16 "a vaga encerrada pelo job e a chamada nova recusada com vaga_encerrada" a
+
+echo "▸ 17. job x exclusão da conta do profissional, com a ordem forçada (a exclusão primeiro, o job depois)"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  corrida_job 17 $((290 + i)) excluir vencer || continue
+  impasse a "$ro" "$re"
+  confere_job "exclusão '$ro', job '$re', conta '$(estado_de "$p1")', chamada '$(psql -c "select estado from public.chamada where id = '$c1';")', abertas $(abertas_vaga "$vaga")" \
+    "exclusão 'ok', job 'ok', conta 'anonimizada', chamada 'cancelada', abertas 0"
+done
+fim_job 17 "a conta anonimizada sem chamada aberta" a
+
+echo "▸ 18. job x suspensão, com a ordem forçada (a: do profissional, b: da casa; a suspensão primeiro, o job depois)"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  for ordem in a b; do
+    case "$ordem" in
+      a) corrida_job 18a $((300 + i)) suspender vencer || continue; alvo=$p1 ;;
+      b) corrida_job 18b $((310 + i)) suspender_casa vencer || continue; alvo=$casa ;;
+    esac
+    impasse "$ordem" "$ro" "$re"
+    obtido="suspensão '$ro', job '$re', conta '$(estado_de "$alvo")', chamada '$(psql -c "select estado from public.chamada where id = '$c1';")', abertas $(abertas_vaga "$vaga")"
+    case "$ordem" in
+      a) confere_job "$obtido" "suspensão 'ok', job 'ok', conta 'suspensa', chamada 'cancelada', abertas 0" ;;
+      b) confere_job "$obtido, vaga '$(estado_vaga "$vaga")'" \
+           "suspensão 'ok', job 'ok', conta 'suspensa', chamada 'encerrada', abertas 0, vaga 'cancelada'" ;;
+    esac
+  done
+done
+fim_job 18 "a conta suspensa sem chamada aberta" a b
 
 exit "$falha"
