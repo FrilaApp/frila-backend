@@ -128,6 +128,11 @@ jobs:
       - name: Corridas do check-in por código
         run: ./scripts/corrida-checkin-codigo.sh
 
+      # Escala de evento (publicar_escala, 0.2.96): dois envios simultâneos com a mesma chave, em duas
+      # conexões, gravam uma escala só e devolvem a mesma resposta. Escala em dobro ou 23505 reprova.
+      - name: Corridas da escala
+        run: ./scripts/corrida-escala.sh
+
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh
 
