@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.91
+  version: 0.2.97
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -84,6 +84,7 @@ info:
     | 422 | `campo_obrigatorio` | Falta campo exigido; `details` diz qual (na vaga, RN02) |
     | 422 | `cursor_invalido` | Cursor de outra lista, vencido ou adulterado (0.2.56) |
     | 409 | `chamada_ja_aberta` | O par estabelecimento e profissional já tem chamada aberta (0.2.55, RN34) |
+    | 409 | `trabalho_ja_aberto` | `chamar_profissional`: a casa já tem vaga direta com chamada aberta para o mesmo trabalho (mesma função, mesmo início e mesmo fim). `details` traz o `vaga_id` dela, e o app repete a chamada com esse `vaga_id` (0.2.95) |
     | 409 | `chamada_indisponivel` | Responder ou cancelar chamada que não está aberta; `details`: `aceita`, `recusada`, `expirada`, `cancelada` ou `encerrada` (0.2.55) |
     | 409 | `recorrencia_nao_confirmada` | 3ª chamada da mesma casa pessoa física ao mesmo profissional em 7 dias sem `confirmo_recorrencia: true` (0.2.55, RN45) |
     | 422 | `profissional_indisponivel` | A chamada fura preferência ou limite do profissional; `details`: `nao_aceita_chamadas`, `antecedencia_insuficiente`, `agenda_cheia`, `pausado`, `par_em_pausa` ou `par_bloqueado_temporariamente` (0.2.55, RN30, RN33, RN34; os três últimos listados na 0.2.67). `pausa_por_recusas` foi listado na 0.2.55, mas o servidor não o devolve |
@@ -93,7 +94,7 @@ info:
     | 409 | `midia_indisponivel` | `pedir_nova_analise_midia` em mídia que não está `recusada` nem `nao_publicada`; `details: estado_invalido` ou `expurgada` (0.2.54) |
     | 422 | `midia_invalida` | Mídia recusada na entrada; `details`: `formato`, `tamanho`, `metadados` (tipo pelo cabeçalho ou EXIF presente), `limite_atingido` ou `tipo_indisponivel` (0.2.54) |
     | 422 | `funcao_nao_marcada` | `definir_servicos` com função que o profissional não marcou no perfil (0.2.53, RN27) |
-    | 422 | `campo_invalido` | O campo veio, e o valor é recusado pela regra; `details` diz qual campo. Distinto de `campo_obrigatorio`, que é ausência — a tela destaca o mesmo campo, com texto diferente |
+    | 422 | `campo_invalido` | O campo veio, e o valor é recusado pela regra; `details` diz qual campo. Distinto de `campo_obrigatorio`, que é ausência — a tela destaca o mesmo campo, com texto diferente. Em `publicar_escala`, `details` é o caminho do campo (0.2.96) |
     | 422 | `intervalo_maximo_excedido` | Intervalo entre `de` e `ate` maior que 30 dias na exportação de turnos (pd7zOS5P) |
     | 422 | `menor_de_idade` | Nascimento com menos de 18 anos (RN20) |
     | 422 | `perfil_incompativel` | A ação é do outro perfil: conta de contratante criando perfil de profissional, ou conta de profissional cadastrando estabelecimento (RN25) |
@@ -107,7 +108,7 @@ info:
     | 422 | `fora_do_raio` | Leitura do código de check-in com distância superior ao raio de validação (50 m provisório). Não conta como tentativa errada (0.2.76) |
     | 422 | `sem_localizacao` | Leitura do código de check-in sem posição do aparelho (`distancia_m` nulo). Não conta como tentativa errada; orienta confirmação manual (0.2.76) |
     | 422 | `codigo_invalido` | Código de check-in recusado (0.2.68): errado, vencido ou de outro turno lido dentro do raio de validação (0.2.76). Um código só, sem `details`. Conta como tentativa errada |
-    | 422 | `a_caminho_fora_da_janela` | Chamada de `avisar_a_caminho` fora da janela permitida (de 3 h antes até 15 min depois do início do turno) (US14, RF12) |
+    | 422 | `a_caminho_fora_da_janela` | Chamada de `avisar_a_caminho` fora da janela permitida (de 3 h antes do início até greatest(inicio_em, confirmado_em) + 15 min) (US14, RF12) |
     | 422 | `registro_no_futuro` | Instante de check-in ou check-out adiante do relógio do servidor. O relógio que vale é o do servidor, nunca o do aparelho |
     | 422 | `reabertura_antes_da_tolerancia` | Reabrir por atraso antes dos 15 minutos (D06) |
     | 422 | `sem_suspensao_ativa` | Contestação sem suspensão em vigor (RF24) |
@@ -115,6 +116,86 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.97, de 16/11/2026.** Proposta de correção simétrica do aviso a caminho para
+    substitutos confirmados após o início. Aguarda decisão do JP sobre aceite tardio.
+    A janela de `avisar_a_caminho` termina em `greatest(inicio_em, confirmado_em) + 15 min`,
+    mantendo a abertura em `inicio_em - 3 h`, autorização e idempotência. `Turno.confirmado_em`
+    passa a informar o instante da confirmação; é opcional para compatibilidade com servidores
+    anteriores. Não altera carência, falta, cancelamento ou política de aceite.
+
+    ---
+
+    **Versão 0.2.96, de 16/11/2026.** Operação nova `POST /rpc/publicar_escala` (RF19, cartão
+    `6mi66YDp`, pedido do Cauê de 16/11/2026): o estabelecimento publica de uma vez um **evento** e
+    as vagas dele (uma por função e horário). Esquemas novos `NovaEscala`, `ItemEscala` e
+    `EscalaPublicada`. Nenhuma operação que já existe muda, e nenhum app chama esta ainda: é para o
+    servidor e para a web, que não existe.
+    - **Tudo ou nada:** o evento, as vagas e as posições entram numa transação só. Qualquer recusa,
+      em qualquer item, desfaz tudo; nunca fica escala pela metade no ar.
+    - **Cada item vira uma vaga comum,** com as mesmas regras de `publicar_vaga` e o mesmo despacho,
+      depois da gravação (B15). A vaga gravada só difere por ter `evento_id`; o item aceita até 100
+      posições (em `publicar_vaga`, até 200).
+    - **Uma chave para a escala inteira:** o reenvio devolve o mesmo resultado e não despacha de novo.
+      Os itens não têm chave própria.
+    - **Limites:** de 1 a 10 vagas e até 100 posições somadas por escala (os tetos do desenho de 03/11;
+      o Cauê pode mudar). Acima disso, publicam-se escalas separadas.
+    - **Fica para outra versão:** ler a escala (painel), cancelar a escala inteira (hoje, cada vaga com
+      `cancelar_vaga`), editar, vaga da escala em outro endereço e o `evento_id` nas leituras de vaga.
+
+    ---
+
+    **Versão 0.2.95, de 16/11/2026.** Uma casa não abre duas vagas diretas para o mesmo trabalho
+    (frila-backend#520, achado da revisão do app na bateria da busca). Adição compatível: um código
+    de erro novo em `chamar_profissional` e uma frase em `publicar_a_partir_da_chamada`. Nenhum campo,
+    operação ou resposta de sucesso muda. Os números 0.2.92 a 0.2.94 foram pulados: os PRs abertos
+    #256 a #258 sobem para 0.2.96 ou mais ao entrar depois desta (a CI recusa versão menor).
+    - **O problema:** pela busca, a 1ª chamada sem `vaga_id` cria a vaga direta, e a 2ª e a 3ª usam
+      o `vaga_id` dela. O servidor não impedia outra chamada sem `vaga_id` para o mesmo trabalho:
+      nascia uma segunda vaga direta, e duas pessoas podiam aceitar o que a casa via como um
+      trabalho só. A `chave` só cobre o reenvio da mesma chamada.
+    - **A decisão: recusar, e não reaproveitar.** A chamada recebe `409 trabalho_ja_aberto`, com o
+      `vaga_id` do trabalho aberto em `details`, e o app a repete com esse `vaga_id`. A 2ª chamada
+      vai sempre com os termos da vaga aberta; se o valor ou os inclusos digitados forem
+      diferentes, o app mostra os da vaga e pede a confirmação da casa antes de repetir. Reaproveitar
+      a vaga em silêncio foi descartado por dois motivos:
+      1. a chamada sem `vaga_id` traz os próprios termos (valor, local, inclusos). Reaproveitar
+         jogaria esses termos fora sem a casa saber, ou mudaria os da vaga com chamada aberta, o
+         que a CD-C04 proíbe. Com a recusa, a diferença aparece na tela;
+      2. reaproveitar mudaria o que o sucesso quer dizer numa operação que já existe (chamada sem
+         `vaga_id` deixaria de criar vaga). A recusa é só um código a mais.
+    - **Mesmo trabalho:** a mesma casa, a mesma função, o mesmo início e o mesmo fim, comparados
+      **até o minuto** (os apps mandam os segundos do relógio). O valor, o local, a região e os
+      inclusos não entram: são termos do trabalho, e não o que o identifica.
+    - **Trabalho aberto:** a vaga direta `publicada`, com início no futuro, posição livre e pelo
+      menos uma chamada `aberta` e ainda no prazo. Sem chamada aberta, ninguém pode aceitar, e a casa pode chamar de
+      novo com outros termos (CD-C04, CD-C10): aí a chamada sem `vaga_id` cria vaga nova, como antes.
+    - **Ordem, corrida e `chave`:** a recusa sai logo depois de `409 chamada_ja_aberta`, antes de
+      qualquer conferência sobre o profissional, e não revela nada dele. Duas chamadas ao mesmo
+      tempo para o mesmo trabalho, a profissionais diferentes: uma cria a vaga, a outra recebe a
+      recusa com o `vaga_id` criado.
+      Reenviar a mesma `chave` continua devolvendo a mesma chamada. O texto completo está em
+      `chamar_profissional`.
+    - **App que não conhece o código:** o iOS 1.2.0 (TestFlight) mostra o erro genérico da tela da
+      chamada ("Não foi possível concluir a chamada. Verifique sua conexão e tente novamente.") e
+      segue. O Android e as telas da busca do iOS tratam código desconhecido como resultado incerto
+      e travam a folha ou a busca até a pessoa fechar a tela. Por isso os dois apps têm de tratar
+      `trabalho_ja_aberto` como recusa definitiva e repetir com o `vaga_id` no mesmo ciclo, antes de
+      a regra chegar ao ambiente deles, e a versão que for à loja tem de conhecer o código. O iOS 1.2.0
+      nunca manda `vaga_id`, então só vê a recusa ao chamar outra pessoa para a mesma função e o
+      mesmo horário (até o minuto) **enquanto** a primeira chamada está aberta. Respondida, expirada
+      ou cancelada a primeira, a chamada passa. O caminho em sequência (um recusou, chama outro) não
+      muda. Limite que fica: quem não mexe no horário manda "agora + 24 h", que muda a cada
+      abertura da folha; nenhuma regra de igualdade pega isso, e quem segura é o app.
+    - **`publicar_a_partir_da_chamada`:** ao converter uma vaga direta, encerra também as outras
+      vagas diretas da casa para o mesmo trabalho (até o minuto) que ainda estão `publicada`, com ou
+      sem chamada aberta, e as chamadas abertas delas, com o mesmo aviso. A vaga `preenchida` não é
+      tocada (é a outra pessoa do mesmo horário, já confirmada). Assim "Publicar para todos" numa vaga antiga, sem chamada aberta, não deixa uma vaga
+      normal despachada ao lado de uma chamada aberta em outra vaga direta (CD-C15).
+    - **Fica para outra versão:** não há campo para a casa dizer que quer duas pessoas da mesma
+      função no mesmo horário por chamada direta (hoje: um trabalho de cada vez, ou vaga normal com
+      duas posições), e uma chamada direta nova ao lado de uma vaga normal aberta para o mesmo
+      horário não é recusada.
 
     **Versão 0.2.91, de 16/11/2026.** Só descrição: a versão `2026-11-16` (Termos de Uso 1.2 e Política
     de Privacidade 1.3, no ar em frilabr.com desde 16/11/2026 às 17:48) entra na lista de versões
@@ -3479,6 +3560,99 @@ paths:
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
+  /rpc/publicar_escala:
+    post:
+      tags: [Vagas]
+      operationId: publicarEscala
+      summary: Publicar uma escala de evento em lote
+      description: |
+        0.2.96 (RF19). Grava um evento e as vagas dele de uma vez. Cada item de `vagas` vira uma vaga
+        comum, com `evento_id` apontando para o evento, uma posição por unidade pedida e o despacho de
+        sempre, depois da gravação, pelo agendador (B15, RN23). Nenhum app chama esta operação ainda.
+
+        **Tudo ou nada.** O evento, as vagas e as posições são gravados numa transação só. Se qualquer
+        item for recusado, nada é gravado, nada é despachado e a resposta é a recusa desse item.
+
+        **Ordem da conferência**, que para na primeira recusa: quem pode (perfil, conta suspensa,
+        membro do estabelecimento); a `chave` (ausente, `campo_obrigatorio`; já usada neste
+        estabelecimento, devolve a escala gravada e para aqui); `evento` e `vagas` presentes; o evento;
+        os limites de quantidade e de soma; e os itens, do primeiro ao último.
+
+        **Quem pode e recusas gerais:** as mesmas de `publicar_vaga`, na mesma ordem. Conta de
+        profissional recebe `422 perfil_incompativel`; quem não é membro do estabelecimento, ou
+        estabelecimento que não existe, `403 sem_permissao`; conta suspensa, `403 sem_permissao` com
+        `details: conta_suspensa`.
+
+        **O evento:** `nome`, `data`, `local`, `regiao_administrativa` e `ponto`. Todas as vagas da escala
+        usam o `local`, a `regiao_administrativa` e o `ponto` do evento. `data` é o dia do evento no
+        horário de Brasília; o servidor não a compara com os horários das vagas, porque montagem na
+        véspera e desmontagem de madrugada são comuns.
+
+        Recusas do evento, campo a campo, na ordem acima: ausente ou em branco, `422 campo_obrigatorio`;
+        valor recusado, `422 campo_invalido`; os dois com `details: evento.<campo>`. `local`,
+        `regiao_administrativa` e `ponto` seguem as regras dos mesmos campos em `publicar_vaga` (a região
+        tem de estar no catálogo ativo). `nome` tem de 3 a 100 caracteres, e `data` só precisa ser uma
+        data válida. `nome` e `local` passam pelo mesmo filtro de termos de `publicar_vaga` (diretriz
+        1.2). Em `evento` e nos itens, valor de tipo errado (texto onde vai número, data ou uuid
+        malformado) é `campo_invalido`, com o caminho do campo.
+
+        **Cada item:** os campos de `NovaVaga`, menos `estabelecimento_id`, `chave` e os de endereço,
+        com as mesmas recusas e as mesmas mensagens de `publicar_vaga`: `campo_obrigatorio`,
+        `campo_invalido`, `horario_invalido`, `selecao_sem_antecedencia` (RN24, por item) e o filtro de
+        termos. A implementação usa a mesma validação, como em `republicar_vaga`. Uma diferença:
+        `posicoes` vai de 1 a 100 por item (em `publicar_vaga`, até 200). Fora disso, `422
+        campo_invalido`, `details: vagas[<i>].posicoes`.
+
+        **Onde está o erro (`details`):**
+        - campo do topo: o nome do campo (`chave`, `evento`, `vagas`). `estabelecimento_id` ausente
+          responde `403 sem_permissao`, como em `publicar_vaga`;
+        - campo do evento: `evento.<campo>`, por exemplo `evento.nome`;
+        - campo de um item: `vagas[<i>].<campo>`, com `i` a partir de 0, por exemplo
+          `vagas[2].valor_centavos`;
+        - recusa de um item que não é de um campo só (`horario_invalido`, `selecao_sem_antecedencia`):
+          `vagas[<i>]`.
+
+        **Limites:**
+        - de 1 a 10 itens em `vagas`. Lista vazia ou com mais de 10: `422 campo_invalido`,
+          `details: vagas`;
+        - até 100 posições somadas nos itens (a soma conta só os `posicoes` inteiros de 1 a 100; o
+          item com `posicoes` ausente ou fora disso é recusado depois, no próprio item). Acima:
+          `422 campo_invalido`, `details: posicoes`.
+
+        O limite geral de escrita por minuto vale, como em toda operação.
+
+        **`chave`:** uma só para a escala inteira, gerada pelo cliente uma vez por publicação. Reenviar
+        com a mesma `chave` para o mesmo estabelecimento devolve a mesma `EscalaPublicada`, sem
+        conferir o corpo de novo e sem despachar de novo. Dois envios simultâneos com a mesma `chave`:
+        um grava, o outro espera e devolve o mesmo resultado. Uma escala recusada não grava nada,
+        então a `chave` não fica gasta. Os itens não têm chave própria.
+
+        **Depois de publicada:** cada vaga da escala é uma vaga como outra qualquer. Candidatura,
+        escolha, cancelamento (`cancelar_vaga`) e republicação seguem as regras de cada uma;
+        `republicar_vaga` e `republicar_posicoes_restantes` não copiam o `evento_id`. O profissional
+        que serve a mais de uma função pode ser avisado de mais de uma vaga do evento, dentro do teto
+        de avisos (RN23), e a RN21 o impede de ficar com dois turnos que se cruzam.
+      x-requisitos: [RF19, RF04, RF09, RN02, RN18, RN21, RN23, RN24]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NovaEscala'
+      responses:
+        '200':
+          description: Escala publicada, ou a mesma de um reenvio com a mesma `chave`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EscalaPublicada'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
   /rpc/republicar_posicoes_restantes:
     post:
       tags: [Vagas]
@@ -4248,6 +4422,81 @@ paths:
         abertas e 20 por dia civil, ou 3 abertas e 5 em 7 dias sem turno cumprido
         (`422 limite_de_chamadas`). Cancelar não devolve cota de envio.
 
+        **Um trabalho, uma vaga direta (0.2.95).** A casa não abre uma segunda vaga direta para um
+        trabalho que já tem chamada aberta. O servidor recusa, em vez de reaproveitar a vaga, para
+        os termos nunca mudarem sem a casa ver (CD-C04).
+        - **Mesmo trabalho:** o mesmo `estabelecimento_id`, o mesmo `funcao_id`, o mesmo `inicio_em`
+          e o mesmo `fim_em`, comparados **truncados ao minuto** (os apps mandam os segundos do
+          relógio; o corte é só no servidor e não muda o que se grava). Com `vaga_id` de vaga direta da casa, valem
+          a função e o horário dessa vaga. O valor, o local, o ponto, a região
+          (`regiao_administrativa` e `regiao_id`), os inclusos, o responsável e o recado **não**
+          entram, por três motivos:
+          - são os termos do trabalho, e não o que o identifica. Se o valor entrasse, bastaria mudar
+            o valor para abrir a segunda vaga, e duas pessoas aceitariam o mesmo trabalho;
+          - `local` é texto livre e `ponto` é coordenada: uma letra ou um metro de diferença
+            passaria por outro trabalho;
+          - `regiao_id` é opcional, e só o caminho da busca o manda.
+        - **Trabalho aberto:** a vaga da casa com `origem = chamada_direta`, `publicada`, com início
+          no futuro, com a posição livre e com pelo menos uma chamada `aberta` e ainda no prazo
+          (`agora < expira_em`, pelo relógio do servidor, mesmo antes de a rotina de expiração
+          arrumar o estado). Vaga preenchida,
+          cancelada ou encerrada não conta. Vaga direta sem chamada aberta (todas recusadas,
+          expiradas ou canceladas, ou posição reaberta) também não: ninguém pode aceitá-la, e a
+          casa pode chamar de novo com outros termos (CD-C04, CD-C10). Nesse caso a chamada sem
+          `vaga_id` cria vaga nova, como antes. Se houver mais de um trabalho aberto igual (vagas
+          criadas antes desta versão), vale o da vaga criada primeiro.
+        - **A recusa:** havendo trabalho aberto, a chamada só entra nele. A chamada sem `vaga_id`
+          para o mesmo trabalho, ou com o `vaga_id` de outra vaga direta do mesmo trabalho, recebe
+          `409 trabalho_ja_aberto`, com o `vaga_id` do trabalho aberto em `details` (o uuid, em
+          texto). Nada é criado e nenhuma cota é gasta. Com `vaga_id` de vaga direta já preenchida
+          ou encerrada e outra vaga do mesmo trabalho aberta, vale `trabalho_ja_aberto` (ela vem
+          antes de `409 vaga_encerrada`).
+        - **O que o app faz:** repete a chamada com esse `vaga_id`, sem os campos do trabalho; pode
+          usar a mesma `chave`, que a recusa não consome. **A 2ª chamada vai sempre com os termos da
+          vaga que já existe** (valor, inclusos, local e quem recebe), e os do corpo recusado são
+          descartados: é o que o profissional vê e aceita. Por isso, quando o valor ou os inclusos
+          que a pessoa digitou forem diferentes dos da vaga, o app **não repete sozinho**: mostra os
+          termos da vaga (por exemplo, "Esta chamada vai com os termos da vaga já aberta: R$ …, …";
+          o texto da tela é do design) e só repete com a confirmação da casa. Iguais, pode repetir direto. A casa os lê pelas próprias chamadas, e não por `detalhe_vaga`
+          (que é leitura de profissional): `minhas_chamadas` com `estado=aberta` traz, no item com
+          esse `vaga_id`, a função, o início, o fim e o valor, e `detalhe_chamada` traz os inclusos e
+          a região. Em geral o item está na primeira página; o app segue o cursor e, se não achar o
+          item, **não repete sozinho**. `details` continua sendo só o `vaga_id` (texto),
+          porque `Erro.details` é `string`. Para mudar os termos, a casa cancela as
+          chamadas abertas do trabalho (`cancelar_chamada`) e chama de novo.
+        - **Ordem:** a recusa sai depois das recusas de permissão (`401`, `403`), do bloqueio
+          (`404`), de `termos_pendentes` e de `409 chamada_ja_aberta`. Sai antes de qualquer
+          conferência sobre o profissional (as recusas genéricas, as pausas, o prazo e a agenda) e
+          dos limites da casa. Entre as validações de campo, além dos três obrigatórios do topo
+          (`chave`, `profissional_id` e `estabelecimento_id`), só a do `regiao_id`
+          (`422 campo_invalido`) vem antes dela; as dos outros campos vêm depois. Só é conferida quando a função
+          e o horário são conhecidos: `funcao_id`, `inicio_em` e `fim_em` no corpo, ou `vaga_id` de
+          vaga direta da casa. Sem isso, seguem as recusas de sempre (`422 campo_obrigatorio`,
+          `404`). Ela depende só das vagas e das chamadas da própria casa: é a mesma para qualquer
+          profissional que passe pelo bloqueio, e não revela nada dele.
+        - **Corrida:** a conferência e a criação da vaga acontecem sob a mesma trava, por casa e
+          por trabalho (o servidor pode usar a trava da casa inteira, mais larga, que já serializa
+          as chamadas pelos limites da RN34). Duas chamadas sem `vaga_id` ao mesmo tempo para o
+          mesmo trabalho, com chaves diferentes e a profissionais diferentes (ao mesmo profissional,
+          a segunda recebe `409 chamada_ja_aberta`, que vem antes): uma cria a vaga e a chamada; a outra espera e
+          recebe `409 trabalho_ja_aberto` com o `vaga_id` que a primeira criou. Nunca nascem duas
+          vagas, e nenhuma das duas recebe erro de concorrência. Se a primeira for recusada por
+          outra regra, não há trabalho aberto, e a segunda segue normalmente.
+        - **`chave`:** é conferida antes. Reenviar a chamada que criou o trabalho devolve a mesma
+          chamada, e nunca `trabalho_ja_aberto`. Vale também para dois envios simultâneos da mesma
+          `chave`: um cria, e o outro devolve a mesma chamada.
+        - **Duas pessoas no mesmo horário:** a vaga direta tem uma posição. A casa que precisa de
+          duas pessoas da mesma função no mesmo horário preenche um trabalho de cada vez (com o
+          primeiro preenchido, a chamada seguinte sem `vaga_id` cria outra vaga) ou publica uma
+          vaga normal com duas posições (`publicar_vaga`).
+        - **App que não conhece o código:** o iOS 1.2.0 mostra o texto genérico da tela e segue. O
+          Android e as telas da busca do iOS tratam código desconhecido como resultado incerto e
+          travam a folha ou a busca: por isso os dois apps têm de tratar `trabalho_ja_aberto` como
+          recusa definitiva e repetir com o `vaga_id`, antes de a regra chegar ao ambiente deles. O iOS
+          1.2.0 nunca manda `vaga_id`: nele, a recusa só aparece ao chamar outra pessoa para a mesma
+          função e o mesmo horário (até o minuto) enquanto a primeira chamada está aberta, e some
+          quando ela é respondida, expira ou é cancelada.
+
         **Recorrência (J7, RN45):** se o estabelecimento é pessoa física (CPF) e esta seria a 3ª
         chamada ao mesmo profissional em 7 dias corridos, sem `confirmo_recorrencia: true` a resposta é
         `409 recorrencia_nao_confirmada`; o app mostra o aviso e reenvia com a confirmação. Nunca vale
@@ -4290,7 +4539,10 @@ paths:
                     Para chamar mais alguém para um trabalho já criado. Exclui os campos abaixo. Tem
                     de ser vaga do mesmo `estabelecimento_id`, com `origem = chamada_direta`, uma
                     posição e ainda aberta; vaga de outra casa é `404`, e vaga normal, preenchida ou
-                    encerrada é `409 vaga_encerrada`.
+                    encerrada é `409 vaga_encerrada`. Se outra vaga direta da casa, para o mesmo
+                    trabalho, tem chamada aberta, é `409 trabalho_ja_aberto` com o `vaga_id` dela
+                    em `details` (0.2.95). Sem `vaga_id`, a mesma recusa vale quando o trabalho do
+                    corpo já está aberto.
                   $ref: '#/components/schemas/Uuid'
                 funcao_id:
                   $ref: '#/components/schemas/Uuid'
@@ -4570,6 +4822,14 @@ paths:
         qualquer vaga, com os mesmos termos. A direta e as chamadas abertas dela vão a `encerrada`,
         com aviso aos chamados. Nunca há duas posições contratáveis para o mesmo trabalho.
 
+        0.2.95. Na mesma transação, e sob a mesma trava de `chamar_profissional`, as **outras** vagas
+        diretas da casa para o mesmo trabalho (mesma função, mesmo início e mesmo fim, até o minuto,
+        como em `chamar_profissional`) **que ainda estão `publicada`**, com ou sem chamada aberta, vão a
+        `encerrada`, e as chamadas abertas delas também, com o mesmo aviso. Vaga `preenchida` não é
+        tocada: é a outra pessoa do mesmo horário, já confirmada. Sem isso, "Publicar para todos" numa
+        vaga direta antiga, sem chamada aberta, deixaria uma vaga normal despachada ao lado de uma
+        chamada aberta noutra vaga direta do mesmo trabalho (CD-C15).
+
         Vale antes do início e, para posição reaberta por atraso, até `fim_em − 1 h`, a mesma janela de
         `reabrir_por_atraso`. Fora disso, ou com a direta já preenchida sem posição reaberta, ou
         cancelada, é `409 vaga_encerrada`. `modo` opcional, padrão `urgencia`; `selecao` segue a RN24
@@ -4820,7 +5080,8 @@ paths:
         do turno (`painel_estabelecimento`).
 
         Só o profissional confirmado no turno pode chamar (`403 sem_permissao`). A janela permitida
-        vai de 3 horas antes do início previsto até 15 minutos depois do início; fora dessa janela,
+        vai de 3 horas antes do início previsto até `greatest(inicio_em, confirmado_em) + 15 min`,
+        com ambas as bordas inclusivas; confirmação ausente usa o início. Fora dessa janela,
         a chamada é recusada com `422 a_caminho_fora_da_janela`.
 
         Idempotente: chamar uma segunda vez não altera o instante já gravado e devolve o mesmo
@@ -6517,6 +6778,13 @@ components:
                 message: codigo_bloqueado
                 details: temporario
                 hint: null
+            trabalho_ja_aberto:
+              summary: A casa já tem vaga direta com chamada aberta para o mesmo trabalho (0.2.95)
+              value:
+                code: trabalho_ja_aberto
+                message: trabalho_ja_aberto
+                details: 7c1f0c1e-5b0a-4a53-9d1e-2f6c8f0a4b11
+                hint: null
             verificacao_indisponivel:
               value:
                 code: verificacao_indisponivel
@@ -6881,7 +7149,9 @@ components:
           description: Texto para log. Nunca exibir na tela.
         details:
           type: [string, 'null']
-          description: 'Motivo complementar estável, quando houver (por exemplo, `turno_sobreposto`).'
+          description: |
+            Motivo complementar estável, quando houver (por exemplo, `turno_sobreposto`). Em
+            `409 trabalho_ja_aberto` (0.2.95), é o `vaga_id` do trabalho aberto: um uuid em texto.
         hint:
           type: [string, 'null']
 
@@ -7902,6 +8172,109 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Uuid'
+    NovaEscala:
+      type: object
+      required: [estabelecimento_id, evento, vagas, chave]
+      description: Corpo de `publicar_escala` (0.2.96, RF19).
+      properties:
+        estabelecimento_id:
+          $ref: '#/components/schemas/Uuid'
+        evento:
+          type: object
+          required: [nome, data, local, regiao_administrativa, ponto]
+          properties:
+            nome:
+              type: string
+              minLength: 3
+              maxLength: 100
+              example: Formatura de Direito
+            data:
+              type: string
+              format: date
+              description: Dia do evento, no horário de Brasília.
+              example: '2026-12-12'
+            local:
+              type: string
+              description: Endereço. Vale para todas as vagas da escala.
+            regiao_administrativa:
+              type: string
+              description: Região Administrativa do Distrito Federal. Vale para todas as vagas da escala.
+              example: Plano Piloto
+            ponto:
+              $ref: '#/components/schemas/Coordenada'
+        vagas:
+          type: array
+          minItems: 1
+          maxItems: 10
+          description: Uma vaga por item, na ordem em que a resposta as devolve. Até 100 posições somadas.
+          items:
+            $ref: '#/components/schemas/ItemEscala'
+        chave:
+          $ref: '#/components/schemas/ChaveDeIdempotencia'
+    ItemEscala:
+      type: object
+      required:
+        - funcao_id
+        - inicio_em
+        - fim_em
+        - valor_centavos
+        - posicoes
+        - inclui_refeicao
+        - inclui_transporte
+        - exige_material_proprio
+        - responsavel_local
+        - modo
+      description: |
+        Uma vaga da escala. Os campos e as regras são os de `NovaVaga`, menos `estabelecimento_id`,
+        `chave`, `local`, `regiao_administrativa` e `ponto`, que vêm da escala.
+      properties:
+        funcao_id:
+          $ref: '#/components/schemas/Uuid'
+        inicio_em:
+          $ref: '#/components/schemas/Instante'
+        fim_em:
+          $ref: '#/components/schemas/Instante'
+        valor_centavos:
+          $ref: '#/components/schemas/Centavos'
+        posicoes:
+          type: integer
+          minimum: 1
+          maximum: 100
+        inclui_refeicao:
+          type: boolean
+        inclui_transporte:
+          type: boolean
+        exige_material_proprio:
+          type: boolean
+          description: Sim = o profissional leva o material.
+        responsavel_local:
+          type: string
+          description: Quem recebe o profissional no local.
+        traje:
+          type: [string, 'null']
+        participa_rateio:
+          type: [boolean, 'null']
+          description: Participa do rateio dos 10% da taxa de serviço (Lei 13.419/2017).
+        observacoes:
+          type: [string, 'null']
+        modo:
+          $ref: '#/components/schemas/ModoPreenchimento'
+        alerta_antecedencia_min:
+          type: integer
+          minimum: 1
+          default: 180
+          description: Como em `NovaVaga`.
+    EscalaPublicada:
+      type: object
+      required: [evento_id, vagas]
+      properties:
+        evento_id:
+          $ref: '#/components/schemas/Uuid'
+        vagas:
+          type: array
+          description: Uma por item de `NovaEscala.vagas`, na mesma ordem.
+          items:
+            $ref: '#/components/schemas/VagaPublicada'
     Inclusos:
       type: object
       required: [inclui_refeicao, inclui_transporte, exige_material_proprio]
@@ -8307,6 +8680,14 @@ components:
             servidor atual ainda manda o fim previsto do turno mais 7 dias; o servidor que parar de
             entregar o contato omite o campo ou manda `null`. O cliente trata ausente e nulo do
             mesmo jeito: não há prazo a mostrar nem botão de contato a oferecer.
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
+        confirmado_em:
+          description: |
+            Instante da confirmação da posição deste turno. Usado no limite superior do aviso
+            a caminho: greatest(vaga.inicio_em, confirmado_em) + 15 min. Opcional para servidores
+            antigos; ausente ou nulo preserva o limite baseado no início. Não altera regra de falta.
           oneOf:
             - $ref: '#/components/schemas/Instante'
             - type: 'null'
