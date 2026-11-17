@@ -11,6 +11,8 @@
 --   E  RLS e grant: anon não lê public.vaga direto
 -- O vermelho (sem o filtro de demonstração e sem o de vaga direta, este arquivo falha) é provado no
 -- roteiro do despacho B-037, trocando o corpo da função e rodando este arquivo.
+-- Desde a 0.2.101 a casa 21 é de CPF (11 dígitos): o nome dela não sai, e o 'nada da casa' segue valendo.
+-- O nome de casa com CNPJ é o 881.
 -- Só dados sintéticos.
 begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
@@ -67,7 +69,7 @@ insert into public.profissional (id, usuario_id, ponto_base)
 values (pg_temp.id(13), pg_temp.id(3), 'POINT(-47.8820 -15.7940)'::extensions.geography),
        (pg_temp.id(14), pg_temp.id(4), 'POINT(-47.8820 -15.7940)'::extensions.geography);
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto, regiao_administrativa)
-values (pg_temp.id(21), 'CasaSigilosa879', '94827987000199', 'food_service', 'EnderecoSigiloso879',
+values (pg_temp.id(21), 'CasaSigilosa879', '94827987001', 'food_service', 'EnderecoSigiloso879',
         'POINT(-47.88 -15.79)'::extensions.geography, 'Plano Piloto'),
        (pg_temp.id(22), 'CasaDemo879', '94827987000188', 'food_service', 'EnderecoDemo879',
         'POINT(-47.88 -15.79)'::extensions.geography, 'Plano Piloto');
@@ -120,7 +122,7 @@ create temp table r as select pg_temp.vp(null, pg_temp.id(31)::text) as anon,
                               pg_temp.vp(pg_temp.id(1), pg_temp.id(31)::text) as casa;
 
 select is((select array_agg(k order by k) from r, jsonb_object_keys(r.anon) k),
-          array['estado','fim_em','funcao','id','inclusos','inicio_em','modo','posicoes_abertas',
+          array['estabelecimento_nome','estado','fim_em','funcao','id','inclusos','inicio_em','modo','posicoes_abertas',
                 'publicado_em','regiao_administrativa','valor_centavos'],
           'B: anon recebe exatamente as chaves de VagaPublica');
 select is((select array_agg(k order by k) from r, jsonb_object_keys(r.anon->'funcao') k),

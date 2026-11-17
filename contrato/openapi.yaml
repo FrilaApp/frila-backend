@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.100
+  version: 0.2.101
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -116,6 +116,20 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.101, de 17/11/2026.** `VagaPublica` ganha `estabelecimento_nome`: a página pública da
+    vaga mostra o nome do estabelecimento (decisão do Cauê no painel, 17/11/2026: função, valor, data e
+    horário, região e o nome da casa; endereço exato e contato só para quem foi aceito). Campo novo
+    na resposta; nenhum outro muda.
+    - **Só de casa com CNPJ.** Quando a casa se cadastrou com CPF (pessoa física), o nome que ela deu
+      ao local pode ser o nome de alguém ("Casa da Maria"), e ele não vai à internet aberta: vem
+      `null`. Decisão do jurídico do time (17/11/2026), dentro da ordem do Cauê; base: necessidade
+      (LGPD, art. 6º, III) e o cuidado do art. 9º, I e V, para dado de pessoa física publicado.
+    - **O nome é o que a casa cadastrou** (`Estabelecimento.nome`), o mesmo que o profissional já vê
+      no app. Não é a razão social nem o documento, que nunca saem.
+    - **Só enquanto a vaga está aberta.** Com a vaga encerrada, preenchida, cancelada ou já começada, o
+      nome vem `null`. O MEI tem CNPJ, mas o nome pode ser o dele; quando a conta é excluída, as
+      vagas são canceladas e o nome deixa de sair (LGPD, art. 16).
 
     **Versão 0.2.100, de 16/11/2026.** Operação nova `GET /rpc/vaga_publica` e esquema `VagaPublica`
     (web do Frila, pedido do Cauê 2026-11-16-31, item B5 do mapa de paridade
@@ -3988,9 +4002,11 @@ paths:
         `Authorization`; um token vencido recebe `401` antes da função. Para o detalhe completo
         (casa, endereço, quem recebe), a pessoa entra e lê por `detalhe_vaga`.
 
-        **Só os campos de `VagaPublica`.** Nunca saem o estabelecimento (nome, foto, reputação ou
-        documento), o `local`, o `ponto`, o `responsavel_local`, o `traje`, as `observacoes`, quem
-        publicou, nem dado de candidato ou de profissional confirmado. A região sai só pelo nome do
+        **Só os campos de `VagaPublica`.** Do estabelecimento, sai só o nome que ele cadastrou, e só
+        quando a casa tem CNPJ e a vaga está aberta (0.2.101); com CPF, ou com a vaga encerrada,
+        preenchida, cancelada ou já começada, `estabelecimento_nome` vem `null`. Nunca saem a foto,
+        a reputação ou o documento da casa, o `local`, o `ponto`, o `responsavel_local`, o `traje`, as
+        `observacoes`, quem publicou, nem dado de candidato ou de profissional confirmado. A região sai só pelo nome do
         catálogo; sem casamento, vem `null`.
 
         **`404 nao_encontrado`, indistinguível de vaga inexistente,** para:
@@ -4003,8 +4019,8 @@ paths:
         cancelada ou já passada: o link antigo diz que a vaga não está mais aberta, em vez de parecer
         quebrado. `posicoes_abertas` segue a regra de `detalhe_vaga`. A web trata como encerrada a vaga
         com `estado` diferente de `publicada`, ou com `posicoes_abertas = 0`, ou já começada: sem dados
-        estruturados de emprego e fora do índice. Sem a casa, quem anuncia nos dados estruturados é o
-        Frila (decisão da web).
+        estruturados de emprego e fora do índice. Com `estabelecimento_nome` nulo, quem anuncia nos dados
+        estruturados é o Frila (decisão da web).
 
         **Bloqueio (RF26):** sem sessão, o bloqueio não se aplica, porque não há quem bloquear. A
         conta bloqueada que entra continua sem ver a vaga em `detalhe_vaga`; aqui ela vê só o que
@@ -8350,14 +8366,24 @@ components:
     VagaPublica:
       type: object
       description: |
-        0.2.100. O que `vaga_publica` mostra a qualquer pessoa. Sem estabelecimento, sem endereço, sem
-        ponto e sem texto livre (ver a operação).
-      required: [id, funcao, regiao_administrativa, inicio_em, fim_em, valor_centavos, publicado_em, inclusos, modo, posicoes_abertas, estado]
+        0.2.100. O que `vaga_publica` mostra a qualquer pessoa. Sem endereço, sem ponto e sem texto
+        livre (ver a operação). Desde a 0.2.101, com o nome do estabelecimento de casa com CNPJ.
+      required: [id, funcao, estabelecimento_nome, regiao_administrativa, inicio_em, fim_em, valor_centavos, publicado_em, inclusos, modo, posicoes_abertas, estado]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
         funcao:
           $ref: '#/components/schemas/Funcao'
+        estabelecimento_nome:
+          type: [string, 'null']
+          description: |
+            0.2.101. O nome que o estabelecimento cadastrou (`Estabelecimento.nome`), só quando a casa
+            tem CNPJ. Casa com CPF (pessoa física): `null`, porque o nome pode ser o de uma pessoa.
+            `null` também quando a vaga não está aberta (`estado` diferente de `publicada`, ou já
+            começada): a página da vaga encerrada não precisa da casa (LGPD, art. 6º, III, e art. 16).
+            O servidor decide pelo documento: só `length(documento) = 14` (CNPJ) mostra o nome; o resto
+            vem `null` (falha fechada).
+          example: Bar do Zé
         regiao_administrativa:
           type: [string, 'null']
           description: |
