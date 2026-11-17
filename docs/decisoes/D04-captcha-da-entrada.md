@@ -13,3 +13,15 @@ limite de e-mails por hora (`rate_limit_email_sent`) sair de 30. Os dois esperad
 (`AUTH_CAPTCHA_ESPERADO=turnstile`, `AUTH_LIMITE_EMAILS_HORA`) no dia em que esta decisão mudar.
 Medido no `frila-dev` em 16/11/2026 22h4x: `rate_limit_email_sent = 30`, captcha desligado,
 `rate_limit_otp = 30`, `rate_limit_verify = 30`.
+
+## O Auth do Prod em 16/11/2026
+
+Job `prod` da Conferência de Auth remoto, run
+[43997238286](https://github.com/FrilaApp/frila-backend/actions/runs/43997238286), 22h45 (Brasília), nesta
+branch, aprovado no ambiente frila-prod: **configuração válida**. `site_url` sem localhost; código de 6
+dígitos; os dois modelos com `{{ .Token }}` e sem `ConfirmationURL`; `rate_limit_email_sent = 30` por hora;
+captcha desligado; `rate_limit_otp = 30` e `rate_limit_verify = 30`.
+
+**SMTP do Prod:** SMTP próprio ligado (`smtp_host` preenchido), porta 465, remetente no domínio
+`frilabr.com` (os três pelo mesmo run). O provedor é o Resend (auditoria só de leitura do time do JP,
+comentário do cartão `ohSt4dg2` de 16/11/2026 14:35; o run não imprime o host).
