@@ -2078,6 +2078,37 @@ select pg_temp.guarda('promete:aceitarTermos:422', pg_temp.observado('cc000000-0
 select pg_temp.guarda('promete:aceitarTermos:401', pg_temp.observado(null,
   $$ select public.aceitar_termos('2026-11-13') $$));
 
+-- convidar_membro e aceitar_convite_membro (0.2.73, B-052): chamadas pelos NOMES do contrato
+-- (estabelecimento_id, email, papel; token), como o PostgREST faz. A conta ...0099 é contratante
+-- ativa e, aqui, ainda não é membro da casa; por isso fica por último: aceitar o convite a faz membro.
+create temp table convite_colhido as
+  select pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'Novo.Membro@frila.test', papel => 'operador') $$,
+    (select casa_id from ids))) as r;
+select pg_temp.guarda('convidarMembro', (select r from convite_colhido));
+
+select pg_temp.guarda('promete:convidarMembro:401', pg_temp.observado(null, format(
+  $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'x@frila.test', papel => 'operador') $$,
+  (select casa_id from ids))));
+select pg_temp.guarda('promete:convidarMembro:403', pg_temp.observado('ee000000-0000-4000-8000-000000000099', format(
+  $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'x@frila.test', papel => 'operador') $$,
+  (select casa_id from ids))));
+select pg_temp.guarda('promete:convidarMembro:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'sem-arroba', papel => 'operador') $$,
+  (select casa_id from ids))));
+select pg_temp.guarda('promete:convidarMembro:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'x@frila.test', papel => null) $$,
+  (select casa_id from ids))));
+
+select pg_temp.guarda('promete:aceitarConviteMembro:401', pg_temp.observado(null,
+  $$ select public.aceitar_convite_membro(token => 'qualquer') $$));
+select pg_temp.guarda('promete:aceitarConviteMembro:422', pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+  $$ select public.aceitar_convite_membro(token => %L) $$, (select r->>'token' from convite_colhido))));
+select pg_temp.guarda('promete:aceitarConviteMembro:422', pg_temp.observado('ee000000-0000-4000-8000-000000000099',
+  $$ select public.aceitar_convite_membro(token => 'token-que-nao-existe') $$));
+select pg_temp.guarda('aceitarConviteMembro', pg_temp.como('ee000000-0000-4000-8000-000000000099', format(
+  $$ select public.aceitar_convite_membro(token => %L) $$, (select r->>'token' from convite_colhido))));
+
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o
 \pset format unaligned
