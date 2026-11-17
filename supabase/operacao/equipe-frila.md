@@ -271,8 +271,10 @@ Equipe Frila
 
 Passo a passo do atendimento: [`canal-do-titular.md`](canal-do-titular.md).
 
+Responda na mesma conversa do pedido (o assunto começa com "Re:" e repete o do pedido). **Como enviar a resposta:** só pelo Gmail na web da caixa do `suporte@` (o "Enviar como" usa o Resend) ou direto pelo SMTP do Resend. Nunca por script no SMTP do próprio Gmail: a mensagem sai pelos servidores do Google, sem a assinatura do frilabr.com, e chega com `dmarc=fail` (medido em 17/11/2026; com o DMARC em quarantine, vai para o spam).
+
 ```
-Assunto: [Frila] Resposta ao seu pedido sobre dados pessoais (protocolo [PROTOCOLO])
+Assunto: Re: [ASSUNTO DO PEDIDO] · protocolo [PROTOCOLO]
 
 Olá, [primeiro nome].
 
