@@ -28,7 +28,7 @@ set local frila.agendador_secret = 'segredo-de-teste';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(282);
+select plan(286);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -36,8 +36,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  77::bigint,
-  'censo de RPCs: schema public contem exatamente 77 RPCs expostas (com buscar_profissionais, 0.2.88, aceitar_termos, 0.2.90, publicar_escala, 0.2.96, e vaga_publica, 0.2.100)'
+  78::bigint,
+  'censo de RPCs: schema public contem exatamente 78 RPCs expostas (com buscar_profissionais, 0.2.88, aceitar_termos, 0.2.90, publicar_escala, 0.2.96, vaga_publica, 0.2.100, e membros_do_estabelecimento, 0.2.103)'
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -593,6 +593,12 @@ select is(pg_temp.testar_autorizacao('anon', null, 'select public.equipe_de_conf
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.equipe_de_confianca(''78600000-0000-4000-8000-000000000010''::uuid)'), '403_SEM_PERMISSAO', 'equipe_de_confianca [profissional]: profissional toma 403 sem_permissao na equipe do est');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.equipe_de_confianca(''78600000-0000-4000-8000-000000000010''::uuid)'), '403_SEM_PERMISSAO', 'equipe_de_confianca [outro contratante]: outro contratante toma 403 sem_permissao na equipe alheia');
 select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.equipe_de_confianca(''78600000-0000-4000-8000-000000000010''::uuid)'), 'AUTORIZADO', 'equipe_de_confianca [dono]: dono consulta lista de profissionais da sua equipe');
+
+-- --- membros_do_estabelecimento (0.2.103) ---
+select is(pg_temp.testar_autorizacao('anon', null, 'select public.membros_do_estabelecimento(''78600000-0000-4000-8000-000000000010''::uuid)'), '42501_SEM_EXECUTE', 'membros_do_estabelecimento [anon]: anon nao possui EXECUTE em membros_do_estabelecimento');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000003', 'select public.membros_do_estabelecimento(''78600000-0000-4000-8000-000000000010''::uuid)'), '403_SEM_PERMISSAO', 'membros_do_estabelecimento [profissional]: profissional toma 403 sem_permissao na lista de membros');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000002', 'select public.membros_do_estabelecimento(''78600000-0000-4000-8000-000000000010''::uuid)'), '403_SEM_PERMISSAO', 'membros_do_estabelecimento [outro contratante]: administrador de outra casa toma 403 sem_permissao');
+select is(pg_temp.testar_autorizacao('authenticated', '78600000-0000-4000-8000-000000000001', 'select public.membros_do_estabelecimento(''78600000-0000-4000-8000-000000000010''::uuid)'), 'AUTORIZADO', 'membros_do_estabelecimento [dono]: o administrador da casa lista os membros');
 
 -- --- confirmar_checkin_manual ---
 select is(pg_temp.testar_autorizacao('anon', null, 'select public.confirmar_checkin_manual(''78600000-0000-4000-8000-000000000301''::uuid)'), '42501_SEM_EXECUTE', 'confirmar_checkin_manual [anon]: anon nao possui EXECUTE em confirmar_checkin_manual');
