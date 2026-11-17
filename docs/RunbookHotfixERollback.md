@@ -96,22 +96,23 @@ visível em PR).
    `./scripts/lint-conhecido.sh`, `./scripts/advisor-conhecido.sh`. Se tocou Edge Function,
    `deno test --allow-all --no-check`.
 6. **PR para `develop`** (`gh pr create --base develop`), com o que foi e o que não foi
-   executado. A CI leva de 1 a 2 h (medido em 11/11/2026); um hotfix real mede o prazo contando com isso,
-   ou com a exceção de emergência registrada no PR.
+   executado. A CI leva cerca de 24 min (medido em 16/11/2026 em 37 runs completos e verdes de 14 a 16/11: mínimo 11,9 min, mediana 24,4, p90 27,4, máximo 103,9;
+   run de referência `43703361286`, 23 min 26 s, com "Migrações e pgTAP" como o job mais longo). A fila do GitHub pode levar o tempo bem acima disso
+   (o máximo medido passa de 1 h 40), então um hotfix real conta com a mediana e reserva folga, ou usa a exceção de emergência registrada no PR.
 7. **Aprovação e merge** por outro sócio (seção 1).
 8. **Acompanhar o `frila-dev`.** O merge dispara a entrega para o `frila-dev`
    (`entrega.yml:56`) e depois o `desvio-dev` (`:84-119`). Confira o efeito do hotfix lá
    antes de seguir para Prod.
 9. **Checar a janela de novo** e só então criar a tag no commit já mesclado na `develop`:
    `git tag backend-vX.Y.Z <sha> && git push origin backend-vX.Y.Z`. O padrão do nome é
-   `backend-v*` (`entrega.yml:20`). Nenhuma tag existe ainda (medido em 28/10), e o esquema
-   de numeração é proposta, a confirmar.
+   `backend-v*` (`entrega.yml:20`). As tags existentes (medido em 16/11/2026) são `backend-v1.1.0` e
+   `backend-v1.1.1`; o esquema de numeração do próximo hotfix segue sendo proposta, a confirmar.
 10. **Aprovar o job de Prod** se o Environment tiver revisor (`entrega.yml:126-127`).
     Acompanhe os passos da seção 2 até o `desvio.sh` terminar verde.
 11. **Registrar** no PR: SHA, tag, hora, resultado do `desvio.sh`.
 
 Smoke depois da publicação: `GET` na função `saude` do Prod só lê no caminho de sucesso
-(`select 1`, `supabase/functions/saude/index.ts`); no de falha, grava uma linha em
+(`select 1` e, desde `25f475a` (#514), a idade dos jobs `reprocessar_despacho` e `verificar_saude` em `cron.job_run_details`; `supabase/functions/saude/index.ts`); no de falha, grava uma linha em
 `registrar_falha_execucao` (`mantem-prod-vivo.yml:9`). Não rode `ciclo-completo.sh` nem `demonstracao.sh`
 contra o Prod, porque gravam dados; a decisão de gravar em produção é do `[DONO]`.
 
@@ -135,7 +136,8 @@ na CI: `scripts/migracoes-imutaveis.sh:12` lista os arquivos modificados ou remo
    mantendo `set search_path = ''` e os `grant`/`revoke`.
 4. **Dado não volta.** `drop column` apaga o conteúdo. Mudança destrutiva em duas fases
    (acrescenta e escreve nos dois; só depois remove), por `AGENTS.md`, "Banco e migrações". Backup
-   do Prod: ver seção 7, ainda não configurado.
+   do Prod: existe backup lógico diário (`.github/workflows/backup-prod.yml`); o que ele garante e o que
+   não garante está na seção 7. Sem restaurar esse backup, `drop column` em Prod não tem volta.
 5. **pgTAP** que prova o estado revertido e as regras de negócio intactas;
    `supabase db reset` e `supabase test db` verdes.
 6. **PR → `develop` → `frila-dev` → tag → `frila-prod`**, o mesmo caminho da seção 3, sob a
@@ -196,8 +198,11 @@ janela, reprova antes de qualquer migração ou deploy.
 
 Medido em 28/10/2026 com `gh` e `git ls-remote` (só leitura), salvo indicação.
 
-- **Nenhuma tag `backend-v*` existe** (`git ls-remote --tags origin` vazio). O job `frila-prod`
-  nunca rodou a partir de tag; nenhuma execução real prova a seção 2 em Prod.
+- **Existem duas tags `backend-v*`** (medido em 16/11/2026 com `gh api repos/FrilaApp/frila-backend/tags`):
+  `backend-v1.1.0` (`61ed48f`, 04/11) e `backend-v1.1.1` (`e14a8d2`, 05/11). O job `frila-prod`
+  rodou a partir delas com sucesso (runs `41826751600` e `42059164212`; job inteiro em 2,1 e 1,7 min, passo
+  "Edge Functions" em 16 s e 12 s), então a seção 2 está provada em Prod para esses dois casos. Nenhum dos dois
+  foi hotfix nem rollback. Depois de 05/11 o Prod recebeu pacotes por roteiro manual, fora de tag (`docs/ESTADO.md`, seção do `frila-prod`).
 - **O Environment `frila-prod` possui regra de proteção ativa com revisores obrigatórios:**
   possui regra de proteção `required_reviewers` com 4 revisores (`cauecarneiro`, `fbtostadev`,
   `jotape12-Dev`, `silvaaszx`), `prevent_self_review: true` e `can_admins_bypass: true`
@@ -214,16 +219,24 @@ Medido em 28/10/2026 com `gh` e `git ls-remote` (só leitura), salvo indicação
 - **Fila bloqueada por migração falha** (seção 4): inferência, nunca exercida. Sair dela
   (editar a migração com exceção na CI, ou preparar o Prod à mão) é decisão do `[DONO]`.
 - **Reexecutar o job** depois da janela: não se provou se pede nova aprovação do Environment.
-- **Rollback de Edge Function:** o repositório não tem procedimento. `supabase functions
-  deploy` (`entrega.yml:165-166`) publica o código da tag. Proposta, a confirmar: PR de revert
-  na `develop` e tag nova. Se o Supabase guarda versões anteriores para voltar: não
-  encontrado (buscado em: `entrega.yml`, `scripts/`, `docs/`).
-- **Backup do Prod não está configurado.** `docs/BackupDoProd.md:282-296`: "Não foi criado/
-  carregado plist nem configurado serviço ou segredo do prod". Sem backup, `drop column`
-  em Prod não tem volta.
+- **Rollback de Edge Function:** o procedimento está em
+  [`docs/RunbookRollbackEdgeFunction.md`](RunbookRollbackEdgeFunction.md). `supabase functions
+  deploy` (`entrega.yml:165-166`) publica o código da tag. Se o Supabase guarda versões anteriores para voltar: não
+  encontrado (buscado em: `entrega.yml`, `scripts/`, `docs/`, e na página de deploy da documentação do Supabase, lida em 16/11/2026).
+  Nunca se executou um rollback de função em Prod.
+- **Backup do Prod existe, com limites** (corrigido em 16/11/2026; o texto anterior dizia "não
+  está configurado"). MEDIDO com `gh api` em `backup-prod.yml`: 13 execuções agendadas, 12 com
+  sucesso e 1 com falha (04/11, a estreia); a última execução agendada com sucesso foi a de 16/11; cada execução começa entre 6,8 e 10,3 h depois do
+  horário `0 7 * * *` UTC. Descrição do fluxo: `docs/BackupDoProd.md`, seção "Configuração do prod e
+  agendamento diário". DEDUZIDO: o backup mais novo pode ter até ~34 h (24 h + o atraso máximo
+  medido). NAO MEDIDO: restauração de um arquivo real do bucket (os ensaios restauram o script em
+  banco local), custódia da chave privada `age`, ciclo de vida de 14 dias do bucket, RPO e RTO
+  declarados. `drop column` em Prod só volta com a restauração desse backup, em banco novo, e perde
+  o que entrou depois dele.
 - **Nunca se executou um rollback real em Prod**, nem um hotfix de ponta a ponta.
-- **`mantem-prod-vivo.yml`:** a variável `FRILA_PROD_URL_SAUDE` não existe (nenhuma variável
-  de repositório, medido em 28/10), então o job falha até alguém criá-la. Que a chamada
+- **`mantem-prod-vivo.yml`:** a variável `FRILA_PROD_URL_SAUDE` existe (MEDIDO em 16/11/2026
+  com `gh api repos/FrilaApp/frila-backend/actions/variables`: é a única variável de repositório,
+  `total_count` 1; em 28/10 não existia). Que a chamada
   diária impeça a pausa do projeto só se comprova esperando mais de sete dias; que o
   Supabase conte uma chamada à função como "uso": não encontrado.
 - **`renova-contas-de-revisao.yml`:** o script chamado, `scripts/renovar-demonstracao.sh`,
