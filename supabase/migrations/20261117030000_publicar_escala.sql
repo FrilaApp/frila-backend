@@ -19,7 +19,7 @@
 -- republicar_vaga e republicar_posicoes_restantes não copiam o evento_id: as duas publicam por
 -- publicar_vaga, que não o recebe.
 
--- contrato: corpo-sem-mudanca-de-superficie public.publicar_vaga 0.2.91
+-- contrato: corpo-sem-mudanca-de-superficie public.publicar_vaga 0.2.95
 
 select set_config('lock_timeout', '2s', true);
 
