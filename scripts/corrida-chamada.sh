@@ -11,6 +11,11 @@
 #   2. Aceite do profissional x cancelamento da casa na mesma chamada: um desfecho só, e o
 #      estado final combina com quem venceu.
 #   3. Duas chamar_profissional simultâneas no mesmo par: uma chamada aberta só (RN34).
+#      3b. Duas simultâneas sem vaga_id para o MESMO trabalho (segundos diferentes, o mesmo minuto),
+#          a profissionais diferentes: uma vaga só; a outra recebe 409 trabalho_ja_aberto com o
+#          vaga_id que a primeira criou, e nenhuma erro de concorrência (0.2.95, #520).
+#      3c. A mesma chave enviada duas vezes ao mesmo tempo: as duas devolvem a mesma chamada
+#          (a chave é relida depois da trava da casa; antes, a 2ª recebia chamada_ja_aberta).
 #   4. Exclusão da conta do profissional x aceite da chamada: a vaga direta nunca vai à fila
 #      do despacho nem é despachada a terceiro, mesmo com um terceiro elegível (conserto do
 #      #434). O motor é chamado no fim para provar que nada sai.
@@ -288,6 +293,94 @@ for i in $(seq 1 "$RODADAS"); do
   fi
 done
 [ "$erros" = 0 ] && ok "em $RODADAS de $RODADAS rodadas, uma chamada aberta só no par"
+
+# ── 3b e 3c. O mesmo trabalho e a mesma chave ao mesmo tempo (0.2.95) ─────────
+# Os mundos vão de 71 a 90 (RODADAS até 10, como os outros cenários). O horário é calculado uma
+# vez, aqui, e vai literal nas duas conexões: as duas caem no mesmo minuto com segundos diferentes.
+# lado_det: como `lado`, e devolve "code details" (ou 'ok' e o id da chamada criada).
+AUX_DET=$(cat <<'SQL'
+create function pg_temp.tentar_det(conta uuid, q text) returns text language plpgsql as $f$
+declare m text; r jsonb;
+begin
+  perform set_config('request.jwt.claims', json_build_object('sub', conta, 'role', 'authenticated')::text, true);
+  execute 'set local role authenticated';
+  execute q into r;
+  execute 'reset role';
+  return 'ok ' || coalesce(r->>'id', '');
+exception when others then
+  get stacked diagnostics m = message_text;
+  return case when m ~ '^\s*\{' then coalesce(m::jsonb->>'code', 'sem_code') || ' ' || coalesce(m::jsonb->>'details', '')
+              else 'sqlstate:' || sqlstate end;
+end $f$;
+SQL
+)
+lado_det() {
+  local saida=$1 conta=$2 sql=$3
+  (
+    psql <<SQL > "$saida" 2>&1
+$AUX_DET
+begin;
+select pg_temp.tentar_det('$conta', \$q\$ $sql \$q\$);
+select pg_sleep(1);
+commit;
+SQL
+  ) &
+}
+resultado_det() { grep -E '^(ok|[a-z_]+|sqlstate:[^ ]*)( [0-9a-f-]*)?$' "$1" | head -1; }
+# sql_trabalho <mundo> <prof_usuario> <segundos> <chave>: chamada sem vaga_id para o trabalho do mundo.
+sql_trabalho() {
+  local m=$1 prof_usuario=$2 seg=$3 chave=$4 prof
+  prof=$(prof_id "$prof_usuario")
+  cat <<SQL
+select public.chamar_profissional(chave => '$chave', profissional_id => '$prof',
+  estabelecimento_id => '$(id "$m" 10)', funcao_id => (select id from public.funcao where nome = 'garçom'),
+  inicio_em => '$INICIO_3B'::timestamptz + interval '$seg seconds', fim_em => '$INICIO_3B'::timestamptz + interval '5 hours $seg seconds',
+  local => 'CLN 201', regiao_administrativa => 'Plano Piloto', ponto => '{"latitude":-15.7942,"longitude":-47.8822}',
+  valor_centavos => 15000, inclui_refeicao => true, inclui_transporte => false, exige_material_proprio => false,
+  responsavel_local => 'Maitre')
+SQL
+}
+INICIO_3B=$(psql -c "select date_trunc('minute', now()) + interval '3 days';")
+
+echo "▸ 3b. duas chamadas sem vaga_id ao mesmo tempo para o mesmo trabalho, a profissionais diferentes"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  m=$((70 + i)); montar_mundo "$m"
+  lado_det "$TMP/3b-$i-a" "$(id "$m" 1)" "$(sql_trabalho "$m" "$(id "$m" 2)" 5 "$(id "$m" 901)")"
+  lado_det "$TMP/3b-$i-b" "$(id "$m" 1)" "$(sql_trabalho "$m" "$(id "$m" 3)" 41 "$(id "$m" 902)")"
+  wait
+  ra=$(resultado_det "$TMP/3b-$i-a"); rb=$(resultado_det "$TMP/3b-$i-b")
+  vagas=$(psql -c "select count(*) from public.vaga where estabelecimento_id = '$(id "$m" 10)';")
+  vaga=$(psql -c "select string_agg(id::text, ',') from public.vaga where estabelecimento_id = '$(id "$m" 10)';")
+  abertas=$(psql -c "select count(*) from public.chamada where estabelecimento_id = '$(id "$m" 10)' and estado = 'aberta';")
+  # Um lado criou ('ok <chamada>'), o outro recebeu o 409 com a vaga que existe.
+  case "${ra%% *} ${rb%% *}" in
+    "ok trabalho_ja_aberto") recusa=${rb#* } ;;
+    "trabalho_ja_aberto ok") recusa=${ra#* } ;;
+    *) recusa=x ;;
+  esac
+  if [ "$vagas" != 1 ] || [ "$abertas" != 1 ] || [ "$recusa" != "$vaga" ]; then
+    falhou "rodada $i: respostas '$ra'/'$rb', vagas $vagas ($vaga), chamadas abertas $abertas"; erros=$((erros + 1))
+  fi
+done
+[ "$erros" = 0 ] && ok "em $RODADAS de $RODADAS rodadas, uma vaga só e um 409 trabalho_ja_aberto com o vaga_id dela"
+
+echo "▸ 3c. a mesma chave enviada duas vezes ao mesmo tempo"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  m=$((80 + i)); montar_mundo "$m"
+  sql=$(sql_trabalho "$m" "$(id "$m" 2)" 5 "$(id "$m" 903)")
+  lado_det "$TMP/3c-$i-a" "$(id "$m" 1)" "$sql"
+  lado_det "$TMP/3c-$i-b" "$(id "$m" 1)" "$sql"
+  wait
+  ra=$(resultado_det "$TMP/3c-$i-a"); rb=$(resultado_det "$TMP/3c-$i-b")
+  chamadas=$(psql -c "select count(*) from public.chamada where estabelecimento_id = '$(id "$m" 10)';")
+  vagas=$(psql -c "select count(*) from public.vaga where estabelecimento_id = '$(id "$m" 10)';")
+  if [ "${ra%% *}" != ok ] || [ "$ra" != "$rb" ] || [ "$chamadas" != 1 ] || [ "$vagas" != 1 ]; then
+    falhou "rodada $i: respostas '$ra'/'$rb', chamadas $chamadas, vagas $vagas"; erros=$((erros + 1))
+  fi
+done
+[ "$erros" = 0 ] && ok "em $RODADAS de $RODADAS rodadas, as duas devolvem a mesma chamada, e só ela existe"
 
 # ── 4. Exclusão de conta x aceite ──────────────────────────────────────────────
 echo "▸ 4. exclusão da conta do profissional x aceite da chamada"
