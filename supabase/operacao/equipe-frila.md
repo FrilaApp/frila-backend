@@ -39,6 +39,7 @@ Campos retornados na consulta:
 - `origem`: canal de abertura (`app` para chamados abertos pelo aplicativo via RPC `abrir_suporte`, `operacao` para procedimentos internos da equipe, ou nulo para legadas).
 - `motivo`: motivo ou categoria do chamado (para suporte: `endereco`, `atraso`, `conduta`, `seguranca`, `outro`).
 - `turno_id`: UUID do turno vinculado ao chamado de suporte ou denúncia.
+- `chamada_id`: UUID da chamada direta em que a denúncia foi feita (CD-S13); nulo quando ela não veio de uma chamada. Só a referência: o recado da chamada não entra na fila (RN15).
 - `criada_em` e `prazo_limite`: data de abertura e SLA limite em dias úteis calculado por `privado.prazo_de_resposta`.
 - `prioridade_sla`: classificação visual de prazo.
 - `autor_nome`, `autor_telefone`, `autor_perfil`: dados cadastrais do autor obtidos por join interno (`usuario`).
