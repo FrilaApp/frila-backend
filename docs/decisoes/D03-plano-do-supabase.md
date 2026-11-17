@@ -19,7 +19,7 @@
 **Organização do Frila (vale para o `frila-dev` e o `frila-prod`):** plano **Free**; **Spend cap ligado**
 (não cobra excedente: passando da cota, o projeto pode ficar sem resposta ou só leitura); nenhuma fatura;
 nenhum meio de pagamento. Fonte: painel do Supabase, página Billing da organização, lida pelo Orquestrador 2
-em 16/11/2026 às 23h3x (Brasília).
+em 16/11/2026, por volta das 22h30 (Brasília).
 
 | Projeto | Disco | Fonte |
 |---|---|---|
