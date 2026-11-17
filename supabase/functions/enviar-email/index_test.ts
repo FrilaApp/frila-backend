@@ -83,6 +83,9 @@ interface Espiao {
   enviados: Email[];
   registrados: Array<{ ocorrencia: string; destino: string; prazo: string | null }>;
   falhas: Array<{ ocorrencia: string; codigo: string }>;
+  // bB0tV5R8: o que foi gravado em `privado.falha_execucao` e a ordem em relação ao arquivamento.
+  falhasOperacionais: string[];
+  ordem: string[];
   arquivados: number[];
 }
 
@@ -94,6 +97,8 @@ function espiao(
   const registrados: Espiao["registrados"] = [];
   const falhas: Espiao["falhas"] = [];
   const arquivados: number[] = [];
+  const falhasOperacionais: string[] = [];
+  const ordem: string[] = [];
 
   const sql: SqlClient = {
     lerFilaEmail: () => Promise.resolve(pedidos),
@@ -106,13 +111,19 @@ function espiao(
       falhas.push({ ocorrencia, codigo });
       return Promise.resolve(falhas.length);
     },
+    registrarFalhaOperacional: (codigo) => {
+      falhasOperacionais.push(codigo);
+      ordem.push(`falha_operacional:${codigo}`);
+      return Promise.resolve();
+    },
     concluir: (msgId) => {
       arquivados.push(msgId);
+      ordem.push(`concluir:${msgId}`);
       return Promise.resolve();
     },
   };
 
-  return { sql, enviados, registrados, falhas, arquivados };
+  return { sql, enviados, registrados, falhas, falhasOperacionais, ordem, arquivados };
 }
 
 function pedido(sobrepor: Partial<PedidoDaFila> = {}): PedidoDaFila {
@@ -730,6 +741,7 @@ Deno.test("enviar-email: clamp de limite e vt protege contra valores abusivos ou
     dadosDoEmail: () => Promise.resolve(null),
     registrarEnviado: () => Promise.resolve(),
     registrarFalha: () => Promise.resolve(0),
+    registrarFalhaOperacional: () => Promise.resolve(),
     concluir: () => Promise.resolve(),
   };
 
@@ -1578,4 +1590,192 @@ Deno.test("B-026: caixaDosCasos usa a injetada, depois o ambiente, depois suport
     assertEquals(caixaDosCasos(ruim), SUPORTE, ruim);
   }
   assertEquals(caixaDosCasos("a@b.co"), "a@b.co");
+});
+
+// ── bB0tV5R8 fase 2: falha de SMTP que arquiva o pedido deixa rastro na sonda ──────
+//
+// Antes, o alerta com falha definitiva era arquivado sem registro nenhum: a fila ficava
+// vazia, o `/saude` ficava verde e ninguém sabia. O registro é só o código (RN15) e
+// nunca impede o arquivamento.
+
+function alertaPedido(msgId: number, readCt = 1): PedidoDaFila {
+  return pedido({
+    msg_id: msgId,
+    read_ct: readCt,
+    mensagem: { tipo: "alerta", codigo: "fila_despacho_parada", valor: 7 },
+  });
+}
+
+const recusaDefinitiva = (codigo: string) => (_e: Email) =>
+  Promise.resolve<ResultadoEnvio>({ ok: false, codigo, transitorio: false });
+const recusaTransitoria = (codigo: string) => (_e: Email) =>
+  Promise.resolve<ResultadoEnvio>({ ok: false, codigo, transitorio: true });
+
+Deno.test("bB0tV5R8: alerta com falha definitiva de SMTP registra o código ANTES de arquivar", async () => {
+  const e = espiao([alertaPedido(901)]);
+
+  const res = await chamar(e, recusaDefinitiva("falha_de_autenticacao"));
+
+  assertEquals(res.status, 200);
+  assertEquals(e.falhasOperacionais, ["falha_de_autenticacao"]);
+  assertEquals(e.ordem, ["falha_operacional:falha_de_autenticacao", "concluir:901"]);
+  assertEquals((await res.json()).relatorio, [
+    { msg_id: 901, status: "arquivado", detalhe: "falha_de_autenticacao" },
+  ]);
+});
+
+Deno.test("bB0tV5R8: alerta transitório que estoura o teto de leituras também registra", async () => {
+  const e = espiao([alertaPedido(902, TETO_DE_LEITURAS)]);
+
+  await chamar(e, recusaTransitoria("falha_de_conexao"));
+
+  assertEquals(e.falhasOperacionais, ["falha_de_conexao"]);
+  assertEquals(e.arquivados, [902]);
+});
+
+Deno.test("bB0tV5R8: alerta transitório abaixo do teto continua na fila e não registra nada", async () => {
+  const e = espiao([alertaPedido(903, TETO_DE_LEITURAS - 1)]);
+
+  const res = await chamar(e, recusaTransitoria("falha_de_conexao"));
+
+  assertEquals(e.falhasOperacionais, []);
+  assertEquals(e.arquivados, []);
+  assertEquals((await res.json()).relatorio, [
+    { msg_id: 903, status: "pendente", detalhe: "falha_de_conexao" },
+  ]);
+});
+
+Deno.test("bB0tV5R8: alerta enviado com sucesso não registra falha", async () => {
+  const e = espiao([alertaPedido(904)]);
+
+  await chamar(e, () => Promise.resolve<ResultadoEnvio>({ ok: true }));
+
+  assertEquals(e.falhasOperacionais, []);
+  assertEquals(e.arquivados, [904]);
+});
+
+Deno.test("bB0tV5R8: alerta com caixa da equipe inválida registra destinatario_invalido em vez de sumir", async () => {
+  const e = espiao([alertaPedido(905)]);
+
+  const res = await chamar(
+    e,
+    () => Promise.resolve<ResultadoEnvio>({ ok: true }),
+    { caixaDaEquipe: "equipe@frila.test\nBcc: x@frila.test", caixaDosCasos: CASOS },
+  );
+
+  assertEquals(e.enviados, []);
+  assertEquals(e.falhasOperacionais, ["destinatario_invalido"]);
+  assertEquals(e.ordem, ["falha_operacional:destinatario_invalido", "concluir:905"]);
+  assertEquals((await res.json()).relatorio, [
+    { msg_id: 905, status: "arquivado", detalhe: "destinatario_invalido" },
+  ]);
+});
+
+Deno.test("bB0tV5R8: se gravar a falha operacional lançar, o alerta ainda é arquivado", async () => {
+  const e = espiao([alertaPedido(906)]);
+  e.sql.registrarFalhaOperacional = () => Promise.reject(new Error("banco fora"));
+
+  const res = await chamar(e, recusaDefinitiva("smtp_550"));
+
+  assertEquals(res.status, 200);
+  assertEquals(e.arquivados, [906]);
+  assertEquals((await res.json()).relatorio, [
+    { msg_id: 906, status: "arquivado", detalhe: "smtp_550" },
+  ]);
+});
+
+Deno.test("bB0tV5R8: o registro operacional recebe só o código, nunca destinatário nem assunto", async () => {
+  const e = espiao([alertaPedido(907)]);
+  const recebido: unknown[][] = [];
+  e.sql.registrarFalhaOperacional = (...args: unknown[]) => {
+    recebido.push(args);
+    return Promise.resolve();
+  };
+
+  await chamar(e, recusaDefinitiva("smtp_553"));
+
+  assertEquals(recebido, [["smtp_553"]]);
+  assertEquals(/^[a-z0-9_]{1,60}$/.test(String(recebido[0][0])), true);
+});
+
+Deno.test("bB0tV5R8: ocorrência cuja caixa da equipe recusa de forma definitiva registra o código", async () => {
+  const e = espiao([pedido({ msg_id: 910 })], dados({ equipe_pendente: true, autor_pendente: false }));
+
+  await chamar(e, recusaDefinitiva("smtp_550"));
+
+  assertEquals(e.falhasOperacionais, ["smtp_550"]);
+  assertEquals(e.ordem, ["falha_operacional:smtp_550", "concluir:910"]);
+});
+
+Deno.test("bB0tV5R8: caixa de um usuário que não existe (550) não acende a sonda", async () => {
+  const e = espiao([pedido({ msg_id: 911 })], dados({ equipe_pendente: false, autor_pendente: true }));
+
+  const res = await chamar(e, recusaDefinitiva("smtp_550"));
+
+  // O erro por ocorrência continua no banco e o pedido é arquivado, como antes...
+  assertEquals(e.falhas, [{ ocorrencia: OCORRENCIA, codigo: "smtp_550" }]);
+  assertEquals(e.arquivados, [911]);
+  assertEquals((await res.json()).relatorio[0].status, "arquivado");
+  // ...mas um endereço digitado errado por uma pessoa não é incidente do sistema.
+  assertEquals(e.falhasOperacionais, []);
+});
+
+Deno.test("bB0tV5R8: recusa de autenticação no SMTP registra mesmo quando o destino era o autor", async () => {
+  const e = espiao([pedido({ msg_id: 912 })], dados({ equipe_pendente: false, autor_pendente: true }));
+
+  await chamar(e, recusaDefinitiva("falha_de_autenticacao"));
+
+  assertEquals(e.falhasOperacionais, ["falha_de_autenticacao"]);
+  assertEquals(e.arquivados, [912]);
+});
+
+Deno.test("bB0tV5R8: ocorrência com falha transitória abaixo do teto fica na fila e não registra", async () => {
+  const e = espiao([pedido({ msg_id: 913, read_ct: 1 })], dados({ equipe_pendente: true, autor_pendente: false }));
+
+  await chamar(e, recusaTransitoria("falha_de_conexao"));
+
+  assertEquals(e.falhasOperacionais, []);
+  assertEquals(e.arquivados, []);
+});
+
+Deno.test("bB0tV5R8: ocorrência que estoura o teto de leituras por falha de conexão registra", async () => {
+  const e = espiao(
+    [pedido({ msg_id: 914, read_ct: TETO_DE_LEITURAS })],
+    dados({ equipe_pendente: true, autor_pendente: false }),
+  );
+
+  await chamar(e, recusaTransitoria("falha_de_conexao"));
+
+  assertEquals(e.falhasOperacionais, ["falha_de_conexao"]);
+  assertEquals(e.arquivados, [914]);
+});
+
+Deno.test("bB0tV5R8: ocorrência em que equipe e autor falham registra um único código", async () => {
+  const e = espiao([pedido({ msg_id: 915 })], dados({ equipe_pendente: true, autor_pendente: true }));
+
+  await chamar(e, recusaDefinitiva("smtp_550"));
+
+  assertEquals(e.falhasOperacionais, ["smtp_550"]);
+});
+
+Deno.test("bB0tV5R8: criarSqlClient entrega um registrarFalhaOperacional ao SqlClient de verdade", () => {
+  const cliente = criarSqlClient({ dbUrl: "postgres://usuario:senha@127.0.0.1:1/banco" });
+  assertEquals(typeof cliente.registrarFalhaOperacional, "function");
+});
+
+// O registro grava na origem que a sonda lê. Nenhum teste Deno chega ao SQL de verdade, e
+// uma origem grafada diferente (`enviar-email` com hífen, por exemplo) deixaria o rastro
+// gravado e a sonda cega: exatamente o silêncio que este cartão fecha.
+Deno.test("bB0tV5R8: a origem gravada por enviar-email é a que a sonda do banco lê", async () => {
+  const funcao = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+  const migracao = await Deno.readTextFile(
+    new URL("../../migrations/20261117100000_saude_operacional.sql", import.meta.url),
+  );
+
+  const gravada = /registrar_falha_execucao\(\s*'([a-z_-]+)'::text,\s*\$\{codigo\}/.exec(funcao);
+  const lida = /f\.origem = '([a-z_-]+)'/.exec(migracao);
+
+  assertEquals(gravada !== null && lida !== null, true);
+  assertEquals(gravada![1], lida![1]);
+  assertEquals(gravada![1], "enviar_email");
 });
