@@ -359,6 +359,10 @@ VIGIADAS = {
     ("validarCodigoCheckin", "404"): "nao_encontrado",
     ("validarCodigoCheckin", "409"): "checkin_ja_confirmado",
     ("validarCodigoCheckin", "422"): "codigo_invalido",
+    # Escala de evento em lote (0.2.96, RF19; B-031): vigiada desde o nascimento.
+    ("publicarEscala", "401"): "nao_autenticado",
+    ("publicarEscala", "403"): "sem_permissao",
+    ("publicarEscala", "422"): "campo_invalido",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não

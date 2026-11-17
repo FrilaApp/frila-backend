@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.95
+  version: 0.2.96
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -94,7 +94,7 @@ info:
     | 409 | `midia_indisponivel` | `pedir_nova_analise_midia` em mídia que não está `recusada` nem `nao_publicada`; `details: estado_invalido` ou `expurgada` (0.2.54) |
     | 422 | `midia_invalida` | Mídia recusada na entrada; `details`: `formato`, `tamanho`, `metadados` (tipo pelo cabeçalho ou EXIF presente), `limite_atingido` ou `tipo_indisponivel` (0.2.54) |
     | 422 | `funcao_nao_marcada` | `definir_servicos` com função que o profissional não marcou no perfil (0.2.53, RN27) |
-    | 422 | `campo_invalido` | O campo veio, e o valor é recusado pela regra; `details` diz qual campo. Distinto de `campo_obrigatorio`, que é ausência — a tela destaca o mesmo campo, com texto diferente |
+    | 422 | `campo_invalido` | O campo veio, e o valor é recusado pela regra; `details` diz qual campo. Distinto de `campo_obrigatorio`, que é ausência — a tela destaca o mesmo campo, com texto diferente. Em `publicar_escala`, `details` é o caminho do campo (0.2.96) |
     | 422 | `intervalo_maximo_excedido` | Intervalo entre `de` e `ate` maior que 30 dias na exportação de turnos (pd7zOS5P) |
     | 422 | `menor_de_idade` | Nascimento com menos de 18 anos (RN20) |
     | 422 | `perfil_incompativel` | A ação é do outro perfil: conta de contratante criando perfil de profissional, ou conta de profissional cadastrando estabelecimento (RN25) |
@@ -116,6 +116,23 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.96, de 16/11/2026.** Operação nova `POST /rpc/publicar_escala` (RF19, cartão
+    `6mi66YDp`, pedido do Cauê de 16/11/2026): o estabelecimento publica de uma vez um **evento** e
+    as vagas dele (uma por função e horário). Esquemas novos `NovaEscala`, `ItemEscala` e
+    `EscalaPublicada`. Nenhuma operação que já existe muda, e nenhum app chama esta ainda: é para o
+    servidor e para a web, que não existe.
+    - **Tudo ou nada:** o evento, as vagas e as posições entram numa transação só. Qualquer recusa,
+      em qualquer item, desfaz tudo; nunca fica escala pela metade no ar.
+    - **Cada item vira uma vaga comum,** com as mesmas regras de `publicar_vaga` e o mesmo despacho,
+      depois da gravação (B15). A vaga gravada só difere por ter `evento_id`; o item aceita até 100
+      posições (em `publicar_vaga`, até 200).
+    - **Uma chave para a escala inteira:** o reenvio devolve o mesmo resultado e não despacha de novo.
+      Os itens não têm chave própria.
+    - **Limites:** de 1 a 10 vagas e até 100 posições somadas por escala (os tetos do desenho de 03/11;
+      o Cauê pode mudar). Acima disso, publicam-se escalas separadas.
+    - **Fica para outra versão:** ler a escala (painel), cancelar a escala inteira (hoje, cada vaga com
+      `cancelar_vaga`), editar, vaga da escala em outro endereço e o `evento_id` nas leituras de vaga.
 
     **Versão 0.2.95, de 16/11/2026.** Uma casa não abre duas vagas diretas para o mesmo trabalho
     (frila-backend#520, achado da revisão do app na bateria da busca). Adição compatível: um código
@@ -3525,6 +3542,99 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/VagaPublicada'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/publicar_escala:
+    post:
+      tags: [Vagas]
+      operationId: publicarEscala
+      summary: Publicar uma escala de evento em lote
+      description: |
+        0.2.96 (RF19). Grava um evento e as vagas dele de uma vez. Cada item de `vagas` vira uma vaga
+        comum, com `evento_id` apontando para o evento, uma posição por unidade pedida e o despacho de
+        sempre, depois da gravação, pelo agendador (B15, RN23). Nenhum app chama esta operação ainda.
+
+        **Tudo ou nada.** O evento, as vagas e as posições são gravados numa transação só. Se qualquer
+        item for recusado, nada é gravado, nada é despachado e a resposta é a recusa desse item.
+
+        **Ordem da conferência**, que para na primeira recusa: quem pode (perfil, conta suspensa,
+        membro do estabelecimento); a `chave` (ausente, `campo_obrigatorio`; já usada neste
+        estabelecimento, devolve a escala gravada e para aqui); `evento` e `vagas` presentes; o evento;
+        os limites de quantidade e de soma; e os itens, do primeiro ao último.
+
+        **Quem pode e recusas gerais:** as mesmas de `publicar_vaga`, na mesma ordem. Conta de
+        profissional recebe `422 perfil_incompativel`; quem não é membro do estabelecimento, ou
+        estabelecimento que não existe, `403 sem_permissao`; conta suspensa, `403 sem_permissao` com
+        `details: conta_suspensa`.
+
+        **O evento:** `nome`, `data`, `local`, `regiao_administrativa` e `ponto`. Todas as vagas da escala
+        usam o `local`, a `regiao_administrativa` e o `ponto` do evento. `data` é o dia do evento no
+        horário de Brasília; o servidor não a compara com os horários das vagas, porque montagem na
+        véspera e desmontagem de madrugada são comuns.
+
+        Recusas do evento, campo a campo, na ordem acima: ausente ou em branco, `422 campo_obrigatorio`;
+        valor recusado, `422 campo_invalido`; os dois com `details: evento.<campo>`. `local`,
+        `regiao_administrativa` e `ponto` seguem as regras dos mesmos campos em `publicar_vaga` (a região
+        tem de estar no catálogo ativo). `nome` tem de 3 a 100 caracteres, e `data` só precisa ser uma
+        data válida. `nome` e `local` passam pelo mesmo filtro de termos de `publicar_vaga` (diretriz
+        1.2). Em `evento` e nos itens, valor de tipo errado (texto onde vai número, data ou uuid
+        malformado) é `campo_invalido`, com o caminho do campo.
+
+        **Cada item:** os campos de `NovaVaga`, menos `estabelecimento_id`, `chave` e os de endereço,
+        com as mesmas recusas e as mesmas mensagens de `publicar_vaga`: `campo_obrigatorio`,
+        `campo_invalido`, `horario_invalido`, `selecao_sem_antecedencia` (RN24, por item) e o filtro de
+        termos. A implementação usa a mesma validação, como em `republicar_vaga`. Uma diferença:
+        `posicoes` vai de 1 a 100 por item (em `publicar_vaga`, até 200). Fora disso, `422
+        campo_invalido`, `details: vagas[<i>].posicoes`.
+
+        **Onde está o erro (`details`):**
+        - campo do topo: o nome do campo (`chave`, `evento`, `vagas`). `estabelecimento_id` ausente
+          responde `403 sem_permissao`, como em `publicar_vaga`;
+        - campo do evento: `evento.<campo>`, por exemplo `evento.nome`;
+        - campo de um item: `vagas[<i>].<campo>`, com `i` a partir de 0, por exemplo
+          `vagas[2].valor_centavos`;
+        - recusa de um item que não é de um campo só (`horario_invalido`, `selecao_sem_antecedencia`):
+          `vagas[<i>]`.
+
+        **Limites:**
+        - de 1 a 10 itens em `vagas`. Lista vazia ou com mais de 10: `422 campo_invalido`,
+          `details: vagas`;
+        - até 100 posições somadas nos itens (a soma conta só os `posicoes` inteiros de 1 a 100; o
+          item com `posicoes` ausente ou fora disso é recusado depois, no próprio item). Acima:
+          `422 campo_invalido`, `details: posicoes`.
+
+        O limite geral de escrita por minuto vale, como em toda operação.
+
+        **`chave`:** uma só para a escala inteira, gerada pelo cliente uma vez por publicação. Reenviar
+        com a mesma `chave` para o mesmo estabelecimento devolve a mesma `EscalaPublicada`, sem
+        conferir o corpo de novo e sem despachar de novo. Dois envios simultâneos com a mesma `chave`:
+        um grava, o outro espera e devolve o mesmo resultado. Uma escala recusada não grava nada,
+        então a `chave` não fica gasta. Os itens não têm chave própria.
+
+        **Depois de publicada:** cada vaga da escala é uma vaga como outra qualquer. Candidatura,
+        escolha, cancelamento (`cancelar_vaga`) e republicação seguem as regras de cada uma;
+        `republicar_vaga` e `republicar_posicoes_restantes` não copiam o `evento_id`. O profissional
+        que serve a mais de uma função pode ser avisado de mais de uma vaga do evento, dentro do teto
+        de avisos (RN23), e a RN21 o impede de ficar com dois turnos que se cruzam.
+      x-requisitos: [RF19, RF04, RF09, RN02, RN18, RN21, RN23, RN24]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NovaEscala'
+      responses:
+        '200':
+          description: Escala publicada, ou a mesma de um reenvio com a mesma `chave`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EscalaPublicada'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
         '403':
@@ -8050,6 +8160,109 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Uuid'
+    NovaEscala:
+      type: object
+      required: [estabelecimento_id, evento, vagas, chave]
+      description: Corpo de `publicar_escala` (0.2.96, RF19).
+      properties:
+        estabelecimento_id:
+          $ref: '#/components/schemas/Uuid'
+        evento:
+          type: object
+          required: [nome, data, local, regiao_administrativa, ponto]
+          properties:
+            nome:
+              type: string
+              minLength: 3
+              maxLength: 100
+              example: Formatura de Direito
+            data:
+              type: string
+              format: date
+              description: Dia do evento, no horário de Brasília.
+              example: '2026-12-12'
+            local:
+              type: string
+              description: Endereço. Vale para todas as vagas da escala.
+            regiao_administrativa:
+              type: string
+              description: Região Administrativa do Distrito Federal. Vale para todas as vagas da escala.
+              example: Plano Piloto
+            ponto:
+              $ref: '#/components/schemas/Coordenada'
+        vagas:
+          type: array
+          minItems: 1
+          maxItems: 10
+          description: Uma vaga por item, na ordem em que a resposta as devolve. Até 100 posições somadas.
+          items:
+            $ref: '#/components/schemas/ItemEscala'
+        chave:
+          $ref: '#/components/schemas/ChaveDeIdempotencia'
+    ItemEscala:
+      type: object
+      required:
+        - funcao_id
+        - inicio_em
+        - fim_em
+        - valor_centavos
+        - posicoes
+        - inclui_refeicao
+        - inclui_transporte
+        - exige_material_proprio
+        - responsavel_local
+        - modo
+      description: |
+        Uma vaga da escala. Os campos e as regras são os de `NovaVaga`, menos `estabelecimento_id`,
+        `chave`, `local`, `regiao_administrativa` e `ponto`, que vêm da escala.
+      properties:
+        funcao_id:
+          $ref: '#/components/schemas/Uuid'
+        inicio_em:
+          $ref: '#/components/schemas/Instante'
+        fim_em:
+          $ref: '#/components/schemas/Instante'
+        valor_centavos:
+          $ref: '#/components/schemas/Centavos'
+        posicoes:
+          type: integer
+          minimum: 1
+          maximum: 100
+        inclui_refeicao:
+          type: boolean
+        inclui_transporte:
+          type: boolean
+        exige_material_proprio:
+          type: boolean
+          description: Sim = o profissional leva o material.
+        responsavel_local:
+          type: string
+          description: Quem recebe o profissional no local.
+        traje:
+          type: [string, 'null']
+        participa_rateio:
+          type: [boolean, 'null']
+          description: Participa do rateio dos 10% da taxa de serviço (Lei 13.419/2017).
+        observacoes:
+          type: [string, 'null']
+        modo:
+          $ref: '#/components/schemas/ModoPreenchimento'
+        alerta_antecedencia_min:
+          type: integer
+          minimum: 1
+          default: 180
+          description: Como em `NovaVaga`.
+    EscalaPublicada:
+      type: object
+      required: [evento_id, vagas]
+      properties:
+        evento_id:
+          $ref: '#/components/schemas/Uuid'
+        vagas:
+          type: array
+          description: Uma por item de `NovaEscala.vagas`, na mesma ordem.
+          items:
+            $ref: '#/components/schemas/VagaPublicada'
     Inclusos:
       type: object
       required: [inclui_refeicao, inclui_transporte, exige_material_proprio]

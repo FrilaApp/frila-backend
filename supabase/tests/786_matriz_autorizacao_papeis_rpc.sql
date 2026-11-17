@@ -36,8 +36,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  75::bigint,
-  'censo de RPCs: schema public contem exatamente 75 RPCs expostas (com buscar_profissionais, 0.2.88, e aceitar_termos, 0.2.90)'
+  76::bigint,
+  'censo de RPCs: schema public contem exatamente 76 RPCs expostas (com buscar_profissionais, 0.2.88, aceitar_termos, 0.2.90, e publicar_escala, 0.2.96)'
 );
 
 -- 3. Fixtures e contas representativas da matriz
