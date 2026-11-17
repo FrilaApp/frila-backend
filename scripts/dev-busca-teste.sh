@@ -32,12 +32,14 @@
 #   1. no app, digite o e-mail e toque em pedir código (a tela passa para o campo do código);
 #   2. `./scripts/dev-busca-teste.sh --alvo dev codigo busca-casa@frila.test`;
 #   3. digite o código na tela. Vale uma vez e por até 1 hora (o padrão do Auth).
-# `codigo` só aceita os 4 e-mails acima, e só de conta que `montar` já criou: nunca cria conta nem gera código
-# para e-mail de pessoa.
+# `codigo` só aceita os 4 e-mails acima, e só de conta que `montar` já criou (o id fixo e o e-mail conferem
+# no Auth): nunca cria conta nem gera código para e-mail de pessoa. Ele só fala HTTPS com a Admin API do Auth
+# (a chave service_role vem da Management API): não usa psql nem a porta do banco, então funciona mesmo
+# quando a rede barra a 5432/6543. Quem roda: só o Cauê ou o Prisma. Agente nenhum roda `codigo`.
 #
 # ── Uso ───────────────────────────────────────────────────────────────────────────────────────────────────
 #
-#   ./scripts/dev-busca-teste.sh [--alvo local|dev] montar [--minimo-busca <versão>]
+#   ./scripts/dev-busca-teste.sh [--alvo local|dev] [--via https|psql] montar [--minimo-busca <versão>]
 #   ./scripts/dev-busca-teste.sh [--alvo local|dev] conferir        # 4 buscas como a casa, transação desfeita
 #   ./scripts/dev-busca-teste.sh [--alvo local|dev] http            # entra pelo Auth e busca pelo REST (4 logins)
 #   ./scripts/dev-busca-teste.sh [--alvo local|dev] codigo <e-mail> # o código de entrada, para o Prisma
@@ -46,7 +48,15 @@
 #   ./scripts/dev-busca-teste.sh --alvo local acesso --saida <arquivo>   # ensaio: a saída tem de ficar fora do repo
 #
 # O alvo padrão é o banco LOCAL (o ensaio). `--alvo dev` lê a conexão de ~/.config/frila/dev-db-url sem
-# imprimi-la. Não existe alvo prod: o script não sabe falar com ele.
+# imprimi-la e confere o ref dela (trava abaixo). Não existe alvo prod: o script não sabe falar com ele.
+#
+# No dev, o SQL vai de dois jeitos (`--via`):
+#   https (padrão)  pela Management API (POST /v1/projects/<ref>/database/query), com o token de conta de
+#                   ~/.config/frila/supabase-token: nenhuma senha de banco e nenhuma porta do Postgres, então
+#                   funciona com a 5432/6543 barradas pela rede (B-027.k);
+#   psql            o psql pela conexão do dev, que nunca recebe a URL na linha de comando (nada dela aparece no
+#                   `ps`): a senha vai num arquivo de senhas temporário (600, apagado na saída) e o resto em
+#                   variáveis PG* só do psql.
 #
 # ── O que `montar` faz e o que NÃO faz com as chaves ──────────────────────────────────────────────────────
 #
@@ -63,6 +73,17 @@
 # deles, o FCM responde UNREGISTERED e o enviar-push APAGA a linha do aparelho (supabase/functions/enviar-push/
 # index.ts); sem aparelho, o profissional some da busca. É só rodar `montar` de novo.
 #
+# (Medido no dev em 16/11/2026: o token falso de hoje recebe INVALID_ARGUMENT, e com esse erro o enviar-push NÃO
+# apaga o aparelho; só 404/410 ou UNREGISTERED apagam.)
+#
+# Chamadas de teste (B-027.k): a busca tira da casa quem já tem chamada ABERTA dela (RN34) e quem recusou chamada
+# dela há menos de 24 h ou tem as 3 últimas recusadas/expiradas (CD-C13). Testar o chamar no app deixa isso para
+# trás: em 16/11 Bruno recusou às 17:51 e Clara ficou com uma aberta às 18:28, e os dois sumiram das buscas de
+# garçom. O `montar` limpa só entre a casa de teste e as 3 profissionais de teste: a aberta a casa cancela pelo
+# caminho do produto (cancelar_chamada, como a casa; cancelada não conta na busca), e as recusadas e expiradas
+# desse par saem (nenhum caminho do produto desfaz uma recusa; nada depende da linha da chamada). Aceitas (com
+# vaga e turno) não são tocadas.
+#
 # Pelo banco compartilhado: no local, rode pela fila (orquestracao/scripts/fila.sh rodar banco <dono> -- ...).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -72,6 +93,7 @@ DB_CONTAINER=${DB_CONTAINER:-supabase_db_frila-backend}
 PSQL=${PSQL:-/opt/homebrew/opt/postgresql@16/bin/psql}
 MINIMO_BUSCA=""
 SAIDA=""
+VIA=https
 # O checkout principal (Ground): é o caminho que o arquivo de acesso cita depois da mescla do #518.
 CAMINHO_GROUND="$HOME/Documents/Projetos/Frila/frila-backend"
 
@@ -95,12 +117,14 @@ while [ $# -gt 0 ]; do
     --alvo)          ALVO="${2:-}"; shift 2 || break ;;
     --minimo-busca)  MINIMO_BUSCA="${2:-}"; shift 2 || break ;;
     --saida)         SAIDA="${2:-}"; shift 2 || break ;;
+    --via)           VIA="${2:-}"; shift 2 || break ;;
     -h|--ajuda)      sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)              falhou "opção desconhecida: $1 (veja --ajuda)" ;;
     *)               if [ -z "$COMANDO" ]; then COMANDO="$1"; elif [ -z "$ARG1" ]; then ARG1="$1"; else falhou "argumento a mais: $1"; fi; shift ;;
   esac
 done
 case "$ALVO" in local|dev) ;; *) falhou "--alvo vale local ou dev (recebi \"$ALVO\"). Prod não existe aqui." ;; esac
+case "$VIA" in https|psql) ;; *) falhou "--via vale https ou psql (recebi \"$VIA\")" ;; esac
 case "$COMANDO" in montar|conferir|http|codigo|estado|acesso) ;; *) falhou "uso: dev-busca-teste.sh [--alvo local|dev] montar|conferir|http|codigo <e-mail>|estado|acesso (veja --ajuda)" ;; esac
 if [ -n "$MINIMO_BUSCA" ] && ! printf '%s' "$MINIMO_BUSCA" | grep -Eq '^[0-9]{1,6}(\.[0-9]{1,6}){0,2}$'; then
   falhou "--minimo-busca precisa ter de 1 a 3 partes numéricas (ex.: 1.2.0)"
@@ -118,10 +142,141 @@ refs_da_url() {
     printf '%s' "$1" | grep -oE '[a-z0-9]{20}\.(pooler\.)?supabase\.(co|com)' | cut -c1-20
   } || true
 }
+# `codigo` só fala HTTPS com o Auth (Admin API): não usa psql, nem a porta do banco, nem o contêiner local.
+usa_banco() { [ "$COMANDO" != codigo ]; }
+
+# Senha fora da linha de comando (B-027.j). O psql do dev nunca recebe a URL: a senha vai num arquivo de senhas
+# do libpq (PGPASSFILE) temporário, 600, numa pasta 700 fora do repositório, criado com umask 077 e apagado na
+# saída (também no erro e no Ctrl-C); host, porta, usuário e banco vão em variáveis PG* só no ambiente do psql.
+# Assim nada da conexão aparece no `ps`. O arquivo só nasce DEPOIS da trava do ref.
+CONEXAO_DIR=""; CON_HOST=""; CON_PORT=""; CON_USER=""; CON_DB=""; CON_SSLMODE=""; CON_TIMEOUT=""; CON_APPNAME=""
+limpar_conexao() { if [ -n "$CONEXAO_DIR" ]; then rm -rf "$CONEXAO_DIR"; CONEXAO_DIR=""; fi; }
+trap limpar_conexao EXIT
+trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM
+
+# Lê a URL pela entrada (nunca por argumento), como o libpq a lê: o usuário e a senha vão até a primeira @ antes
+# da primeira /, o %XX é decodificado e ssl=true vale sslmode=require. É mais estrito que o libpq: um host só,
+# usuário e host sem %, e só os parâmetros sslmode, connect_timeout e application_name (hostaddr, host, service,
+# passfile e qualquer outro saem com erro, para nada desviar a conexão que a trava conferiu). Grava a senha no
+# arquivo do argumento 1 e devolve o resto (sem a senha), um campo por linha. Erro: só o motivo, nunca a URL.
+LER_URL_PY='import os, re, sys
+def sair(motivo):
+    sys.stderr.write("  ✗ conexão do dev: " + motivo + "\n")
+    sys.exit(2)
+def dec(s, campo):
+    b = s.encode("utf-8"); out = bytearray(); i = 0
+    while i < len(b):
+        if b[i] == 37:
+            h = b[i + 1:i + 3]
+            if len(h) != 2 or not all(c in b"0123456789abcdefABCDEF" for c in h):
+                sair("% sem dois dígitos hexadecimais em " + campo)
+            if int(h, 16) == 0:
+                sair("%00 em " + campo)
+            out.append(int(h, 16)); i += 3
+        else:
+            out.append(b[i]); i += 1
+    try:
+        t = out.decode("utf-8")
+    except UnicodeDecodeError:
+        sair(campo + " não é UTF-8")
+    if "\n" in t or "\r" in t:
+        sair("quebra de linha em " + campo)
+    return t
+u = sys.stdin.read()
+r = None
+for prefixo in ("postgresql://", "postgres://"):
+    if u.startswith(prefixo):
+        r = u[len(prefixo):]
+        break
+if r is None:
+    sair("não começa com postgresql://")
+i = 0
+while i < len(r) and r[i] not in "@/":
+    i += 1
+if i == len(r) or r[i] != "@":
+    sair("sem usuário e senha antes do host")
+user, tem_senha, senha = r[:i].partition(":")
+if not tem_senha or not senha:
+    sair("sem senha")
+r = r[i + 1:]
+j = 0
+while j < len(r) and r[j] not in ":/?,":
+    j += 1
+host, sep, r = r[:j], r[j:j + 1], r[j + 1:]
+porta = ""
+if sep == ":":
+    j = 0
+    while j < len(r) and r[j] not in "/?,":
+        j += 1
+    porta, sep, r = r[:j], r[j:j + 1], r[j + 1:]
+if sep == ",":
+    sair("mais de um host")
+banco, query = "", ""
+if sep == "/":
+    banco, _, query = r.partition("?")
+elif sep == "?":
+    query = r
+if not re.fullmatch(r"[A-Za-z0-9._-]+", user):
+    sair("usuário fora do formato (só letras, dígitos, ponto, hífen e sublinhado)")
+if not re.fullmatch(r"[A-Za-z0-9.-]+", host):
+    sair("host fora do formato (um nome ou IPv4, sem %)")
+if not re.fullmatch(r"[0-9]{0,5}", porta):
+    sair("porta não numérica")
+banco = dec(banco, "banco")
+if banco and not re.fullmatch(r"[A-Za-z0-9._-]+", banco):
+    sair("nome do banco fora do formato")
+senha = dec(senha, "senha")
+campos = [("host", host), ("port", porta), ("user", user), ("dbname", banco)]
+partes = query.split("&") if query else []
+if partes and partes[-1] == "":
+    partes.pop()
+for par in partes:
+    if par.count("=") != 1:
+        sair("parâmetro sem um = só")
+    k, v = par.split("=")
+    k, v = dec(k, "nome de parâmetro"), dec(v, "valor de parâmetro")
+    if k == "ssl" and v == "true":
+        k, v = "sslmode", "require"
+    if k == "sslmode" and v in ("disable", "allow", "prefer", "require", "verify-ca", "verify-full"):
+        campos.append((k, v))
+    elif k == "connect_timeout" and re.fullmatch(r"[0-9]{1,4}", v):
+        campos.append((k, v))
+    elif k == "application_name" and re.fullmatch(r"[A-Za-z0-9 ._-]{0,63}", v):
+        campos.append((k, v))
+    else:
+        sair("parâmetro não aceito aqui: " + re.sub(r"[^A-Za-z0-9_]", "?", k)[:40])
+fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    f.write("*:*:*:*:" + senha.replace("\\", "\\\\").replace(":", "\\:") + "\n")
+for k, v in campos:
+    if v:
+        print(k + "=" + v)'
+
+preparar_conexao_dev() {
+  local campos linha valor
+  CONEXAO_DIR=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/frila-dev-busca.XXXXXX") \
+    || falhou "não consegui criar a pasta temporária da conexão"
+  campos=$(umask 077; printf '%s' "$PGURL" | python3 -I -c "$LER_URL_PY" "$CONEXAO_DIR/pgpass") \
+    || falhou "a conexão do dev (.config/frila/dev-db-url) não está no formato esperado. Nada foi conectado."
+  while IFS= read -r linha; do
+    valor=${linha#*=}
+    case "$linha" in
+      host=*)             CON_HOST=$valor ;;
+      port=*)             CON_PORT=$valor ;;
+      user=*)             CON_USER=$valor ;;
+      dbname=*)           CON_DB=$valor ;;
+      sslmode=*)          CON_SSLMODE=$valor ;;
+      connect_timeout=*)  CON_TIMEOUT=$valor ;;
+      application_name=*) CON_APPNAME=$valor ;;
+    esac
+  done <<< "$campos"
+  [ -n "$CON_HOST" ] && [ -n "$CON_USER" ] && [ -s "$CONEXAO_DIR/pgpass" ] \
+    || falhou "a conexão do dev ficou incompleta (host, usuário ou senha). Nada foi conectado."
+}
+
 if [ "$ALVO" = dev ]; then
   ARQUIVO_URL="${FRILA_DEV_DB_URL_ARQUIVO:-$HOME/.config/frila/dev-db-url}"
   [ -f "$ARQUIVO_URL" ] || falhou "não achei o arquivo da conexão do dev (.config/frila/dev-db-url)"
-  [ -x "$PSQL" ] || falhou "não achei o psql em $PSQL (defina PSQL)"
   PGURL="$(tr -d '\n' < "$ARQUIVO_URL" | sed 's/^[A-Za-z_]*=//')"
   [ -n "$PGURL" ] || falhou "o arquivo da conexão do dev está vazio"
   # Todos os refs achados têm de ser o do dev (uma URL com um ref do dev e outro de outro projeto também sai).
@@ -133,14 +288,91 @@ if [ "$ALVO" = dev ]; then
     REF="$ref"
   done <<< "$(refs_da_url "$PGURL")"
   [ -n "$REF" ] || falhou "a conexão lida NÃO é a do frila-dev (nenhum ref reconhecível na URL). Nada foi conectado."
-else
+  if usa_banco && [ "$VIA" = psql ]; then
+    [ -x "$PSQL" ] || falhou "não achei o psql em $PSQL (defina PSQL)"
+    preparar_conexao_dev
+  elif usa_banco; then
+    [ -f "$HOME/.config/frila/supabase-token" ] || falhou "não achei ~/.config/frila/supabase-token (o SQL por HTTPS usa o token de conta)"
+  fi
+  PGURL=""   # daqui em diante a URL (com a senha) não é usada: o psql lê o arquivo de senhas; o https, o token
+elif usa_banco; then
   docker ps --format '{{.Names}}' | grep -qx "$DB_CONTAINER" \
     || falhou "o contêiner $DB_CONTAINER não está de pé (supabase start; ou defina DB_CONTAINER)"
 fi
 
+# SQL pela Management API (--via https, o padrão no dev). Aceita as mesmas opções que o psql_ recebe (-v nome=valor
+# e -c "sql"; sem -c, o SQL vem pela entrada), troca cada :'nome' pelo valor como literal SQL (aspas dobradas) e
+# imprime como o `psql -t -A`: uma linha por linha, colunas separadas por |, booleano t/f, nulo vazio. O endpoint
+# devolve só o resultado da ÚLTIMA instrução que tem linhas (medido em 16/11/2026), então cada SQL daqui tem no
+# máximo uma consulta que devolve linhas; begin/set/DO/commit em volta não atrapalham. E cada coluna precisa de nome
+# único: a resposta é JSON, e duas colunas `to_char` virariam uma só. O token é lido do arquivo pelo
+# python e o ref vai pelo ambiente: nenhum dos dois na linha de comando nem na saída. Erro do banco sai com o código
+# e a mensagem do Postgres, e o script para (como o ON_ERROR_STOP do psql).
+SQL_HTTPS_PY='import json, os, re, sys, urllib.error, urllib.request
+args, valores, sql = sys.argv[1:], {}, None
+i = 0
+while i < len(args):
+    if args[i] == "-v" and i + 1 < len(args):
+        k, _, v = args[i + 1].partition("=")
+        valores[k] = v
+        i += 2
+    elif args[i] == "-c" and i + 1 < len(args):
+        sql = args[i + 1]
+        i += 2
+    else:
+        i += 1
+if sql is None:
+    sql = sys.stdin.read()
+def literal(m):
+    if m.group(1) not in valores:
+        sys.exit("  ✗ SQL por HTTPS: a variável :" + chr(39) + m.group(1) + chr(39) + " não recebeu valor")
+    return chr(39) + valores[m.group(1)].replace(chr(39), chr(39) * 2) + chr(39)
+sql = re.sub(r":" + chr(39) + r"([A-Za-z_][A-Za-z0-9_]*)" + chr(39), literal, sql)
+token = re.sub(r"^[A-Za-z_]*=", "", open(os.environ["FRILA_TOKEN_ARQUIVO"], encoding="utf-8").read().strip())
+pedido = urllib.request.Request("https://api.supabase.com/v1/projects/" + os.environ["FRILA_REF_DEV"] + "/database/query",
+    data=json.dumps({"query": sql}).encode(), method="POST",
+    headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+try:
+    with urllib.request.urlopen(pedido, timeout=120) as r:
+        linhas = json.load(r)
+except urllib.error.HTTPError as e:
+    try:
+        msg = json.loads(e.read()).get("message", "")
+    except Exception:
+        msg = ""
+    sys.exit("  ✗ SQL por HTTPS (%d): %s" % (e.code, msg[:600]))
+except (urllib.error.URLError, OSError) as e:
+    sys.exit("  ✗ a Management API não respondeu: " + str(getattr(e, "reason", e))[:200])
+def texto(v):
+    if v is None:
+        return ""
+    if v is True or v is False:
+        return "t" if v else "f"
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, ensure_ascii=False)
+    return str(v)
+for linha in linhas if isinstance(linhas, list) else []:
+    print("|".join(texto(v) for v in linha.values()))'
+
+sql_https() {
+  FRILA_REF_DEV="$REF" FRILA_TOKEN_ARQUIVO="$HOME/.config/frila/supabase-token" python3 -I -c "$SQL_HTTPS_PY" "$@" 2> >(redigir >&2)
+}
+
 psql_() {
-  if [ "$ALVO" = dev ]; then
-    "$PSQL" "$PGURL" -X -q -t -A -v ON_ERROR_STOP=1 "$@" 2> >(redigir >&2)
+  if [ "$ALVO" = dev ] && [ "$VIA" = https ]; then
+    sql_https "$@"
+  elif [ "$ALVO" = dev ]; then
+    # Num subshell, para as PG* valerem só neste psql. Antes, sai toda PG* herdada do terminal (PGHOSTADDR,
+    # PGSERVICE, PGPASSWORD, PGOPTIONS...): nenhuma desvia a conexão nem põe outra senha. O connect_timeout
+    # padrão (15 s) faz a rede que barra a porta falhar logo, em vez de esperar o TCP desistir.
+    ( for v in $(compgen -e); do case "$v" in PG*) unset "$v" ;; esac; done
+      export PGPASSFILE="$CONEXAO_DIR/pgpass" PGHOST="$CON_HOST" PGUSER="$CON_USER" PGCONNECT_TIMEOUT="${CON_TIMEOUT:-15}"
+      [ -z "$CON_PORT" ] || export PGPORT="$CON_PORT"
+      [ -z "$CON_DB" ] || export PGDATABASE="$CON_DB"
+      [ -z "$CON_SSLMODE" ] || export PGSSLMODE="$CON_SSLMODE"
+      [ -z "$CON_APPNAME" ] || export PGAPPNAME="$CON_APPNAME"
+      "$PSQL" -X -q -t -A -v ON_ERROR_STOP=1 "$@" 2> >(redigir >&2)
+    )
   else
     docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -X -q -t -A -v ON_ERROR_STOP=1 "$@"
   fi
@@ -168,30 +400,39 @@ checar_migracoes() {
 # ── Resumo (chaves, versões mínimas, ids e o que cada um tem) ──────────────
 recursos() {
   echo "▸ Chaves e versões mínimas ($ALVO)"
+  # Uma consulta só (o SQL por HTTPS devolve só a última que tem linhas).
   psql_ <<'SQL' | sed 's/^/    /'
-select 'chave   ' || r.chave || ' = ' || r.ligado
-  from privado.recurso r where r.chave in ('busca_profissionais', 'chamada_direta', 'perfil_rico') order by r.chave;
-select 'mínimo  ' || m.recurso || ' / ' || m.plataforma || ' >= ' || m.versao_minima
-  from privado.recurso_versao_minima m where m.recurso in ('busca_profissionais', 'chamada_direta', 'perfil_rico') order by m.recurso, m.plataforma;
-select 'SEM mínimo para ' || x.recurso || ' no iOS: o app NÃO verá o recurso (configuracao_do_app dá false sem a linha)'
-  from (values ('busca_profissionais'), ('chamada_direta')) x(recurso)
- where not exists (select 1 from privado.recurso_versao_minima m where m.recurso = x.recurso and m.plataforma = 'ios');
-select 'SEM mínimo para ' || x.recurso || ' no Android: o app NÃO verá o recurso'
-  from (values ('busca_profissionais'), ('chamada_direta')) x(recurso)
- where not exists (select 1 from privado.recurso_versao_minima m where m.recurso = x.recurso and m.plataforma = 'android');
+select linha from (
+  select 1 as ordem, r.chave::text as k1, ''::text as k2, 'chave   ' || r.chave || ' = ' || r.ligado as linha
+    from privado.recurso r where r.chave in ('busca_profissionais', 'chamada_direta', 'perfil_rico')
+  union all
+  select 2, m.recurso::text, m.plataforma::text, 'mínimo  ' || m.recurso || ' / ' || m.plataforma || ' >= ' || m.versao_minima
+    from privado.recurso_versao_minima m where m.recurso in ('busca_profissionais', 'chamada_direta', 'perfil_rico')
+  union all
+  select 3, x.recurso, '', 'SEM mínimo para ' || x.recurso || ' no iOS: o app NÃO verá o recurso (configuracao_do_app dá false sem a linha)'
+    from (values ('busca_profissionais'), ('chamada_direta')) x(recurso)
+   where not exists (select 1 from privado.recurso_versao_minima m where m.recurso = x.recurso and m.plataforma = 'ios')
+  union all
+  select 4, x.recurso, '', 'SEM mínimo para ' || x.recurso || ' no Android: o app NÃO verá o recurso'
+    from (values ('busca_profissionais'), ('chamada_direta')) x(recurso)
+   where not exists (select 1 from privado.recurso_versao_minima m where m.recurso = x.recurso and m.plataforma = 'android')
+) t order by ordem, k1, k2;
 SQL
 }
 
 resumo() {
   echo "▸ Quem existe ($ALVO)"
+  # Uma consulta só (o SQL por HTTPS devolve só a última que tem linhas): a casa primeiro, depois as profissionais.
   psql_ <<'SQL' | sed 's/^/    /'
-select 'casa   usuario_id=' || u.id || '  estabelecimento_id=' || e.id || '  ' || u.email || '  (' || e.nome || ', ' || e.regiao_administrativa || ')'
-       || E'\n         termos aceitos: ' || u.termos_versao || ' (a busca exige 2026-11-13 ou mais nova)'
+select linha from (
+select 0 as ordem, ''::text as email, 'casa   usuario_id=' || u.id || '  estabelecimento_id=' || e.id || '  ' || u.email || '  (' || e.nome || ', ' || e.regiao_administrativa || ')'
+       || E'\n         termos aceitos: ' || u.termos_versao || ' (a busca exige 2026-11-13 ou mais nova)' as linha
   from public.usuario u
   join public.membro_estabelecimento m on m.usuario_id = u.id
   join public.estabelecimento e on e.id = m.estabelecimento_id
- where u.id = 'b027f000-0000-4000-8000-000000000001';
-select 'prof   usuario_id=' || u.id || '  profissional_id=' || p.id || '  ' || u.email
+ where u.id = 'b027f000-0000-4000-8000-000000000001'
+union all
+select 1, u.email::text, 'prof   usuario_id=' || u.id || '  profissional_id=' || p.id || '  ' || u.email
        || E'\n         nome curto: ' || privado.nome_curto(u.nome)
        || ' · faixa: ' || case when extensions.ST_DWithin(p.ponto_base, e.ponto, 5000) then 'até 5 km'
                                when extensions.ST_DWithin(p.ponto_base, e.ponto, 15000) then '5 a 15 km' else 'mais de 15 km' end
@@ -209,12 +450,14 @@ select 'prof   usuario_id=' || u.id || '  profissional_id=' || p.id || '  ' || u
        || E'\n         chamadas: ' || coalesce((select pc.aceita_chamadas::text from public.profissional_preferencia_chamada pc where pc.profissional_id = p.id), 'sem linha')
        || ' · pendências p/ busca: ' || privado.pendencias_para_busca(p.id)::text
        || ' · aparelho: ' || coalesce((select string_agg(d.plataforma || ' ' || d.versao_app, ', ') from public.dispositivo d where d.usuario_id = u.id), 'NENHUM')
+       || E'\n         foto de perfil: ' || coalesce((select m.estado from privado.midia m where m.dono_usuario_id = u.id and m.tipo = 'foto_perfil'
+                                                     order by (m.estado = 'aprovada') desc, m.atualizado_em desc limit 1), 'nenhuma') as linha
   from public.usuario u
   join public.profissional p on p.usuario_id = u.id
   cross join public.estabelecimento e
  where e.id = 'b027f000-0000-4000-8000-0000000000c1'
    and u.id in ('b027f000-0000-4000-8000-000000000011', 'b027f000-0000-4000-8000-000000000012', 'b027f000-0000-4000-8000-000000000013')
- order by u.email;
+) t order by ordem, email;
 SQL
 }
 
@@ -382,9 +625,30 @@ begin
   end loop;
 end $$;
 
+-- 7. As chamadas de teste não escondem ninguém da busca da casa de teste (B-027.k; ver o cabeçalho). Só entre a casa
+--    de teste e as 3 profissionais de teste. A ABERTA a casa cancela pelo caminho do produto (cancelar_chamada, como
+--    a casa): cancelada não conta na busca. As RECUSADAS e EXPIRADAS desse par saem: nenhum caminho do produto desfaz
+--    uma recusa, e nada depende da linha da chamada. Aceitas (com vaga e turno) ficam.
+do $$
+declare r record;
+begin
+  for r in select ch.id from public.chamada ch
+            where ch.estabelecimento_id = 'b027f000-0000-4000-8000-0000000000c1' and ch.estado = 'aberta'
+              and ch.profissional_id in ('b027f000-0000-4000-8000-000000000021', 'b027f000-0000-4000-8000-000000000022', 'b027f000-0000-4000-8000-000000000023')
+  loop
+    perform set_config('request.jwt.claims', json_build_object('sub', 'b027f000-0000-4000-8000-000000000001', 'role', 'authenticated')::text, true);
+    execute 'set local role authenticated';
+    perform public.cancelar_chamada(chamada_id => r.id);
+    execute 'reset role';
+  end loop;
+end $$;
+delete from public.chamada ch
+ where ch.estabelecimento_id = 'b027f000-0000-4000-8000-0000000000c1' and ch.estado in ('recusada', 'expirada')
+   and ch.profissional_id in ('b027f000-0000-4000-8000-000000000021', 'b027f000-0000-4000-8000-000000000022', 'b027f000-0000-4000-8000-000000000023');
+
 commit;
 SQL
-  ok "contas, casa, profissionais, grade, aparelhos e preferência gravados"
+  ok "contas, casa, profissionais, grade, aparelhos e preferência gravados; chamadas de teste que escondiam alguém da busca limpas"
   recursos
   resumo
 }
@@ -398,12 +662,12 @@ conferir() {
   linha=$(psql_ <<'SQL'
 with sp as (select (privado.agora() at time zone 'America/Sao_Paulo')::date + 2 as d),
      dias as (select d + ((6 - extract(dow from d)::int + 7) % 7) as sab, d + ((1 - extract(dow from d)::int + 7) % 7) as seg from sp)
-select to_char(((sab + time '11:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-       to_char(((sab + time '15:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-       to_char(((seg + time '09:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-       to_char(((seg + time '13:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-       (select id from public.funcao where nome = 'garçom' and ativo),
-       (select id from public.funcao where nome = 'faxina residencial' and ativo)
+select to_char(((sab + time '11:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as sab_ini,
+       to_char(((sab + time '15:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as sab_fim,
+       to_char(((seg + time '09:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as seg_ini,
+       to_char(((seg + time '13:00') at time zone 'America/Sao_Paulo') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as seg_fim,
+       (select id from public.funcao where nome = 'garçom' and ativo) as f_garcom,
+       (select id from public.funcao where nome = 'faxina residencial' and ativo) as f_faxina
   from dias;
 SQL
   )
@@ -412,10 +676,11 @@ SQL
   echo "    sábado $sab_ini a $sab_fim · segunda $seg_ini a $seg_fim (UTC)"
 
   local saida
-  saida=$(psql_ -v "casa=$CASA_USUARIO" -v "estab=$CASA_ESTAB" -v "sab_ini=$sab_ini" -v "sab_fim=$sab_fim" \
-                -v "seg_ini=$seg_ini" -v "seg_fim=$seg_fim" -v "f_garcom=$f_garcom" -v "f_faxina=$f_faxina" <<'SQL'
+  # As claims da casa vão por `set local` (e não por set_config + \gset, comando do psql que o SQL por HTTPS não tem).
+  saida=$(psql_ -v "claims={\"sub\":\"$CASA_USUARIO\",\"role\":\"authenticated\"}" -v "estab=$CASA_ESTAB" -v "sab_ini=$sab_ini" \
+                -v "sab_fim=$sab_fim" -v "seg_ini=$seg_ini" -v "seg_fim=$seg_fim" -v "f_garcom=$f_garcom" -v "f_faxina=$f_faxina" <<'SQL'
 begin;
-select set_config('request.jwt.claims', json_build_object('sub', :'casa', 'role', 'authenticated')::text, true) \gset
+set local request.jwt.claims = :'claims';
 set local role authenticated;
 with b(k, r) as (values
   ('B1', public.buscar_profissionais(estabelecimento_id => :'estab'::uuid, funcao_id => :'f_garcom'::uuid)),
@@ -510,11 +775,35 @@ gerar_codigo() {
   api POST /auth/v1/admin/generate_link "$SR_KEY" "$SR_KEY" "{\"type\":\"magiclink\",\"email\":\"$1\"}" | json_campo email_otp
 }
 
+# O id fixo de cada e-mail de teste (o do cabeçalho). Fora desta lista, nada.
+id_da_conta_de_teste() {
+  case "$1" in
+    busca-casa@frila.test)   echo b027f000-0000-4000-8000-000000000001 ;;
+    busca-prof-1@frila.test) echo b027f000-0000-4000-8000-000000000011 ;;
+    busca-prof-2@frila.test) echo b027f000-0000-4000-8000-000000000012 ;;
+    busca-prof-3@frila.test) echo b027f000-0000-4000-8000-000000000013 ;;
+    *) return 1 ;;
+  esac
+}
+
+# A conta de teste existe no Auth, com o id fixo E o mesmo e-mail? Pela Admin API, sem psql. Tem de vir antes do
+# generate_link: o tipo magiclink CRIA a conta quando o e-mail não existe, e o `codigo` nunca cria conta.
+conta_de_teste_no_auth() {
+  local email="$1" id resp
+  id=$(id_da_conta_de_teste "$email") || falhou "só gero código para os e-mails de teste: $EMAILS_DE_TESTE"
+  resp=$(api GET "/auth/v1/admin/users/$id" "$SR_KEY" "$SR_KEY") || falhou "o Auth de $ALVO não respondeu"
+  [ "$(printf '%s' "$resp" | json_campo id)" = "$id" ] && [ "$(printf '%s' "$resp" | json_campo email)" = "$email" ] \
+    || falhou "a conta $email não existe no Auth de $ALVO com o id de teste: rode montar antes (o código nunca cria conta)"
+}
+
+# Só HTTPS: a lista fixa, a chave service_role pela Management API (carregar_chaves), a conta conferida pela
+# Admin API e o código pelo generate_link. Nenhum psql: funciona com a 5432/6543 barradas.
 codigo() {
   local email="${1:-}"
   [ -n "$email" ] || falhou "uso: codigo <e-mail de teste>"
-  so_email_de_teste "$email"
+  id_da_conta_de_teste "$email" >/dev/null || falhou "só gero código para os e-mails de teste: $EMAILS_DE_TESTE"
   carregar_chaves
+  conta_de_teste_no_auth "$email"
   local otp
   otp=$(gerar_codigo "$email")
   [ -n "$otp" ] || falhou "o Auth não devolveu código para $email"
@@ -577,7 +866,7 @@ acesso() {
       echo '<!-- gerado por dev-busca-teste.sh (B-027.f). Dados sintéticos; sem código nem segredo. Pode ser regerado. -->'
       echo "# Teste de ponta a ponta da busca de profissionais ($ALVO)"
       echo
-      echo "Gerado em $(date '+%Y-%m-%d %H:%M') pelo scripts/dev-busca-teste.sh (branch feat/busca-chamar-e-perfil, PR #518)."
+      echo "Gerado em $(date '+%Y-%m-%d %H:%M') pelo scripts/dev-busca-teste.sh (\`acesso\`; no dev, o SQL vai por HTTPS)."
       echo
       echo '## Contas (todas entram por e-mail + código; o e-mail @frila.test não recebe nada)'
       echo
@@ -588,6 +877,8 @@ acesso() {
       echo
       echo '## Como pegar o código (o código NÃO fica neste arquivo)'
       echo
+      echo 'Quem roda: só o Cauê ou o Prisma. O código sai só no terminal de quem rodou: não vai para arquivo, log nem mensagem.'
+      echo
       echo '1. No app, digite o e-mail e toque em pedir código (pedir de novo invalida o código anterior).'
       echo '2. Na sequência, rode:'
       echo
@@ -595,9 +886,13 @@ acesso() {
       echo "$CAMINHO_GROUND/scripts/dev-busca-teste.sh --alvo $ALVO codigo <e-mail>"
       echo '```'
       echo
-      echo "Até o #518 ser mesclado, use o do floor: $raiz/scripts/dev-busca-teste.sh"
+      if [ "$raiz" != "$CAMINHO_GROUND" ]; then
+        echo "Enquanto esta versão do script não estiver na develop, use a deste floor: $raiz/scripts/dev-busca-teste.sh"
+        echo
+      fi
+      echo "O \`codigo\` só fala HTTPS com a Admin API do Auth (a chave service_role vem da Management API): não usa psql nem a porta do banco, então funciona mesmo com a 5432/6543 barradas pela rede."
       echo
-      echo '3. Digite o código que sai no terminal. Vale uma vez e por até 1 hora. Só funciona para os 4 e-mails acima.'
+      echo "3. Digite o código que sai no terminal. Vale uma vez e por até 1 hora. Só funciona para os 4 e-mails acima, e só para conta que o \`montar\` já criou (o \`codigo\` nunca cria conta)."
       echo
       echo '## O que cada conta tem (lido do banco agora)'
       echo
@@ -612,6 +907,10 @@ acesso() {
       echo '3. faxina residencial, região Taguatinga, na próxima segunda das 9h às 13h → só Ana T. (atende todo o DF; na grade).'
       echo
       echo 'Extra: garçom em Guará → só Bruno T. Os horários precisam estar a mais de 6 horas do momento da busca.'
+      echo
+      echo 'Foto: a linha "foto de perfil" acima diz o estado de cada uma. Com "aprovada", o perfil_publico e o cartão da busca trazem foto_url (link do ler-midia, temporário). As fotos de teste são imagens sintéticas (cor e forma, sem pessoa).'
+      echo
+      echo "Se Bruno ou Clara sumirem da busca depois de testar o chamar no app: a busca esconde quem já tem chamada aberta desta casa e quem recusou chamada dela há menos de 24 h. O \`montar\` limpa essas chamadas de teste (só entre a casa de teste e as 3 profissionais de teste)."
       echo
       echo '## Refazer ou consertar'
       echo
