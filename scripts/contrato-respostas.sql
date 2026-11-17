@@ -456,6 +456,10 @@ select pg_temp.guarda('incluirNaEquipe', pg_temp.como('cc000000-0000-4000-8000-0
 select pg_temp.guarda('equipeDeConfianca', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.equipe_de_confianca(%L::uuid) $$, (select casa_id from ids))));
 
+-- ── Membros da casa (0.2.103): o administrador da casa lista a equipe ────────────
+select pg_temp.guarda('membrosDoEstabelecimento', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.membros_do_estabelecimento(%L::uuid) $$, (select casa_id from ids))));
+
 select pg_temp.guarda('removerDaEquipe', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.remover_da_equipe(%L::uuid, %L::uuid) $$,
   (select casa_id from ids),
@@ -1060,6 +1064,11 @@ select pg_temp.guarda('promete:equipeDeConfianca:403',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
     $$ select public.equipe_de_confianca(%L::uuid) $$, (select casa_id from ids))));
 
+-- 55b. membrosDoEstabelecimento: 403 sem_permissao (quem não é administrador da casa; mesma recusa para todo o resto)
+select pg_temp.guarda('promete:membrosDoEstabelecimento:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.membros_do_estabelecimento(%L::uuid) $$, (select casa_id from ids))));
+
 -- 56. vagasAbertas: 403 sem_permissao (profissional suspenso tentando listar vagas)
 select pg_temp.guarda('promete:vagasAbertas:403',
   pg_temp.observado('cc000000-0000-4000-8000-000000000004',
@@ -1496,6 +1505,11 @@ select pg_temp.guarda('promete:meuEstabelecimento:401',
 select pg_temp.guarda('promete:equipeDeConfianca:401',
   pg_temp.observado(null,
     $$ select public.equipe_de_confianca('c0000000-0000-4000-8000-000000000001'::uuid) $$));
+
+-- 124b. membrosDoEstabelecimento: 401 nao_autenticado (chamador sem sessão)
+select pg_temp.guarda('promete:membrosDoEstabelecimento:401',
+  pg_temp.observado(null,
+    $$ select public.membros_do_estabelecimento('c0000000-0000-4000-8000-000000000001'::uuid) $$));
 
 -- 125. situacaoDaConta: 401 nao_autenticado (chamador sem sessão / anonimo)
 select pg_temp.guarda('promete:situacaoDaConta:401',

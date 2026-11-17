@@ -137,6 +137,7 @@ VIGIADAS = {
     ("pedirRevisaoDespacho", "403"): "sem_permissao",
     ("meuEstabelecimento", "403"): "sem_permissao",
     ("equipeDeConfianca", "403"): "sem_permissao",
+    ("membrosDoEstabelecimento", "403"): "sem_permissao",
     ("vagasAbertas", "403"): "sem_permissao",
     ("retirarCandidatura", "403"): "sem_permissao",
     ("minhasCandidaturas", "403"): "sem_permissao",
@@ -210,6 +211,7 @@ VIGIADAS = {
     ("meusEstabelecimentos", "401"): "nao_autenticado",
     ("meuEstabelecimento", "401"): "nao_autenticado",
     ("equipeDeConfianca", "401"): "nao_autenticado",
+    ("membrosDoEstabelecimento", "401"): "nao_autenticado",
     ("situacaoDaConta", "401"): "nao_autenticado",
     # Lote 9: mais 15 pares críticos por risco (regras de negócio 422 e perímetro 401)
     ("criteriosDeNotificacao", "422"): "perfil_incompativel",
@@ -370,6 +372,8 @@ VIGIADAS = {
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
 # vigiados" porque são coisas diferentes: estes nunca vão entrar pela colheita no banco.
 ISENTAS = {
+    # 0.2.103: uuid malformado o PostgREST recusa antes da função (22P02, 400); não é código nosso.
+    ("membrosDoEstabelecimento", "400"): "recusa do PostgREST para uuid inválido, antes da função; fala só do formato",
     # O espelho inclui F1/F2/F4 e B4c, entregues em PRs próprios. Lista fechada:
     # ao implementar uma dessas operações, trocar a isenção por cenário e VIGIADAS.
     **{
