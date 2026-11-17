@@ -101,7 +101,7 @@ create function pg_temp.gasto(conta uuid) returns int language sql as $$
 -- Contas: 1 a 6 contratantes; 101, 102, 103, 104 profissionais nomeados; 1001+ os de garçom.
 insert into public.usuario (id, perfil, nome, telefone, email, nascimento, estado, termos_versao, termos_aceite_em)
 select pg_temp.conta(n), 'contratante', 'Contratante ' || n, '+556195558700' || n, 'c' || n || '@t870.test', '1985-01-01',
-       case when n = 5 then 'suspensa' else 'ativa' end::public.estado_conta, '1.0', privado.agora()
+       case when n = 5 then 'suspensa' else 'ativa' end::public.estado_conta, '2026-11-13', privado.agora()
   from generate_series(1, 6) n;
 insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em) values
   (pg_temp.conta(101), 'profissional', 'Maria Souza',  '+5561987654321', 'maria.souza@t870.test', '1990-03-15', '1.0', privado.agora()),
@@ -208,8 +208,8 @@ select ok(pg_temp.cartao('sem_horario', 101)::text !~ '1990|1990-03-15',
   'nenhum valor traz a data de nascimento');
 select ok(pg_temp.cartao('sem_horario', 101)::text !~ '47\.88|15\.78|POINT',
   'nenhum valor traz o ponto base (coordenadas)');
-select ok(pg_temp.cartao('sem_horario', 101)::text !~* 'telefone|email|e-mail|nascimento|ponto_base|usuario_id|foto|disponibilidade|apresentacao',
-  'nenhuma chave de contato, nascimento, ponto base, grade, foto ou apresentação');
+select ok(pg_temp.cartao('sem_horario', 101)::text !~* 'telefone|email|e-mail|nascimento|ponto_base|usuario_id|disponibilidade|apresentacao',
+  'nenhuma chave de contato, nascimento, ponto base, grade ou apresentação (a foto é do 873, desde a 0.2.90)');
 select ok(not (pg_temp.cartao('sem_horario', 101) -> 'servico' ?| array['profissional_id', 'extras', 'atualizado_em']),
   'servico sem profissional_id, extras nem atualizado_em');
 select ok(pg_temp.cartao('sem_horario', 101)::text !~ 'segredo_extra',

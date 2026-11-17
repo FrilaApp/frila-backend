@@ -325,6 +325,10 @@ VIGIADAS = {
     ("buscarProfissionais", "403"): "sem_permissao",
     ("buscarProfissionais", "422"): "campo_obrigatorio",
     ("buscarProfissionais", "429"): "limite_excedido",
+    # aceitar_termos (0.2.90): 401 sem sessão, 404 login sem conta, 422 versão vazia (campo_obrigatorio) ou não publicada.
+    ("aceitarTermos", "401"): "nao_autenticado",
+    ("aceitarTermos", "404"): "nao_encontrado",
+    ("aceitarTermos", "422"): "campo_invalido",
     ("responderChamada", "401"): "nao_autenticado",
     ("responderChamada", "403"): "sem_permissao",
     ("responderChamada", "404"): "nao_encontrado",

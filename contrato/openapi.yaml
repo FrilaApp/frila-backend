@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.89
+  version: 0.2.91
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -89,6 +89,7 @@ info:
     | 422 | `profissional_indisponivel` | A chamada fura preferência ou limite do profissional; `details`: `nao_aceita_chamadas`, `antecedencia_insuficiente`, `agenda_cheia`, `pausado`, `par_em_pausa` ou `par_bloqueado_temporariamente` (0.2.55, RN30, RN33, RN34; os três últimos listados na 0.2.67). `pausa_por_recusas` foi listado na 0.2.55, mas o servidor não o devolve |
     | 422 | `limite_de_chamadas` | Limite do estabelecimento; `details`: `por_vaga`, `abertas`, `por_dia` ou `conta_nova` (0.2.55, RN34) |
     | 403 | `sem_permissao` + `recurso_desligado` | O recurso está desligado no servidor (`ConfiguracaoDoApp.recursos`, 0.2.54, RN46) |
+    | 403 | `sem_permissao` + `termos_pendentes` | A busca de profissionais (e o caminho da busca em `chamar_profissional`) exige os Termos 1.1 ou mais novos aceitos; o app pede o aceite em `aceitar_termos` (0.2.90) |
     | 409 | `midia_indisponivel` | `pedir_nova_analise_midia` em mídia que não está `recusada` nem `nao_publicada`; `details: estado_invalido` ou `expurgada` (0.2.54) |
     | 422 | `midia_invalida` | Mídia recusada na entrada; `details`: `formato`, `tamanho`, `metadados` (tipo pelo cabeçalho ou EXIF presente), `limite_atingido` ou `tipo_indisponivel` (0.2.54) |
     | 422 | `funcao_nao_marcada` | `definir_servicos` com função que o profissional não marcou no perfil (0.2.53, RN27) |
@@ -114,6 +115,33 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.91, de 16/11/2026.** Só descrição: a versão `2026-11-16` (Termos de Uso 1.2 e Política
+    de Privacidade 1.3, no ar em frilabr.com desde 16/11/2026 às 17:48) entra na lista de versões
+    publicadas. Nenhum campo, operação ou código muda.
+    - **O que o app manda:** a versão que a tela mostra, hoje `2026-11-16`, tanto em `aceitar_termos`
+      quanto em `criar_conta.termos_versao`. Assim o aceite aponta para o texto que está na página.
+    - **O que a busca exige não muda:** `2026-11-13` (Termos 1.1) ou mais nova. A 1.2 não muda o que
+      foi aceito, e quem já aceitou a `2026-11-13` não precisa aceitar de novo.
+
+    **Versão 0.2.90, de 16/11/2026.** A busca de profissionais exige os Termos 1.1 aceitos (decisão do
+    Cauê, pedido 2026-11-16-12, item 2; parecer do Juiz I6 no P-026J). Adição compatível: uma
+    operação nova, um campo opcional em `Usuario`, dois em `CartaoProfissional` e um `details` novo em
+    `403 sem_permissao`.
+    - **Por quê:** quem tem conta de antes de 13/11/2026 e não aceitou os Termos 1.1 no app não está
+      preso à regra de uso dos dados do profissional (Termos, seção 10.1), e a busca abre o perfil de
+      quem ligou "Aceito chamadas diretas" a qualquer contratante.
+    - **`buscar_profissionais`** responde `403 sem_permissao` (`termos_pendentes`) ao contratante cuja
+      última versão aceita é anterior a `2026-11-13`. O app pede o aceite e repete a busca.
+    - **Pela busca**, sem o aceite: `chamar_profissional` responde a mesma recusa quando o vínculo de
+      trabalho falta, e `perfil_publico` não conta a busca como vínculo de leitura.
+    - **`POST /rpc/aceitar_termos`** (nova): registra o aceite de uma versão dos Termos e da Política
+      por quem já tem conta, com o instante carimbado pelo servidor.
+    - **`Usuario.termos_versao`** (opcional, em `minha_conta`): a última versão aceita, para o app
+      saber se precisa pedir o aceite.
+    - **Foto na busca** (decisão do Cauê, pedido 2026-11-16-13, CD-B07): `CartaoProfissional` ganha
+      `foto_url` e `foto_id` opcionais (foto aprovada, se houver), e o vínculo de leitura pela busca
+      passa a abrir também a foto em `perfil_publico`. A foto nunca filtra nem ordena (RN39).
 
     **Versão 0.2.89, de 16/11/2026.** Só descrição: a regra do nome do profissional fica fechada
     para todo leitor (pedido da Forja, B-027 PR 2, parecer do Lince Opus). Nenhum campo, operação ou
@@ -2083,8 +2111,10 @@ paths:
                     Guardar só um booleano não responde o que a pessoa aceitou, que é o que a
                     LGPD e a diretriz da App Store perguntam. **Não há campo de data**: o
                     instante é carimbado pelo servidor, porque data de aceite enviada pelo
-                    cliente é forjável e não vale como registro de consentimento.
-                  example: '2026-09-22'
+                    cliente é forjável e não vale como registro de consentimento. Desde a
+                    0.2.91, o app manda a versão publicada que a tela mostra, hoje `2026-11-16`
+                    (Termos 1.2 e Política 1.3), a mesma de `aceitar_termos`.
+                  example: '2026-11-16'
                 sinal_idade:
                   type: string
                   enum: [dezoito_ou_mais, recusou, indisponivel]
@@ -2135,6 +2165,61 @@ paths:
           $ref: '#/components/responses/NaoAutenticado'
         '404':
           $ref: '#/components/responses/NaoEncontrado'
+
+  /rpc/aceitar_termos:
+    post:
+      tags: [Cadastro e perfil]
+      operationId: aceitarTermos
+      summary: Aceitar uma versão nova dos Termos e da Política
+      description: |
+        0.2.90. Para quem já tem conta aceitar uma versão dos Termos de Uso e da Política de
+        Privacidade que a tela exibiu, como em `criar_conta.termos_versao`. O servidor carimba o
+        instante (data enviada pelo cliente não vale como registro) e guarda cada aceite, com a
+        versão e o instante; o mais novo é o que vale e volta em `Usuario.termos_versao`. Repetir a
+        mesma versão não cria outro registro e devolve o aceite que já existe. Só vale uma versão
+        **publicada**: o servidor mantém a lista (hoje, `2026-11-13` e `2026-11-16`, 0.2.91). O app
+        manda a versão que a tela mostra, hoje `2026-11-16`. Versão vazia,
+        `422 campo_obrigatorio` (`termos_versao`). Versão fora do formato `AAAA-MM-DD`, fora da lista
+        de publicadas ou anterior à que a conta já aceitou é `422 campo_invalido` (`termos_versao`):
+        o aceite não volta atrás. Sessão sem conta (antes de `criar_conta`) é `404 nao_encontrado`,
+        como em `minha_conta`.
+
+        O primeiro uso é a busca de profissionais (0.2.90): o contratante que recebe
+        `403 sem_permissao` (`termos_pendentes`) vê os Termos, aceita por aqui e repete a busca.
+        Os registros de aceite seguem a retenção do aceite do cadastro.
+      x-requisitos: [RF01, RF25]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [termos_versao]
+              properties:
+                termos_versao:
+                  type: string
+                  pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                  description: Versão publicada que a tela exibiu, no formato `AAAA-MM-DD`.
+                  example: '2026-11-16'
+      responses:
+        '200':
+          description: Aceite em vigor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [termos_versao, aceito_em]
+                properties:
+                  termos_versao:
+                    type: string
+                  aceito_em:
+                    $ref: '#/components/schemas/Instante'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '404':
+          $ref: '#/components/responses/NaoEncontrado'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
 
   /rpc/criar_perfil_profissional:
     post:
@@ -3978,6 +4063,14 @@ paths:
         `403 sem_permissao` (`conta_suspensa`, RN13). Com `recursos.busca_profissionais` desligado:
         `403 sem_permissao` (`recurso_desligado`, RN46).
 
+        **Termos 1.1 aceitos (0.2.90):** quem busca tem de ter aceito a versão `2026-11-13` ou mais
+        nova dos Termos (`Usuario.termos_versao`; as versões são datas `AAAA-MM-DD` e se comparam
+        como data, ou como texto em `collate "C"` depois de conferir o formato; valor gravado fora do
+        formato conta como não aceito). Sem isso, `403 sem_permissao` (`termos_pendentes`), depois
+        das três recusas acima e antes da validação dos filtros (`422`); essa recusa não gasta o
+        limite de buscas (`429`). O app mostra os Termos, chama `aceitar_termos` e repete a busca. O motivo é a seção
+        10.1 dos Termos (uso dos dados do profissional), que só vale para quem a aceitou.
+
         **Filtros (CD-B02, reduzidos aos três do fluxo aprovado pelo Cauê em 16/11/2026):**
         `funcao_id` (obrigatório), `regiao_id` (padrão: a região do estabelecimento, achada pelo
         `Estabelecimento.regiao_administrativa` igual ao `RegiaoAdministrativa.nome`; sem casamento,
@@ -4092,7 +4185,8 @@ paths:
         '403':
           description: |
             `sem_permissao`: `recurso_desligado` quando `recursos.busca_profissionais` está
-            desligado; `conta_suspensa`; ou quem busca não é membro do estabelecimento.
+            desligado; `conta_suspensa`; quem busca não é membro do estabelecimento; ou
+            `termos_pendentes` (0.2.90), quando quem busca não aceitou os Termos 1.1 ou mais novos.
           content:
             application/json:
               schema:
@@ -4129,6 +4223,14 @@ paths:
         genérica (`422 profissional_indisponivel`, `nao_aceita_chamadas`), sem saber qual faltou. Com
         `vaga_id`, a função e a região são as da vaga direta, que guarda o `regiao_id` com que nasceu
         (a 2ª e a 3ª chamada usam o mesmo id da 1ª).
+
+        **Termos (0.2.90):** com `recursos.busca_profissionais` ligado e quem chama sem os Termos 1.1
+        ou mais novos aceitos (como em `buscar_profissionais`), a busca não conta como caminho. Sem
+        turno cumprido com presença verificada nem equipe de confiança com o profissional (os fatos
+        que a casa já conhece, e não a preferência dele), a resposta é `403 sem_permissao`
+        (`termos_pendentes`), depois das recusas de permissão e do bloqueio (`404`) e antes de
+        qualquer conferência sobre o profissional. Com turno ou equipe, vale só o caminho do vínculo,
+        com as recusas de sempre. Com a busca desligada, `termos_pendentes` nunca sai.
 
         **Prazo:** o início tem de estar a pelo menos o maior entre 2 h e a antecedência mínima do
         profissional (`422 profissional_indisponivel`, `antecedencia_insuficiente`). O servidor calcula
@@ -4243,7 +4345,9 @@ paths:
         '403':
           description: |
             `sem_permissao`: `recurso_desligado` quando `recursos.chamada_direta` está desligado;
-            `conta_suspensa`; ou quem chama não é membro do estabelecimento.
+            `conta_suspensa`; quem chama não é membro do estabelecimento; ou `termos_pendentes`
+            (0.2.90), com `busca_profissionais` ligado, sem vínculo de trabalho e sem os Termos 1.1
+            aceitos.
           content:
             application/json:
               schema:
@@ -6108,6 +6212,12 @@ paths:
         ou esgotado, foto removida, vínculo perdido. Toda resposta vem com
         `Cache-Control: private, no-store`.
 
+        **Vínculo pela busca (0.2.90):** conta também o vínculo pela busca
+        (`PerfilPublico.apresentacao`). Ele vale com `recursos.busca_profissionais` ligado, o
+        profissional com `aceita_chamadas` ligado e quem lê com os Termos 1.1 ou mais novos aceitos,
+        tudo reconferido a cada `GET`. Desligada a opção ou a chave, o link deixa de abrir
+        (`404 nao_encontrado`).
+
         O token é portador: quem o tiver vê a miniatura até vencer, como acontecia com a URL
         assinada. Ele vai na query, e os registros de requisição do provedor podem guardá-lo.
       security: []
@@ -6819,6 +6929,12 @@ components:
           format: date
         estado:
           $ref: '#/components/schemas/EstadoConta'
+        termos_versao:
+          description: |
+            0.2.90. A última versão dos Termos e da Política que a conta aceitou (no cadastro ou em
+            `aceitar_termos`). Opcional nesta versão; ausente, o app trata como não aceita e, se
+            precisar, pede o aceite.
+          type: string
     JanelaDeDisponibilidade:
       type: object
       required: [dia_semana, hora_inicio, hora_fim]
@@ -7592,9 +7708,12 @@ components:
             confiança). Para qualquer outra conta, e para estabelecimento, são omitidos.
 
             0.2.88. Com `recursos.busca_profissionais` ligado, o profissional com `aceita_chamadas`
-            ligado também conta como vínculo de leitura para qualquer contratante, nestes campos. A
-            pausa não muda isso, para o perfil não revelar quando ele pausou. Não vale para
-            `foto_url` e `foto_id`.
+            ligado também conta como vínculo de leitura para qualquer contratante, nestes campos.
+            Desde a 0.2.90, só para contratante com os Termos 1.1 ou mais novos aceitos
+            (`buscar_profissionais`). A
+            pausa não muda isso, para o perfil não revelar quando ele pausou. Até a 0.2.89 não valia
+            para `foto_url` e `foto_id`; desde a 0.2.90 vale também para eles (decisão do Cauê de
+            mostrar a foto na busca, CD-B07).
           oneOf:
             - type: string
               maxLength: 600
@@ -7637,8 +7756,9 @@ components:
             estabelecimento, para profissional com candidatura, chamada ou turno com a casa. Sem
             vínculo, com `recursos.foto_de_perfil` desligado, sem foto aprovada, ou com o titular
             suspenso (RN13) ou com conta encerrada (RF25), o campo vem **ausente**, e os demais
-            campos do perfil respondem exatamente como antes da 0.2.54. Estar na busca não basta
-            para a foto (0.2.88).
+            campos do perfil respondem exatamente como antes da 0.2.54. Desde a 0.2.90, o vínculo
+            pela busca (`apresentacao`, acima) também abre a foto do profissional, com as mesmas
+            condições.
           type: string
           format: uri
         foto_id:
@@ -7658,8 +7778,9 @@ components:
       description: |
         0.2.88. Um resultado de `buscar_profissionais` (CD-B07): só o que ajuda a decidir quem
         chamar. Nunca telefone, e-mail, sobrenome completo, ponto base, grade ou data de nascimento.
-        A foto não vem no cartão: desde a 0.2.54, a foto aprovada só aparece para quem tem vínculo de
-        leitura, e nunca em busca ou lista. O perfil completo sai por `perfil_publico`.
+        Desde a 0.2.90, o cartão traz a foto aprovada, se houver (`foto_url` e `foto_id`, decisão do
+        Cauê, CD-B07). A foto nunca filtra nem ordena a lista (RN39). O perfil completo sai por
+        `perfil_publico`.
       properties:
         id:
           description: O `id` do `PerfilPublico`, o mesmo de `chamar_profissional.profissional_id`.
@@ -7684,6 +7805,16 @@ components:
         reputacao:
           description: Com denominador e turnos realizados (RN08); não ordena a lista (RN06).
           $ref: '#/components/schemas/Reputacao'
+        foto_url:
+          description: |
+            0.2.90. Link de leitura de 1 h da foto `aprovada` (miniatura de 320 px), pela `ler-midia`,
+            como `PerfilPublico.foto_url`. Vem **ausente** com `recursos.foto_de_perfil` desligado,
+            sem foto aprovada, ou com o titular suspenso (RN13) ou com conta encerrada (RF25).
+          type: string
+          format: uri
+        foto_id:
+          description: 0.2.90. Identificador opaco da foto, com as mesmas condições; é o que o app manda em `denunciar.midia_id`.
+          $ref: '#/components/schemas/Uuid'
         disponivel_no_horario:
           description: |
             O selo "disponível nesse horário": a grade semanal cobre o horário pedido inteiro. Só

@@ -54,7 +54,9 @@
 # A VERSÃO MÍNIMA do iOS é por chave em privado.recurso_versao_minima, e o app só vê
 # `recursos.busca_profissionais = true` se existir a linha da busca (a migração não cria nenhuma). Decisão da
 # Forja (16/11/2026): no dev, sem linha, o `montar` copia a mínima da chamada_direta (o Prisma testa com o
-# build atual); linha que já existe não é tocada, e `--minimo-busca <versão>` sobrescreve. No Prod o script
+# build atual); linha que já existe não é tocada, e `--minimo-busca <versão>` sobrescreve.
+# No Android (B-027.g), `montar` grava 1.0.0 para as duas chaves quando não há linha (no dev já há, à mão: não é tocada).
+# A casa de teste fica com os Termos 1.1 aceitos (termos_versao 2026-11-13), que a busca exige desde a migração 20261116230000. No Prod o script
 # não roda: a chave fica desligada e a mínima se decide ao ligar.
 #
 # Aparelhos de teste: o token FCM é falso de propósito. Se alguma chamada de teste tentar mandar push a um
@@ -148,7 +150,7 @@ psql_() {
 checar_migracoes() {
   local presentes
   presentes=$(psql_ -c "select coalesce(string_agg(version, ' ' order by version), '') from supabase_migrations.schema_migrations
-                         where version in ('20261116210000', '20261116220000');")
+                         where version in ('20261116210000', '20261116220000', '20261116230000');")
   case " $presentes " in
     *" 20261116210000 "*) ok "migração da busca (20261116210000) está neste banco" ;;
     *) falhou "a migração 20261116210000 NÃO está neste banco ($ALVO). Espere a Entrega aplicar depois da mescla do #517" ;;
@@ -156,6 +158,10 @@ checar_migracoes() {
   case " $presentes " in
     *" 20261116220000 "*) ok "migração de chamar e perfil (20261116220000) também está" ;;
     *) aviso "a migração 20261116220000 (chamar_profissional pela busca, perfil) ainda NÃO está: a busca roda, o chamar a partir dela não" ;;
+  esac
+  case " $presentes " in
+    *" 20261116230000 "*) ok "migração dos Termos 1.1 (20261116230000) também está: a casa de teste precisa ter aceito a 1.1 (o montar grava)" ;;
+    *) aviso "a migração 20261116230000 (busca só com os Termos 1.1) ainda NÃO está: a busca vale para qualquer casa até ela entrar" ;;
   esac
 }
 
@@ -170,6 +176,9 @@ select 'mínimo  ' || m.recurso || ' / ' || m.plataforma || ' >= ' || m.versao_m
 select 'SEM mínimo para ' || x.recurso || ' no iOS: o app NÃO verá o recurso (configuracao_do_app dá false sem a linha)'
   from (values ('busca_profissionais'), ('chamada_direta')) x(recurso)
  where not exists (select 1 from privado.recurso_versao_minima m where m.recurso = x.recurso and m.plataforma = 'ios');
+select 'SEM mínimo para ' || x.recurso || ' no Android: o app NÃO verá o recurso'
+  from (values ('busca_profissionais'), ('chamada_direta')) x(recurso)
+ where not exists (select 1 from privado.recurso_versao_minima m where m.recurso = x.recurso and m.plataforma = 'android');
 SQL
 }
 
@@ -177,6 +186,7 @@ resumo() {
   echo "▸ Quem existe ($ALVO)"
   psql_ <<'SQL' | sed 's/^/    /'
 select 'casa   usuario_id=' || u.id || '  estabelecimento_id=' || e.id || '  ' || u.email || '  (' || e.nome || ', ' || e.regiao_administrativa || ')'
+       || E'\n         termos aceitos: ' || u.termos_versao || ' (a busca exige 2026-11-13 ou mais nova)'
   from public.usuario u
   join public.membro_estabelecimento m on m.usuario_id = u.id
   join public.estabelecimento e on e.id = m.estabelecimento_id
@@ -248,6 +258,11 @@ select 'busca_profissionais', 'ios', m.versao_minima
   from privado.recurso_versao_minima m
  where m.recurso = 'chamada_direta' and m.plataforma = 'ios'
 on conflict (recurso, plataforma) do nothing;
+-- Android (B-027.g): o app Android do time também testa a busca e a chamada no dev. Mínimo 1.0.0 nas duas chaves;
+-- linha que já existe (o dev já a tem, gravada à mão) não é tocada, então rodar de novo não muda nada.
+insert into privado.recurso_versao_minima (recurso, plataforma, versao_minima)
+values ('busca_profissionais', 'android', '1.0.0'), ('chamada_direta', 'android', '1.0.0')
+on conflict (recurso, plataforma) do nothing;
 
 -- 2. As contas. O Auth precisa da linha em auth.users (e em auth.identities) para o código de e-mail entrar;
 --    public.usuario não tem chave para auth.users, então as duas são criadas aqui.
@@ -275,8 +290,16 @@ select c.id::text, c.id,
  where not exists (select 1 from auth.identities i where i.user_id = c.id and i.provider = 'email');
 
 insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
-select c.id, c.perfil, c.nome, c.telefone, c.email, date '1990-01-01', '1.0', now() from _contas c
-on conflict (id) do update set nome = excluded.nome, estado = 'ativa', anonimizado_em = null;
+select c.id, c.perfil, c.nome, c.telefone, c.email, date '1990-01-01', '2026-11-13', now() from _contas c
+on conflict (id) do update set nome = excluded.nome, estado = 'ativa', anonimizado_em = null,
+  -- I6 (16/11/2026): a busca só vale para quem aceitou os Termos 1.1 (termos_versao >= 2026-11-13, a data da
+  -- publicação). A casa de teste aceita; quem já tem a 1.1 ou mais nova não muda, e o instante só anda quando a versão anda.
+  termos_versao = case when public.usuario.termos_versao ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                        and public.usuario.termos_versao collate "C" >= excluded.termos_versao collate "C"
+                       then public.usuario.termos_versao else excluded.termos_versao end,
+  termos_aceite_em = case when public.usuario.termos_versao ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                           and public.usuario.termos_versao collate "C" >= excluded.termos_versao collate "C"
+                          then public.usuario.termos_aceite_em else excluded.termos_aceite_em end;
 
 -- 3. A casa: Plano Piloto, perto do ponto base do prof 1. CNPJ sintético (14 dígitos, sem dígito verificador).
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto, regiao_administrativa)

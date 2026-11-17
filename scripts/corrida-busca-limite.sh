@@ -184,7 +184,7 @@ cenario() {
 begin;
 insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em)
 values ('$conta', 'contratante', 'Contratante Corrida', '+55619$(printf '%03d%02d%03d' "$RUN" "$n" "$i")', 'corrida-busca-$RUN-$c@frila.test',
-        '1985-01-01', '1.0', now());
+        '1985-01-01', '2026-11-13', now());
 insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel) values ('$conta', '$(id 4 0)', 'administrador');
 insert into privado.contador_busca (usuario_id, hora, total)
 select '$conta', date_trunc('hour', now()), $gastas where $gastas > 0;
