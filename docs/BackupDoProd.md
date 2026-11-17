@@ -375,3 +375,153 @@ Para complementar a projeção determinística da esteira sem conceder permissõ
 
 - **Backblaze B2:** Permite configurar em *Caps & Alerts* limites de faturamento e alertas diários por e-mail quando o uso se aproxima do teto.
 - **Cloudflare R2:** Acompanhamento periódico da volumetria real via dashboard Cloudflare (R2 → Overview / Analytics) ou consultas analíticas GraphQL, ciente da defasagem de processamento do plano de controle.
+
+## Restauração real de 17/11/2026
+
+Cartão `U3RlsJF7` (pedido 16-28, item 7). Um backup real do `frila-prod` foi decifrado e restaurado num
+Postgres descartável, e as contagens de linhas foram conferidas. Roteiro: `scripts/restauracao-real.sh`.
+
+### De onde veio o arquivo: cópia local, não o bucket
+
+**O arquivo restaurado veio da cópia local do Mac do Cauê (`~/Backups/frila-prod`), e não do bucket R2.**
+Nenhuma credencial guardada no Mac lê o bucket: o `cloudflare-token` e o `cloudflare-pages-token` recebem
+`Authentication error` (10000) em `GET /accounts/<id>/r2/buckets`, e a conta do login do wrangler não tem R2
+ligado (10042). A credencial do GitHub Actions só grava (`PutObject`). A credencial de leitura foi pedida ao
+Cauê no painel.
+
+- Arquivo: `frila-backup-20261117T003409Z-jK1Mho.tar.age`, com 5.165.480 bytes. Gerado às 00:34:09 UTC de
+  17/11 (21:34:09 em Brasília, 16/11). É o backup que o roteiro do Prod "ligar a busca" tira antes de aplicar,
+  pelo `scripts/backup-logico.sh` da árvore do corte, e o mais novo da pasta local.
+- Formato: o mesmo do bucket. O pacote decifrado trouxe `formato.txt` = `frila-backup-v2`, `banco.dump`
+  (5.156.906 bytes) e `extensoes.sql` (375 bytes).
+- Chave: o roteiro cifra para `~/.config/frila/backup/destinatario.age`, e a decifra usou a identidade
+  privada desse destinatário. Que o `BACKUP_PUBLIC_KEY` do GitHub é esse mesmo destinatário só se prova decifrando um
+  arquivo do bucket, e essa prova fica pendente junto com o download.
+
+**PENDENTES (falta a credencial de leitura do R2):**
+
+1. Baixar do bucket o `.tar.age` do dia anterior e medir o tempo de download.
+2. Conferir no R2 a regra de ciclo de vida de 14 dias. O `backup-prod.yml` e esta página dizem que ela
+   existe, mas ninguém do time a viu com prova.
+
+### Destino descartável
+
+- Imagem `public.ecr.aws/supabase/postgres:17.6.1.075`, num contêiner do Colima com `--network none`: sem
+  porta publicada e sem saída para a rede. O acesso foi só por `docker exec`, de modo que nada pôde apontar
+  ao dev nem ao Prod.
+- O banco `ensaio` foi criado antes do restore, com `cron.database_name = 'ensaio'` e
+  `cron.launch_active_jobs = off`. Os 26 jobs restaurados não rodaram.
+- Os papéis `supabase_functions_admin` e `supabase_realtime_admin` foram criados sem login, porque a imagem
+  não os traz.
+- Restore: `pg_restore --exit-on-error --single-transaction --no-owner`, mais o suplemento
+  `extensoes.sql` (`psql --single-transaction`, `ON_ERROR_STOP`). Os dois terminaram com código 0.
+- Logo depois do restore, `privado.chave_cursor_busca` ganhou chave nova, para a cópia não cunhar link de foto
+  válido no Prod.
+- Limpeza (pelo `trap`, que roda também na falha): a pasta temporária do decifrado ficou vazia (`ls -A` → `[]`)
+  e foi removida, e o contêiner foi apagado (0 contêineres `frila-restauracao-*` no `docker ps -a`).
+
+### Tempos medidos (RTO)
+
+Relógio de alta resolução (`Time::HiRes`), em segundos. A rodada 1 (03:31 UTC) teve o restore perfeito, mas
+parou na comparação por um defeito do contador do roteiro, já corrigido. A rodada 2 (03:34 UTC) passou
+inteira.
+
+| Etapa | Rodada 1 | Rodada 2 |
+| --- | ---: | ---: |
+| Baixar do bucket | pendente | pendente |
+| Subir o contêiner, criar o banco e reiniciar | 7,756 | 4,000 |
+| Decifrar com age | 0,047 | 0,024 |
+| Extrair o pacote | 0,030 | 0,019 |
+| Copiar para o contêiner | 0,218 | 0,097 |
+| `pg_restore` | 1,908 | 0,972 |
+| Suplemento `extensoes.sql` | 0,155 | 0,058 |
+| **Total, sem o download** | **10,910** | **5,843** |
+
+**RTO do banco, medido: cerca de 11 s** com o arquivo já no disco. Esse número vale só para o banco num
+Postgres descartável. Uma volta de verdade, num projeto Supabase novo, soma etapas que não foram medidas:
+o download (5 MB), a criação do projeto, a configuração do Auth, as Edge Functions, os segredos e o Vault,
+e os arquivos do Storage, que ficam fora do backup (ver "Decifrar e restaurar em destino descartável").
+
+### Contagens de linhas
+
+O pacote não grava contagem. O roteiro conta as linhas de cada `COPY` do `banco.dump` e do suplemento,
+sem mostrar nenhuma linha, e compara com `count(*)` no restaurado. Depois compara com o Prod, numa transação
+`REPEATABLE READ READ ONLY` com `row_security = off`, aberta às 03:34:50 UTC, 3 h 01 depois do snapshot.
+
+As 5 tabelas `privado.registro_acesso*` foram restauradas, mas ficaram fora de toda contagem: decisão do
+Cauê de 08/11/2026 (só se leem com ordem dele). O TOC tem 122 itens `TABLE DATA`, e foram comparadas
+**120 tabelas**:
+
+- **116 iguais** entre o pacote e o restaurado.
+- **1 igual pelo suplemento:** `pgmq.meta`, com 4 linhas.
+- **1 com linhas da própria extensão:** `extensions.spatial_ref_sys`. O pacote traz 0 linhas, porque o
+  `pg_dump` só exporta o que o usuário acrescenta; o `CREATE EXTENSION postgis` cria 8.500, o mesmo que o Prod.
+- **2 vazias e sem dados no pacote:** `net._http_response`, excluída de propósito (perda aceita em 20/10),
+  e `net.http_request_queue`.
+- **Nenhuma diferente.**
+
+Total: **134.172 linhas no pacote** e **142.672 no restaurado** (134.172 + as 8.500 do PostGIS).
+
+| Esquema | Tabelas | Pacote | Restaurado | Prod às 03:34:50 UTC |
+| --- | ---: | ---: | ---: | ---: |
+| `public` | 31 | 1.091 | 1.091 | 1.091 |
+| `privado` (sem `registro_acesso*`) | 34 | 553 | 553 | 554 |
+| `auth` | 27 | 296 | 296 | 296 |
+| `storage` (só metadados) | 10 | 83 | 83 | 83 |
+| `pgmq` | 9 | 446 | 446 | 446 |
+| `cron` | 2 | 131.386 | 131.386 | 133.571 |
+| `supabase_migrations` | 1 | 213 | 213 | 213 |
+| `realtime` | 2 | 96 | 96 | 96 |
+| `vault` (texto cifrado, sem a chave) | 1 | 8 | 8 | 8 |
+| `extensions` | 1 | 0 | 8.500 | 8.500 |
+| `net` | 2 | 0 | 0 | 366 |
+
+Nas tabelas principais de `public`, restaurado = Prod: `evento_app` 501, `notificacao` 119,
+`profissional_funcao` 79, `disponibilidade` 67, `funcao` e `posicao` 38 cada, `usuario` 33 e `vaga` 25.
+`auth.users` tem 22.
+
+Só 3 tabelas do Prod diferem do restaurado, e as três diferenças vêm do tempo:
+
+| Tabela | Restaurado | Prod | Por quê |
+| --- | ---: | ---: | --- |
+| `cron.job_run_details` | 131.360 | 133.545 | São 2.185 execuções do pg_cron em 3 h 01 (Inferência: ~12 por minuto, 26 jobs) |
+| `net._http_response` | 0 | 366 | Log transitório do pg_net, excluído do dump (perda aceita em 20/10) |
+| `privado.recurso_versao_minima` | 4 | 5 | O "ligar a busca" rodou às 21:34:16 de Brasília, 7 s depois do backup, e o SQL dele insere a linha `busca_profissionais`/`ios` (o Android ficou desligado). A linha não foi lida |
+
+### Horário real dos backups e RPO
+
+O cron pede 07:00 UTC, mas o GitHub atrasou todas as execuções agendadas. Fonte: `gh run list --workflow
+backup-prod.yml` e `gh api .../actions/runs/<id>/attempts/<n>`, lidos em 17/11/2026 às 03:2x UTC.
+
+| Dia | Início (UTC) | Fim (UTC) |
+| --- | --- | --- |
+| 05/11 | 15:15:06 | 15:18:36 |
+| 06/11 | 14:50:25 | 14:54:06 |
+| 07/11 | 13:47:34 | 13:52:55 |
+| 08/11 | 14:07:59 | 14:13:31 |
+| 09/11 | 17:15:45 | 17:19:49 |
+| 10/11 | 15:26:59 | 15:32:14 |
+| 11/11 | 14:57:43 | 18:25:32 (2ª tentativa) |
+| 12/11 | 15:50:41 | 15:55:01 |
+| 13/11 | 15:10:41 | 15:15:00 |
+| 14/11 | 13:58:44 | 14:04:30 |
+| 15/11 | 14:34:38 | 14:39:39 |
+| 16/11 | 16:50:12 | 16:54:50 |
+
+**Achado de 11/11 (3,5 h):** a 1ª tentativa falhou em "Instalar postgresql-client-17 e age" (das 14:57:48
+às 15:02:37 UTC). Uma reexecução manual, às 18:20:18 UTC, gerou o backup do dia às 18:25:31 UTC. O
+`gh run list` mostra só a última tentativa (`success`): para ver a falha, consulte `attempts/1`. O passo
+que falhou instala pacotes pelo apt, antes de qualquer acesso ao banco.
+
+**Achado da cópia local:** o lançador do Mac falhou em 16/11 às 04:06 ("falha ao gerar dump e suplemento de
+extensões no mesmo snapshot", no `~/.config/frila/backup/log/backup.log`). As cópias locais seguintes são
+as duas que os roteiros do Prod tiraram, às 00:27 e às 00:34 UTC de 17/11.
+
+**RPO medido: até ~27 h.** O maior intervalo entre o fim de dois backups bons seguidos foi de 27,1 h (de
+08/11 14:13 a 09/11 17:19 UTC). Os outros ficaram entre 21,4 h e 26,8 h. Isso confirma o ~28 h da
+[D03](decisoes/D03-plano-do-supabase.md). Um dia que falhe sem reexecução leva o RPO a ~48 h ou mais.
+
+### Em aberto
+
+- **"2 pessoas com a chave": EM ABERTO**, por decisão do Cauê. Este ensaio não muda isso.
+- O download do bucket e a regra de 14 dias no R2 seguem pendentes, como descrito acima.
