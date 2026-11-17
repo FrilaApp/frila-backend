@@ -24,6 +24,10 @@ on conflict (id) do update set eh_teste = true;
 
 set local frila.agora = '2026-11-16 12:00:00-03';
 
+-- O gatilho de pgmq.q_despacho chama privado.disparar_despacho, que aborta sem segredo.
+-- O valor é definido na transação para não depender do segredo global do ambiente.
+set local frila.agendador_secret = 'segredo-de-teste-875';
+
 select plan(51);
 
 -- ── 1. Estrutura e segurança ──────────────────────────────────────────────────
