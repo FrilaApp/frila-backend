@@ -150,6 +150,20 @@ export async function sendFcmMessage(
     }
   }
 
+  // Aparelho web (B-038): só o bloco webpush (WebpushConfig do FCM v1), sem apns nem android.
+  // https://firebase.google.com/docs/reference/fcm/rest/v1/projects.messages#WebpushConfig
+  // Sem fcm_options.link: o payload não traz link de destino (a whitelist só deixa UUIDs).
+  if (payload.plataforma === "web") {
+    return await postarMensagem(url, accessToken, fetchFn, {
+      token: payload.token,
+      data,
+      webpush: {
+        notification: { title: payload.title, body: payload.body },
+        data,
+      },
+    });
+  }
+
   const apnsPayload: Record<string, unknown> = {
     aps: {
       alert: {
@@ -184,6 +198,15 @@ export async function sendFcmMessage(
     },
   };
 
+  return await postarMensagem(url, accessToken, fetchFn, message);
+}
+
+async function postarMensagem(
+  url: string,
+  accessToken: string,
+  fetchFn: typeof fetch,
+  message: Record<string, unknown>,
+): Promise<FcmSendResult> {
   const body: Record<string, unknown> = { message };
 
   try {
