@@ -4,7 +4,7 @@
 -- A disputa entre duas conexões está em scripts/corrida-token-upload-verificacao.sh.
 
 begin;
-select plan(33);
+select plan(40);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -109,6 +109,62 @@ select throws_ok(
   $$ select pg_temp.upload('89000000-0000-4000-8000-0000000002f3', '89000000-0000-4000-8000-000000000102',
        'verso', '890/102/verso.jpg', pg_temp.token(1)) $$,
   '23505', null, 'dois slots não compartilham o mesmo hash');
+-- Cada CHECK recusa sozinho: os demais valores do insert são válidos, e a mensagem
+-- nomeia a restrição que disparou.
+select throws_ok(
+  $$ insert into privado.upload_verificacao_identidade
+       (verificacao_id, parte, storage_path, token_hash, expira_em)
+     values ('89000000-0000-4000-8000-000000000103', 'selfie', '',
+       pg_temp.hash_token(pg_temp.token(251)), privado.agora() + interval '2 hours') $$,
+  '23514',
+  'new row for relation "upload_verificacao_identidade" violates check constraint "upload_verificacao_storage_path_nao_vazio"',
+  'caminho vazio é recusado');
+select throws_ok(
+  $$ insert into privado.upload_verificacao_identidade
+       (verificacao_id, parte, storage_path, token_hash, expira_em)
+     values ('89000000-0000-4000-8000-000000000103', 'selfie', '   ',
+       pg_temp.hash_token(pg_temp.token(252)), privado.agora() + interval '2 hours') $$,
+  '23514',
+  'new row for relation "upload_verificacao_identidade" violates check constraint "upload_verificacao_storage_path_nao_vazio"',
+  'caminho só com espaços é recusado');
+select throws_ok(
+  $$ insert into privado.upload_verificacao_identidade
+       (verificacao_id, parte, storage_path, token_hash, expira_em)
+     values ('89000000-0000-4000-8000-000000000103', 'selfie', '890/103/selfie.jpg',
+       upper(pg_temp.hash_token(pg_temp.token(253))), privado.agora() + interval '2 hours') $$,
+  '23514',
+  'new row for relation "upload_verificacao_identidade" violates check constraint "upload_verificacao_token_hash_valido"',
+  'hash em maiúsculas é recusado');
+select throws_ok(
+  $$ insert into privado.upload_verificacao_identidade
+       (verificacao_id, parte, storage_path, token_hash, expira_em)
+     values ('89000000-0000-4000-8000-000000000103', 'selfie', '890/103/selfie.jpg',
+       left(pg_temp.hash_token(pg_temp.token(254)), 63), privado.agora() + interval '2 hours') $$,
+  '23514',
+  'new row for relation "upload_verificacao_identidade" violates check constraint "upload_verificacao_token_hash_valido"',
+  'hash com 63 caracteres é recusado');
+select throws_ok(
+  $$ insert into privado.upload_verificacao_identidade
+       (verificacao_id, parte, storage_path, token_hash, expira_em)
+     values ('89000000-0000-4000-8000-000000000103', 'selfie', '890/103/selfie.jpg',
+       pg_temp.hash_token(pg_temp.token(255)) || '0', privado.agora() + interval '2 hours') $$,
+  '23514',
+  'new row for relation "upload_verificacao_identidade" violates check constraint "upload_verificacao_token_hash_valido"',
+  'hash com 65 caracteres é recusado');
+select throws_ok(
+  $$ insert into privado.upload_verificacao_identidade
+       (verificacao_id, parte, storage_path, token_hash, expira_em)
+     values ('89000000-0000-4000-8000-000000000103', 'selfie', '890/103/selfie.jpg',
+       repeat('g', 64), privado.agora() + interval '2 hours') $$,
+  '23514',
+  'new row for relation "upload_verificacao_identidade" violates check constraint "upload_verificacao_token_hash_valido"',
+  'hash de 64 caracteres fora de hexadecimal é recusado');
+select lives_ok(
+  $$ insert into privado.upload_verificacao_identidade
+       (verificacao_id, parte, storage_path, token_hash, expira_em)
+     values ('89000000-0000-4000-8000-000000000103', 'selfie', '890/103/selfie.jpg',
+       pg_temp.hash_token(pg_temp.token(256)), privado.agora() + interval '2 hours') $$,
+  'caminho preenchido e SHA-256 em minúsculas entram');
 select ok((select token_hash = pg_temp.hash_token(pg_temp.token(1))
                   and position(pg_temp.token(1) in row_to_json(u)::text) = 0
              from privado.upload_verificacao_identidade u
