@@ -50,6 +50,7 @@ PERMITIR_BASE_POVOADA=sim ./scripts/medir-painel.sh --saida DIR
 AMOSTRAS=10 AQUECIMENTO=3 ./scripts/medir-painel.sh --saida DIR   # são os padrões
 AUTO_EXPLAIN_MIN_MS=0 ./scripts/medir-painel.sh --cenarios S3 --saida DIR  # plano de todas as consultas internas (saída grande)
 DB_CONTAINER=supabase_db_frila-backend ./scripts/medir-painel.sh --saida DIR
+DB_USER=postgres ./scripts/medir-painel.sh --saida DIR   # papel antigo: auto_explain fica NAO MEDIDO
 ```
 
 Saída do script: `0` mediu tudo o que foi pedido; `2` **NAO mediu** (ou mediu só parte). Não existe saída `1`: o script registra, não julga. Sem `--saida`, ele cria um diretório com `mktemp -d` e imprime o caminho.
@@ -75,6 +76,8 @@ O resumo do plano é só contagem de `Seq Scan` em `posicao`, `ocorrencia` e `va
 - Estatística: o gerador roda `analyze` nas tabelas dentro da transação. A medição não usa `enable_seqscan = off`.
 
 Se o `auto_explain` não puder ser ligado neste banco, o relatório diz `NAO MEDIDO` para as consultas internas e mantém tempo, tamanho e `explain` da chamada inteira.
+
+O `auto_explain` só carrega para superusuário. No Supabase local o superusuário é `supabase_admin` (o `postgres` não é), e é o padrão de `DB_USER`, como em `scripts/ciclo-completo.sh` e `scripts/teste-operacao-sql.sh`. O papel muda só a conexão do `psql`: o contêiner continua sendo o de `DB_CONTAINER`, o gerador mantém as salvaguardas e a transação termina em `rollback`; a medição dos cenários roda como `authenticated`, então RLS vale igual. O cabeçalho do relatório imprime o papel e se ele é superusuário. Se a senha de `supabase_admin` não for a que o script usa, o script sai com 2 (`NAO MEDI`) na primeira consulta, sem tocar nada.
 
 ## Referência para decidir (sugestão do plano, quem decide é o Cauê ou o Jota)
 

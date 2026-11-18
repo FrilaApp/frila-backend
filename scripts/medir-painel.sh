@@ -23,6 +23,11 @@
 #
 # Variáveis de ambiente:
 #   DB_CONTAINER            contêiner do Postgres local      (padrão supabase_db_frila-backend)
+#   DB_USER                 papel do psql no contêiner       (padrão supabase_admin)
+#                           O auto_explain só carrega para superusuário. No Supabase local o
+#                           superusuário é supabase_admin; `postgres` não é e deixa as consultas
+#                           internas como NAO MEDIDO. Os cenários rodam como `authenticated`
+#                           (set local role) de qualquer jeito, então RLS vale igual.
 #   AMOSTRAS                chamadas medidas por cenário     (padrão 10)
 #   AQUECIMENTO             chamadas descartadas antes       (padrão 3)
 #   STATEMENT_TIMEOUT_MS    teto de cada comando             (padrão 600000)
@@ -38,6 +43,7 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 DB="${DB_CONTAINER:-supabase_db_frila-backend}"
+DB_USER="${DB_USER:-supabase_admin}"
 GERADOR="supabase/tests/carga/gerar_casa_pesada.sql"
 MEDIDOR="scripts/medir-painel.sql"
 AMOSTRAS="${AMOSTRAS:-10}"
@@ -84,6 +90,7 @@ done
 numero "$AMOSTRAS" && [ "$AMOSTRAS" -ge 1 ] || nao_medi "AMOSTRAS precisa ser um inteiro >= 1 (recebi '$AMOSTRAS')"
 numero "$AQUECIMENTO" || nao_medi "AQUECIMENTO precisa ser um inteiro >= 0 (recebi '$AQUECIMENTO')"
 numero "$TIMEOUT_MS" || nao_medi "STATEMENT_TIMEOUT_MS precisa ser um inteiro (recebi '$TIMEOUT_MS')"
+case "$DB_USER" in ''|[!A-Za-z_]*|*[!A-Za-z0-9_]*) nao_medi "DB_USER precisa ser um nome de papel simples (recebi '$DB_USER')" ;; esac
 case "$PERMITIR_BASE_POVOADA" in sim|nao) : ;; *) nao_medi "PERMITIR_BASE_POVOADA aceita 'sim' ou 'nao'" ;; esac
 
 if $listar; then
@@ -105,9 +112,10 @@ command -v docker >/dev/null 2>&1 || nao_medi "docker não está no PATH"
 docker inspect -f '{{.State.Running}}' "$DB" 2>/dev/null | grep -q true \
   || nao_medi "o contêiner $DB não está de pé"
 
-psql_() { docker exec -e PGPASSWORD=postgres -i "$DB" psql -U postgres -d postgres -X -q "$@"; }
+psql_() { docker exec -e PGPASSWORD=postgres -i "$DB" psql -U "$DB_USER" -d postgres -X -q "$@"; }
 
-psql_ -At -c 'select 1' >/dev/null 2>&1 || nao_medi "o Postgres em $DB não respondeu"
+psql_ -At -c 'select 1' >/dev/null 2>&1 \
+  || nao_medi "o Postgres em $DB não respondeu como '$DB_USER' (senha, papel ou contêiner; DB_USER=postgres volta ao papel antigo)"
 
 n_funcoes=$(psql_ -At -c 'select count(*) from public.funcao' 2>/dev/null)
 numero "$n_funcoes" || nao_medi "não consegui contar public.funcao (psql devolveu: '${n_funcoes:-vazio}')"
@@ -127,12 +135,14 @@ relatorio="$SAIDA/relatorio.txt"
 : > "$relatorio" || nao_medi "não consegui escrever em $relatorio"
 
 versao_pg=$(psql_ -At -c 'show server_version' 2>/dev/null)
+superusuario=$(psql_ -At -c 'select rolsuper from pg_roles where rolname = current_user' 2>/dev/null)
 commit=$(git rev-parse --short HEAD 2>/dev/null || printf 'desconhecido')
 
 linha() { printf '%s\n' "$*" | tee -a "$relatorio"; }
 
 linha "# medir-painel.sh · $(date '+%Y-%m-%d %H:%M:%S %z')"
 linha "commit do repositório: $commit · Postgres $versao_pg · usuários na base antes: $n_usuarios"
+linha "papel do psql: $DB_USER (superusuário: ${superusuario:-?}; auto_explain só carrega se for 't')"
 linha "amostras=$AMOSTRAS aquecimento=$AQUECIMENTO (mediana e máximo; com $AMOSTRAS amostras não se afirma p95)"
 linha "volumes: HIPÓTESE do plano, não dado de produto. Tempo local não transfere para o Prod."
 linha ""
