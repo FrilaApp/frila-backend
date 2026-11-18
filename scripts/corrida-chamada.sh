@@ -56,6 +56,10 @@
 #  24. O job x a conversão x reabrir_por_atraso de uma irmã preenchida, entre a trava da conversão e o
 #      update das irmãs (guarda): a reabertura espera a conversão, nenhum 40P01, a conversão feita e a
 #      irmã reaberta depois dela.
+#  25 a 27. Os resíduos de ordem de travas depois do #562 (#565): um update de várias linhas sem ordem x
+#      um job que pega as mesmas linhas por id, com a ordem forçada por uma terceira conexão e o job
+#      atrasado. 25: fechar_turnos_e_vagas x expirar_chamadas (vagas); 26: publicar_a_partir_da_chamada
+#      x lembrar_chamadas (chamadas); 27: limpar_contas_anonimizadas x expirar_chamadas (vagas).
 #
 # Uso: ./scripts/corrida-chamada.sh        RODADAS=4 ./scripts/corrida-chamada.sh
 set -uo pipefail
@@ -1586,5 +1590,212 @@ SQL
     "conversão 'ok', reabertura 'ok' (travado antes do job), job 'ok', G1 'publicada', G2 'encerrada', nova 1, chamadas 'expirada'/'encerrada'"
 done
 fim_job 24 "a reabertura à espera da conversão, a conversão feita e G1 reaberta depois dela" a
+
+# ── 25 a 27. Resíduos de ordem de travas depois do #562 (#565) ─────────────────────
+# Três funções pegam várias linhas da mesma tabela num update sem ordem, contra um job que pega as
+# mesmas linhas por id. Molde do 22: X segura a linha do meio da varredura do update, e o script só
+# solta X depois de ver os dois lados parados na trava. No 26 e no 27 o update varre uma tabela só, na
+# ordem física (ctid): a montagem grava as linhas num insert só, na ordem que quer, e a confere antes da
+# disputa. No 25 o plano é outro (abaixo). Com as linhas A < B pelo id e o update lendo B, M, A:
+#   · o update (U) pega B e para em M (de X);
+#   · o job (J), por id, pega A e para em B (de U);
+#   · ao soltar X, U pega M e quer A, que é de J; J quer B, que é de U: o ciclo.
+# Os três exigem o job atrasado (pg_cron parado, a issue): uma chamada aberta e vencida numa vaga já
+# terminada (25, 27) ou um lembrete pendente (26, como o 19).
+# Nos cenários de vaga terminada (25, 27), os dados ficam no passado, e o pg_cron local roda o
+# expirar_chamadas a cada minuto e o fechar_turnos_e_vagas a cada 5, no segundo 0: a rodada monta e
+# disputa entre os segundos 3 e 35, longe dele.
+#   25. privado.fechar_turnos_e_vagas (o update das vagas, 20261015140000:87-95) x privado.expirar_chamadas;
+#   26. public.publicar_a_partir_da_chamada (o update das chamadas, 20261117180000) x privado.lembrar_chamadas;
+#   27. privado.limpar_contas_anonimizadas (o passo 6, o update das vagas de quem foi excluído,
+#       20261107350000:679-772) x privado.expirar_chamadas.
+# Fica de fora privado.anonimizar_contexto_das_vagas: os três chamadores pegam antes as vagas por id
+# com skip locked (20261109180000:208-216, 20261108100000:318-353), e ela só alcança vaga terminada há
+# anos (privado.vaga_expirada); para o job querer uma vaga dessas, a chamada dela teria de estar aberta
+# há anos.
+longe_do_cron() {   # até o segundo do relógio do banco ficar entre 3 e 35.
+  local s
+  until s=$(psql -c "select extract(second from clock_timestamp())::int;") && [ "$s" -ge 3 ] && [ "$s" -le 35 ]; do sleep 1; done
+}
+# vagas_passadas <mundo> <publicado_por> <entidade...>: vagas diretas publicadas que já terminaram,
+# gravadas num insert só, na ordem dada, cada uma com a posição aberta.
+vagas_passadas() {
+  local m=$1 autor=$2 e linhas='' ids=''; shift 2
+  for e in "$@"; do
+    ids+="'$(id "$m" "$e")',"
+    linhas+="('$(id "$m" "$e")'::uuid, '$(id "$m" 10)'::uuid, (select id from public.funcao where nome = 'garçom'), '$autor'::uuid,
+              date_trunc('hour', now()) - interval '6 hours', date_trunc('hour', now()) - interval '1 hour',
+              'CLN 201', 'Plano Piloto', 'POINT(-47.8822 -15.7942)'::extensions.geography, 15000, 1, true, false, false, 'Maitre',
+              'urgencia'::public.modo_preenchimento, gen_random_uuid(), now() - interval '1 day', 'publicada'::public.estado_vaga, 'chamada_direta'),"
+  done
+  psql >/dev/null <<SQL
+insert into public.vaga (id, estabelecimento_id, funcao_id, publicado_por, inicio_em, fim_em, local, regiao_administrativa, ponto,
+                         valor_centavos, posicoes, inclui_refeicao, inclui_transporte, exige_material_proprio, responsavel_local,
+                         modo, chave_cliente, publicado_em, estado, origem)
+values ${linhas%,};
+insert into public.posicao (vaga_id, inicio_em, fim_em)
+select id, inicio_em, fim_em from public.vaga where id in (${ids%,});
+SQL
+}
+# ordem_fisica <tabela> <id...>: os ids na ordem da varredura sequencial (ctid).
+ordem_fisica() {
+  local t=$1 l; shift
+  l=$(printf "'%s'," "$@")
+  psql -c "select string_agg(id::text, ' ' order by ctid) from public.$t where id in (${l%,});"
+}
+responsavel_de() { psql -c "select responsavel_local from public.vaga where id = '$1';"; }
+
+# 25. O update das vagas do fechamento não tem ordem, e a do plano não é a física: hoje é um hash anti
+# join que devolve as vagas na ordem do hash do id. A montagem grava 10 vagas terminadas e mede a ordem
+# em que o update as pega (os dois comandos dele numa transação desfeita, com o plano do banco); dela
+# escolhe três, B antes de M antes de A no update, com A < B < M pelo id. X segura M; as chamadas
+# vencidas ficam em A e B. M com o id maior faz a mesma ordem se formar quando o fechamento pegar as
+# vagas por id (ele para em M já com A e B). Sem trinca assim, mais 10 vagas (até 30). Mundos 451 a 460.
+ordem_do_fechamento() {   # ordem_do_fechamento <estabelecimento>: as vagas da casa na ordem do update.
+  psql <<SQL | tail -1
+begin;
+update public.posicao p set estado = 'cancelada' where p.estado = 'aberta' and p.fim_em <= now();
+create temp table ordem on commit drop as
+  with u as (
+    update public.vaga v set estado = 'encerrada'
+     where v.estado in ('publicada', 'preenchida') and v.fim_em <= now()
+       and not exists (select 1 from public.posicao p where p.vaga_id = v.id and p.estado in ('aberta', 'confirmada'))
+    returning v.id, v.estabelecimento_id)
+  select id, estabelecimento_id, row_number() over () as n from u;
+select coalesce(string_agg(id::text, ' ' order by n), '') from ordem where estabelecimento_id = '$1';
+rollback;
+SQL
+}
+# trinca <id...>: "B M A" com B antes de M antes de A na lista e A < B < M; vazio se não houver.
+trinca() {
+  local -a v=("$@")
+  local i j k n=${#v[@]}
+  for ((i = 0; i < n; i++)); do for ((j = i + 1; j < n; j++)); do
+    [[ "${v[j]}" > "${v[i]}" ]] || continue
+    for ((k = j + 1; k < n; k++)); do
+      [[ "${v[k]}" < "${v[i]}" ]] && { echo "${v[i]} ${v[j]} ${v[k]}"; return; }
+    done
+  done; done
+}
+
+echo "▸ 25. fechar_turnos_e_vagas x expirar_chamadas, com duas vagas terminadas e de chamada vencida nos dois lotes"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  m=$((450 + i))
+  montar_mundo "$m"
+  casa=$(id "$m" 1); p1=$(id "$m" 2); p2=$(id "$m" 3)
+  longe_do_cron
+  escolha=
+  for lote in 2 3 4; do
+    # shellcheck disable=SC2046  # as entidades vão separadas
+    vagas_passadas "$m" "$casa" $(seq $((lote * 10)) $((lote * 10 + 9)))
+    # shellcheck disable=SC2046
+    escolha=$(trinca $(ordem_do_fechamento "$(id "$m" 10)"))
+    [ -n "$escolha" ] && break
+  done
+  read -r gb gm ga <<< "$escolha"
+  [ -n "${ga:-}" ] || { falhou "rodada $i (25): não achei a trinca em 30 vagas"; erros=$((erros + 1)); continue; }
+  ca=$(chamada_direta "$m" "$ga" "$p1" vencida); cb=$(chamada_direta "$m" "$gb" "$p2" vencida)
+  [ -n "$ca" ] && [ -n "$cb" ] || { falhou "rodada $i (25): não montei as chamadas"; erros=$((erros + 1)); continue; }
+  n="cc-$RUN-$m"
+  # CONTA_* e SQL_* são lidas pelo nome, no forcar.
+  # shellcheck disable=SC2034
+  { CONTA_f=; SQL_f="select privado.fechar_turnos_e_vagas()"; CONTA_e=; SQL_e="select privado.expirar_chamadas()"; }
+  segurar "$n-x" "select 1 from public.vaga where id = '$gm' for update"
+  if ! forcar "$n" "x segurando" f "f travado" e "e travado"; then
+    falhou "rodada $i (25): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    erros=$((erros + 1)); continue
+  fi
+  rf=$(resultado "$TMP/$n-f"); re=$(resultado "$TMP/$n-e")
+  impasse a "$rf" "$re"
+  abertas=$(psql -c "select count(*) from public.vaga where estabelecimento_id = '$(id "$m" 10)' and estado <> 'encerrada';")
+  confere_job "fechamento '$rf', job '$re', chamadas '$(estado_chamada "$ca")'/'$(estado_chamada "$cb")', vagas não encerradas $abertas" \
+    "fechamento 'ok', job 'ok', chamadas 'expirada'/'expirada', vagas não encerradas 0"
+done
+fim_job 25 "as chamadas expiradas e as vagas encerradas" a
+
+# 26. Uma vaga direta com três chamadas abertas A < M < B pelo id, gravadas na ordem física B, M, A; A e
+# B com lembrete pendente, M sem. X segura M; a conversão (O) encerra as chamadas, pega B e para em M; o
+# lembrete (L, o relógio congelado do 19) pega A e para em B. Os prazos e lembretes ficam no futuro do
+# relógio de verdade: o pg_cron não os alcança. Mundos 461 a 470.
+echo "▸ 26. publicar_a_partir_da_chamada x lembrar_chamadas, com três chamadas da vaga em ordem física inversa à do id"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  m=$((460 + i))
+  montar_mundo "$m"; mais_prof "$m" 4
+  casa=$(id "$m" 1); p1=$(id "$m" 2); p2=$(id "$m" 3); p3=$(id "$m" 4)
+  g1=$(id "$m" 20); vaga_direta "$m" 20 3
+  ca=$(id "$m" 30); cm=$(id "$m" 31); cb=$(id "$m" 32)
+  psql >/dev/null <<SQL
+insert into public.chamada (id, vaga_id, profissional_id, estabelecimento_id, criada_por, expira_em, lembrete_em, chave) values
+  ('$cb', '$g1', (select id from public.profissional where usuario_id = '$p3'), '$(id "$m" 10)', '$casa', now() + interval '2 hours', now() + interval '1 hour', gen_random_uuid()),
+  ('$cm', '$g1', (select id from public.profissional where usuario_id = '$p2'), '$(id "$m" 10)', '$casa', now() + interval '2 hours', null, gen_random_uuid()),
+  ('$ca', '$g1', (select id from public.profissional where usuario_id = '$p1'), '$(id "$m" 10)', '$casa', now() + interval '2 hours', now() + interval '1 hour', gen_random_uuid());
+SQL
+  fisica=$(ordem_fisica chamada "$ca" "$cm" "$cb")
+  [ "$fisica" = "$cb $cm $ca" ] || { falhou "rodada $i (26): não montei (ordem física '$fisica')"; erros=$((erros + 1)); continue; }
+  n="cc-$RUN-$m"
+  segurar "$n-x" "select 1 from public.chamada where id = '$cm' for update"
+  parou=
+  aguardar "$n-x" segurando || parou="x segurando"
+  if [ -z "$parou" ]; then
+    lado_nomeado "$n-o" "$casa" "select public.publicar_a_partir_da_chamada('$g1', gen_random_uuid(), 'urgencia')"
+    aguardar "$n-o" travado || parou="o travado"
+  fi
+  if [ -z "$parou" ]; then lado_lembrete "$n-l"; aguardar "$n-l" travado || parou="l travado"; fi
+  if [ -n "$parou" ]; then
+    soltar "$n-%"; wait
+    falhou "rodada $i (26): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    erros=$((erros + 1)); continue
+  fi
+  soltar "$n-x"; wait
+  ro=$(resultado "$TMP/$n-o"); rl=$(resultado "$TMP/$n-l")
+  impasse a "$ro" "$rl"
+  nova=$(psql -c "select count(*) from public.vaga where vaga_origem_id = '$g1' and estado = 'publicada';")
+  confere_job "conversão '$ro', lembrete '$rl', chamadas '$(estado_chamada "$ca")'/'$(estado_chamada "$cm")'/'$(estado_chamada "$cb")', vaga '$(estado_vaga "$g1")', nova $nova" \
+    "conversão 'ok', lembrete 'ok', chamadas 'encerrada'/'encerrada'/'encerrada', vaga 'encerrada', nova 1"
+done
+fim_job 26 "a conversão feita e as três chamadas encerradas" a
+
+# 27. A conta que publicou três vagas da casa foi excluída há 16 dias e ainda tem dado a limpar (a
+# data de nascimento; o membro saiu, as vagas ficam com a casa). As vagas terminaram; duas têm uma
+# chamada aberta e vencida, feita por outro membro (o administrador do mundo), em conta ativa: nada da
+# conta excluída. X segura a do meio; a limpeza (L) sanitiza as vagas dela, pega B e para em M; o job
+# pega A e para em B. Mundos 481 a 490.
+echo "▸ 27. limpar_contas_anonimizadas x expirar_chamadas, com três vagas terminadas da conta excluída"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  m=$((480 + i))
+  montar_mundo "$m"
+  casa=$(id "$m" 1); p1=$(id "$m" 2); p2=$(id "$m" 3); autor=$(id "$m" 4)
+  psql >/dev/null <<SQL
+$AUX
+insert into auth.users (instance_id, id, aud, role, email, created_at, updated_at, is_sso_user, is_anonymous)
+values ('00000000-0000-0000-0000-000000000000', '$autor', 'authenticated', 'authenticated', 'corrida-chamada-$RUN-$m-4@frila.test', now(), now(), false, false);
+select pg_temp.tentar('$autor', \$q\$ select public.criar_conta('contratante', 'Ex Membro', '+5561$(printf '%03d%03d4%02d' "$RUN" "$m" 0)', '1985-01-01', '2026-09-22') \$q\$);
+update public.usuario set estado = 'anonimizada', anonimizado_em = now() - interval '16 days' where id = '$autor';
+SQL
+  ga=$(id "$m" 20); gb=$(id "$m" 21); gm=$(id "$m" 22)
+  longe_do_cron
+  vagas_passadas "$m" "$autor" 21 22 20
+  ca=$(chamada_direta "$m" "$ga" "$p1" vencida); cb=$(chamada_direta "$m" "$gb" "$p2" vencida)
+  fisica=$(ordem_fisica vaga "$ga" "$gb" "$gm")
+  if [ -z "$ca" ] || [ -z "$cb" ] || [ "$fisica" != "$gb $gm $ga" ]; then
+    falhou "rodada $i (27): não montei (ordem física '$fisica')"; erros=$((erros + 1)); continue
+  fi
+  n="cc-$RUN-$m"
+  # shellcheck disable=SC2034
+  { CONTA_l=; SQL_l="select privado.limpar_contas_anonimizadas(15)"; CONTA_e=; SQL_e="select privado.expirar_chamadas()"; }
+  segurar "$n-x" "select 1 from public.vaga where id = '$gm' for update"
+  if ! forcar "$n" "x segurando" l "l travado" e "e travado"; then
+    falhou "rodada $i (27): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    erros=$((erros + 1)); continue
+  fi
+  rl=$(resultado "$TMP/$n-l"); re=$(resultado "$TMP/$n-e")
+  impasse a "$rl" "$re"
+  confere_job "limpeza '$rl', job '$re', chamadas '$(estado_chamada "$ca")'/'$(estado_chamada "$cb")', responsável '$(responsavel_de "$ga")'/'$(responsavel_de "$gb")'/'$(responsavel_de "$gm")'" \
+    "limpeza 'ok', job 'ok', chamadas 'expirada'/'expirada', responsável '[removido por exclusão de conta]'/'[removido por exclusão de conta]'/'[removido por exclusão de conta]'"
+done
+fim_job 27 "as chamadas expiradas e as três vagas sanitizadas" a
 
 exit "$falha"
