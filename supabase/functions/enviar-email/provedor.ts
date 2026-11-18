@@ -79,6 +79,9 @@ export function classificarErro(erro: unknown): { codigo: string; transitorio: b
   if (m) {
     const classe = m[1];
     const completo = `${m[1]}${m[2]}`;
+    if (completo === "535") {
+      return { codigo: "falha_de_autenticacao", transitorio: false };
+    }
     if (classe === "2") return { codigo: `smtp_${completo}`, transitorio: false };
     if (classe === "4") return { codigo: `smtp_${completo}`, transitorio: true };
     // 550, 553 e companhia: caixa que não existe ou recusa. Insistir não muda.

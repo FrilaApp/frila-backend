@@ -511,7 +511,7 @@ Deno.test("provedor: 4xx é transitório, 5xx não é, e nenhum dos dois guarda 
   assertEquals(classificarErro(new Error("ECONNREFUSED")).transitorio, true);
   assertEquals(
     classificarErro(new Error("535 authentication failed")).codigo,
-    "smtp_535",
+    "falha_de_autenticacao",
   );
   assertEquals(classificarErro("qualquer coisa"), {
     codigo: "erro_nao_classificado",
@@ -1610,6 +1610,31 @@ const recusaDefinitiva = (codigo: string) => (_e: Email) =>
   Promise.resolve<ResultadoEnvio>({ ok: false, codigo, transitorio: false });
 const recusaTransitoria = (codigo: string) => (_e: Email) =>
   Promise.resolve<ResultadoEnvio>({ ok: false, codigo, transitorio: true });
+
+Deno.test("bB0tV5R8: 535 real do provedor deixa rastro de falha de autenticação para destino autor", async () => {
+  const e = espiao(
+    [pedido({ msg_id: 900 })],
+    dados({ equipe_pendente: false, autor_pendente: true }),
+  );
+  const erro535DoProvedor = (_e: Email) => {
+    const falha = classificarErro(
+      new Error("535 5.7.8 Authentication credentials invalid"),
+    );
+    return Promise.resolve<ResultadoEnvio>({ ok: false, ...falha });
+  };
+
+  const res = await chamar(e, erro535DoProvedor);
+
+  assertEquals(res.status, 200);
+  assertEquals(e.falhasOperacionais, ["falha_de_autenticacao"]);
+  assertEquals(e.ordem, [
+    "falha_operacional:falha_de_autenticacao",
+    "concluir:900",
+  ]);
+  assertEquals((await res.json()).relatorio, [
+    { msg_id: 900, status: "arquivado", detalhe: "falha_de_autenticacao" },
+  ]);
+});
 
 Deno.test("bB0tV5R8: alerta com falha definitiva de SMTP registra o código ANTES de arquivar", async () => {
   const e = espiao([alertaPedido(901)]);
