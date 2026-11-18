@@ -4,7 +4,7 @@
 -- A disputa entre duas conexões está em scripts/corrida-token-upload-verificacao.sh.
 
 begin;
-select plan(40);
+select plan(42);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -90,6 +90,13 @@ select ok(not has_table_privilege('anon', 'privado.upload_verificacao_identidade
 select ok(not has_table_privilege('service_role', 'privado.upload_verificacao_identidade', 'select')
           and not has_table_privilege('service_role', 'privado.upload_verificacao_identidade', 'update'),
   'service_role acessa o slot somente pela função privada');
+select is((select prosecdef from pg_proc
+            where oid = 'privado.consumir_token_upload_verificacao(uuid, text)'::regprocedure),
+  true, 'o consumo é SECURITY DEFINER');
+select ok((select coalesce(proconfig, '{}') @> array['search_path=""']
+             from pg_proc
+            where oid = 'privado.consumir_token_upload_verificacao(uuid, text)'::regprocedure),
+  'o consumo fixa search_path vazio');
 select ok(not has_function_privilege('anon', 'privado.consumir_token_upload_verificacao(uuid, text)', 'execute')
           and not has_function_privilege('authenticated', 'privado.consumir_token_upload_verificacao(uuid, text)', 'execute'),
   'anon e authenticated não executam o consumo');
