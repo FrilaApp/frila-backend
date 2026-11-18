@@ -4,8 +4,22 @@
 -- (as chamadas por id, a mesma ordem) e public.publicar_a_partir_da_chamada (a origem e as irmãs que
 -- ela encerra, travadas por id num comando só; seção no fim). As três seguem a regra vaga -> chamada
 -- -> usuario, com as vagas em ordem de id. Medido com a ordem forçada por uma terceira conexão em
--- scripts/corrida-chamada.sh, cenários 14 a 23; a matriz das funções que travam vaga ou chamada contra
+-- scripts/corrida-chamada.sh, cenários 14 a 24; a matriz das funções que travam vaga ou chamada contra
 -- o job, com o antes e o depois, está no PR #563.
+--
+-- Resíduos conhecidos (não fecham ciclo hoje, por invariante; ficam registrados):
+--   - privado.fechar_turnos_e_vagas (vigente na 20261015140000:87-95, cron a cada 5 min) encerra várias
+--     vagas num update sem ordem. Só pega vaga já terminada (fim_em <= agora) e sem posição aberta ou
+--     confirmada. A chamada vence no máximo 1 h antes do início (20261117160000:405-407) e o job roda a
+--     cada minuto. Inferência: as vagas dos dois só coincidem se o job ficar parado mais de 1 h além da
+--     duração do turno.
+--   - privado.limpar_contas_anonimizadas (20261107350000:674 antes de :680) e
+--     privado.anonimizar_contexto_das_vagas (20261108100000:140 antes de :155) pegam a chamada antes da
+--     vaga. A primeira só alcança contas anonimizadas há 15 dias, cujas chamadas abertas a anonimização
+--     já cancelou (processar_anonimizacao_chamada, 20261107350000:534), e chamada nova exige conta ativa (20261117160000:83).
+--     A segunda só atua em vaga terminada há anos (privado.vaga_expirada), sem chamada aberta, e é
+--     chamada pelos expurgos que já seguram a vaga com skip locked. Inferência: o job nunca segura as
+--     vagas nem as chamadas delas.
 --
 -- A regra única de travas da chamada direta é vaga -> chamada -> usuario (20261117010000,
 -- 20261117140000). O job (pg_cron, a cada minuto) era a exceção que a 20261117130000 deixou como
@@ -201,15 +215,26 @@ grant execute on function privado.lembrar_chamadas() to service_role;
 -- e a conversão de G2: a conversão segurava G2 e esperava G1; o job segurava G1 e esperava G2. Medido
 -- com a ordem forçada por uma terceira conexão (scripts/corrida-chamada.sh, cenário 20): 40P01 antes.
 --
--- Conserto: depois da trava da casa, a origem é lida sem trava; a origem e as irmãs candidatas (mesma
--- casa, chamada_direta, publicada, mesma função, início e fim até o minuto, o filtro do update) são
--- travadas FOR UPDATE num comando só, em ordem de id; a origem é relida e o corpo segue igual
+-- Conserto: depois da trava da casa, a origem é lida sem trava; a origem e todas as vagas diretas da
+-- casa para o mesmo trabalho (chamada_direta, mesma função, início e fim até o minuto: o filtro do
+-- update sem o estado) são travadas FOR UPDATE num comando só, em ordem de id; a origem é relida e o
+-- corpo segue igual
 -- (idempotência, conferências, 409 vaga_encerrada de #523, encerramento das irmãs e das chamadas, avisos,
 -- despacho). Ler a origem sem trava é seguro para achar as irmãs: função, início e fim de uma vaga não
 -- mudam depois de criada (git grep nas migrações: nenhum update de vaga os altera; o gatilho
--- vaga_horario_sincroniza só copia o horário para a posição). Uma vaga que vire irmã publicada entre a
--- trava e o update (reabrir_por_atraso de uma direta preenchida já confirmada) ainda é pega no update,
--- como antes.
+-- vaga_horario_sincroniza só copia o horário para a posição).
+--
+-- Por que sem o filtro de estado: reabrir_por_atraso (20261108070000) não pede a trava da casa e devolve
+-- a vaga preenchida a publicada (:520). Com a trava só das publicadas, uma irmã preenchida reaberta
+-- entre a trava e o update entraria no update (que encerra as publicadas) fora de ordem, depois da
+-- origem. Medido (scripts/corrida-chamada.sh, cenário 24, e uma sonda com lock_timeout): hoje isso não
+-- acontece, porque o update de :520 faz a conferência da chave estrangeira vaga -> estabelecimento (FOR
+-- KEY SHARE na casa), que espera o FOR UPDATE da casa da conversão. Inferência: a conferência roda porque
+-- a linha da vaga já foi alterada na mesma transação, pelo gatilho posicao_reaberta_abre_rodada do
+-- insert de :516 (20260929110000:390, :402-406). Com todas as vagas do trabalho travadas desde o começo,
+-- a conversão não depende desse detalhe: a reabertura espera a vaga, e o update continua encerrando só
+-- as publicadas (a preenchida segue sem ser tocada, CD-C15). O custo é travar também, por um instante,
+-- as preenchidas, encerradas e canceladas do mesmo trabalho na mesma casa (poucas: uma por pessoa).
 --
 -- Corpo copiado de 20261117150000 (a vigente: develop e PRs abertos, conferido com git grep e
 -- gh pr diff), só com a trava acima. Comentário, assinatura e grants iguais.
@@ -260,17 +285,18 @@ begin
   if not privado.eh_membro(v_estab) then perform public.erro(403, 'sem_permissao'); end if;
   perform 1 from public.estabelecimento e where e.id = v_estab for update;
 
-  -- B-065 (#563): a origem e as irmãs que o update abaixo encerra são travadas num comando só, em
-  -- ordem de id, a ordem do expirar_chamadas (que não pega a trava da casa). Antes, a origem era
-  -- travada primeiro e as irmãs só no update, fora de ordem. A origem é lida sem trava para achar as
-  -- irmãs: função, início e fim de uma vaga não mudam (nenhuma função os altera).
+  -- B-065 (#563): a origem e todas as vagas diretas da casa para o mesmo trabalho são travadas num
+  -- comando só, em ordem de id, a ordem do expirar_chamadas (que não pega a trava da casa). Sem
+  -- filtro de estado: a preenchida que reabrir_por_atraso devolve a publicada já está travada, e o
+  -- update abaixo, que encerra só as publicadas, não pega nenhuma vaga fora de ordem. Antes, a origem era travada primeiro e as irmãs só no update. A origem é lida sem
+  -- trava para achar as irmãs: função, início e fim de uma vaga não mudam (nenhuma função os altera).
   select * into v_orig from public.vaga where id = publicar_a_partir_da_chamada.vaga_id;
   if not found then perform public.erro(404, 'nao_encontrado'); end if;
   perform 1
     from public.vaga g
    where g.id = v_orig.id
       or (g.estabelecimento_id = v_orig.estabelecimento_id
-          and g.origem = 'chamada_direta' and g.estado = 'publicada'
+          and g.origem = 'chamada_direta'
           and g.funcao_id = v_orig.funcao_id
           and date_trunc('minute', g.inicio_em) = date_trunc('minute', v_orig.inicio_em)
           and date_trunc('minute', g.fim_em) = date_trunc('minute', v_orig.fim_em))

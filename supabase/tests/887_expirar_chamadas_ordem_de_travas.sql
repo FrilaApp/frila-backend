@@ -5,7 +5,7 @@
 -- O lembrete (privado.lembrar_chamadas), o outro job, pega as chamadas na mesma ordem de id. A conversão
 -- (public.publicar_a_partir_da_chamada) trava a origem e as irmãs que encerra num comando só, por id.
 --
--- O ciclo só aparece com várias conexões: scripts/corrida-chamada.sh, cenários 14 a 22 (40P01 em
+-- O ciclo só aparece com várias conexões: scripts/corrida-chamada.sh, cenários 14 a 24 (40P01 em
 -- 4 de 4 rodadas da ordem forçada antes, nos que fechavam). Numa sessão só fica o catálogo, que
 -- falha com o corpo da 20261117130000 (lá, 'for update of c' vinha primeiro e as chamadas iam
 -- por expira_em), com o lembrete da 20261107370000 (lá, por lembrete_em) e com a conversão da
@@ -14,8 +14,10 @@
 --   2. as chamadas são travadas em ordem de id, só as das vagas travadas;
 --   3. a função segue SECURITY DEFINER com search_path vazio;
 --   4. o lembrete trava as chamadas em ordem de id, e segue SECURITY DEFINER com search_path vazio;
---   5. a conversão, depois da trava da casa, trava primeiro a origem e as irmãs, por id, com o filtro
---      do update das irmãs, e segue SECURITY DEFINER com search_path vazio e só para authenticated.
+--   5. a conversão, depois da trava da casa, trava primeiro a origem e todas as vagas diretas da casa
+--      do mesmo trabalho (o filtro do update das irmãs sem o estado: a preenchida que reabrir_por_atraso
+--      devolve a publicada já está travada), por id, e segue SECURITY DEFINER com search_path vazio e
+--      só para authenticated.
 begin;
 set local search_path = public, extensions;
 create extension if not exists pgtap with schema extensions;
@@ -60,10 +62,10 @@ select ok((select casa > 0 and trava_vagas > casa
                     = trava_vagas - casa - length('from public.estabelecimento e where e.id = v_estab for update') + length('order by g.id ') + 1
              from conv),
   'a conversão trava a origem e as irmãs por id logo depois da casa, antes de qualquer outra trava');
-select ok((select strpos(src, 'where g.id = v_orig.id or (g.estabelecimento_id = v_orig.estabelecimento_id and g.origem = ''chamada_direta'' and g.estado = ''publicada'' and g.funcao_id = v_orig.funcao_id and date_trunc(''minute'', g.inicio_em) = date_trunc(''minute'', v_orig.inicio_em) and date_trunc(''minute'', g.fim_em) = date_trunc(''minute'', v_orig.fim_em)) order by g.id for update') > 0
+select ok((select strpos(src, 'where g.id = v_orig.id or (g.estabelecimento_id = v_orig.estabelecimento_id and g.origem = ''chamada_direta'' and g.funcao_id = v_orig.funcao_id and date_trunc(''minute'', g.inicio_em) = date_trunc(''minute'', v_orig.inicio_em) and date_trunc(''minute'', g.fim_em) = date_trunc(''minute'', v_orig.fim_em)) order by g.id for update') > 0
                   and strpos(src, 'g.origem = ''chamada_direta'' and g.estado = ''publicada'' and g.funcao_id = v_orig.funcao_id and date_trunc(''minute'', g.inicio_em) = date_trunc(''minute'', v_orig.inicio_em) and date_trunc(''minute'', g.fim_em) = date_trunc(''minute'', v_orig.fim_em) returning g.id') > 0
              from conv),
-  'a trava pega a origem e as irmãs com o mesmo filtro do update que as encerra');
+  'a trava pega a origem e todas as vagas diretas da casa do mesmo trabalho, sem filtro de estado; o update encerra só as publicadas');
 select ok((select p.prosecdef and p.proconfig @> array['search_path=""']
                   and has_function_privilege('authenticated', p.oid, 'execute')
                   and not has_function_privilege('anon', p.oid, 'execute')
