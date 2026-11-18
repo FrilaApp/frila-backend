@@ -112,6 +112,12 @@ jobs:
       - name: Corrida no token de uso único do upload
         run: ./scripts/corrida-token-upload.sh
 
+      # Mesma prova para o token opaco de upload da verificação de identidade (RN14): duas
+      # conexões chamam privado.consumir_token_upload_verificacao e só uma recebe o destino.
+      # Conexão que morre ou rodada sem um vencedor e um perdedor reprova.
+      - name: Corrida no token de uso único da verificação de identidade
+        run: ./scripts/corrida-token-upload-verificacao.sh
+
       # Chamada direta (T1): aceites simultâneos da mesma vaga, aceite x cancelamento da casa,
       # duas chamadas ao mesmo par e exclusão de conta x aceite. Duas conexões de verdade.
       - name: Corridas da chamada direta
