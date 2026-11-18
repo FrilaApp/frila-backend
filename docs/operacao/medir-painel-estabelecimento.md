@@ -1,6 +1,6 @@
 # Medir `painel_estabelecimento` com volume (cartão 1zojatYG)
 
-Roteiro de quem executa a medição no banco local. Este documento e os arquivos que ele cita só preparam a medição: **nenhum número de desempenho do painel foi medido ainda**. Onde a tabela abaixo diz `NAO MEDIDO`, é o que a execução vai preencher.
+Roteiro de quem executa a medição no banco local. A primeira execução (2026-11-18) está na seção **Resultados**. Onde a tabela diz `NAO MEDIDO`, a execução não produziu o dado; **nenhum número abaixo é dado de produto**.
 
 ## O que existe
 
@@ -90,15 +90,23 @@ Migração, índice e paginação estão **fora** desta entrega.
 
 ## Resultados
 
-Nenhuma execução foi feita por quem escreveu estes arquivos.
+Primeira execução: 2026-11-18 10:15 (-0300), por quem opera o banco local (Gaara), no commit `6ec4af1`, Postgres 17.6, 10 amostras e 3 aquecimentos por cenário, banco local sem carga concorrente. Os números vêm do `relatorio.txt` dessa execução, sem interpretação. **Os volumes são HIPÓTESE do plano, não dado de produto, e tempo local não transfere para o Prod.**
 
-| Cenário | Mediana (ms) | Máximo (ms) | Resposta (bytes) | `Seq Scan` em posicao/ocorrencia/vaga | Quem mediu e quando |
-|---|---|---|---|---|---|
-| S1 | NAO MEDIDO | NAO MEDIDO | NAO MEDIDO | NAO MEDIDO | |
-| S2 | NAO MEDIDO | NAO MEDIDO | NAO MEDIDO | NAO MEDIDO | |
-| S3 | NAO MEDIDO | NAO MEDIDO | NAO MEDIDO | NAO MEDIDO | |
-| S3_membro5 | NAO MEDIDO | NAO MEDIDO | NAO MEDIDO | NAO MEDIDO | |
-| S4 | NAO MEDIDO | NAO MEDIDO | NAO MEDIDO | NAO MEDIDO | |
-| S5 | NAO MEDIDO | NAO MEDIDO | NAO MEDIDO | NAO MEDIDO | |
+Antes da execução o banco local foi atualizado de 180 para 230 migrações (`supabase migration up --local`, sem reset), para bater com `origin/develop` `26c4a2b`. Depois do `rollback`: 0 estabelecimentos `Casa pesada`, 18 usuários antes e 18 depois.
 
-Depende de humano ou de Prod (fora do alcance da medição local): confirmar volumes plausíveis por casa e o teto de latência aceitável do painel (Cauê ou Jota); medir o tamanho real de `posicao`, `ocorrencia` e `vaga` no Prod, somente leitura, antes de qualquer índice.
+| Cenário | Janela | Vagas / posições / candidaturas / turnos na janela | Mediana (ms) | Mín (ms) | Máx (ms) | Resposta (bytes) | `explain` Execution Time (ms) | `explain` Buffers (shared hit) | `Seq Scan` em posicao/ocorrencia/vaga |
+|---|---|---|---|---|---|---|---|---|---|
+| S1 | 1 dia | 1 / 2 / 12 / 2 | 6,77 | 2,15 | 8,83 | 1.772 | 4,818 | 483 | NAO MEDIDO |
+| S2 | 7 dias | 4 / 8 / 48 / 7 | 12,69 | 6,36 | 21,31 | 6.758 | 27,048 | 1.693 | NAO MEDIDO |
+| S3 | 30 dias | 83 / 249 / 2.490 / 199 | 608,85 | 412,27 | 808,11 | 181.438 | 634,044 | 107.475 | NAO MEDIDO |
+| S3_membro5 | 30 dias, leitor em 5 casas | 83 / 249 / 2.490 / 199 | 368,36 | 268,27 | 610,21 | 181.438 | 360,878 | 110.163 | NAO MEDIDO |
+| S4 | 365 dias | 1.000 / 3.000 / 30.000 / 2.400 | 6.371,06 | 5.888,65 | 8.111,98 | 2.186.748 | 5.592,107 | 1.287.511 | NAO MEDIDO |
+| S5 | 1.825 dias | 1.000 / 3.000 / 30.000 / 2.400 | 5.743,69 | 3.806,23 | 7.595,94 | 2.186.748 | 5.524,309 | 1.287.511 | NAO MEDIDO |
+
+`Seq Scan` continua **NAO MEDIDO** em todos os cenários. O `explain (analyze, buffers)` da chamada inteira mostra só um nó `Result`, sem os nós de dentro da função. As consultas internas dependem do `auto_explain`, que não pôde ser ligado nessa execução (o papel `postgres` não é superusuário: `access to library "auto_explain" is not allowed` e `permission denied to set parameter "auto_explain.log_nested_statements"`), e os arquivos `plano-<cenário>.txt` ficaram vazios. O script saiu com 0 mesmo assim, como este roteiro descreve.
+
+Fatos da execução, sem interpretação: S4 e S5 têm a mesma contagem na janela, os mesmos bytes e os mesmos buffers; a mediana de S5 é menor que a de S4; a mediana de S2 é menor que o `Execution Time` do `explain` de S2; S1 e S2 têm só 1 e 4 vagas na janela.
+
+Leitura contra a referência do plano (mediana até 100 ms e resposta até cerca de 200 KB, lendo S1 e S2): S1 e S2 ficam abaixo dos dois limites. Os ramos "`Seq Scan` em `posicao` ou `ocorrencia`" e "índice" da tabela de decisão **não podem ser avaliados** sem o plano interno. A decisão (índice, janela limitada ou paginação) é do Cauê ou do Jota; paginação muda contrato e exige o ok do Fabrício (UI).
+
+Depende de humano ou de Prod (fora do alcance da medição local): confirmar volumes plausíveis por casa e o teto de latência aceitável do painel (Cauê ou Jota); medir o tamanho real de `posicao`, `ocorrencia` e `vaga` no Prod, somente leitura, antes de qualquer índice. Não medido nessa execução: autovacuum e versões mortas deixadas pelo `rollback`.
