@@ -23,15 +23,20 @@
 --   · FOR NO KEY UPDATE: o modo do update da vaga, logo abaixo, e o de privado.cancelar_uma_posicao na
 --     confirmada futura (20261108070000:307-309). Em FOR UPDATE, a trava subiria de modo com um
 --     candidato já na fila da vaga (cenário 29b).
--- Na vaga direta, a vaga já é desta transação desde o começo (B-035): a trava nova não espera nada.
+-- Na vaga direta, a vaga já é desta transação desde o começo (B-035, o for update da linha 90): a
+-- trava nova não espera nada.
+-- A trava relê a vaga (select into) e repete o curto-circuito de estado: quem perde a fila recebe o
+-- desfecho da execução serial. Na disputa com o fechamento ou a exclusão, o cancelamento espera a
+-- vaga e, se ela já saiu encerrada ou cancelada por outro, devolve 409 vaga_encerrada, e o erro desfaz
+-- o que o laço das confirmadas fez (sem estado misto); o reenvio do mesmo autor segue 200.
 -- Sem disputa, nada muda: os mesmos estados, a mesma resposta e os mesmos erros
--- (supabase/tests/890_cancelar_vaga_ordem_de_travas.sql). Na disputa com o fechamento, o cancelamento
--- espera a vaga e, depois dele, a cancela, o desfecho que a base já dava quando não fechava ciclo.
+-- (supabase/tests/890_cancelar_vaga_ordem_de_travas.sql).
 -- Resíduo conhecido, fora daqui: o cancelamento da vaga direta pega a vaga antes da confirmada
 -- terminada, e o fechamento pega a confirmada antes da vaga (o parecer do B-071, anterior ao #567).
 --
 -- Corpo copiado de 20261117050000 (a última definição na develop; nenhum PR aberto a redefine,
--- conferido com git grep e gh pr diff), com só o bloco "B-072" e duas frases nos comentários.
+-- conferido com git grep e gh pr diff), com só o bloco "B-072" (a trava relida e o curto-circuito
+-- repetido) e duas frases nos comentários.
 -- Assinatura, SECURITY DEFINER, search_path vazio, resposta e grants iguais.
 
 select set_config('lock_timeout', '2s', true);
@@ -126,7 +131,35 @@ begin
   -- confirmadas: o fechamento pega a confirmada que terminou antes da vaga. Em no key update, o
   -- modo do update da vaga logo abaixo e o de cancelar_uma_posicao na confirmada futura: a trava
   -- não sobe de modo. Na vaga direta, já travada lá em cima, não espera nada.
-  perform 1 from public.vaga g where g.id = cancelar_vaga.vaga_id for no key update;
+  select * into v from public.vaga g where g.id = cancelar_vaga.vaga_id for no key update;
+
+  -- Relida já travada: quem encerrou ou cancelou a vaga enquanto esta esperava recebe o desfecho
+  -- da execução serial, o mesmo curto-circuito de cima (o reenvio do mesmo autor segue 200; a
+  -- vaga fechada por outro dá 409 vaga_encerrada, e o erro desfaz as confirmadas do laço).
+  if v.estado in ('cancelada', 'encerrada') then
+    if v.estado = 'cancelada' then
+      if exists (
+        select 1 from privado.auditoria_ciclo a
+         where a.entidade = 'vaga'
+           and a.entidade_id = v.id
+           and a.estado_novo = 'cancelada'
+           and a.autor_id = v_uid
+      ) or exists (
+        select 1 from public.ocorrencia o
+          join public.posicao p on p.id = o.posicao_id
+         where p.vaga_id = v.id
+           and o.tipo = 'cancelamento'
+           and o.autor_id = v_uid
+      ) then
+        return jsonb_build_object(
+          'vaga_id',             v.id,
+          'estado',              'cancelada',
+          'posicoes_canceladas', (select count(*)::int from public.posicao p where p.vaga_id = v.id and p.estado = 'cancelada'));
+      end if;
+    end if;
+
+    perform public.erro(409, 'vaga_encerrada');
+  end if;
 
   update public.posicao p
      set estado = 'cancelada'

@@ -64,7 +64,8 @@
 #      com a ordem forçada por uma terceira conexão: 28, fechar_turnos_e_vagas numa vaga terminada com
 #      posição aberta; 28b, a mesma com uma confirmada sem chegada (guarda); 29 e 29b, candidatar numa
 #      vaga futura (guardas); 30, excluir_conta da casa de membro único (a: vaga terminada, b: futura).
-#      Nenhum 40P01.
+#      Nenhum 40P01, e o desfecho da execução serial: no 28, no 28b e no 30, o cancelamento chega
+#      depois e recebe 409 vaga_encerrada, sem estado misto.
 #
 # Uso: ./scripts/corrida-chamada.sh        RODADAS=4 ./scripts/corrida-chamada.sh
 set -uo pipefail
@@ -1881,6 +1882,8 @@ fim_job 27 "as chamadas expiradas e as três vagas sanitizadas" a
 #   30. excluir_conta da casa de membro único x cancelar_vaga, com uma posição aberta: X segura a vaga;
 #       a exclusão para nela (a 1ª trava dela); o cancelamento para em seguida. a: vaga terminada (mundos
 #       521 a 530); b: vaga futura (mundos 541 a 550).
+# No 28, no 28b e no 30, quem fecha a vaga passa primeiro, e o cancelamento relê a vaga depois da trava:
+# encerrada ou cancelada por outro, ele devolve 409 vaga_encerrada, como se chegasse depois do commit.
 # Os dados no passado (28, 28b e 30) são montados longe do pg_cron do fechamento, como no 25.
 # vaga_publicacao <mundo> <entidade> <passada|futura> <posições>: uma vaga de publicação publicada,
 # gravada direto, com as posições abertas. A passada terminou há uma hora; a futura é daqui a 3 dias.
@@ -1929,9 +1932,9 @@ for i in $(seq 1 "$RODADAS"); do
   rf=$(resultado "$TMP/$n-f"); rk=$(resultado "$TMP/$n-k")
   impasse a "$rf" "$rk"
   confere_job "fechamento '$rf', cancelamento '$rk', vaga '$(estado_vaga "$g")', posição '$(estado_posicao "$pa")'" \
-    "fechamento 'ok', cancelamento 'ok', vaga 'cancelada', posição 'cancelada'"
+    "fechamento 'ok', cancelamento 'vaga_encerrada', vaga 'encerrada', posição 'cancelada'"
 done
-fim_job 28 "a posição cancelada pelo fechamento e a vaga cancelada depois dele" a
+fim_job 28 "a vaga encerrada pelo fechamento e o cancelamento recusado depois dele (409 vaga_encerrada)" a
 
 echo "▸ 28b. fechar_turnos_e_vagas x cancelar_vaga, vaga de publicação terminada com uma confirmada sem chegada (guarda)"
 erros=0
@@ -1951,9 +1954,9 @@ for i in $(seq 1 "$RODADAS"); do
   rf=$(resultado "$TMP/$n-f"); rk=$(resultado "$TMP/$n-k")
   impasse a "$rf" "$rk"
   confere_job "fechamento '$rf', cancelamento '$rk', vaga '$(estado_vaga "$g")', confirmada '$(estado_posicao "$pc")', aberta '$(estado_posicao "$pa")'" \
-    "fechamento 'ok', cancelamento 'ok', vaga 'cancelada', confirmada 'cancelada', aberta 'cancelada'"
+    "fechamento 'ok', cancelamento 'vaga_encerrada', vaga 'encerrada', confirmada 'cancelada', aberta 'cancelada'"
 done
-fim_job 28b "o no-show do fechamento e a vaga cancelada depois dele" a
+fim_job 28b "o no-show e a vaga encerrada pelo fechamento, e o cancelamento recusado depois dele (409 vaga_encerrada)" a
 
 echo "▸ 29. candidatar x cancelar_vaga, vaga de publicação futura com duas posições abertas (guarda)"
 erros=0
@@ -2013,9 +2016,9 @@ for i in $(seq 1 "$RODADAS"); do
     re=$(resultado "$TMP/$n-e"); rk=$(resultado "$TMP/$n-k")
     impasse "$ordem" "$re" "$rk"
     confere_job "exclusão '$re', cancelamento '$rk', conta '$(estado_de "$casa")', vaga '$(estado_vaga "$g")', posição '$(estado_posicao "$pa")'" \
-      "exclusão 'ok', cancelamento 'ok', conta 'anonimizada', vaga 'cancelada', posição 'cancelada'"
+      "exclusão 'ok', cancelamento 'vaga_encerrada', conta 'anonimizada', vaga 'cancelada', posição 'cancelada'"
   done
 done
-fim_job 30 "a conta anonimizada e a vaga cancelada" a b
+fim_job 30 "a conta anonimizada, a vaga cancelada pela exclusão e o cancelamento recusado depois dela (409 vaga_encerrada)" a b
 
 exit "$falha"

@@ -4,16 +4,20 @@
 -- (migração 20261117200000). Antes, na vaga de publicação, pegava as abertas antes da vaga e fechava ciclo
 -- com quem pega a vaga primeiro: o fechamento e a exclusão da conta da casa. O ciclo só aparece com
 -- várias conexões (scripts/corrida-chamada.sh, cenários 28 a 30). Numa sessão só ficam:
---   1-2. o catálogo: a trava da vaga, em no key update, vem depois do laço das confirmadas e antes do
---        update das abertas (falha com o corpo da 20261117050000); SECURITY DEFINER, search_path vazio,
---        só para authenticated;
+--   1-2. o catálogo: a trava da vaga, em no key update e relida (select into), vem depois do laço das
+--        confirmadas e antes do update das abertas (falha com o corpo da 20261117050000); SECURITY
+--        DEFINER, search_path vazio, só para authenticated;
 --   3-16. o desfecho sem disputa, que não muda (passa igual com o corpo anterior): vaga de publicação
 --        futura com uma confirmada e uma aberta, o reenvio idempotente, a vaga terminada, a vaga já
---        encerrada pelo fechamento (409 vaga_encerrada), a vaga direta e os erros de antes da trava.
+--        encerrada pelo fechamento (409 vaga_encerrada), a vaga direta e os erros de antes da trava;
+--   17-19. o curto-circuito depois da trava: a vaga encerrada por outro entre a 1ª leitura e a trava
+--        (simulado por um gatilho de teste na ocorrência que o laço das confirmadas grava) dá 409
+--        vaga_encerrada, o desfecho serial, e o erro desfaz a confirmada cancelada no laço (sem estado
+--        misto). Com o corpo anterior, a vaga encerrada virava cancelada e a resposta era 200.
 begin;
 set local search_path = public, extensions;
 create extension if not exists pgtap with schema extensions;
-select plan(16);
+select plan(19);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -91,13 +95,13 @@ insert into public.turno (posicao_id, valor_acordado_centavos) select id, 15000 
 create temp table fonte as
 select regexp_replace(p.prosrc, '\s+', ' ', 'g') as src
   from pg_proc p where p.oid = 'public.cancelar_vaga(uuid, text)'::regprocedure;
-select ok((select strpos(src, 'perform 1 from public.vaga g where g.id = cancelar_vaga.vaga_id for no key update;') > 0
+select ok((select strpos(src, 'select * into v from public.vaga g where g.id = cancelar_vaga.vaga_id for no key update;') > 0
                   and strpos(src, 'perform privado.cancelar_uma_posicao(v_pos, v_uid, v_motivo, false);')
-                    < strpos(src, 'perform 1 from public.vaga g where g.id = cancelar_vaga.vaga_id for no key update;')
-                  and strpos(src, 'perform 1 from public.vaga g where g.id = cancelar_vaga.vaga_id for no key update;')
+                    < strpos(src, 'select * into v from public.vaga g where g.id = cancelar_vaga.vaga_id for no key update;')
+                  and strpos(src, 'select * into v from public.vaga g where g.id = cancelar_vaga.vaga_id for no key update;')
                     < strpos(src, 'update public.posicao p set estado = ''cancelada'' where p.vaga_id = cancelar_vaga.vaga_id and p.estado = ''aberta'';')
              from fonte),
-  'cancelar_vaga trava a vaga (no key update) depois das confirmadas e antes das posições abertas');
+  'cancelar_vaga trava e relê a vaga (no key update) depois das confirmadas e antes das posições abertas');
 select ok((select p.prosecdef and p.proconfig @> array['search_path=""']
                   and has_function_privilege('authenticated', p.oid, 'execute')
                   and not has_function_privilege('anon', p.oid, 'execute')
@@ -156,6 +160,32 @@ select is(pg_temp.r('c8900000-0000-4000-8000-000000000001',
 select is(pg_temp.r('c8900000-0000-4000-8000-000000000001',
   $$ select public.cancelar_vaga('c8900000-0000-4000-8000-0000000000a3', 'ok') $$),
   'campo_obrigatorio:motivo', 'motivo curto: 422 campo_obrigatorio');
+
+-- 17-19. O curto-circuito depois da trava. V5: publicação terminada há 1 h, uma confirmada sem chegada
+-- (a menor) e uma aberta. O gatilho de teste faz o papel de quem fecha a vaga enquanto o cancelamento
+-- espera a trava: quando o laço das confirmadas grava a ocorrência, a vaga vai a encerrada.
+select pg_temp.vaga('c8900000-0000-4000-8000-0000000000a5', 'c8900000-0000-4000-8000-0000000000e1',
+  'c8900000-0000-4000-8000-000000000001', date_trunc('minute', now()) - interval '6 hours', 'publicacao', 2);
+update public.posicao set estado = 'confirmada', confirmado_em = now() - interval '1 day',
+       profissional_id = (select id from public.profissional where usuario_id = 'c8900000-0000-4000-8000-000000000002')
+ where id = (select id from public.posicao where vaga_id = 'c8900000-0000-4000-8000-0000000000a5' order by id limit 1);
+create function public.t890_encerra_no_meio() returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  update public.vaga g set estado = 'encerrada'
+   where g.id = 'c8900000-0000-4000-8000-0000000000a5'
+     and exists (select 1 from public.posicao p where p.id = new.posicao_id and p.vaga_id = g.id);
+  return null;
+end $$;
+create trigger t890_encerra_no_meio after insert on public.ocorrencia
+  for each row execute function public.t890_encerra_no_meio();
+select is(pg_temp.r('c8900000-0000-4000-8000-000000000001',
+  $$ select public.cancelar_vaga('c8900000-0000-4000-8000-0000000000a5', 'Evento desmarcado') $$),
+  'vaga_encerrada', 'vaga encerrada por outro antes da trava: 409 vaga_encerrada, o desfecho serial');
+select is((select estado::text from public.vaga where id = 'c8900000-0000-4000-8000-0000000000a5'), 'publicada',
+  'sem estado misto: o 409 desfaz o que o cancelamento fez, e a vaga não vira cancelada');
+select is((select string_agg(estado::text, ',' order by id) from public.posicao where vaga_id = 'c8900000-0000-4000-8000-0000000000a5'),
+  'confirmada,aberta', 'sem estado misto: a confirmada cancelada no laço volta, e a aberta fica');
+drop trigger t890_encerra_no_meio on public.ocorrencia;
 
 select * from finish();
 rollback;
