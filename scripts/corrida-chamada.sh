@@ -1294,11 +1294,13 @@ for i in $(seq 1 "$RODADAS"); do
   # A é a de id menor; B, a de id maior, vence e lembra antes.
   if [[ "$c1" < "$c2" ]]; then ca=$c1; cb=$c2; else ca=$c2; cb=$c1; fi
   n="cc-$RUN-$m"
+  # B tem de estar vencida antes de X a segurar (X a trava de B, e o update esperaria): o cron não pode
+  # cair entre o vencimento e X. Vence-se longe do cron, e a rodada cabe na janela dele (#568).
+  cron_cai "$n"; longe_do_cron
   psql >/dev/null <<SQL
 update public.chamada set lembrete_em = now() - interval '2 minutes', expira_em = now() - interval '1 minute' where id = '$ca';
 update public.chamada set lembrete_em = now() - interval '3 minutes', expira_em = now() - interval '2 minutes' where id = '$cb';
 SQL
-  cron_cai "$n"
   segurar "$n-x" "select 1 from public.chamada where id = '$cb' for update"
   parou=
   aguardar "$n-x" segurando || parou="x segurando"
@@ -1461,13 +1463,18 @@ for i in $(seq 1 "$RODADAS"); do
   p1=$(id "$m" 2); p2=$(id "$m" 3)
   g1=$(id "$m" 20); g2=$(id "$m" 21)
   vaga_direta "$m" 20 3; vaga_direta "$m" 21 3
-  v1=$(chamada_direta "$m" "$g1" "$p1" vencida); v2=$(chamada_direta "$m" "$g2" "$p2" vencida)
+  v1=$(chamada_direta "$m" "$g1" "$p1" prazo); v2=$(chamada_direta "$m" "$g2" "$p2" prazo)
   [ -n "$v1" ] && [ -n "$v2" ] || { falhou "rodada $i (22): não montei as chamadas"; erros=$((erros + 1)); continue; }
   n="cc-$RUN-$m"
-  cron_cai "$n"
   segurar "$n-x" "select 1 from public.vaga where id = '$g2' for update"
   parou=
   aguardar "$n-x" segurando || parou="x segurando"
+  # As chamadas vencem com X já segurando G2 (#568): vencidas desde a montagem, o expirar_chamadas do
+  # pg_cron podia expirá-las antes, e o 1º job não achava o que esperar. Agora o do cron só entra na fila.
+  if [ -z "$parou" ]; then
+    psql >/dev/null -c "update public.chamada set expira_em = now() - interval '1 minute' where id in ('$v1', '$v2');"
+    cron_cai "$n"
+  fi
   if [ -z "$parou" ]; then lado_nomeado "$n-e" "" "select privado.expirar_chamadas()"; aguardar "$n-e" travado || parou="e travado"; fi
   if [ -z "$parou" ]; then lado_nomeado "$n-f" "" "select privado.expirar_chamadas()"; aguardar "$n-f" travado || parou="f travado"; fi
   if [ -n "$parou" ]; then
@@ -1511,7 +1518,9 @@ for i in $(seq 1 "$RODADAS"); do
       if [ "$ordem" = a ]; then
         psql >/dev/null -c "update public.chamada set expira_em = clock_timestamp() + interval '2 seconds' where id = '$c1';"
       else
-        vencer "$c1"; cron_cai "$n"
+        # X segura a chamada: ela tem de vencer antes, e o cron não pode cair entre o vencimento e X (#568).
+        cron_cai "$n"; longe_do_cron
+        vencer "$c1"
       fi
       segurar "$n-x" "select 1 from public.chamada where id = '$c1' for update"
       parou=
@@ -1586,13 +1595,18 @@ SQL
   cand=$(psql -c "insert into public.candidatura (posicao_id, profissional_id)
                   select x.id, (select id from public.profissional where usuario_id = '$p3') from public.posicao x where x.vaga_id = '$g2'
                   returning id;")
-  v1=$(chamada_direta "$m" "$g1" "$p2" vencida); v2=$(chamada_direta "$m" "$g2" "$p1" vencida)
+  v1=$(chamada_direta "$m" "$g1" "$p2" prazo); v2=$(chamada_direta "$m" "$g2" "$p1" prazo)
   [ -n "$pos1" ] && [ -n "$cand" ] && [ -n "$v1" ] && [ -n "$v2" ] || { falhou "rodada $i (24): não montei"; erros=$((erros + 1)); continue; }
   n="cc-$RUN-$m"
-  cron_cai "$n"
+  # As chamadas vencem com X já segurando, antes da conversão (#568). X segura só a candidatura, e a
+  # conversão trava as chamadas de G2 depois de começar: o vencimento não pode esperar por ela. O cron,
+  # aqui, não ficaria na fila de nenhuma vaga, então o vencimento e o começo da conversão (menos de
+  # 1 s) ficam longe do cron.
+  cron_cai "$n"; longe_do_cron
   segurar "$n-x" "select 1 from public.candidatura where id = '$cand' for update"
   parou=
   aguardar "$n-x" segurando || parou="x segurando"
+  [ -z "$parou" ] && psql >/dev/null -c "update public.chamada set expira_em = now() - interval '1 minute' where id in ('$v1', '$v2');"
   if [ -z "$parou" ]; then
     lado_nomeado "$n-c" "$casa" "select public.publicar_a_partir_da_chamada('$g2', gen_random_uuid(), 'urgencia')"
     aguardar "$n-c" travado || parou="c travado"
