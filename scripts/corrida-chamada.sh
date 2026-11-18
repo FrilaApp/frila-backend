@@ -1325,15 +1325,22 @@ insert into public.profissional (usuario_id, ponto_base) values ('$u', 'POINT(-4
 SQL
 }
 estado_chamada() { psql -c "select estado from public.chamada where id = '$1';"; }
-# ordem_conv <prefixo> <job_primeiro|conv_primeiro> <vaga segurada>: X segura a vaga, os dois lados
-# param nela na ordem dada, X solta. Devolve 1 (com $parou) se a ordem não se formou.
+# ordem_conv <prefixo> <job_primeiro|conv_primeiro> <vaga segurada> [<sql>]: X segura a vaga, o sql
+# opcional roda com X já segurando, os dois lados param nela na ordem dada, X solta. Devolve 1 (com
+# $parou) se a ordem não se formou.
+# O sql é o vencimento das chamadas (#565): vencidas desde a montagem, o expirar_chamadas do pg_cron
+# (a cada minuto) podia expirá-las antes de X segurar a vaga, e o job do cenário não achava nada para
+# esperar ('e' não chegou a 'travado', CI do #567). Vencidas com X segurando, o do cron só entra na
+# fila da vaga, como mais um job.
 ordem_conv() {
-  local n=$1 ordem=$2 alvo=$3 passos passo c s
+  local n=$1 ordem=$2 alvo=$3 depois=${4:-} passos passo c s
   segurar "$n-x" "select 1 from public.vaga where id = '$alvo' for update"
-  if [ "$ordem" = job_primeiro ]; then passos=("x segurando" e "e travado" o "o travado")
-  else passos=("x segurando" o "o travado" e "e travado"); fi
+  if [ "$ordem" = job_primeiro ]; then passos=(e "e travado" o "o travado")
+  else passos=(o "o travado" e "e travado"); fi
   parou=
-  for passo in "${passos[@]}"; do
+  aguardar "$n-x" segurando || parou="x segurando"
+  [ -z "$parou" ] && [ -n "$depois" ] && psql >/dev/null -c "$depois"
+  [ -n "$parou" ] || for passo in "${passos[@]}"; do
     case "$passo" in
       *" "*) aguardar "$n-${passo% *}" "${passo#* }" || { parou=$passo; break; } ;;
       *) c="CONTA_$passo"; s="SQL_$passo"; lado_nomeado "$n-$passo" "${!c}" "${!s}" ;;
@@ -1352,9 +1359,9 @@ for i in $(seq 1 "$RODADAS"); do
     casa=$(id "$m" 1); p1=$(id "$m" 2); p2=$(id "$m" 3); p3=$(id "$m" 4); p4=$(id "$m" 5)
     g1=$(id "$m" 20); g2=$(id "$m" 21)   # g1 < g2 pelo id
     vaga_direta "$m" 20 3; vaga_direta "$m" 21 3
-    v1=$(chamada_direta "$m" "$g1" "$p1" vencida); a1=$(chamada_direta "$m" "$g1" "$p2" prazo)
+    v1=$(chamada_direta "$m" "$g1" "$p1" prazo); a1=$(chamada_direta "$m" "$g1" "$p2" prazo)
     # Uma chamada aberta por par casa e profissional (RN34): quatro profissionais.
-    v2=$(chamada_direta "$m" "$g2" "$p3" vencida); a2=$(chamada_direta "$m" "$g2" "$p4" prazo)
+    v2=$(chamada_direta "$m" "$g2" "$p3" prazo); a2=$(chamada_direta "$m" "$g2" "$p4" prazo)
     [ -n "$v1" ] && [ -n "$a1" ] && [ -n "$v2" ] && [ -n "$a2" ] || { falhou "rodada $i (20$ordem): não montei as chamadas"; erros=$((erros + 1)); continue; }
     n="cc-$RUN-$m"
     # shellcheck disable=SC2034
@@ -1364,8 +1371,8 @@ for i in $(seq 1 "$RODADAS"); do
     # shellcheck disable=SC2034
     CONTA_o=$casa; SQL_o="select public.publicar_a_partir_da_chamada('$g2', gen_random_uuid(), 'urgencia')"
     case "$ordem" in a) o=job_primeiro ;; b) o=conv_primeiro ;; esac
-    if ! ordem_conv "$n" "$o" "$g1"; then
-      falhou "rodada $i (20$ordem): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    if ! ordem_conv "$n" "$o" "$g1" "update public.chamada set expira_em = now() - interval '1 minute' where id in ('$v1', '$v2');"; then
+      falhou "rodada $i (20$ordem): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada; vencidas '$(estado_chamada "$v1")'/'$(estado_chamada "$v2")')"
       erros=$((erros + 1)); continue
     fi
     ro=$(resultado "$TMP/$n-o"); re=$(resultado "$TMP/$n-e")
@@ -1386,7 +1393,7 @@ for i in $(seq 1 "$RODADAS"); do
     montar_mundo "$m"
     casa=$(id "$m" 1); p1=$(id "$m" 2); p2=$(id "$m" 3)
     g1=$(id "$m" 20); vaga_direta "$m" 20 3
-    v1=$(chamada_direta "$m" "$g1" "$p1" vencida); a1=$(chamada_direta "$m" "$g1" "$p2" prazo)
+    v1=$(chamada_direta "$m" "$g1" "$p1" prazo); a1=$(chamada_direta "$m" "$g1" "$p2" prazo)
     [ -n "$v1" ] && [ -n "$a1" ] || { falhou "rodada $i (21$ordem): não montei as chamadas"; erros=$((erros + 1)); continue; }
     n="cc-$RUN-$m"
     # shellcheck disable=SC2034
@@ -1396,8 +1403,8 @@ for i in $(seq 1 "$RODADAS"); do
     # shellcheck disable=SC2034
     CONTA_o=$casa; SQL_o="select public.publicar_a_partir_da_chamada('$g1', gen_random_uuid(), 'urgencia')"
     case "$ordem" in a) o=job_primeiro ;; b) o=conv_primeiro ;; esac
-    if ! ordem_conv "$n" "$o" "$g1"; then
-      falhou "rodada $i (21$ordem): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    if ! ordem_conv "$n" "$o" "$g1" "update public.chamada set expira_em = now() - interval '1 minute' where id = '$v1';"; then
+      falhou "rodada $i (21$ordem): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada; vencida '$(estado_chamada "$v1")')"
       erros=$((erros + 1)); continue
     fi
     ro=$(resultado "$TMP/$n-o"); re=$(resultado "$TMP/$n-e")
@@ -1613,9 +1620,22 @@ fim_job 24 "a reabertura à espera da conversão, a conversão feita e G1 reaber
 # com skip locked (20261109180000:208-216, 20261108100000:318-353), e ela só alcança vaga terminada há
 # anos (privado.vaga_expirada); para o job querer uma vaga dessas, a chamada dela teria de estar aberta
 # há anos.
-longe_do_cron() {   # até o segundo do relógio do banco ficar entre 3 e 35.
-  local s
-  until s=$(psql -c "select extract(second from clock_timestamp())::int;") && [ "$s" -ge 3 ] && [ "$s" -le 35 ]; do sleep 1; done
+# longe_do_cron: até o segundo do relógio do banco ficar entre 3 e 35 e a execução deste minuto do
+# expirar_chamadas (e do fechar_turnos_e_vagas, no minuto múltiplo de 5) ter terminado, se o pg_cron a
+# registrou (cron.job_run_details): um cron atrasado não cai no meio da rodada. Sem registro em 70 s,
+# fica só a janela.
+longe_do_cron() {
+  local n=0
+  until [ "$(psql -c "select extract(second from clock_timestamp()) between 3 and 35
+      and ($n >= 70 or not exists (
+        select 1 from cron.job j
+         where j.active and (j.jobname = 'expirar_chamadas_diretas'
+                             or (j.jobname = 'fechar_turnos_e_vagas' and extract(minute from clock_timestamp())::int % 5 = 0))
+           and not exists (select 1 from cron.job_run_details d
+                            where d.jobid = j.jobid and d.start_time >= date_trunc('minute', clock_timestamp())
+                              and d.end_time is not null)));")" = t ]; do
+    n=$((n + 1)); sleep 1
+  done
 }
 # vagas_passadas <mundo> <publicado_por> <entidade...>: vagas diretas publicadas que já terminaram,
 # gravadas num insert só, na ordem dada, cada uma com a posição aberta.
