@@ -1645,10 +1645,11 @@ ordem_fisica() {
 }
 responsavel_de() { psql -c "select responsavel_local from public.vaga where id = '$1';"; }
 
-# 25. O update das vagas do fechamento não tem ordem, e a do plano não é a física: hoje é um hash anti
-# join que devolve as vagas na ordem do hash do id. A montagem grava 10 vagas terminadas e mede a ordem
-# em que o update as pega (os dois comandos dele numa transação desfeita, com o plano do banco); dela
-# escolhe três, B antes de M antes de A no update, com A < B < M pelo id. X segura M; as chamadas
+# 25. O update das vagas do fechamento não tem ordem, e a dele depende do plano: com estatísticas, um hash
+# anti join que devolve as vagas na ordem do hash do id; logo depois do reset, a ordem física. A montagem
+# grava 10 vagas terminadas, fora da ordem de id, e mede a ordem em que o update as pega (os dois comandos
+# dele numa transação desfeita, com o plano do banco); dela escolhe três, B antes de M antes de A no
+# update, com A < B < M pelo id. X segura M; as chamadas
 # vencidas ficam em A e B. M com o id maior faz a mesma ordem se formar quando o fechamento pegar as
 # vagas por id (ele para em M já com A e B). Sem trinca assim, mais 10 vagas (até 30). Mundos 451 a 460.
 ordem_do_fechamento() {   # ordem_do_fechamento <estabelecimento>: as vagas da casa na ordem do update.
@@ -1687,8 +1688,9 @@ for i in $(seq 1 "$RODADAS"); do
   longe_do_cron
   escolha=
   for lote in 2 3 4; do
+    # Fora da ordem de id (1 2 0 4 5 3 ...): se o plano ler na ordem física, a trinca está lá também.
     # shellcheck disable=SC2046  # as entidades vão separadas
-    vagas_passadas "$m" "$casa" $(seq $((lote * 10)) $((lote * 10 + 9)))
+    vagas_passadas "$m" "$casa" $(for d in 1 2 0 4 5 3 7 8 6 9; do echo $((lote * 10 + d)); done)
     # shellcheck disable=SC2046
     escolha=$(trinca $(ordem_do_fechamento "$(id "$m" 10)"))
     [ -n "$escolha" ] && break
