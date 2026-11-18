@@ -53,6 +53,9 @@
 #  22. Dois expirar_chamadas ao mesmo tempo, em duas vagas, com a ordem forçada (guarda).
 #  23. O job x quem pega só a chamada (guarda): cancelar_chamada, bloquear e a recusa, com X segurando
 #      a chamada; a: o outro lado primeiro, b: o job primeiro. Desfecho de quem chegou primeiro.
+#  24. O job x a conversão x reabrir_por_atraso de uma irmã preenchida, entre a trava da conversão e o
+#      update das irmãs (guarda): a reabertura espera a conversão, nenhum 40P01, a conversão feita e a
+#      irmã reaberta depois dela.
 #
 # Uso: ./scripts/corrida-chamada.sh        RODADAS=4 ./scripts/corrida-chamada.sh
 set -uo pipefail
@@ -472,11 +475,18 @@ soltar() { psql >/dev/null -c "select pg_cancel_backend(pid) from pg_stat_activi
 
 # lado_nomeado <nome> <conta|''> <sql>: como `lado`, sem atraso nem espera, com nome visível
 # em pg_stat_activity para o script saber onde ele parou.
+# A conversão (cenários 20, 21 e 24) enfileira o despacho e quer o segredo do agendador, lido do Vault
+# ou, na falta dele, de frila.agendador_secret (privado.disparar_despacho, 20261103120000). O passo da CI
+# não o tem (o reset apaga o do banco), e o roteiro não depende do ambiente: cada conexão nomeada põe um
+# valor aleatório só na própria sessão. Nada vai ao banco, ao Vault nem à saída; o Vault, se houver,
+# continua valendo antes dele.
+SEGREDO_SESSAO=$(openssl rand -hex 32)
 lado_nomeado() {
   local nome=$1 conta=$2 sql=$3 conta_sql=null
   [ -n "$conta" ] && conta_sql="'$conta'"
   ( psql <<SQL > "$TMP/$nome" 2>&1
 set application_name = '$nome';
+do \$s\$ begin perform set_config('frila.agendador_secret', '$SEGREDO_SESSAO', false); end \$s\$;
 $AUX
 begin;
 select pg_temp.tentar($conta_sql, \$q\$ $sql \$q\$);
@@ -1490,5 +1500,91 @@ for i in $(seq 1 "$RODADAS"); do
   done
 done
 fim_job 23 "o desfecho de quem chegou primeiro na chamada" cancelar_a cancelar_b bloquear_a bloquear_b recusar_a recusar_b
+
+# ── 24. O job x a conversão x reabrir_por_atraso de uma irmã preenchida (guarda) ─────
+# reabrir_por_atraso não pede a trava da casa e devolve a vaga preenchida a publicada (20261108070000:520).
+# Com a trava da conversão só pelas irmãs publicadas, a preenchida ficava de fora: se ela fosse reaberta
+# entre a trava e o update das irmãs, o update a pegaria fora de ordem, depois da origem. Duas irmãs
+# G1 < G2: G1 preenchida (o p1 confirmado, sem check-in), G2 publicada, cada uma com uma chamada vencida
+# (o job pede as duas vagas).
+#   · X segura uma candidatura pendente de G2. A conversão de G2 (C) trava e para no gatilho
+#     vaga_fechada_expira_candidaturas, que roda depois do encerramento da origem e antes do update das
+#     irmãs: o meio exato, sem sorteio.
+#   · R reabre G1; o job (E) chega depois; X solta.
+# Se R terminasse antes de E, E pegaria G1 e esperaria G2 (de C), e C, no update, quereria G1: o ciclo.
+# Medido: R não termina. Desde antes do conserto (no eb21daf), ele para na casa, porque o update de
+# :520 confere a chave estrangeira vaga -> estabelecimento (FOR KEY SHARE), e a casa é de C até o fim;
+# com o conserto, a G1 já é de C. Por isso o cenário é guarda: o caminho que fecharia o ciclo não se
+# forma de forma determinística. A conferência só falha se R terminar antes de E ou se alguém receber 40P01.
+# O reabrir conta a tolerância pelo horário da posição (v_pos.inicio_em, 15 min), não pelo da vaga: a
+# montagem grava a posição de G1 com início 30 min atrás, e a vaga continua no futuro, do mesmo trabalho
+# que G2. É o mesmo que a conversão durar além do início + 15 min. A candidatura pendente numa vaga
+# direta também é montagem (candidatar recusa a direta). Mundos 441 a 450.
+aguardar_fim_ou_trava() {   # devolve 0 com $onde = terminou|travado; 1 em 15 s sem nenhum dos dois.
+  local nome=$1 arq=$2 n=0
+  onde=
+  until [ -n "$onde" ]; do
+    if [ "$(psql -c "select count(*) from pg_stat_activity where application_name = '$nome' and wait_event_type = 'Lock';")" = 1 ]; then
+      onde=travado
+    elif [ -s "$arq" ] && [ "$(psql -c "select count(*) from pg_stat_activity where application_name = '$nome';")" = 0 ]; then
+      onde=terminou
+    else
+      n=$((n + 1)); [ "$n" -ge 150 ] && return 1
+      sleep 0.1
+    fi
+  done
+}
+
+echo "▸ 24. job x publicar_a_partir_da_chamada x reabrir_por_atraso de uma irmã preenchida, no meio da conversão"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  m=$((440 + i))
+  montar_mundo "$m"; mais_prof "$m" 4
+  casa=$(id "$m" 1); p1=$(id "$m" 2); p2=$(id "$m" 3); p3=$(id "$m" 4)
+  g1=$(id "$m" 20); g2=$(id "$m" 21)
+  vaga_direta "$m" 20 3; vaga_direta "$m" 21 3
+  pos1=$(psql <<SQL
+update public.vaga set estado = 'preenchida' where id = '$g1';
+update public.posicao set estado = 'confirmada', profissional_id = (select id from public.profissional where usuario_id = '$p1'),
+       confirmado_em = now() - interval '1 hour', inicio_em = now() - interval '30 minutes', fim_em = now() + interval '5 hours'
+ where vaga_id = '$g1' returning id;
+SQL
+)
+  psql >/dev/null -c "insert into public.turno (posicao_id, valor_acordado_centavos) values ('$pos1', 15000);"
+  cand=$(psql -c "insert into public.candidatura (posicao_id, profissional_id)
+                  select x.id, (select id from public.profissional where usuario_id = '$p3') from public.posicao x where x.vaga_id = '$g2'
+                  returning id;")
+  v1=$(chamada_direta "$m" "$g1" "$p2" vencida); v2=$(chamada_direta "$m" "$g2" "$p1" vencida)
+  [ -n "$pos1" ] && [ -n "$cand" ] && [ -n "$v1" ] && [ -n "$v2" ] || { falhou "rodada $i (24): não montei"; erros=$((erros + 1)); continue; }
+  n="cc-$RUN-$m"
+  segurar "$n-x" "select 1 from public.candidatura where id = '$cand' for update"
+  parou=
+  aguardar "$n-x" segurando || parou="x segurando"
+  if [ -z "$parou" ]; then
+    lado_nomeado "$n-c" "$casa" "select public.publicar_a_partir_da_chamada('$g2', gen_random_uuid(), 'urgencia')"
+    aguardar "$n-c" travado || parou="c travado"
+  fi
+  if [ -z "$parou" ]; then
+    lado_nomeado "$n-r" "$casa" "select public.reabrir_por_atraso('$pos1')"
+    aguardar_fim_ou_trava "$n-r" "$TMP/$n-r" || parou="r terminou ou travado"
+  fi
+  r_antes=$onde
+  if [ -z "$parou" ]; then
+    lado_nomeado "$n-e" "" "select privado.expirar_chamadas()"
+    aguardar "$n-e" travado || parou="e travado"
+  fi
+  if [ -n "$parou" ]; then
+    soltar "$n-%"; wait
+    falhou "rodada $i (24): '${parou% *}' não chegou a '${parou#* }' em 15 s (a ordem não foi forçada)"
+    erros=$((erros + 1)); continue
+  fi
+  soltar "$n-x"; wait
+  rc=$(resultado "$TMP/$n-c"); rr=$(resultado "$TMP/$n-r"); re=$(resultado "$TMP/$n-e")
+  impasse a "$rc" "$rr" "$re"
+  nova=$(psql -c "select count(*) from public.vaga where vaga_origem_id = '$g2' and estado = 'publicada';")
+  confere_job "conversão '$rc', reabertura '$rr' ($r_antes antes do job), job '$re', G1 '$(estado_vaga "$g1")', G2 '$(estado_vaga "$g2")', nova $nova, chamadas '$(estado_chamada "$v1")'/'$(estado_chamada "$v2")'" \
+    "conversão 'ok', reabertura 'ok' (travado antes do job), job 'ok', G1 'publicada', G2 'encerrada', nova 1, chamadas 'expirada'/'encerrada'"
+done
+fim_job 24 "a reabertura à espera da conversão, a conversão feita e G1 reaberta depois dela" a
 
 exit "$falha"
