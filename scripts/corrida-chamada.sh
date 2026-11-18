@@ -1667,23 +1667,6 @@ fim_job 24 "a reabertura à espera da conversão, a conversão feita e G1 reaber
 # com skip locked (20261109180000:208-216, 20261108100000:318-353), e ela só alcança vaga terminada há
 # anos (privado.vaga_expirada); para o job querer uma vaga dessas, a chamada dela teria de estar aberta
 # há anos.
-# longe_do_cron: até o segundo do relógio do banco ficar entre 3 e 35 e a execução deste minuto do
-# expirar_chamadas (e do fechar_turnos_e_vagas, no minuto múltiplo de 5) ter terminado, se o pg_cron a
-# registrou (cron.job_run_details): um cron atrasado não cai no meio da rodada. Sem registro em 70 s,
-# fica só a janela.
-longe_do_cron() {
-  local n=0
-  until [ "$(psql -c "select extract(second from clock_timestamp()) between 3 and 35
-      and ($n >= 70 or not exists (
-        select 1 from cron.job j
-         where j.active and (j.jobname = 'expirar_chamadas_diretas'
-                             or (j.jobname = 'fechar_turnos_e_vagas' and extract(minute from clock_timestamp())::int % 5 = 0))
-           and not exists (select 1 from cron.job_run_details d
-                            where d.jobid = j.jobid and d.start_time >= date_trunc('minute', clock_timestamp())
-                              and d.end_time is not null)));")" = t ]; do
-    n=$((n + 1)); sleep 1
-  done
-}
 # vagas_passadas <mundo> <publicado_por> <entidade...>: vagas diretas publicadas que já terminaram,
 # gravadas num insert só, na ordem dada, cada uma com a posição aberta.
 vagas_passadas() {
