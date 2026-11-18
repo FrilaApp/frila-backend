@@ -65,9 +65,9 @@ export function lerConfiguracaoSmtp(): ConfiguracaoSmtp | null {
 // A classe do erro, em `snake_case`, e se vale tentar de novo.
 //
 // A leitura é pelo código SMTP de três dígitos no início da mensagem, que é o que todo
-// servidor devolve. Sem código reconhecível, o erro conta como transitório: insistir
-// cinco vezes num erro definitivo custa quatro chamadas; desistir de um transitório
-// custa a denúncia de alguém.
+// servidor devolve. O `denomailer` põe dois-pontos depois do código (`535: 5.7.8 ...`).
+// Sem código reconhecível, o erro conta como transitório: insistir cinco vezes num erro
+// definitivo custa quatro chamadas; desistir de um transitório custa a denúncia de alguém.
 export function classificarErro(erro: unknown): { codigo: string; transitorio: boolean } {
   const texto = erro instanceof Error ? erro.message : String(erro ?? "");
 
@@ -75,7 +75,7 @@ export function classificarErro(erro: unknown): { codigo: string; transitorio: b
     return { codigo: "falha_de_conexao", transitorio: true };
   }
 
-  const m = /(?:^|\s)([245])(\d{2})(?:\s|-|$)/.exec(texto);
+  const m = /(?:^|\s)([245])(\d{2})(?::|\s|-|$)/.exec(texto);
   if (m) {
     const classe = m[1];
     const completo = `${m[1]}${m[2]}`;

@@ -1636,6 +1636,51 @@ Deno.test("bB0tV5R8: 535 real do provedor deixa rastro de falha de autenticaçã
   ]);
 });
 
+// O `denomailer@1.6.0` lança `new Error(cmd.code + ": " + cmd.args)`: o código vem
+// seguido de dois-pontos. Estes textos são o formato do fio, sem a palavra
+// "authentication" que o fallback por palavra reconheceria.
+Deno.test("bB0tV5R8: 535 no formato do denomailer (com dois-pontos) é falha_de_autenticacao", () => {
+  const textos = [
+    "535: 5.7.8 Username and Password not accepted",
+    "535: 5.7.8 Username and Password not accepted. For more information, go to https://support.google.com/mail/?p=BadCredentials",
+    "535: 5.7.8 Authentication credentials invalid",
+  ];
+  for (const t of textos) {
+    assertEquals(
+      classificarErro(new Error(t)),
+      { codigo: "falha_de_autenticacao", transitorio: false },
+      t,
+    );
+  }
+  // Os outros códigos com dois-pontos seguem a regra da classe.
+  assertEquals(classificarErro(new Error("550: 5.1.1 user unknown")), {
+    codigo: "smtp_550",
+    transitorio: false,
+  });
+  assertEquals(classificarErro(new Error("451: 4.3.0 Try again later")), {
+    codigo: "smtp_451",
+    transitorio: true,
+  });
+});
+
+Deno.test("bB0tV5R8: 535 do denomailer sem palavra-chave arquiva COM rastro, mesmo no teto de leituras", async () => {
+  const e = espiao([alertaPedido(905, TETO_DE_LEITURAS)]);
+  const recusaDoDenomailer = (_e: Email) =>
+    Promise.resolve<ResultadoEnvio>({
+      ok: false,
+      ...classificarErro(new Error("535: 5.7.8 Username and Password not accepted")),
+    });
+
+  const res = await chamar(e, recusaDoDenomailer);
+
+  assertEquals(res.status, 200);
+  assertEquals(e.falhasOperacionais, ["falha_de_autenticacao"]);
+  assertEquals(e.ordem, ["falha_operacional:falha_de_autenticacao", "concluir:905"]);
+  assertEquals((await res.json()).relatorio, [
+    { msg_id: 905, status: "arquivado", detalhe: "falha_de_autenticacao" },
+  ]);
+});
+
 Deno.test("bB0tV5R8: alerta com falha definitiva de SMTP registra o código ANTES de arquivar", async () => {
   const e = espiao([alertaPedido(901)]);
 
