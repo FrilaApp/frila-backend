@@ -73,17 +73,21 @@ pid_a=$!
 sleep 0.5
 inicio=$(date +%s)
 psql -c "select privado.consumir_token_upload_verificacao('$ID', '$TOKEN') is not null;" > "$TMP/b.out"
+status_b=$?
 fim=$(date +%s)
 wait "$pid_a"
+status_a=$?
 a=$(grep -E '^[tf]$' "$TMP/a.out" | head -1)
 b=$(grep -E '^[tf]$' "$TMP/b.out" | head -1)
+[ "$status_a" = 0 ] && [ "$status_b" = 0 ] && ok "as duas conexões terminaram sem erro (A=$status_a, B=$status_b)" \
+  || falhou "conexão com erro (A=$status_a, B=$status_b): sem as duas, a disputa não prova nada"
 [ "$a" = t ] && ok "A recebeu o destino" || falhou "A deveria receber o destino (veio '$a')"
 [ "$b" = f ] && ok "B, depois de A, não recebeu destino" || falhou "B recebeu o destino também (veio '$b')"
 [ $((fim - inicio)) -ge 1 ] && ok "B esperou a trava de A ($((fim - inicio)) s)" \
   || falhou "B não esperou a trava de A: a corrida não aconteceu"
 
 echo "▸ 2. $RODADAS rodadas com duas conexões juntas"
-vencedores_errados=0
+rodadas_ruins=0
 for i in $(seq 1 "$RODADAS"); do
   ID="89000000-0000-4000-8000-$(printf '%012d' "$i")"
   TOKEN=$(openssl rand -hex 32)
@@ -100,14 +104,24 @@ select privado.consumir_token_upload_verificacao('$ID', '$TOKEN') is not null;
 select pg_sleep(0.2);
 commit;
 SQL
-    ) &
+      echo $? > "$TMP/$i-$lado.status" ) &
   done
   wait
-  n=$(cat "$TMP/$i-x.out" "$TMP/$i-y.out" | grep -c '^t$')
-  [ "$n" = 1 ] || vencedores_errados=$((vencedores_errados + 1))
+  # Conexão que morre não disputa nada: sem as duas terminando em 0, uma t e uma f, a
+  # rodada não conta, mesmo que sobre exatamente um vencedor.
+  status_x=$(cat "$TMP/$i-x.status" 2>/dev/null || echo ausente)
+  status_y=$(cat "$TMP/$i-y.status" 2>/dev/null || echo ausente)
+  res_x=$(grep -E '^[tf]$' "$TMP/$i-x.out" | head -1)
+  res_y=$(grep -E '^[tf]$' "$TMP/$i-y.out" | head -1)
+  printf '    rodada %02d  x: %s (status %s)  y: %s (status %s)\n' \
+    "$i" "${res_x:--}" "$status_x" "${res_y:--}" "$status_y"
+  if [ "$status_x" != 0 ] || [ "$status_y" != 0 ] \
+     || { [ "$res_x$res_y" != tf ] && [ "$res_x$res_y" != ft ]; }; then
+    rodadas_ruins=$((rodadas_ruins + 1))
+  fi
 done
-[ "$vencedores_errados" = 0 ] && ok "em $RODADAS de $RODADAS rodadas houve exatamente um vencedor" \
-  || falhou "$vencedores_errados de $RODADAS rodadas não tiveram exatamente um vencedor"
+[ "$rodadas_ruins" = 0 ] && ok "em $RODADAS de $RODADAS rodadas as duas conexões terminaram sem erro, com um t e um f" \
+  || falhou "$rodadas_ruins de $RODADAS rodadas sem as duas conexões em status 0 e com exatamente um t e um f"
 
 usados=$(psql -c "select count(*) from privado.upload_verificacao_identidade where verificacao_id = '$V_ID' and usado_em is not null;")
 [ "$usados" = 3 ] && ok "cada slot vigente registra um único consumo ($usados de 3)" \
