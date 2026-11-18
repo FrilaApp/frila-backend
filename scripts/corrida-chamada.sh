@@ -60,10 +60,11 @@
 #      um job que pega as mesmas linhas por id, com a ordem forçada por uma terceira conexão e o job
 #      atrasado. 25: fechar_turnos_e_vagas x expirar_chamadas (vagas); 26: publicar_a_partir_da_chamada
 #      x lembrar_chamadas (chamadas); 27: limpar_contas_anonimizadas x expirar_chamadas (vagas).
-#  28 a 30. cancelar_vaga na vaga de publicação contra quem pega a vaga antes da posição (#572), com a
-#      ordem forçada por uma terceira conexão: 28, fechar_turnos_e_vagas numa vaga terminada com posição
-#      aberta; 28b, a mesma com uma confirmada sem chegada (guarda); 29, candidatar numa vaga futura
-#      (guarda); 30, excluir_conta da casa de membro único numa vaga terminada. Nenhum 40P01.
+#  28 a 30. cancelar_vaga na vaga de publicação contra quem pega a vaga antes da posição aberta (#572),
+#      com a ordem forçada por uma terceira conexão: 28, fechar_turnos_e_vagas numa vaga terminada com
+#      posição aberta; 28b, a mesma com uma confirmada sem chegada (guarda); 29 e 29b, candidatar numa
+#      vaga futura (guardas); 30, excluir_conta da casa de membro único (a: vaga terminada, b: futura).
+#      Nenhum 40P01.
 #
 # Uso: ./scripts/corrida-chamada.sh        RODADAS=4 ./scripts/corrida-chamada.sh
 set -uo pipefail
@@ -1855,10 +1856,11 @@ done
 fim_job 27 "as chamadas expiradas e as três vagas sanitizadas" a
 
 # ── 28 a 30. cancelar_vaga na vaga de publicação: o fechamento, o candidato e a exclusão (#572) ─────
-# Na vaga de publicação, public.cancelar_vaga (20261117050000) pega as confirmadas, depois as posições
-# abertas (o update delas) e só então a vaga: a ordem de candidatar, posição e depois vaga. Quem pega a
-# vaga antes da posição aberta fecha ciclo com ela: o fechamento, desde a pré-trava da 20261117190000,
-# e a exclusão da conta da casa de membro único (20261117010000), as duas por id. Molde do 25: X segura
+# Na vaga de publicação, public.cancelar_vaga (20261117050000) pegava as confirmadas, depois as posições
+# abertas (o update delas) e só então a vaga, pela ordem que o comentário dele atribui a candidatar
+# (posição e depois vaga). Quem pega a vaga antes da posição aberta fecha ciclo com ela: o fechamento,
+# desde a pré-trava da 20261117190000, e a exclusão da conta da casa de membro único (20261117010000).
+# candidatar também pega a vaga antes (privado.travar_candidatura, 20260929153712). Molde do 25: X segura
 # uma trava do caminho, e o script só solta X depois de ver os dois lados parados na trava.
 #   28. fechar_turnos_e_vagas x cancelar_vaga, vaga terminada com uma posição aberta: X segura a vaga;
 #       o fechamento para nela (a pré-trava); o cancelamento pega a posição e para na vaga. Mundos 491
@@ -1868,11 +1870,17 @@ fim_job 27 "as chamadas expiradas e as três vagas sanitizadas" a
 #       (cancelar_uma_posicao) param nela. O fechamento pega a confirmada antes da vaga: quem pegasse a
 #       vaga antes da confirmada fecharia ciclo com ele. Mundos 501 a 510.
 #   29. candidatar x cancelar_vaga, vaga futura com duas posições abertas (guarda): X segura a vaga; o
-#       candidato confirma uma posição e para na vaga; o cancelamento para nessa posição. Quem pegasse a
-#       vaga viva antes das posições abertas fecharia ciclo com o candidato. Mundos 511 a 520.
-#   30. excluir_conta da casa de membro único x cancelar_vaga, vaga terminada com uma posição aberta: X
-#       segura a vaga; a exclusão para nela (a 1ª trava dela); o cancelamento pega a posição e para na
-#       vaga. Mundos 521 a 530.
+#       candidato para nela (travar_candidatura), o cancelamento também. Dois desfechos legítimos: o
+#       candidato confirma e o cancelamento recolhe a confirmada, ou o candidato acha as posições já
+#       tomadas pelo cancelamento (posicao_ja_preenchida). Mundos 511 a 520.
+#   29b. a vaga futura com uma confirmada (de outro profissional) e uma aberta, o cancelamento na frente
+#       (guarda): X segura a vaga; o cancelamento para nela (cancelar_uma_posicao, a vaga em no key
+#       update antes da confirmada futura), e o candidato depois. A trava da vaga que o cancelamento pede
+#       antes das abertas não pode subir de modo: o candidato esperando a vaga fecharia ciclo. Mundos
+#       531 a 540.
+#   30. excluir_conta da casa de membro único x cancelar_vaga, com uma posição aberta: X segura a vaga;
+#       a exclusão para nela (a 1ª trava dela); o cancelamento para em seguida. a: vaga terminada (mundos
+#       521 a 530); b: vaga futura (mundos 541 a 550).
 # Os dados no passado (28, 28b e 30) são montados longe do pg_cron do fechamento, como no 25.
 # vaga_publicacao <mundo> <entidade> <passada|futura> <posições>: uma vaga de publicação publicada,
 # gravada direto, com as posições abertas. A passada terminou há uma hora; a futura é daqui a 3 dias.
@@ -1960,27 +1968,54 @@ for i in $(seq 1 "$RODADAS"); do
   rc=$(resultado "$TMP/$n-c"); rk=$(resultado "$TMP/$n-k")
   impasse a "$rc" "$rk"
   confere_job "candidatura '$rc', cancelamento '$rk', vaga '$(estado_vaga "$g")', confirmadas $(confirmadas_de "$p1"), abertas $(psql -c "select count(*) from public.posicao where vaga_id = '$g' and estado = 'aberta';")" \
-    "candidatura 'ok', cancelamento 'ok', vaga 'cancelada', confirmadas 0, abertas 0"
+    "candidatura 'ok', cancelamento 'ok', vaga 'cancelada', confirmadas 0, abertas 0" \
+    "candidatura 'posicao_ja_preenchida', cancelamento 'ok', vaga 'cancelada', confirmadas 0, abertas 0"
 done
-fim_job 29 "a candidatura confirmada e recolhida pelo cancelamento da vaga" a
+fim_job 29 "a vaga cancelada sem confirmada de pé" a
 
-echo "▸ 30. excluir_conta da casa x cancelar_vaga, vaga de publicação terminada com uma posição aberta"
+echo "▸ 29b. cancelar_vaga x candidatar, vaga de publicação futura com uma confirmada e uma aberta (guarda)"
 erros=0
 for i in $(seq 1 "$RODADAS"); do
-  m=$((520 + i))
+  m=$((530 + i))
   montar_mundo "$m"
-  casa=$(id "$m" 1); g=$(id "$m" 20)
-  longe_do_cron
-  vaga_publicacao "$m" 20 passada 1
-  pa=$(psql -c "select id from public.posicao where vaga_id = '$g';")
+  casa=$(id "$m" 1); p1=$(id "$m" 2); p2=$(id "$m" 3); g=$(id "$m" 20)
+  vaga_publicacao "$m" 20 futura 2
+  pc=$(psql -c "update public.posicao set estado = 'confirmada', confirmado_em = now() - interval '1 hour',
+                       profissional_id = (select id from public.profissional where usuario_id = '$p2')
+                 where id = (select id from public.posicao where vaga_id = '$g' order by id limit 1) returning id;")
+  psql >/dev/null -c "insert into public.turno (posicao_id, valor_acordado_centavos) values ('$pc', 15000);"
   # shellcheck disable=SC2034
-  { CONTA_e=; SQL_e="select privado.excluir_conta('$casa')"; CONTA_k=$casa; SQL_k="select public.cancelar_vaga('$g', 'Evento desmarcado')"; }
-  cancelar_x 30 "$m" e k "select 1 from public.vaga where id = '$g' for update" || continue
-  re=$(resultado "$TMP/$n-e"); rk=$(resultado "$TMP/$n-k")
-  impasse a "$re" "$rk"
-  confere_job "exclusão '$re', cancelamento '$rk', conta '$(estado_de "$casa")', vaga '$(estado_vaga "$g")', posição '$(estado_posicao "$pa")'" \
-    "exclusão 'ok', cancelamento 'ok', conta 'anonimizada', vaga 'cancelada', posição 'cancelada'"
+  { CONTA_c=$p1; SQL_c="select public.candidatar('$g')"; CONTA_k=$casa; SQL_k="select public.cancelar_vaga('$g', 'Evento desmarcado')"; }
+  cancelar_x 29b "$m" k c "select 1 from public.vaga where id = '$g' for update" || continue
+  rc=$(resultado "$TMP/$n-c"); rk=$(resultado "$TMP/$n-k")
+  impasse a "$rc" "$rk"
+  confere_job "cancelamento '$rk', candidatura '$rc', vaga '$(estado_vaga "$g")', confirmada '$(estado_posicao "$pc")', confirmadas $(confirmadas_de "$p1")" \
+    "cancelamento 'ok', candidatura 'vaga_encerrada', vaga 'cancelada', confirmada 'cancelada', confirmadas 0"
 done
-fim_job 30 "a conta anonimizada e a vaga cancelada" a
+fim_job 29b "a vaga cancelada e o candidato recusado depois dela" a
+
+echo "▸ 30. excluir_conta da casa x cancelar_vaga, vaga de publicação com uma posição aberta (a: terminada, b: futura)"
+erros=0
+for i in $(seq 1 "$RODADAS"); do
+  for ordem in a b; do
+    case "$ordem" in
+      a) m=$((520 + i)); quando=passada ;;
+      b) m=$((540 + i)); quando=futura ;;
+    esac
+    montar_mundo "$m"
+    casa=$(id "$m" 1); g=$(id "$m" 20)
+    [ "$quando" = passada ] && longe_do_cron
+    vaga_publicacao "$m" 20 "$quando" 1
+    pa=$(psql -c "select id from public.posicao where vaga_id = '$g';")
+    # shellcheck disable=SC2034
+    { CONTA_e=; SQL_e="select privado.excluir_conta('$casa')"; CONTA_k=$casa; SQL_k="select public.cancelar_vaga('$g', 'Evento desmarcado')"; }
+    cancelar_x "30$ordem" "$m" e k "select 1 from public.vaga where id = '$g' for update" || continue
+    re=$(resultado "$TMP/$n-e"); rk=$(resultado "$TMP/$n-k")
+    impasse "$ordem" "$re" "$rk"
+    confere_job "exclusão '$re', cancelamento '$rk', conta '$(estado_de "$casa")', vaga '$(estado_vaga "$g")', posição '$(estado_posicao "$pa")'" \
+      "exclusão 'ok', cancelamento 'ok', conta 'anonimizada', vaga 'cancelada', posição 'cancelada'"
+  done
+done
+fim_job 30 "a conta anonimizada e a vaga cancelada" a b
 
 exit "$falha"
