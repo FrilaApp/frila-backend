@@ -509,6 +509,49 @@ aguardar() {
   done
 }
 
+aguardar_fim_ou_trava() {   # devolve 0 com $onde = terminou|travado; 1 em 15 s sem nenhum dos dois.
+  local nome=$1 arq=$2 n=0
+  onde=
+  until [ -n "$onde" ]; do
+    if [ "$(psql -c "select count(*) from pg_stat_activity where application_name = '$nome' and wait_event_type = 'Lock';")" = 1 ]; then
+      onde=travado
+    elif [ -s "$arq" ] && [ "$(psql -c "select count(*) from pg_stat_activity where application_name = '$nome';")" = 0 ]; then
+      onde=terminou
+    else
+      n=$((n + 1)); [ "$n" -ge 150 ] && return 1
+      sleep 0.1
+    fi
+  done
+}
+
+# cron_cai <prefixo>: com EXPIRAR_FORCADO=1, o expirar_chamadas do pg_cron "cai aqui". É o ponto da
+# montagem em que as chamadas já estão vencidas e o cron, a cada minuto, podia passar (#568). Roda o
+# job numa conexão nomeada (<prefixo>-k) e espera ela terminar ou parar numa trava: terminou, o cron
+# ganhou a corrida e o cenário já não acha o que esperar; parada, ele é mais um na fila. Sem a variável,
+# não faz nada: é só a prova da exposição (o expirar forçado antes da disputa).
+cron_cai() {
+  [ -n "${EXPIRAR_FORCADO:-}" ] || return 0
+  lado_nomeado "$1-k" "" "select privado.expirar_chamadas()"
+  aguardar_fim_ou_trava "$1-k" "$TMP/$1-k"
+}
+# longe_do_cron: até o segundo do relógio do banco ficar entre 3 e 35 e a execução deste minuto do
+# expirar_chamadas (e do fechar_turnos_e_vagas, no minuto múltiplo de 5) ter terminado, se o pg_cron a
+# registrou (cron.job_run_details): um cron atrasado não cai no meio da rodada. Sem registro em 70 s,
+# fica só a janela. (A mesma do #567, que a usa nos cenários 25 a 27.)
+longe_do_cron() {
+  local n=0
+  until [ "$(psql -c "select extract(second from clock_timestamp()) between 3 and 35
+      and ($n >= 70 or not exists (
+        select 1 from cron.job j
+         where j.active and (j.jobname = 'expirar_chamadas_diretas'
+                             or (j.jobname = 'fechar_turnos_e_vagas' and extract(minute from clock_timestamp())::int % 5 = 0))
+           and not exists (select 1 from cron.job_run_details d
+                            where d.jobid = j.jobid and d.start_time >= date_trunc('minute', clock_timestamp())
+                              and d.end_time is not null)));")" = t ]; do
+    n=$((n + 1)); sleep 1
+  done
+}
+
 # Conta as posições confirmadas de quem foi excluído: a exclusão reabre todas.
 confirmadas_de() { psql -c "select count(*) from public.posicao p join public.profissional f on f.id = p.profissional_id where f.usuario_id = '$1' and p.estado = 'confirmada';"; }
 
@@ -750,7 +793,7 @@ for i in $(seq 1 "$RODADAS"); do
   [ -z "${c1:-}" ] && { falhou "rodada $i (a): não montei a chamada"; erros=$((erros + 1)); continue; }
   chamar=$(sql_chamar "$m" "$p2" "$vaga")
   a=0; b=0.2; [ $((i % 2)) = 0 ] && { a=0.2; b=0; }
-  vencer "$c1"
+  vencer "$c1"; cron_cai "cc-$RUN-$m"
   lado "$TMP/8a-$i-c" "$a" 1 "$(id "$m" 1)" "$chamar"
   lado "$TMP/8a-$i-e" "$b" 1 "" "select privado.expirar_chamadas()"
   wait
@@ -771,7 +814,7 @@ for i in $(seq 1 "$RODADAS"); do
     aguardar "$n-c" travado || parou="$n-c travado"
   fi
   if [ -z "$parou" ]; then
-    vencer "$c1"
+    vencer "$c1"; cron_cai "$n"
     lado_nomeado "$n-e" "" "select privado.expirar_chamadas()"
     aguardar "$n-e" travado || parou="$n-e travado"
   fi
@@ -1119,7 +1162,7 @@ corrida_job() {
   local passo
   for passo in "${passos[@]}"; do
     case "$passo" in
-      vencer) "$venc" "$c1" ;;
+      vencer) "$venc" "$c1"; cron_cai "$n" ;;
       *" "*)  aguardar "$n-${passo% *}" "${passo#* }" || { parou=$passo; break; } ;;
       *)      local c="CONTA_$passo" s="SQL_$passo"; lado_nomeado "$n-$passo" "${!c}" "${!s}" ;;
     esac
@@ -1255,6 +1298,7 @@ for i in $(seq 1 "$RODADAS"); do
 update public.chamada set lembrete_em = now() - interval '2 minutes', expira_em = now() - interval '1 minute' where id = '$ca';
 update public.chamada set lembrete_em = now() - interval '3 minutes', expira_em = now() - interval '2 minutes' where id = '$cb';
 SQL
+  cron_cai "$n"
   segurar "$n-x" "select 1 from public.chamada where id = '$cb' for update"
   parou=
   aguardar "$n-x" segurando || parou="x segurando"
@@ -1420,6 +1464,7 @@ for i in $(seq 1 "$RODADAS"); do
   v1=$(chamada_direta "$m" "$g1" "$p1" vencida); v2=$(chamada_direta "$m" "$g2" "$p2" vencida)
   [ -n "$v1" ] && [ -n "$v2" ] || { falhou "rodada $i (22): não montei as chamadas"; erros=$((erros + 1)); continue; }
   n="cc-$RUN-$m"
+  cron_cai "$n"
   segurar "$n-x" "select 1 from public.vaga where id = '$g2' for update"
   parou=
   aguardar "$n-x" segurando || parou="x segurando"
@@ -1466,7 +1511,7 @@ for i in $(seq 1 "$RODADAS"); do
       if [ "$ordem" = a ]; then
         psql >/dev/null -c "update public.chamada set expira_em = clock_timestamp() + interval '2 seconds' where id = '$c1';"
       else
-        vencer "$c1"
+        vencer "$c1"; cron_cai "$n"
       fi
       segurar "$n-x" "select 1 from public.chamada where id = '$c1' for update"
       parou=
@@ -1474,6 +1519,7 @@ for i in $(seq 1 "$RODADAS"); do
       if [ "$ordem" = a ]; then
         if [ -z "$parou" ]; then lado_nomeado "$n-o" "$CONTA_o" "$SQL_o"; aguardar "$n-o" travado || parou="o travado"; fi
         [ -z "$parou" ] && until [ "$(psql -c "select clock_timestamp() > expira_em from public.chamada where id = '$c1';")" = t ]; do sleep 0.2; done
+        cron_cai "$n"
         if [ -z "$parou" ]; then lado_nomeado "$n-e" "" "select privado.expirar_chamadas()"; aguardar "$n-e" travado || parou="e travado"; fi
       else
         if [ -z "$parou" ]; then lado_nomeado "$n-e" "" "select privado.expirar_chamadas()"; aguardar "$n-e" travado || parou="e travado"; fi
@@ -1520,20 +1566,6 @@ fim_job 23 "o desfecho de quem chegou primeiro na chamada" cancelar_a cancelar_b
 # montagem grava a posição de G1 com início 30 min atrás, e a vaga continua no futuro, do mesmo trabalho
 # que G2. É o mesmo que a conversão durar além do início + 15 min. A candidatura pendente numa vaga
 # direta também é montagem (candidatar recusa a direta). Mundos 441 a 450.
-aguardar_fim_ou_trava() {   # devolve 0 com $onde = terminou|travado; 1 em 15 s sem nenhum dos dois.
-  local nome=$1 arq=$2 n=0
-  onde=
-  until [ -n "$onde" ]; do
-    if [ "$(psql -c "select count(*) from pg_stat_activity where application_name = '$nome' and wait_event_type = 'Lock';")" = 1 ]; then
-      onde=travado
-    elif [ -s "$arq" ] && [ "$(psql -c "select count(*) from pg_stat_activity where application_name = '$nome';")" = 0 ]; then
-      onde=terminou
-    else
-      n=$((n + 1)); [ "$n" -ge 150 ] && return 1
-      sleep 0.1
-    fi
-  done
-}
 
 echo "▸ 24. job x publicar_a_partir_da_chamada x reabrir_por_atraso de uma irmã preenchida, no meio da conversão"
 erros=0
@@ -1557,6 +1589,7 @@ SQL
   v1=$(chamada_direta "$m" "$g1" "$p2" vencida); v2=$(chamada_direta "$m" "$g2" "$p1" vencida)
   [ -n "$pos1" ] && [ -n "$cand" ] && [ -n "$v1" ] && [ -n "$v2" ] || { falhou "rodada $i (24): não montei"; erros=$((erros + 1)); continue; }
   n="cc-$RUN-$m"
+  cron_cai "$n"
   segurar "$n-x" "select 1 from public.candidatura where id = '$cand' for update"
   parou=
   aguardar "$n-x" segurando || parou="x segurando"
