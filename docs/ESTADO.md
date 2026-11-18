@@ -12,6 +12,10 @@ do `frila-documentacao`: este arquivo não repete esse escopo.
 > que precisa de `supabase db reset` **não foi remedido** e leva a marca "não remedido em 18/11/2026",
 > com a data e a ref da última medição. Número sem a marca vem de 01/11/2026 (ref `c25ef14`) ou de data
 > anterior, e vale como histórico, não como estado de hoje.
+>
+> **A `develop` andou depois da medição.** O PR #573 foi mesclado em 18/11/2026 e a ponta da `develop` na verificação
+> de 18/11/2026 era `5fa493d`; os contadores deste arquivo (migrações, arquivos pgTAP, PRs abertos) são de `add668b`
+> e devem ser remedidos na próxima rodada.
 
 ---
 
