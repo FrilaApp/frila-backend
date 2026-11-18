@@ -194,6 +194,9 @@ Medida com `gh pr list --state open` em 16/10:
 
 ### O `frila-prod` em 08/11/2026 (medido logo após o pacote v1.1; não remedido em 18/11/2026)
 
+**Tudo nesta seção, a tabela e as listas incluídas, descreve o `frila-prod` em 08/11/2026 e não foi remedido em
+18/11/2026.** Os verbos no presente abaixo valem para aquela data, não para hoje.
+
 Pacote v1.1 = `develop` em `e8516b51` (#425), **14 migrações** de `20261105150000` a
 `20261107370000`, aplicadas entre 09:15 e 09:20 (horário de São Paulo) pelo roteiro aprovado
 (uma transação por arquivo, conexão direta, `lock_timeout` 2 s e `statement_timeout` 10 s
@@ -202,21 +205,22 @@ foi ensaiada em contêiner isolado.
 
 | O quê | Estado |
 |---|---|
-| Histórico de migrações | **151** versões, topo `20261107370000`. As 4 de 08/11 da `develop` (`20261108010000` a `20261108040000`, #426 a #430) **não** estão no Prod: são o pacote 2 |
-| Chaves de recurso | `foto_de_perfil` = false, `chamada_direta` = false, `perfil_rico` = false (`configuracao_do_app('ios')`) |
-| Moderação de mídia | `MODERACAO_PROVEDOR=local`, `MODERACAO_TETO_MENSAL=5000`; nenhum segredo da Azure. `local` autoaprova e só serve com `foto_de_perfil` desligada |
+| Histórico de migrações | **151** versões, topo `20261107370000`. Em 08/11, as 4 migrações de 08/11 da `develop` (`20261108010000` a `20261108040000`, #426 a #430) **não** estavam no Prod: eram o pacote 2 |
+| Chaves de recurso | Em 08/11: `foto_de_perfil` = false, `chamada_direta` = false, `perfil_rico` = false (`configuracao_do_app('ios')`). O `produto/AGORA.md` registra as três ligadas no Prod para o iOS 1.2.0 desde 13 e 14/11/2026; não medido contra o Prod por esta atualização |
+| Moderação de mídia | Em 08/11: `MODERACAO_PROVEDOR=local`, `MODERACAO_TETO_MENSAL=5000`; nenhum segredo da Azure. `local` autoaprova e só serve com `foto_de_perfil` desligada |
 | Edge Functions | `despachar` v7, `entrar-demonstracao` v7, `enviar-email` v7, `enviar-push` v9, `excluir-conta` v7, `exportar-meus-dados` v8, `exportar-turnos` v7, `expurgar-midias` v1, `limpar-contas-orfas` v7, `moderar-midia` v1, `saude` v8 |
 | Publicadas do SHA `e8516b51` | `moderar-midia`, `expurgar-midias`, `exportar-meus-dados`, `saude` (antes do DDL) e `enviar-push` (depois da `20261107370000`, que cria `dispositivo.versao_app`). As demais são de 04/11 a 05/11 |
 | Jobs novos no `pg_cron` | `limpar_contas_orfas_diaria`, `expurgar_midias_diaria`, `expurgar_midias_horario`, `processar_fila_moderacao_midia`, `expirar_chamadas_diretas`, `lembrar_chamadas_diretas`: ativos, usuário `postgres`, sem falha nos primeiros 10 min |
 | Vault | Presentes: `agendador_secret`, `edge_function_url`, `email_function_url`, `push_function_url`, `limpar_contas_function_url`, `expurgar_midias_function_url`, `moderar_midia_function_url` (as 4 últimas criadas em 08/11) |
-| Vault, **ausentes** | `documento_pepper`, `storage_url`, `storage_jwt_secret`. Nenhuma GUC `frila.*`. Sem efeito hoje: 0 verificações de identidade em toda a história e o app não chama as RPCs da RN14. Ligar `foto_de_perfil` ou adotar a RN14 no app exige os três antes |
+| Vault, **ausentes** | Em 08/11: `documento_pepper`, `storage_url`, `storage_jwt_secret`. Nenhuma GUC `frila.*`. Sem efeito naquela data: 0 verificações de identidade em toda a história e o app não chamava as RPCs da RN14. Ligar `foto_de_perfil` ou adotar a RN14 no app exigia os três antes |
 
 O que custou caro descobrir na aplicação:
-- A URL de conexão guardada para o Prod é a do **pooler de sessão**, que ignora `PGOPTIONS`. Limite por sessão só vale na conexão direta (`db.<ref>.supabase.co:5432`).
+- Em 08/11, a URL de conexão guardada para o Prod era a do **pooler de sessão**, que ignora `PGOPTIONS`. Limite por sessão só vale na conexão direta (`db.<ref>.supabase.co:5432`).
 - `supabase functions deploy` a partir de worktree em `/private/tmp` falha no empacotador Docker; use `--use-api`.
 - `supabase secrets set` sobe a versão de todas as funções sem mudar o código (`updated_at` intacto).
 
-**Desde 29/09 o `frila-dev` manda e-mail por SMTP próprio** (PR #81):
+**Histórico: em 29/09 o `frila-dev` passou a mandar e-mail por SMTP próprio** (PR #81). Os itens abaixo são o que o
+PR configurou naquela data; o estado atual do `frila-dev` **não foi remedido em 18/11/2026**:
 - Envio: `smtp.gmail.com:465`, conta `frilaverificacao@gmail.com`, remetente "Frila".
 - Conteúdo: código de seis dígitos (`{{ .Token }}`).
 - Validade: 15 minutos.
