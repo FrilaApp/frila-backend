@@ -426,3 +426,43 @@ Para reverter os efeitos de uma migração problemática, o procedimento obrigat
 ### Quem Decide / Quem Age
 - **Criação do PR corretivo:** Engenharia de Backend.
 - **Aprovação do PR e execução do `aplicar-remoto.sh` em ambientes remotos:** **`[DONO]`**.
+
+---
+
+## 7. `/saude` Responde 503 (Sonda Externa)
+
+### Sintomas
+- O monitor externo (que não usa `pg_cron`, `pgmq` nem e-mail) avisa que `GET` ou `HEAD /functions/v1/saude` devolve `503`.
+- O corpo do `GET` traz só o `status`: `atrasado` (job do `pg_cron` parado ou inativo), `degradado` (fila, `pg_net` ou SMTP) ou `indisponivel` (o banco não respondeu, ou a consulta da sonda falhou).
+- O corpo público não traz nome de job, fila ou tabela de propósito (RN15). O detalhe está no log da função `saude`.
+
+### O que a sonda vigia
+- **Jobs do `pg_cron`:** `reprocessar_despacho` e `verificar_saude` (`privado.consultar_saude_cron`), mais `processar_fila_email` e, só com a coleta de registro de acesso ligada, `consumir_registro_acesso` (`privado.consultar_saude_operacional`). Job inativo, sem sucesso no histórico ou com o último sucesso além da tolerância derruba a sonda.
+- **Filas:** mensagem mais velha de `pgmq.q_email` ou `pgmq.q_despacho` com mais de 15 minutos.
+- **`pg_net`:** 3 ou mais falhas de transporte (timeout, erro ou 5xx) em `net._http_response` nos últimos 15 minutos. Se a tabela não for legível, a sonda NÃO adoece e o log traz `transporte_legivel: false`.
+- **SMTP:** uma ou mais linhas em `privado.falha_execucao` com origem `enviar_email` nos últimos 30 minutos. A `enviar-email` grava essa linha quando arquiva um pedido que não saiu (falha definitiva, ou teto de leituras estourado), antes só havia o arquivamento.
+
+### Diagnóstico (Somente Leitura)
+1. **Ler o log da função `saude`** e procurar a linha JSON com `"evento":"saude_operacional_degradada"`. Os campos são `entrega_idade_segundos`, `entrega_ativo`, `registro_idade_segundos`, `registro_ativo`, `fila_idade_segundos`, `transporte_falhas`, `transporte_legivel` e `entrega_falhas`.
+2. **Ver o mesmo estado no banco** (`service_role`):
+   ```sql
+   select * from privado.consultar_saude_operacional();
+   select * from privado.consultar_saude_cron();
+   ```
+3. **Se `entrega_falhas > 0`:** ver os códigos (nunca há destinatário nem texto de erro):
+   ```sql
+   select codigo, count(*), max(criada_em)
+     from privado.falha_execucao
+    where origem = 'enviar_email' and criada_em > now() - interval '30 minutes'
+    group by codigo order by 3 desc;
+   ```
+   `falha_de_autenticacao` e `falha_de_conexao` apontam para o SMTP (credencial, host, porta). `smtp_5xx` na caixa da equipe aponta para a caixa de destino. O restante do roteiro de e-mail está na seção 2.
+4. **Se a idade de um job estiver alta ou o job estiver inativo:** seguir a seção 3.
+
+### Mitigação
+- A sonda volta a `200` sozinha quando o sinal sai da janela. Falha de SMTP leva até 30 minutos para sair; religar um job leva até a tolerância dele (10 minutos).
+- Não há ação de mitigação nesta seção: corrigir a causa pela seção 2 ou 3.
+
+### Quem Decide / Quem Age
+- **Leitura de log e diagnóstico:** Engenharia de Backend.
+- **Correção de SMTP e reativação de job em produção:** **`[DONO]`**.

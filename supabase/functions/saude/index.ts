@@ -2,13 +2,15 @@
 // Cartão 5bPJvMIo · RNF02, RNF03, RNF12 · RN15 · Cartão bB0tV5R8.
 //
 // Invocado periodicamente (ex.: a cada ≤15 minutos) por serviço externo de monitoramento.
-// Executa probe de conectividade e monitoramento de idade dos jobs do pg_cron
-// sem expor dados sensíveis, pessoais ou nomes internos de infraestrutura (RN15, condição b).
+// Executa probe de conectividade e monitoramento de idade dos jobs do pg_cron, da fila
+// de e-mail e do pg_net, e de falha recente de SMTP, sem expor dados sensíveis, pessoais
+// ou nomes internos de infraestrutura (RN15, condição b). O detalhe vai só para o log.
 //
 //   GET  /functions/v1/saude  -> 200 { "ok": true, "status": "saudavel", "timestamp": "...", "despacho_idade_segundos": ..., "vigia_idade_segundos": ... }
 //   HEAD /functions/v1/saude  -> 200 (sem corpo quando saudável) / 503 (sem corpo quando atrasado ou fora)
 //   POST /functions/v1/saude  -> 405 { "ok": false, "erro": "metodo_nao_permitido" }
 //   Jobs cron atrasados       -> 503 { "ok": false, "status": "atrasado", "despacho_idade_segundos": ..., "vigia_idade_segundos": ... }
+//   Fila, pg_net ou SMTP      -> 503 { "ok": false, "status": "degradado", "timestamp": "..." }
 //   Falha de banco            -> 503 { "ok": false, "status": "indisponivel", ... }
 
 import postgres from "npm:postgres@3.4.4";
@@ -22,9 +24,25 @@ export interface InfoSaudeCron {
   vigia_ativo: boolean;
 }
 
+// O que `privado.consultar_saude_operacional()` devolve. Estes campos são só para o log da
+// função: o corpo público leva apenas o status (RN15).
+export interface InfoSaudeOperacional {
+  saudavel: boolean;
+  status: string;
+  entrega_idade_segundos: number | null;
+  entrega_ativo: boolean;
+  registro_idade_segundos: number | null;
+  registro_ativo: boolean;
+  fila_idade_segundos: number | null;
+  transporte_falhas: number;
+  transporte_legivel: boolean;
+  entrega_falhas: number;
+}
+
 export interface SqlProbe {
   ping: () => Promise<boolean>;
   consultarJobs?: () => Promise<InfoSaudeCron>;
+  consultarOperacional?: () => Promise<InfoSaudeOperacional>;
   registrarFalha?: (origem: string, codigo: string) => Promise<void>;
 }
 
@@ -99,6 +117,52 @@ export function criarSqlProbe(dbUrl?: string): SqlProbe {
         };
       });
     },
+    consultarOperacional: async () => {
+      return await com(async (sql) => {
+        const rows = await sql`
+          select
+            saudavel,
+            status,
+            entrega_idade_segundos,
+            entrega_ativo,
+            registro_idade_segundos,
+            registro_ativo,
+            fila_idade_segundos,
+            transporte_falhas,
+            transporte_legivel,
+            entrega_falhas
+          from privado.consultar_saude_operacional()
+        `;
+        if (!rows || rows.length === 0) {
+          return {
+            saudavel: false,
+            status: "degradado",
+            entrega_idade_segundos: null,
+            entrega_ativo: false,
+            registro_idade_segundos: null,
+            registro_ativo: false,
+            fila_idade_segundos: null,
+            transporte_falhas: 0,
+            transporte_legivel: false,
+            entrega_falhas: 0,
+          };
+        }
+        const r = rows[0];
+        const numero = (v: unknown) => (v !== null && v !== undefined ? Number(v) : null);
+        return {
+          saudavel: Boolean(r.saudavel),
+          status: String(r.status),
+          entrega_idade_segundos: numero(r.entrega_idade_segundos),
+          entrega_ativo: Boolean(r.entrega_ativo),
+          registro_idade_segundos: numero(r.registro_idade_segundos),
+          registro_ativo: Boolean(r.registro_ativo),
+          fila_idade_segundos: numero(r.fila_idade_segundos),
+          transporte_falhas: Number(r.transporte_falhas ?? 0),
+          transporte_legivel: Boolean(r.transporte_legivel),
+          entrega_falhas: Number(r.entrega_falhas ?? 0),
+        };
+      });
+    },
     registrarFalha: async (origem: string, codigo: string) => {
       try {
         await com(async (sql) => {
@@ -115,6 +179,12 @@ export function criarSqlProbe(dbUrl?: string): SqlProbe {
       }
     },
   };
+}
+
+// O detalhe do que está doente fica no log da função, que só os sócios leem. A resposta
+// pública não ganha nome de fila, de job nem de tabela.
+function registrarDetalhe(operacional: InfoSaudeOperacional): void {
+  console.log(JSON.stringify({ evento: "saude_operacional_degradada", ...operacional }));
 }
 
 export async function processarSaude(
@@ -140,6 +210,13 @@ export async function processarSaude(
       if (probe.consultarJobs) {
         const jobs = await probe.consultarJobs();
         if (!jobs.saudavel) {
+          return new Response(null, { status: 503 });
+        }
+      }
+      if (probe.consultarOperacional) {
+        const operacional = await probe.consultarOperacional();
+        if (!operacional.saudavel) {
+          registrarDetalhe(operacional);
           return new Response(null, { status: 503 });
         }
       }
@@ -173,7 +250,19 @@ export async function processarSaude(
       jobs = await probe.consultarJobs();
     }
 
+    let operacional: InfoSaudeOperacional | undefined;
+    if (probe.consultarOperacional) {
+      operacional = await probe.consultarOperacional();
+    }
+
     const agoraIso = new Date().toISOString();
+
+    if (operacional && !operacional.saudavel) {
+      registrarDetalhe(operacional);
+      if (probe.registrarFalha) {
+        await probe.registrarFalha("saude", "operacao_degradada");
+      }
+    }
 
     if (jobs && !jobs.saudavel) {
       if (probe.registrarFalha) {
@@ -186,6 +275,11 @@ export async function processarSaude(
         despacho_idade_segundos: jobs.despacho_idade_segundos,
         vigia_idade_segundos: jobs.vigia_idade_segundos,
       }, 503);
+    }
+
+    if (operacional && !operacional.saudavel) {
+      // Status fixo: o texto vindo do banco não chega a quem consulta (RN15).
+      return json({ ok: false, status: "degradado", timestamp: agoraIso }, 503);
     }
 
     return json({
