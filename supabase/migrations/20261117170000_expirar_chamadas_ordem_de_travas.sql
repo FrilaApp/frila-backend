@@ -7,19 +7,24 @@
 -- scripts/corrida-chamada.sh, cenários 14 a 24; a matriz das funções que travam vaga ou chamada contra
 -- o job, com o antes e o depois, está no PR #563.
 --
--- Resíduos conhecidos (não fecham ciclo hoje, por invariante; ficam registrados):
---   - privado.fechar_turnos_e_vagas (vigente na 20261015140000:87-95, cron a cada 5 min) encerra várias
---     vagas num update sem ordem. Só pega vaga já terminada (fim_em <= agora) e sem posição aberta ou
---     confirmada. A chamada vence no máximo 1 h antes do início (20261117160000:405-407) e o job roda a
---     cada minuto. Inferência: as vagas dos dois só coincidem se o job ficar parado mais de 1 h além da
---     duração do turno.
+-- Resíduos conhecidos (riscos que ficam registrados; não são invariantes do banco, só a operação
+-- normal dos jobs os afasta; revisão do Lince Codex, rodada 3):
+--   - privado.fechar_turnos_e_vagas (vigente na 20261015140000:80-95, cron a cada 5 min) cancela as
+--     posições vencidas e encerra várias vagas num update sem ordem. Só pega vaga já terminada
+--     (fim_em <= agora). A chamada vence no máximo 1 h antes do início (20261117160000:405-407) e o job
+--     roda a cada minuto, mas o expirar_chamadas não exclui vagas passadas. Inferência: depois de um
+--     atraso dos jobs (pg_cron parado), duas vagas vencidas podem cair nos dois lotes e fechar ciclo
+--     (40P01, um lote desfeito e refeito na rodada seguinte). Não se promete ausência de ciclo aqui.
+--   - publicar_a_partir_da_chamada × lembrar_chamadas: a conversão atualiza as chamadas das vagas sem
+--     ordem própria; contra o expirar a vaga serializa, contra o lembrete o risco já existia antes deste
+--     arquivo e não foi mexido.
 --   - privado.limpar_contas_anonimizadas (20261107350000:674 antes de :680) e
 --     privado.anonimizar_contexto_das_vagas (20261108100000:140 antes de :155) pegam a chamada antes da
 --     vaga. A primeira só alcança contas anonimizadas há 15 dias, cujas chamadas abertas a anonimização
 --     já cancelou (processar_anonimizacao_chamada, 20261107350000:534), e chamada nova exige conta ativa (20261117160000:83).
 --     A segunda só atua em vaga terminada há anos (privado.vaga_expirada), sem chamada aberta, e é
---     chamada pelos expurgos que já seguram a vaga com skip locked. Inferência: o job nunca segura as
---     vagas nem as chamadas delas.
+--     chamada pelos expurgos que já seguram a vaga com skip locked (20261109180000:208,
+--     20261108100000:328): essa pré-trava, e não a antiguidade da vaga, é a proteção concreta.
 --
 -- A regra única de travas da chamada direta é vaga -> chamada -> usuario (20261117010000,
 -- 20261117140000). O job (pg_cron, a cada minuto) era a exceção que a 20261117130000 deixou como
@@ -44,7 +49,7 @@
 -- skip locked foi descartado: pularia a vaga ocupada e adiaria a expiração sem garantia de que o
 -- próximo minuto a encontre livre; a espera em ordem não perde nada e não fecha ciclo.
 --
--- Com isto a regra vaga -> chamada -> usuario vale para o job sem resíduo: vagas, depois chamadas,
+-- Com isto a regra vaga -> chamada -> usuario vale para o job, fora os resíduos acima: vagas, depois chamadas,
 -- depois o usuario (FOR KEY SHARE, a chave estrangeira do aviso). Ninguém mais pega a chamada e
 -- depois a vaga (git grep nas migrações: a recusa, cancelar_chamada e o lembrete pegam só a
 -- chamada e não pedem a vaga depois).
