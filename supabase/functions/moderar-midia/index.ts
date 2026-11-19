@@ -490,6 +490,12 @@ export function criarProvedor(env: FonteEnv, fetchFn: typeof fetch): ProvedorMod
 const HOSTS_AMBIENTE_LOCAL = new Set(["localhost", "127.0.0.1", "[::1]", "kong", "host.docker.internal"]);
 
 /**
+ * Host do projeto Supabase de produção (frila-prod). O provedor `local` nunca é aceito
+ * em produção, mesmo com MODERACAO_PERMITE_LOCAL=1 (falha fechada contra aprovação cega).
+ */
+export const HOST_PROD = "hbjkkcenbudiezmamiak.supabase.co";
+
+/**
  * O código não tem flag de ambiente; o que a hospedagem e a pilha local definem de forma
  * diferente é o host de SUPABASE_URL. Só host conhecido de pilha local conta como local:
  * URL ilegível ou desconhecida conta como hospedagem real (falha fechada).
@@ -503,12 +509,36 @@ export function ambienteLocal(supabaseUrl: string): boolean {
 }
 
 /**
+ * Determina se o provedor `local` é permitido:
+ * (a) na pilha local conhecida (localhost, 127.0.0.1, etc.); ou
+ * (b) quando MODERACAO_PERMITE_LOCAL=1 (após trim) e o host de SUPABASE_URL não for o de produção (HOST_PROD).
+ * Qualquer outro valor da variável não tem efeito.
+ */
+export function permiteProvedorLocal(supabaseUrl: string, env?: FonteEnv): boolean {
+  if (ambienteLocal(supabaseUrl)) {
+    return true;
+  }
+  const permite = env?.MODERACAO_PERMITE_LOCAL?.trim() === "1";
+  if (!permite) {
+    return false;
+  }
+  try {
+    const host = new URL(supabaseUrl).hostname;
+    return Boolean(host) && host !== HOST_PROD;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * `local` aprova toda foto sem olhar para ela. Fora da pilha local isso seria moderação de
  * mentira, então a função recusa subir com ele (ErroConfiguracao, que o handler devolve como
  * 500 antes de tocar na fila). A mensagem cita só nomes de variável, nunca valor.
+ * No frila-dev, aceita `local` se MODERACAO_PERMITE_LOCAL=1; em produção (HOST_PROD),
+ * recusa sempre com o mesmo erro_configuracao.
  */
-export function exigirProvedorReal(provedor: ProvedorModeracao, supabaseUrl: string): void {
-  if (provedor.nome === "local" && !ambienteLocal(supabaseUrl)) {
+export function exigirProvedorReal(provedor: ProvedorModeracao, supabaseUrl: string, env?: FonteEnv): void {
+  if (provedor.nome === "local" && !permiteProvedorLocal(supabaseUrl, env)) {
     throw new ErroConfiguracao(
       "MODERACAO_PROVEDOR=local só é aceito em ambiente local: configure MODERACAO_PROVEDOR=azure " +
         "(com AZURE_CONTENT_SAFETY_KEY e AZURE_CONTENT_SAFETY_ENDPOINT) ou openai (com OPENAI_API_KEY)",
@@ -873,14 +903,14 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   try {
     const env = deps?.env ?? Object.fromEntries(
       ["MODERACAO_PROVEDOR", "MODERACAO_TETO_MENSAL", "OPENAI_API_KEY", "AZURE_CONTENT_SAFETY_KEY",
-        "AZURE_CONTENT_SAFETY_ENDPOINT"].map((k) => [k, Deno.env.get(k)]),
+        "AZURE_CONTENT_SAFETY_ENDPOINT", "MODERACAO_PERMITE_LOCAL"].map((k) => [k, Deno.env.get(k)]),
     );
     // Provedor injetado só existe nos testes (o entrypoint não passa deps); a guarda vale para o do ambiente.
     if (deps?.provedor) {
       provedor = deps.provedor;
     } else {
       provedor = criarProvedor(env, fetchFn);
-      exigirProvedorReal(provedor, supabaseUrl);
+      exigirProvedorReal(provedor, supabaseUrl, env);
     }
     tetoMensal = lerTetoMensal(env);
   } catch (err) {

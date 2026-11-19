@@ -21,6 +21,7 @@ import {
   gerarMiniaturaJpeg,
   handler,
   HandlerDeps,
+  HOST_PROD,
   lerTetoMensal,
   MensagemModeracao,
   MOTIVOS_RECUSA,
@@ -1373,6 +1374,91 @@ Deno.test("guarda: em ambiente local o provedor local segue valendo, sem variáv
       assertEquals(corpo.aprovadas, 1, rotulo);
       assertEquals(mundo.chamadasProvedor, 0, rotulo);
     }
+  }
+});
+
+const URL_PROD = `https://${HOST_PROD}`;
+
+Deno.test("guarda: no DEV com MODERACAO_PERMITE_LOCAL=1 e provedor local, aceita e modera", async () => {
+  const urlsDev = [
+    "https://abcdefghijklmnopqrst.supabase.co",
+    "https://jcobftbhbqdikratzizz.supabase.co",
+  ];
+  const envs = [
+    { MODERACAO_PERMITE_LOCAL: "1" },
+    { MODERACAO_PERMITE_LOCAL: " 1 " },
+    { MODERACAO_PROVEDOR: "local", MODERACAO_PERMITE_LOCAL: "1" },
+  ];
+  for (const supabaseUrl of urlsDev) {
+    for (const env of envs) {
+      const mundo = novoMundo();
+      semear(mundo, MIDIA_1, IMAGEM_BOA);
+      const { resp, corpo } = await rodar(criarDeps(mundo, { env, supabaseUrl }));
+      const rotulo = `${supabaseUrl} ${JSON.stringify(env)}`;
+      assertEquals(resp.status, 200, rotulo);
+      assertEquals(corpo.aprovadas, 1, rotulo);
+      assertEquals(mundo.chamadasProvedor, 0, rotulo);
+      assertEquals(mundo.midias.get(MIDIA_1)?.estado, "aprovada", rotulo);
+      assertEquals(mundo.alertas.length, 0, rotulo);
+    }
+  }
+});
+
+Deno.test("guarda: no DEV sem MODERACAO_PERMITE_LOCAL, recusa com 500 erro_configuracao", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  const { resp, corpo } = await rodar(criarDeps(mundo, { env: {}, supabaseUrl: URL_HOSPEDADA }));
+  assertEquals(resp.status, 500);
+  assertEquals(corpo.code, "erro_configuracao");
+  assertEquals(corpo.aprovadas, undefined);
+  assertEquals(mundo.lerLoteArgs.length, 0);
+  assertEquals(mundo.removidosDaFila.length, 0);
+  assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise");
+  assertEquals(mundo.alertas.length, 1);
+  assertEquals(mundo.alertas[0].evento, "moderacao_configuracao_invalida");
+  assert(String(mundo.alertas[0].detalhe).includes("MODERACAO_PROVEDOR"));
+});
+
+Deno.test("guarda: no Prod (hbjkkcenbudiezmamiak) com MODERACAO_PERMITE_LOCAL=1, recusa com 500 erro_configuracao", async () => {
+  const envs = [
+    { MODERACAO_PERMITE_LOCAL: "1" },
+    { MODERACAO_PERMITE_LOCAL: " 1 " },
+    { MODERACAO_PROVEDOR: "local", MODERACAO_PERMITE_LOCAL: "1" },
+  ];
+  for (const env of envs) {
+    const mundo = novoMundo();
+    semear(mundo, MIDIA_1, IMAGEM_BOA);
+    const { resp, corpo } = await rodar(criarDeps(mundo, { env, supabaseUrl: URL_PROD }));
+    const rotulo = JSON.stringify(env);
+    assertEquals(resp.status, 500, rotulo);
+    assertEquals(corpo.code, "erro_configuracao", rotulo);
+    assertEquals(corpo.aprovadas, undefined, rotulo);
+    assertEquals(mundo.lerLoteArgs.length, 0, rotulo);
+    assertEquals(mundo.removidosDaFila.length, 0, rotulo);
+    assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise", rotulo);
+    assertEquals(mundo.alertas.length, 1, rotulo);
+    assertEquals(mundo.alertas[0].evento, "moderacao_configuracao_invalida", rotulo);
+    assert(String(mundo.alertas[0].detalhe).includes("MODERACAO_PROVEDOR"), rotulo);
+    assertFalse(JSON.stringify(mundo.alertas).includes("hbjkkcenbudiezmamiak"), rotulo);
+  }
+});
+
+Deno.test("guarda: MODERACAO_PERMITE_LOCAL com valor diferente de 1 recusa fora do ambiente local", async () => {
+  const valoresInvalidos = ["true", "0", "false", "sim", "yes", "2", "local", ""];
+  for (const valor of valoresInvalidos) {
+    const mundo = novoMundo();
+    semear(mundo, MIDIA_1, IMAGEM_BOA);
+    const env = { MODERACAO_PERMITE_LOCAL: valor };
+    const { resp, corpo } = await rodar(criarDeps(mundo, { env, supabaseUrl: URL_HOSPEDADA }));
+    const rotulo = `valor=${valor}`;
+    assertEquals(resp.status, 500, rotulo);
+    assertEquals(corpo.code, "erro_configuracao", rotulo);
+    assertEquals(corpo.aprovadas, undefined, rotulo);
+    assertEquals(mundo.lerLoteArgs.length, 0, rotulo);
+    assertEquals(mundo.removidosDaFila.length, 0, rotulo);
+    assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise", rotulo);
+    assertEquals(mundo.alertas.length, 1, rotulo);
+    assertEquals(mundo.alertas[0].evento, "moderacao_configuracao_invalida", rotulo);
   }
 });
 
