@@ -11,6 +11,12 @@
 #   c) SMTP próprio: smtp_host não pode ser vazio
 #   d) mailer_templates_magic_link_content e mailer_templates_confirmation_content:
 #      devem conter '{{ .Token }}' e NÃO podem conter 'ConfirmationURL'
+#   e) rate_limit_email_sent (e-mails por hora, no projeto inteiro): tem de ser o valor
+#      esperado, $AUTH_LIMITE_EMAILS_HORA (padrão 30). Mudou de propósito: mude o padrão aqui.
+#   f) captcha: desligado (decisão de 16/11/2026, docs/decisoes/D04-captcha-da-entrada.md).
+#      Com AUTH_CAPTCHA_ESPERADO=turnstile, tem de estar ligado e com o provedor turnstile.
+#   Informativo (não reprova): smtp_port, o domínio do remetente e os limites por IP
+#   (rate_limit_otp e rate_limit_verify).
 #
 # Em caso de falha de qualquer validação, imprime o motivo em português, aponta para
 # supabase/operacao/configurar-smtp-auth.md e sai com exit 1.
@@ -71,8 +77,10 @@ else
 fi
 
 # Validação do JSON com Python3
-python3 - "$ARQUIVO_JSON" <<'PY'
+AUTH_LIMITE_EMAILS_HORA="${AUTH_LIMITE_EMAILS_HORA:-30}" AUTH_CAPTCHA_ESPERADO="${AUTH_CAPTCHA_ESPERADO:-desligado}" \
+  python3 - "$ARQUIVO_JSON" <<'PY'
 import json
+import os
 import sys
 
 caminho = sys.argv[1]
@@ -141,6 +149,40 @@ def validar_template(chave, nome_amigavel):
 
 validar_template("mailer_templates_confirmation_content", "modelo de confirmação (mailer_templates_confirmation_content)")
 validar_template("mailer_templates_magic_link_content", "modelo de link mágico (mailer_templates_magic_link_content)")
+
+# e) limite de e-mails por hora do Auth (o projeto inteiro divide a mesma cota)
+limite_esperado = os.environ.get("AUTH_LIMITE_EMAILS_HORA", "30")
+limite = data.get("rate_limit_email_sent")
+if isinstance(limite, bool) or not isinstance(limite, int):
+    erros.append(f"rate_limit_email_sent ausente ou não inteiro: {limite!r}")
+    vereditos.append("  ✗ rate_limit_email_sent: ausente ou não inteiro")
+elif str(limite) != limite_esperado:
+    erros.append(f"rate_limit_email_sent = {limite} por hora (esperado {limite_esperado})")
+    vereditos.append(f"  ✗ rate_limit_email_sent: {limite} por hora (esperado {limite_esperado})")
+else:
+    vereditos.append(f"  ✓ rate_limit_email_sent: {limite} por hora (o esperado)")
+
+# f) captcha da entrada
+captcha_esperado = os.environ.get("AUTH_CAPTCHA_ESPERADO", "desligado")
+captcha_ligado = data.get("security_captcha_enabled")
+provedor = data.get("security_captcha_provider")
+if captcha_esperado == "desligado":
+    if captcha_ligado is False:
+        vereditos.append("  ✓ captcha: desligado (o esperado; decisão de 16/11/2026)")
+    else:
+        erros.append(f"captcha deveria estar desligado (security_captcha_enabled = {captcha_ligado!r})")
+        vereditos.append(f"  ✗ captcha: security_captcha_enabled = {captcha_ligado!r} (esperado desligado)")
+elif captcha_ligado is True and provedor == captcha_esperado:
+    vereditos.append(f"  ✓ captcha: ligado com {provedor} (o esperado)")
+else:
+    erros.append(f"captcha deveria estar ligado com {captcha_esperado} (ligado = {captcha_ligado!r}, provedor = {provedor!r})")
+    vereditos.append(f"  ✗ captcha: ligado = {captcha_ligado!r}, provedor = {provedor!r} (esperado {captcha_esperado})")
+
+# Informativo, sem reprovar e sem segredo
+remetente = data.get("smtp_admin_email")
+dominio = remetente.split("@", 1)[1] if isinstance(remetente, str) and "@" in remetente else None
+vereditos.append(f"  · smtp_port: {data.get('smtp_port')!r}; domínio do remetente: {dominio!r}")
+vereditos.append(f"  · limites por IP: rate_limit_otp = {data.get('rate_limit_otp')!r}, rate_limit_verify = {data.get('rate_limit_verify')!r}")
 
 # Imprime vereditos por campo (NUNCA tokens, senhas ou corpo completo)
 print("Conferência de Auth remoto:")

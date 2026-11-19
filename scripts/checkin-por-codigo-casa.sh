@@ -15,6 +15,9 @@
 #   Credenciais e segredos nunca são impressos no terminal ou logs.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+# A senha da DATABASE_URL vai só no ambiente do psql, nunca na linha de comando (B-027.j).
+# shellcheck source=/dev/null
+. scripts/pg-sem-senha.sh
 
 DB_CONTAINER="${DB_CONTAINER:-supabase_db_frila-backend}"
 
@@ -39,7 +42,7 @@ TXT
 
 psql_q() {
   if [ -n "${DATABASE_URL:-}" ]; then
-    psql "$DATABASE_URL" -X -q -t -A -v ON_ERROR_STOP=1 "$@"
+    psql_url "$DATABASE_URL" -X -q -t -A -v ON_ERROR_STOP=1 "$@"
   else
     docker exec -i "$DB_CONTAINER" psql -U postgres -d postgres -X -q -t -A -v ON_ERROR_STOP=1 "$@"
   fi
@@ -48,7 +51,8 @@ psql_q() {
 # Alvo sem segredos/senhas para exibição segura
 alvo() {
   if [ -n "${DATABASE_URL:-}" ]; then
-    python3 - "$DATABASE_URL" <<'PY'
+    separar_senha_da_url "$DATABASE_URL" || return 2
+    python3 - "$PG_URL_SEM_SENHA" <<'PY'
 import sys
 from urllib.parse import urlsplit
 u = urlsplit(sys.argv[1])

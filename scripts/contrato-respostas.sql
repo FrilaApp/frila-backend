@@ -131,7 +131,7 @@ select '00000000-0000-0000-0000-000000000000', c.id, 'authenticated','authentica
   ) as c(id, email);
 
 select pg_temp.guarda('criarConta', pg_temp.como('cc000000-0000-4000-8000-000000000001',
-  $$ select public.criar_conta('contratante','Casa do Contrato','+5561944440001','1980-05-05','2026-09-22') $$));
+  $$ select public.criar_conta('contratante','Casa do Contrato','+5561944440001','1980-05-05','2026-11-13') $$));
 select pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.criar_conta('profissional','Pê do Contrato','+5561944440002','1995-05-05','2026-09-22') $$);
 select pg_temp.como('cc000000-0000-4000-8000-000000000003',
@@ -219,6 +219,25 @@ create temp table vaga1 as
     (select casa_id from ids), (select id from f), gen_random_uuid())) as r;
 select pg_temp.guarda('publicarVaga', (select r from vaga1));
 
+-- A escala de um evento com duas vagas (publicar_escala, 0.2.96). Colhida sem rastro: as vagas dela não
+-- entram nas leituras nem nos despachos que o resto deste arquivo colhe.
+select pg_temp.guarda('publicarEscala', pg_temp.sem_rastro('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.publicar_escala(%L::uuid,
+       '{"nome": "Formatura do Contrato", "data": "2027-01-20", "local": "CLN 108",
+         "regiao_administrativa": "Plano Piloto", "ponto": {"latitude": -15.7905, "longitude": -47.8855}}'::jsonb,
+       jsonb_build_array(
+         jsonb_build_object('funcao_id', %L::uuid, 'inicio_em', '2027-01-20T21:00:00Z',
+           'fim_em', '2027-01-21T03:00:00Z', 'valor_centavos', 16000, 'posicoes', 2,
+           'inclui_refeicao', true, 'inclui_transporte', false, 'exige_material_proprio', false,
+           'responsavel_local', 'Gerente', 'modo', 'urgencia'),
+         jsonb_build_object('funcao_id', %L::uuid, 'inicio_em', '2027-01-20T19:00:00Z',
+           'fim_em', '2027-01-21T01:00:00Z', 'valor_centavos', 15000, 'posicoes', 1,
+           'inclui_refeicao', true, 'inclui_transporte', false, 'exige_material_proprio', false,
+           'responsavel_local', 'Gerente', 'modo', 'urgencia', 'traje', 'camisa preta',
+           'participa_rateio', true, 'observacoes', 'porta dos fundos')),
+       gen_random_uuid()) $$,
+  (select casa_id from ids), (select id from f), (select id from f))));
+
 create temp table vaga2 as
   select pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
     $$ select public.republicar_vaga(%L::uuid, '2027-01-25 21:00:00+00'::timestamptz,
@@ -231,6 +250,10 @@ select pg_temp.guarda('vagasAbertas', pg_temp.como('cc000000-0000-4000-8000-0000
 
 select pg_temp.guarda('detalheVaga', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
   $$ select public.detalhe_vaga(%L::uuid) $$, ((select r from vaga1)->>'vaga_id')::uuid)));
+
+-- vagaPublica (0.2.100): a mesma vaga pelo link. Com sessão, o corpo é o mesmo de anon (pgTAP 879).
+select pg_temp.guarda('vagaPublica', pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
+  $$ select public.vaga_publica(%L) $$, (select r from vaga1)->>'vaga_id')));
 
 create temp table cand as
   select pg_temp.como('cc000000-0000-4000-8000-000000000002', format(
@@ -392,6 +415,15 @@ select pg_temp.guarda('confirmarCheckinManual', pg_temp.como('cc000000-0000-4000
 -- Edge Functions, logo depois do caminho do código e antes de a posição dele ser cancelada, mais
 -- abaixo. Assim checkins_por_codigo sai com o código exigido e a tentativa errada, e o schema dos
 -- itens é exercitado (--falhar-vazias).
+-- registros_aceita_chamadas (0.2.88): o profissional da cand2 liga "Aceito chamadas diretas" uma vez,
+-- para a coleção sair com 1 item e o schema dele ser exercitado (--falhar-vazias). As duas chaves ligam
+-- só para esta chamada e voltam como estavam: as amostras de recurso desligado vêm depois.
+create temp table recurso_antes_da_exportacao as
+  select r.chave, r.ligado from privado.recurso r where r.chave in ('chamada_direta', 'busca_profissionais');
+update privado.recurso set ligado = true where chave in ('chamada_direta', 'busca_profissionais');
+select pg_temp.como('cc000000-0000-4000-8000-000000000003',
+  $$ select public.definir_preferencia_chamadas(aceita_chamadas => true, versao_texto_busca => 'busca-2026-11') $$);
+update privado.recurso r set ligado = a.ligado from recurso_antes_da_exportacao a where a.chave = r.chave;
 select pg_temp.guarda('exportarMeusDados', privado.meus_dados('cc000000-0000-4000-8000-000000000003'));
 
 -- ── Avaliar e o perfil público ────────────────────────────────────────────────
@@ -423,6 +455,10 @@ select pg_temp.guarda('incluirNaEquipe', pg_temp.como('cc000000-0000-4000-8000-0
 
 select pg_temp.guarda('equipeDeConfianca', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.equipe_de_confianca(%L::uuid) $$, (select casa_id from ids))));
+
+-- ── Membros da casa (0.2.103): o administrador da casa lista a equipe ────────────
+select pg_temp.guarda('membrosDoEstabelecimento', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.membros_do_estabelecimento(%L::uuid) $$, (select casa_id from ids))));
 
 select pg_temp.guarda('removerDaEquipe', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
   $$ select public.remover_da_equipe(%L::uuid, %L::uuid) $$,
@@ -819,6 +855,12 @@ select pg_temp.guarda('promete:publicarVaga:403',
          gen_random_uuid()) $$,
     (select casa_id from ids), (select id from f))));
 
+-- publicarEscala: 403 sem_permissao (o mesmo não membro; quem pode vem antes do corpo)
+select pg_temp.guarda('promete:publicarEscala:403',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000099', format(
+    $$ select public.publicar_escala(%L::uuid, '{}'::jsonb, '[]'::jsonb, gen_random_uuid()) $$,
+    (select casa_id from ids))));
+
 -- 21. candidatar: 404 nao_encontrado (vaga inexistente)
 select pg_temp.guarda('promete:candidatar:404',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002',
@@ -894,6 +936,8 @@ select pg_temp.guarda('promete:avisarACaminho:403',
     $$ select public.avisar_a_caminho(%L::uuid) $$, ((select r from cand)->>'turno_id')::uuid)));
 
 -- 35. configuracaoDoApp: 404 nao_encontrado (plataforma sem linha de configuração)
+-- As três plataformas têm linha desde 20261117060000; apaga a da web (tudo aqui termina em rollback).
+delete from privado.configuracao_app where plataforma = 'web';
 select pg_temp.guarda('promete:configuracaoDoApp:404',
   pg_temp.observado(null,
     $$ select public.configuracao_do_app('web') $$));
@@ -958,6 +1002,11 @@ select pg_temp.guarda('promete:detalheVaga:404',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002',
     $$ select public.detalhe_vaga('c0000000-0000-4000-8000-000000000099'::uuid) $$));
 
+-- 45b. vagaPublica: 404 nao_encontrado (id que não é uuid: o mesmo 404 da vaga inexistente, 0.2.100)
+select pg_temp.guarda('promete:vagaPublica:404',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+    $$ select public.vaga_publica('nao-e-uuid') $$));
+
 -- 46. candidatosDaVaga: 403 sem_permissao (contratante de outro estabelecimento tentando listar candidatos)
 select pg_temp.guarda('promete:candidatosDaVaga:403',
   pg_temp.observado('ee000000-0000-4000-8000-000000000098', format(
@@ -1015,6 +1064,11 @@ select pg_temp.guarda('promete:equipeDeConfianca:403',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
     $$ select public.equipe_de_confianca(%L::uuid) $$, (select casa_id from ids))));
 
+-- 55b. membrosDoEstabelecimento: 403 sem_permissao (quem não é administrador da casa; mesma recusa para todo o resto)
+select pg_temp.guarda('promete:membrosDoEstabelecimento:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000002', format(
+    $$ select public.membros_do_estabelecimento(%L::uuid) $$, (select casa_id from ids))));
+
 -- 56. vagasAbertas: 403 sem_permissao (profissional suspenso tentando listar vagas)
 select pg_temp.guarda('promete:vagasAbertas:403',
   pg_temp.observado('cc000000-0000-4000-8000-000000000004',
@@ -1051,6 +1105,11 @@ on conflict do nothing;
 select pg_temp.guarda('promete:minhaConta:404',
   pg_temp.observado('ee000000-0000-4000-8000-000000000097',
     $$ select public.minha_conta() $$));
+
+-- aceitarTermos (0.2.90): 404 nao_encontrado (login sem cadastro), como a minhaConta acima
+select pg_temp.guarda('promete:aceitarTermos:404',
+  pg_temp.observado('ee000000-0000-4000-8000-000000000097',
+    $$ select public.aceitar_termos('2026-11-13') $$));
 
 delete from auth.users where id = 'ee000000-0000-4000-8000-000000000097';
 
@@ -1166,6 +1225,19 @@ select pg_temp.guarda('promete:publicarVaga:422',
          'Gerente', 'urgencia'::public.modo_preenchimento, gen_random_uuid()) $$,
     (select casa_id from ids))));
 
+-- publicarEscala: 422 campo_invalido ([150] sozinho: o item passa do teto de 100 posições, vagas[0].posicoes)
+select pg_temp.guarda('promete:publicarEscala:422',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.publicar_escala(%L::uuid,
+         '{"nome": "Formatura do Contrato", "data": "2027-01-20", "local": "CLN 108",
+           "regiao_administrativa": "Plano Piloto", "ponto": {"latitude": -15.7905, "longitude": -47.8855}}'::jsonb,
+         jsonb_build_array(jsonb_build_object('funcao_id', %L::uuid, 'inicio_em', '2027-01-20T21:00:00Z',
+           'fim_em', '2027-01-21T03:00:00Z', 'valor_centavos', 16000, 'posicoes', 150,
+           'inclui_refeicao', true, 'inclui_transporte', false, 'exige_material_proprio', false,
+           'responsavel_local', 'Gerente', 'modo', 'urgencia')),
+         gen_random_uuid()) $$,
+    (select casa_id from ids), (select id from f))));
+
 -- 76. escolherCandidato: 422 campo_obrigatorio (candidatura_id nula)
 select pg_temp.guarda('promete:escolherCandidato:422',
   pg_temp.observado('cc000000-0000-4000-8000-000000000001',
@@ -1200,6 +1272,11 @@ select pg_temp.guarda('promete:publicarVaga:401',
          '2027-01-18 21:00:00+00'::timestamptz, '2027-01-19 03:00:00+00'::timestamptz,
          'CLN 108', '{"latitude":-15.7905,"longitude":-47.8855}'::jsonb, 16000::bigint, 1, true, false, false,
          'Gerente', 'urgencia'::public.modo_preenchimento, gen_random_uuid(), 'camisa preta', true, 'porta dos fundos', 180) $$));
+
+-- publicarEscala: 401 nao_autenticado (chamador sem sessão)
+select pg_temp.guarda('promete:publicarEscala:401',
+  pg_temp.observado(null,
+    $$ select public.publicar_escala('00000000-0000-0000-0000-000000000001'::uuid, '{}'::jsonb, '[]'::jsonb, gen_random_uuid()) $$));
 
 -- 82. cancelarVaga: 401 nao_autenticado (chamador sem sessão / anonimo)
 select pg_temp.guarda('promete:cancelarVaga:401',
@@ -1428,6 +1505,11 @@ select pg_temp.guarda('promete:meuEstabelecimento:401',
 select pg_temp.guarda('promete:equipeDeConfianca:401',
   pg_temp.observado(null,
     $$ select public.equipe_de_confianca('c0000000-0000-4000-8000-000000000001'::uuid) $$));
+
+-- 124b. membrosDoEstabelecimento: 401 nao_autenticado (chamador sem sessão)
+select pg_temp.guarda('promete:membrosDoEstabelecimento:401',
+  pg_temp.observado(null,
+    $$ select public.membros_do_estabelecimento('c0000000-0000-4000-8000-000000000001'::uuid) $$));
 
 -- 125. situacaoDaConta: 401 nao_autenticado (chamador sem sessão / anonimo)
 select pg_temp.guarda('promete:situacaoDaConta:401',
@@ -1918,6 +2000,155 @@ select pg_temp.guarda('promete:sair_da_equipe:403',
 select pg_temp.guarda('promete:sair_da_equipe:422',
   pg_temp.observado('cc000000-0000-4000-8000-000000000002',
     $$ select public.sair_da_equipe('c0000000-0000-4000-8000-000000000099'::uuid) $$));
+
+-- ── Busca de profissionais (0.2.88) ───────────────────────────────────────────
+-- Dado sintético. O Pê Três (…0005) ganha serviço com preço, região e liga "Aceito chamadas
+-- diretas"; a casa (…0001) busca por faxina residencial no Plano Piloto. O Pê do Contrato (…0002)
+-- bloqueou a casa mais acima e o Pê Dois (…0003) também: só o Pê Três deve aparecer. A chave
+-- `busca_profissionais` nasce desligada: mede o 403 recurso_desligado antes de ligar.
+update privado.recurso set ligado = false where chave = 'busca_profissionais';
+select pg_temp.guarda('promete:buscarProfissionais:403',
+  pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+    (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+update privado.recurso set ligado = true where chave = 'busca_profissionais';
+
+insert into public.profissional_funcao (profissional_id, funcao_id)
+select p.id, f2.id from public.profissional p cross join public.funcao f2
+ where p.usuario_id = 'cc000000-0000-4000-8000-000000000005' and f2.nome = 'faxina residencial'
+on conflict do nothing;
+select pg_temp.como('cc000000-0000-4000-8000-000000000005', format(
+  $$ select public.definir_servicos(%L::jsonb) $$,
+  (select jsonb_build_array(jsonb_build_object('funcao_id', f2.id, 'unidade', 'diaria',
+            'valor_centavos', 15000, 'horas_incluidas', 8, 'especialidade_ids', jsonb_build_array(e.id)))
+     from public.funcao f2 join public.especialidade e on e.funcao_id = f2.id
+    where f2.nome = 'faxina residencial' limit 1)));
+select pg_temp.como('cc000000-0000-4000-8000-000000000005',
+  $$ select public.definir_regioes_atendidas(array[1], false) $$);
+
+-- A preferência com a busca ligada: aceita_chamadas e pendencias_para_busca na resposta.
+select pg_temp.guarda('definirPreferenciaChamadas', pg_temp.como('cc000000-0000-4000-8000-000000000005',
+  $$ select public.definir_preferencia_chamadas(aceita_chamadas => true, versao_texto_busca => 'busca-2026-11') $$));
+select pg_temp.guarda('promete:definirPreferenciaChamadas:422', pg_temp.observado('cc000000-0000-4000-8000-000000000005',
+  $$ select public.definir_preferencia_chamadas(aceita_chamadas => true) $$));
+-- Em pausa, a lista de pendências vem preenchida ('pausado'): o Pê do Contrato pausa até 01/03/2027.
+select pg_temp.guarda('definirPreferenciaChamadas', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.definir_preferencia_chamadas(aceita_chamadas => true, versao_texto_busca => 'busca-2026-11',
+       pausado_ate => '2027-03-01') $$));
+
+select pg_temp.guarda('buscarProfissionais', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+
+select pg_temp.guarda('promete:buscarProfissionais:401', pg_temp.observado(null, format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+-- Profissional não busca profissional: 403 sem_permissao.
+select pg_temp.guarda('promete:buscarProfissionais:403', pg_temp.observado('cc000000-0000-4000-8000-000000000005', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+-- Sem funcao_id: 422 campo_obrigatorio.
+select pg_temp.guarda('promete:buscarProfissionais:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, regiao_id => 1) $$, (select casa_id from ids))));
+-- Acima de 60 buscas por hora por conta: 429 limite_excedido. As 60 primeiras só gastam o contador.
+select pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial')))
+  from generate_series(1, 60);
+select pg_temp.guarda('promete:buscarProfissionais:429', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+
+-- Termos 1.1 (0.2.90): a busca recusa quem não aceitou (403 termos_pendentes, antes dos filtros e do contador).
+-- A casa volta para a versão anterior só neste trecho.
+update public.usuario set termos_versao = '2026-11-12' where id = 'cc000000-0000-4000-8000-000000000001';
+select pg_temp.guarda('promete:buscarProfissionais:403', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.buscar_profissionais(estabelecimento_id => %L::uuid, funcao_id => %L::uuid, regiao_id => 1) $$,
+  (select casa_id from ids), (select id from public.funcao where nome = 'faxina residencial'))));
+update public.usuario set termos_versao = '2026-11-13' where id = 'cc000000-0000-4000-8000-000000000001';
+
+-- aceitar_termos: o aceite da versão vigente (200), a versão vazia (422), a versão que o servidor não conhece (422) e sem sessão (401).
+update public.usuario set termos_versao = '2026-09-22' where id = 'cc000000-0000-4000-8000-000000000002';
+select pg_temp.guarda('aceitarTermos', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.aceitar_termos('2026-11-13') $$));
+select pg_temp.guarda('promete:aceitarTermos:422', pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+  $$ select public.aceitar_termos('') $$));
+select pg_temp.guarda('promete:aceitarTermos:422', pg_temp.observado('cc000000-0000-4000-8000-000000000002',
+  $$ select public.aceitar_termos('2026-11-12') $$));
+select pg_temp.guarda('promete:aceitarTermos:401', pg_temp.observado(null,
+  $$ select public.aceitar_termos('2026-11-13') $$));
+
+-- convidar_membro, aceitar_convite_membro, remover_membro e transferir_administracao (0.2.73, B-052): chamadas pelos NOMES do contrato
+-- (estabelecimento_id, email, papel; token), como o PostgREST faz. Contas próprias, ativas: ...00a1 é
+-- contratante que ainda não é membro da casa (aceitar o convite a faz membro, por isso este trecho é o
+-- último) e ...00a2 é profissional.
+insert into auth.users (id, email) values
+  ('ee000000-0000-4000-8000-0000000000a1', 'convite_contratante@frila.test'),
+  ('ee000000-0000-4000-8000-0000000000a2', 'convite_profissional@frila.test')
+on conflict do nothing;
+insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado) values
+  ('ee000000-0000-4000-8000-0000000000a1', 'contratante',  'Convidada Contratante', '+5561999990161', 'convite_contratante@frila.test',  '1990-01-01', '1.0', now(), 'ativa'),
+  ('ee000000-0000-4000-8000-0000000000a2', 'profissional', 'Convidada Profissional', '+5561999990162', 'convite_profissional@frila.test', '1990-01-01', '1.0', now(), 'ativa')
+on conflict (id) do update set estado = 'ativa';
+create temp table convite_colhido as
+  select pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+    $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'Novo.Membro@frila.test', papel => 'operador') $$,
+    (select casa_id from ids))) as r;
+select pg_temp.guarda('convidarMembro', (select r from convite_colhido));
+
+select pg_temp.guarda('promete:convidarMembro:401', pg_temp.observado(null, format(
+  $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'x@frila.test', papel => 'operador') $$,
+  (select casa_id from ids))));
+select pg_temp.guarda('promete:convidarMembro:403', pg_temp.observado('ee000000-0000-4000-8000-0000000000a1', format(
+  $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'x@frila.test', papel => 'operador') $$,
+  (select casa_id from ids))));
+select pg_temp.guarda('promete:convidarMembro:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'sem-arroba', papel => 'operador') $$,
+  (select casa_id from ids))));
+select pg_temp.guarda('promete:convidarMembro:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'x@frila.test', papel => null) $$,
+  (select casa_id from ids))));
+
+select pg_temp.guarda('promete:aceitarConviteMembro:401', pg_temp.observado(null,
+  $$ select public.aceitar_convite_membro(token => 'qualquer') $$));
+select pg_temp.guarda('promete:aceitarConviteMembro:422', pg_temp.observado('ee000000-0000-4000-8000-0000000000a2', format(
+  $$ select public.aceitar_convite_membro(token => %L) $$, (select r->>'token' from convite_colhido))));
+select pg_temp.guarda('promete:aceitarConviteMembro:422', pg_temp.observado('ee000000-0000-4000-8000-0000000000a1',
+  $$ select public.aceitar_convite_membro(token => 'token-que-nao-existe') $$));
+select pg_temp.guarda('aceitarConviteMembro', pg_temp.como('ee000000-0000-4000-8000-0000000000a1', format(
+  $$ select public.aceitar_convite_membro(token => %L) $$, (select r->>'token' from convite_colhido))));
+
+-- remover_membro e transferir_administracao (0.2.73, B-052), pelos nomes do contrato. Aqui a casa tem
+-- um administrador (...0001) e um operador (...00a1, que acabou de aceitar o convite).
+select pg_temp.guarda('promete:transferirAdministracao:401', pg_temp.observado(null, format(
+  $$ select public.transferir_administracao(estabelecimento_id => %L::uuid, novo_admin_id => %L::uuid) $$,
+  (select casa_id from ids), 'ee000000-0000-4000-8000-0000000000a1'::uuid)));
+select pg_temp.guarda('promete:transferirAdministracao:403', pg_temp.observado('ee000000-0000-4000-8000-0000000000a1', format(
+  $$ select public.transferir_administracao(estabelecimento_id => %L::uuid, novo_admin_id => %L::uuid) $$,
+  (select casa_id from ids), 'ee000000-0000-4000-8000-0000000000a1'::uuid)));
+select pg_temp.guarda('promete:transferirAdministracao:404', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.transferir_administracao(estabelecimento_id => %L::uuid, novo_admin_id => %L::uuid) $$,
+  (select casa_id from ids), 'ee000000-0000-4000-8000-0000000000ff'::uuid)));
+
+select pg_temp.guarda('promete:removerMembro:401', pg_temp.observado(null, format(
+  $$ select public.remover_membro(estabelecimento_id => %L::uuid, membro_id => %L::uuid) $$,
+  (select casa_id from ids), 'cc000000-0000-4000-8000-000000000001'::uuid)));
+select pg_temp.guarda('promete:removerMembro:403', pg_temp.observado('ee000000-0000-4000-8000-0000000000a2', format(
+  $$ select public.remover_membro(estabelecimento_id => %L::uuid, membro_id => %L::uuid) $$,
+  (select casa_id from ids), 'cc000000-0000-4000-8000-000000000001'::uuid)));
+select pg_temp.guarda('promete:removerMembro:404', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.remover_membro(estabelecimento_id => %L::uuid, membro_id => %L::uuid) $$,
+  (select casa_id from ids), 'ee000000-0000-4000-8000-0000000000ff'::uuid)));
+select pg_temp.guarda('promete:removerMembro:422', pg_temp.observado('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.remover_membro(estabelecimento_id => %L::uuid, membro_id => %L::uuid) $$,
+  (select casa_id from ids), 'cc000000-0000-4000-8000-000000000001'::uuid)));
+
+select pg_temp.guarda('transferirAdministracao', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.transferir_administracao(estabelecimento_id => %L::uuid, novo_admin_id => %L::uuid) $$,
+  (select casa_id from ids), 'ee000000-0000-4000-8000-0000000000a1'::uuid)));
+select pg_temp.guarda('removerMembro', pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
+  $$ select public.remover_membro(estabelecimento_id => %L::uuid, membro_id => %L::uuid) $$,
+  (select casa_id from ids), 'ee000000-0000-4000-8000-0000000000a1'::uuid)));
 
 -- ── A colheita ────────────────────────────────────────────────────────────────
 \o

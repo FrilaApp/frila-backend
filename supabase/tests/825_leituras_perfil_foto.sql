@@ -132,8 +132,8 @@ update privado.configuracao_app set foto_de_perfil = true;
 -- 3.2 sem vínculo de leitura (contratante da casa Y)
 select ok(not (pg_temp.perfil_de('c8250000-0000-4000-8000-000000000004', 'c8250000-0000-4000-8000-000000000011') ?| array['foto_url','foto_id']),
   'sem vínculo (casa Y): as duas chaves ausentes');
-select is(pg_temp.perfil_de('c8250000-0000-4000-8000-000000000004', 'c8250000-0000-4000-8000-000000000011') ->> 'nome', 'Conta 1',
-  'sem vínculo: o perfil base continua respondendo');
+select is(pg_temp.perfil_de('c8250000-0000-4000-8000-000000000004', 'c8250000-0000-4000-8000-000000000011') ->> 'nome', 'Conta 1.',
+  'sem vínculo: o perfil base continua respondendo, com o nome curto: sem candidatura, turno nem equipe só vê "Conta 1." (contrato 0.2.89)');
 
 -- 3.3 foto que não está aprovada
 update privado.midia set estado = 'em_analise' where id = 'c8250000-0000-4000-8000-0000000000a1';

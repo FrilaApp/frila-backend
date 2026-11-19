@@ -8,6 +8,7 @@
 
 import postgres from "npm:postgres@3.4.4";
 import { validarFormatoBearer } from "../_compartilhado/auth.ts";
+import { comCors } from "../_compartilhado/cors.ts";
 
 export interface Erro {
   code: string;
@@ -27,6 +28,8 @@ export interface SqlClient {
 export const TIMEOUT_PADRAO_MS = 10_000;
 
 export interface HandlerDeps {
+  // Lista de origens aceitas pelo CORS; ausente, vale CORS_ORIGENS_PERMITIDAS do ambiente.
+  origensCors?: string;
   fetchFn?: typeof fetch;
   sqlClient?: SqlClient;
   supabaseUrl?: string;
@@ -111,7 +114,11 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
   };
 }
 
-export async function handler(req: Request, deps?: HandlerDeps): Promise<Response> {
+export function handler(req: Request, deps?: HandlerDeps): Promise<Response> {
+  return comCors(req, deps?.origensCors, () => tratar(req, deps));
+}
+
+async function tratar(req: Request, deps?: HandlerDeps): Promise<Response> {
   if (req.method !== "POST") {
     return resposta(405, { code: "metodo_nao_permitido", message: "metodo_nao_permitido", details: null });
   }

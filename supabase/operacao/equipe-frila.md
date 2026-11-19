@@ -39,6 +39,7 @@ Campos retornados na consulta:
 - `origem`: canal de abertura (`app` para chamados abertos pelo aplicativo via RPC `abrir_suporte`, `operacao` para procedimentos internos da equipe, ou nulo para legadas).
 - `motivo`: motivo ou categoria do chamado (para suporte: `endereco`, `atraso`, `conduta`, `seguranca`, `outro`).
 - `turno_id`: UUID do turno vinculado ao chamado de suporte ou denúncia.
+- `chamada_id`: UUID da chamada direta em que a denúncia foi feita (CD-S13); nulo quando ela não veio de uma chamada. Só a referência: o recado da chamada não entra na fila (RN15).
 - `criada_em` e `prazo_limite`: data de abertura e SLA limite em dias úteis calculado por `privado.prazo_de_resposta`.
 - `prioridade_sla`: classificação visual de prazo.
 - `autor_nome`, `autor_telefone`, `autor_perfil`: dados cadastrais do autor obtidos por join interno (`usuario`).
@@ -267,19 +268,30 @@ Equipe Frila
 ```
 
 ### Modelo D: Atendimento a Solicitação de Dados Pessoais (LGPD art. 18 / RF25)
+
+Passo a passo do atendimento: [`canal-do-titular.md`](canal-do-titular.md).
+
+Responda na mesma conversa do pedido (o assunto começa com "Re:" e repete o do pedido). **Como enviar a resposta:** só pelo Gmail na web da caixa do `suporte@` (o "Enviar como" usa o Resend) ou direto pelo SMTP do Resend. Nunca por script no SMTP do próprio Gmail: a mensagem sai pelos servidores do Google, sem a assinatura do frilabr.com, e chega com `dmarc=fail` (medido em 17/11/2026; com o DMARC em quarantine, vai para o spam).
+
 ```
-Assunto: [Frila] Resposta à sua solicitação de dados (LGPD)
+Assunto: Re: [ASSUNTO DO PEDIDO] · protocolo [PROTOCOLO]
 
-Olá, [Nome do Titular].
+Olá, [primeiro nome].
 
-Em atendimento à sua solicitação registrada sob o protocolo [Protocolo/ID], em conformidade com o artigo 18 da Lei Geral de Proteção de Dados (Lei nº 13.709/2018), disponibilizamos o extrato de dados cadastrais e histórico de turnos vinculados ao seu CPF/Telefone.
+Recebemos em [DATA DO PEDIDO] o seu pedido de [acesso / correção / exclusão / informação] dos seus dados pessoais no Frila (LGPD, art. 18). [UMA DAS RESPOSTAS ABAIXO]
 
-Informamos que seus dados são mantidos com base nas finalidades contratuais e nos prazos regulamentares da nossa Política de Privacidade. Caso deseje a exclusão definitiva, você também pode solicitar diretamente pelo menu "Configurações > Excluir Conta" do aplicativo.
+— Acesso: segue em anexo o arquivo com os dados ligados à sua conta, no mesmo formato da opção "Perfil → Exportar meus dados" do app. Ele mostra o que guardamos, para que usamos cada dado e por quanto tempo, como está na nossa Política de Privacidade (frilabr.com/privacidade).
+— Correção: corrigimos [DADO] para [VALOR NOVO]. A mudança já aparece no app.
+— Exclusão: encerramos a sua conta em [DATA]. O acesso acabou na hora; o seu nome, e-mail e telefone foram apagados, e o restante sai depois de 15 dias, na limpeza diária seguinte, menos o que a lei manda guardar, como explica a seção 6 da Política. As avaliações e os turnos ficam sem o seu nome, para não prejudicar a outra parte.
+— Informação: [RESPOSTA OBJETIVA].
 
-Permanecemos à disposição para eventuais dúvidas.
+Para proteger os seus dados, só respondemos ao e-mail cadastrado na conta. Se você não fez este pedido, responda a este e-mail.
+
+Se tiver qualquer outra dúvida sobre os seus dados, é só responder. Você também pode peticionar à Autoridade Nacional de Proteção de Dados (ANPD).
 
 Atenciosamente,
-Encarregado de Dados (DPO) / Equipe Frila
+Equipe Frila
+suporte@frilabr.com
 ```
 
 ### Modelo E: Resposta a Suporte de Turno (`suporte@frilabr.com`)

@@ -5,6 +5,10 @@ set -Eeuo pipefail
 umask 077
 export LC_ALL=C
 export COPYFILE_DISABLE=1
+# A senha da BACKUP_DB_URL vai só no ambiente do psql (e do pg_dump, filho dele), nunca na linha de comando,
+# que aparece no `ps` (B-027.j). Sem senha na URL, nada muda.
+# shellcheck source=/dev/null
+. "$(dirname -- "${BASH_SOURCE[0]}")/pg-sem-senha.sh"
 
 etapa='validar configuração'
 temporario=''
@@ -66,6 +70,8 @@ trap 'falhar "backup interrompido."' HUP INT TERM
 [[ -n "${BACKUP_PUBLIC_KEY:-}" ]] || falhar 'defina BACKUP_PUBLIC_KEY (destinatário age ou caminho do certificado público PEM).'
 [[ -n "${BACKUP_DIR:-}" ]] || falhar 'defina BACKUP_DIR, pasta dedicada fora de qualquer repositório.'
 case "$BACKUP_DB_URL" in postgres://*|postgresql://*) ;; *) falhar 'BACKUP_DB_URL deve ser uma conexão PostgreSQL.' ;; esac
+separar_senha_da_url "$BACKUP_DB_URL" || falhar 'BACKUP_DB_URL fora do formato esperado (a URL não é mostrada).'
+export BACKUP_DB_URL_SEM_SENHA="$PG_URL_SEM_SENHA"
 retencao="${BACKUP_KEEP:-14}"
 [[ "$retencao" =~ ^[1-9][0-9]{0,5}$ ]] || falhar 'BACKUP_KEEP deve ser um inteiro entre 1 e 999999.'
 for comando in pg_dump psql git tar; do
@@ -73,7 +79,7 @@ for comando in pg_dump psql git tar; do
 done
 etapa='consultar versão do servidor (somente leitura)'
 versao_servidor=$(PGSSLMODE="${PGSSLMODE:-require}" PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-15}" \
-  psql -X -qAt --no-password --set ON_ERROR_STOP=1 --dbname "$BACKUP_DB_URL" \
+  com_senha_da_url psql -X -qAt --no-password --set ON_ERROR_STOP=1 --dbname "$BACKUP_DB_URL_SEM_SENHA" \
     --command "BEGIN READ ONLY; SELECT current_setting('server_version_num'); COMMIT;" 2>/dev/null)
 [[ "$versao_servidor" =~ ^[0-9]{5,6}$ ]] || falhar 'não foi possível validar a versão do servidor.'
 etapa='consultar versão do pg_dump'
@@ -134,7 +140,7 @@ etapa='gerar dump e suplemento de extensões no mesmo snapshot'
 # O catálogo define o suplemento; só o log transitório autorizado é excluído.
 export BACKUP_WORK_DIR="$temporario"
 if ! PGSSLMODE="${PGSSLMODE:-require}" PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-15}" \
-  psql -X -qAt --no-password --set ON_ERROR_STOP=1 --dbname "$BACKUP_DB_URL" \
+  com_senha_da_url psql -X -qAt --no-password --set ON_ERROR_STOP=1 --dbname "$BACKUP_DB_URL_SEM_SENHA" \
     --set suplemento="$temporario/extensoes.sql" 2>"$temporario/psql.err" >/dev/null <<'SQL'
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL DateStyle = 'ISO';
@@ -169,7 +175,7 @@ WHERE c.relkind = 'r' AND NOT c.oid = ANY(coalesce(e.extconfig, ARRAY[]::oid[]))
 ORDER BY n.nspname, c.relname
 \gexec
 \o
-\! pg_dump --dbname "$BACKUP_DB_URL" --no-password --format=custom --snapshot="$BACKUP_SNAPSHOT" --exclude-table-data=net._http_response --file "$BACKUP_WORK_DIR/banco.dump" 2>"$BACKUP_WORK_DIR/pg_dump.err" >/dev/null && touch "$BACKUP_WORK_DIR/dump-concluido"
+\! pg_dump --dbname "$BACKUP_DB_URL_SEM_SENHA" --no-password --format=custom --snapshot="$BACKUP_SNAPSHOT" --exclude-table-data=net._http_response --file "$BACKUP_WORK_DIR/banco.dump" 2>"$BACKUP_WORK_DIR/pg_dump.err" >/dev/null && touch "$BACKUP_WORK_DIR/dump-concluido"
 COMMIT;
 SQL
 then

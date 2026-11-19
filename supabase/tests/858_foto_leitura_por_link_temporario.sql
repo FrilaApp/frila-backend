@@ -109,8 +109,8 @@ select is((select (l.midia_id, l.leitor_id, l.expira_em)::text from privado.midi
   ('c8580000-0000-4000-8000-0000000000a1'::uuid, 'c8580000-0000-4000-8000-000000000003'::uuid,
    '2027-01-11 10:00:00+00'::timestamptz)::text,
   'o banco guarda o SHA-256, a mídia, o leitor e expira_em = agora + 1 h');
-select isnt(pg_temp.token_de(pg_temp.perfil_de('c8580000-0000-4000-8000-000000000003', 'c8580000-0000-4000-8000-000000000011') ->> 'foto_url'),
-  pg_temp.token_de((select url from lx)), 'cada leitura cunha um token novo');
+select is(pg_temp.token_de(pg_temp.perfil_de('c8580000-0000-4000-8000-000000000003', 'c8580000-0000-4000-8000-000000000011') ->> 'foto_url'),
+  pg_temp.token_de((select url from lx)), 'a releitura na janela de 30 min reusa o mesmo token (B-027.h, 0.2.90); a janela seguinte cunha outro (873 D15)');
 
 -- Cunhar e resolver vão em comandos separados, como na vida real (a leitura e o GET da função são
 -- duas requisições).

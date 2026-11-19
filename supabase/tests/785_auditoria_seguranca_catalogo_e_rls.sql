@@ -250,15 +250,15 @@ select is(
 
 drop function public._mutante_fn_sem_search_path();
 
--- 16. Apenas public.configuracao_do_app concede EXECUTE para o papel anon em public
+-- 16. Apenas public.configuracao_do_app e public.vaga_publica (0.2.100) concedem EXECUTE para o papel anon em public
 select is(
   (select coalesce(array_agg(p.proname::text order by p.proname), '{}'::text[])
      from pg_proc p
      join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
       and has_function_privilege('anon', p.oid, 'execute')),
-  array['configuracao_do_app']::text[],
-  'superficie anonima: apenas configuracao_do_app e executavel por anon no schema public'
+  array['configuracao_do_app', 'vaga_publica']::text[],
+  'superficie anonima: apenas configuracao_do_app e vaga_publica sao executaveis por anon no schema public'
 );
 
 -- 17. Nenhuma funcao no schema privado e executavel pelo papel anon

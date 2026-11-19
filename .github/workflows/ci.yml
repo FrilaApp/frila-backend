@@ -6,7 +6,7 @@ on:
   # juntos, continuam verdes. O `pull_request` segue sem filtro de branch, então PR contra
   # qualquer base roda a CI inteira.
   push:
-    branches: [main, develop]
+    branches: [main, develop, 'test-*', 'teste-*']
   pull_request:
   schedule:
     # Mutação completa semanal (domingo às 03:00 UTC)
@@ -112,6 +112,12 @@ jobs:
       - name: Corrida no token de uso único do upload
         run: ./scripts/corrida-token-upload.sh
 
+      # Mesma prova para o token opaco de upload da verificação de identidade (RN14): duas
+      # conexões chamam privado.consumir_token_upload_verificacao e só uma recebe o destino.
+      # Conexão que morre ou rodada sem um vencedor e um perdedor reprova.
+      - name: Corrida no token de uso único da verificação de identidade
+        run: ./scripts/corrida-token-upload-verificacao.sh
+
       # Chamada direta (T1): aceites simultâneos da mesma vaga, aceite x cancelamento da casa,
       # duas chamadas ao mesmo par e exclusão de conta x aceite. Duas conexões de verdade.
       - name: Corridas da chamada direta
@@ -127,6 +133,11 @@ jobs:
       # verdade. Qualquer falha, ou corrida que não aconteceu, sai diferente de zero.
       - name: Corridas do check-in por código
         run: ./scripts/corrida-checkin-codigo.sh
+
+      # Escala de evento (publicar_escala, 0.2.96): dois envios simultâneos com a mesma chave, em duas
+      # conexões, gravam uma escala só e devolvem a mesma resposta. Escala em dobro ou 23505 reprova.
+      - name: Corridas da escala
+        run: ./scripts/corrida-escala.sh
 
       - name: Ciclo completo por HTTP
         run: ./scripts/ciclo-completo.sh

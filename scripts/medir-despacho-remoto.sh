@@ -14,6 +14,9 @@
 #   ./scripts/medir-despacho-remoto.sh --local
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# A senha da DATABASE_URL vai só no ambiente do psql, nunca na linha de comando (B-027.j).
+# shellcheck source=/dev/null
+. scripts/pg-sem-senha.sh
 
 REF="${1:-}"
 LOCAL=0
@@ -39,7 +42,7 @@ executar_sql() {
   local sql="$1"
   if [ "$LOCAL" -eq 1 ] || [ -z "$REF" ]; then
     if [ -n "${DATABASE_URL:-}" ]; then
-      psql "$DATABASE_URL" -X -q -t -A -c "$sql"
+      psql_url "$DATABASE_URL" -X -q -t -A -c "$sql"
     else
       docker exec -i "${DB_CONTAINER:-supabase_db_frila-backend}" \
         psql -U postgres -d postgres -X -q -t -A -c "$sql"
