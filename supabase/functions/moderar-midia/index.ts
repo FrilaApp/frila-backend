@@ -773,7 +773,7 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
     // O consumo vive em `privado.moderacao_chamada`, que ainda precisa de migração própria.
     // Sem a tabela estas duas consultas falham, e falhar aqui é falhar fechado.
     reservarChamada(midiaId, provedor, mes, tetoMensal, maximoPorFoto) {
-      return reservarViaFuncao(sql, midiaId, provedor, mes, tetoMensal, maximoPorFoto);
+      return reservarViaFuncao(sql as unknown as SqlTag, midiaId, provedor, mes, tetoMensal, maximoPorFoto);
     },
     async liberarChamada(midiaId, provedor, mes) {
       await sql`
