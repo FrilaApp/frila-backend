@@ -51,6 +51,8 @@ const MEMORIA_MAXIMA_DECODIFICACAO_MB = 96;
 
 /** Teto mensal padrão: a cota gratuita do Azure Content Safety. Zero chamadas pagas. */
 const TETO_MENSAL_PADRAO = 5000;
+/** Percentual do teto mensal que dispara o aviso de cota (uma vez por mês). */
+export const PERCENTUAL_AVISO_COTA = 80;
 /** Severidade do Azure (0, 2, 4, 6) a partir da qual a foto é reprovada. */
 const AZURE_SEVERIDADE_REPROVACAO = 4;
 /** Limite de imagem do Azure Content Safety; acima disso vai a miniatura. */
@@ -573,6 +575,47 @@ export interface MidiaModeracao {
 
 export type ReservaChamada = "ok" | "teto_mensal" | "limite_foto";
 
+/**
+ * Resultado de `reservarChamada`. `consumoMes` é o total do mês DEPOIS da reserva. `avisarCota` diz se
+ * ESTA reserva deve emitir o aviso de cota: o banco decide, na mesma transação e sob a mesma trava,
+ * pelo consumo no limiar ou acima dele e pela marca (provedor, mês, limiar) ainda não gravada.
+ */
+export interface ResultadoReserva {
+  resultado: ReservaChamada;
+  consumoMes: number;
+  avisarCota: boolean;
+}
+
+/** Cliente SQL reduzido ao que `reservarViaFuncao` usa: a tag de template do `postgres`. */
+export type SqlTag = (
+  partes: TemplateStringsArray,
+  ...valores: unknown[]
+) => PromiseLike<Array<Record<string, unknown>>>;
+
+/** Chama `privado.reservar_chamada_moderacao`, que confere teto e limite, grava o consumo e marca o aviso. */
+export async function reservarViaFuncao(
+  sql: SqlTag,
+  midiaId: string,
+  provedor: string,
+  mes: string,
+  tetoMensal: number,
+  maximoPorFoto: number,
+): Promise<ResultadoReserva> {
+  const linhas = await sql`
+    select resultado, consumo_mes, avisar_cota
+      from privado.reservar_chamada_moderacao(
+             ${midiaId}::uuid, ${provedor}::text, ${mes}::text,
+             ${tetoMensal}::integer, ${maximoPorFoto}::integer, ${PERCENTUAL_AVISO_COTA}::integer)
+  `;
+  const linha = linhas[0];
+  if (!linha) throw new Error("reservar_chamada_moderacao não devolveu linha");
+  return {
+    resultado: String(linha.resultado) as ReservaChamada,
+    consumoMes: Number(linha.consumo_mes),
+    avisarCota: linha.avisar_cota === true,
+  };
+}
+
 export interface SqlClient {
   lerLote: (quantidade: number, visibilidade: number) => Promise<MensagemModeracao[]>;
   obterMidia: (id: string) => Promise<MidiaModeracao | null>;
@@ -590,7 +633,7 @@ export interface SqlClient {
     mes: string,
     tetoMensal: number,
     maximoPorFoto: number,
-  ) => Promise<ReservaChamada>;
+  ) => Promise<ResultadoReserva>;
   /** Devolve a reserva quando a chamada nem chegou a produzir veredito (falha de rede). */
   liberarChamada: (midiaId: string, provedor: string, mes: string) => Promise<void>;
   encerrar?: () => Promise<void>;
@@ -729,25 +772,8 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
     },
     // O consumo vive em `privado.moderacao_chamada`, que ainda precisa de migração própria.
     // Sem a tabela estas duas consultas falham, e falhar aqui é falhar fechado.
-    async reservarChamada(midiaId, provedor, mes, tetoMensal, maximoPorFoto) {
-      return await sql.begin(async (tx) => {
-        await tx`select pg_advisory_xact_lock(hashtext('moderacao_chamada'))`;
-        const [mesTotal] = await tx`
-          select count(*)::int as n from privado.moderacao_chamada
-           where mes = ${mes} and provedor = ${provedor}
-        `;
-        if (Number(mesTotal.n) >= tetoMensal) return "teto_mensal" as ReservaChamada;
-        const [fotoTotal] = await tx`
-          select count(*)::int as n from privado.moderacao_chamada
-           where midia_id = ${midiaId}::uuid
-        `;
-        if (Number(fotoTotal.n) >= maximoPorFoto) return "limite_foto" as ReservaChamada;
-        await tx`
-          insert into privado.moderacao_chamada (midia_id, provedor, mes)
-          values (${midiaId}::uuid, ${provedor}, ${mes})
-        `;
-        return "ok" as ReservaChamada;
-      });
+    reservarChamada(midiaId, provedor, mes, tetoMensal, maximoPorFoto) {
+      return reservarViaFuncao(sql as unknown as SqlTag, midiaId, provedor, mes, tetoMensal, maximoPorFoto);
     },
     async liberarChamada(midiaId, provedor, mes) {
       await sql`
@@ -1017,7 +1043,7 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
       let aprovada = true;
       if (provedor.externo) {
         const mes = mesDe(agora());
-        const reserva = await sqlClient.reservarChamada(
+        const { resultado: reserva, consumoMes, avisarCota } = await sqlClient.reservarChamada(
           midia.id,
           provedor.nome,
           mes,
@@ -1031,6 +1057,18 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
         if (reserva === "limite_foto") {
           alerta({ evento: "moderacao_limite_por_foto", provedor: provedor.nome, midia_id: midia.id });
           throw new FalhaTransitoria("limite_por_foto", 0);
+        }
+        // O banco decide, sob a mesma trava da conta: consumo no limiar ou acima E marca (provedor, mês,
+        // limiar) ainda não gravada. Um aviso por mês e por limiar, mesmo que o teto mude no meio do mês.
+        if (avisarCota) {
+          alerta({
+            evento: "moderacao_cota_mensal_80",
+            provedor: provedor.nome,
+            mes,
+            teto: tetoMensal,
+            consumo: consumoMes,
+            limiar_percentual: PERCENTUAL_AVISO_COTA,
+          });
         }
         try {
           aprovada = (await provedor.analisar({ original: originalRecodificado, miniatura })).aprovada;
