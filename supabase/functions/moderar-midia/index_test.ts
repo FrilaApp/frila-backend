@@ -9,7 +9,7 @@
 // Os JPEGs são reais (codificados com jpeg-js), porque sanitizar e gerar miniatura sobre
 // bytes inventados provaria só que o teste concorda consigo mesmo.
 
-import { assert, assertEquals, assertFalse } from "jsr:@std/assert@1.0.19";
+import { assert, assertEquals, assertFalse, assertRejects } from "jsr:@std/assert@1.0.19";
 import jpeg from "npm:jpeg-js@0.4.4";
 import {
   caminhoMiniatura,
@@ -23,7 +23,8 @@ import {
   HandlerDeps,
   HOST_PROD,
   lerTetoMensal,
-  limiarAvisoCota,
+  PERCENTUAL_AVISO_COTA,
+  reservarViaFuncao,
   MensagemModeracao,
   MOTIVOS_RECUSA,
   provedorAzure,
@@ -504,6 +505,8 @@ interface Mundo {
   fila: MensagemModeracao[];
   removidosDaFila: number[];
   reservas: Array<{ midia_id: string; provedor: string; mes: string }>;
+  /** Espelho de privado.moderacao_aviso_cota: chave `provedor|mes|limiar`. */
+  marcasAviso: Set<string>;
   alertas: Array<Record<string, unknown>>;
   chamadasStorage: string[];
   chamadasProvedor: number;
@@ -521,6 +524,7 @@ function novoMundo(): Mundo {
     fila: [],
     removidosDaFila: [],
     reservas: [],
+    marcasAviso: new Set(),
     alertas: [],
     chamadasStorage: [],
     chamadasProvedor: 0,
@@ -646,12 +650,19 @@ function criarDeps(mundo: Mundo, extra: Partial<HandlerDeps> = {}): HandlerDeps 
         if (quebrar(mundo, "reservar")) return Promise.reject(new Error("tabela de consumo indisponivel"));
         mundo.reservasPedidas.push({ mes, teto, maximoPorFoto });
         const doMes = () => mundo.reservas.filter((r) => r.mes === mes && r.provedor === provedor).length;
-        if (doMes() >= teto) return Promise.resolve({ resultado: "teto_mensal", consumoMes: doMes() });
+        if (doMes() >= teto) return Promise.resolve({ resultado: "teto_mensal", consumoMes: doMes(), avisarCota: false });
         if (mundo.reservas.filter((r) => r.midia_id === midiaId).length >= maximoPorFoto) {
-          return Promise.resolve({ resultado: "limite_foto", consumoMes: doMes() });
+          return Promise.resolve({ resultado: "limite_foto", consumoMes: doMes(), avisarCota: false });
         }
         mundo.reservas.push({ midia_id: midiaId, provedor, mes });
-        return Promise.resolve({ resultado: "ok", consumoMes: doMes() });
+        // Mesma regra de privado.reservar_chamada_moderacao: consumo no limiar ou acima E marca ainda não gravada.
+        let avisarCota = false;
+        const chave = `${provedor}|${mes}|80`;
+        if (doMes() >= Math.ceil((teto * 80) / 100) && !mundo.marcasAviso.has(chave)) {
+          mundo.marcasAviso.add(chave);
+          avisarCota = true;
+        }
+        return Promise.resolve({ resultado: "ok", consumoMes: doMes(), avisarCota });
       },
       liberarChamada: (midiaId, provedor, mes) => {
         const i = mundo.reservas.findLastIndex((r) => r.midia_id === midiaId && r.provedor === provedor && r.mes === mes);
@@ -1184,15 +1195,6 @@ function avisos80(mundo: Mundo): Array<Record<string, unknown>> {
   return mundo.alertas.filter((a) => a.evento === EVENTO_COTA_80);
 }
 
-Deno.test("cota 80%: o limiar é 80% do teto, arredondado para cima", () => {
-  assertEquals(limiarAvisoCota(10), 8);
-  assertEquals(limiarAvisoCota(5000), 4000);
-  assertEquals(limiarAvisoCota(7), 6); // 5,6 sobe para 6
-  assertEquals(limiarAvisoCota(15), 12);
-  assertEquals(limiarAvisoCota(1), 1);
-  assertEquals(limiarAvisoCota(0), 0);
-});
-
 Deno.test("cota 80%: abaixo de 80% não avisa", async () => {
   const mundo = novoMundo();
   semear(mundo, MIDIA_1, IMAGEM_BOA);
@@ -1241,12 +1243,71 @@ Deno.test("cota 80%: no teto continua o alerta existente e o aviso de 80% não v
   assertEquals(mundo.alertas, [{ evento: "moderacao_teto_mensal_estourado", provedor: "mock", mes: "2026-11", teto: 10 }]);
 });
 
-Deno.test("cota 80%: a última chamada permitida (100%) não gera segundo aviso de 80%", async () => {
+Deno.test("cota 80%: de 8 a 10 de 10 avisa uma vez só, e a chamada seguinte bate no teto sem novo aviso", async () => {
   const mundo = novoMundo();
+  const MIDIA_3 = "b4c00000-0000-4000-8000-000000000003";
+  const MIDIA_4 = "b4c00000-0000-4000-8000-000000000004";
+  for (const id of [MIDIA_1, MIDIA_2, MIDIA_3, MIDIA_4]) semear(mundo, id, IMAGEM_BOA);
+  gastar(mundo, 7); // as três primeiras levam o mês a 8, 9 e 10; a quarta já encontra o teto
+  const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(corpo.aprovadas, 3);
+  assertEquals(avisos80(mundo).map((a) => a.consumo), [8]);
+  assertEquals(mundo.alertas.filter((a) => a.evento === "moderacao_teto_mensal_estourado").length, 1);
+});
+
+Deno.test("cota 80%: teto reduzido no meio do mês (10 para 5, consumo 4) avisa uma vez e não repete", async () => {
+  const mundo = novoMundo();
+  const MIDIA_3 = "b4c00000-0000-4000-8000-000000000003";
   semear(mundo, MIDIA_1, IMAGEM_BOA);
-  gastar(mundo, 9); // esta chamada leva o mês a 10 de 10
+  gastar(mundo, 3);
   await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
-  assertEquals(avisos80(mundo), []);
+  assertEquals(avisos80(mundo), []); // 4 de 10: abaixo do limiar 8
+
+  semear(mundo, MIDIA_2, IMAGEM_BOA);
+  const deps = criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "5" } });
+  await rodar(deps); // 5 de 5: o limiar novo é 4, e o consumo já o alcançou
+  assertEquals(avisos80(mundo).map((a) => [a.teto, a.consumo]), [[5, 5]]);
+
+  semear(mundo, MIDIA_3, IMAGEM_BOA);
+  await rodar(deps); // no teto: só o alerta de teto
+  assertEquals(avisos80(mundo).length, 1);
+});
+
+Deno.test("cota 80%: teto reduzido abaixo do consumo atual avisa na primeira reserva que ainda cabe, e nunca mais no mês", async () => {
+  const mundo = novoMundo();
+  const MIDIA_3 = "b4c00000-0000-4000-8000-000000000003";
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 7);
+  await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "12" } }));
+  assertEquals(avisos80(mundo), []); // 8 de 12: o limiar é 10
+
+  semear(mundo, MIDIA_2, IMAGEM_BOA);
+  await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "9" } }));
+  assertEquals(avisos80(mundo).map((a) => [a.teto, a.consumo]), [[9, 9]]); // 9 de 9 passou do limiar 8
+
+  semear(mundo, MIDIA_3, IMAGEM_BOA);
+  await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "20" } }));
+  assertEquals(avisos80(mundo).length, 1); // teto de volta a 20: 10 de 20, a marca já existe
+});
+
+Deno.test("cota 80%: reservarViaFuncao chama a função do banco com o percentual e lê as colunas do resultado", async () => {
+  const chamadas: Array<{ texto: string; valores: unknown[] }> = [];
+  // As colunas `resultado`, `consumo_mes` e `avisar_cota` são as que o pgTAP 891 lê da função real.
+  const sql = (partes: TemplateStringsArray, ...valores: unknown[]) => {
+    chamadas.push({ texto: partes.join("?"), valores });
+    return Promise.resolve([{ resultado: "ok", consumo_mes: 8, avisar_cota: true }]);
+  };
+  const r = await reservarViaFuncao(sql, MIDIA_1, "azure", "2026-11", 10, 2);
+  assertEquals(r, { resultado: "ok", consumoMes: 8, avisarCota: true });
+  assertEquals(chamadas.length, 1);
+  assertEquals(chamadas[0].texto.includes("privado.reservar_chamada_moderacao"), true);
+  assertEquals(chamadas[0].valores, [MIDIA_1, "azure", "2026-11", 10, 2, PERCENTUAL_AVISO_COTA]);
+  assertEquals(PERCENTUAL_AVISO_COTA, 80);
+});
+
+Deno.test("cota 80%: reservarViaFuncao sem linha de resposta falha fechado", async () => {
+  const sql = () => Promise.resolve([]);
+  await assertRejects(() => reservarViaFuncao(sql, MIDIA_1, "azure", "2026-11", 10, 1));
 });
 
 Deno.test("cota 80%: a virada de mês zera a conta e o aviso volta a valer no mês novo", async () => {
