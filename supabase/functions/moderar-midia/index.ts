@@ -573,6 +573,16 @@ export interface MidiaModeracao {
 
 export type ReservaChamada = "ok" | "teto_mensal" | "limite_foto";
 
+/**
+ * Resultado de `reservarChamada`. `consumoMes` é o total do mês DEPOIS da reserva, lido na mesma
+ * transação que a gravou (sob a trava): é por ele que o aviso de cota decide sem corrida.
+ * Só vale quando `resultado === "ok"`.
+ */
+export interface ResultadoReserva {
+  resultado: ReservaChamada;
+  consumoMes: number;
+}
+
 export interface SqlClient {
   lerLote: (quantidade: number, visibilidade: number) => Promise<MensagemModeracao[]>;
   obterMidia: (id: string) => Promise<MidiaModeracao | null>;
@@ -590,7 +600,7 @@ export interface SqlClient {
     mes: string,
     tetoMensal: number,
     maximoPorFoto: number,
-  ) => Promise<ReservaChamada>;
+  ) => Promise<ResultadoReserva>;
   /** Devolve a reserva quando a chamada nem chegou a produzir veredito (falha de rede). */
   liberarChamada: (midiaId: string, provedor: string, mes: string) => Promise<void>;
   encerrar?: () => Promise<void>;
@@ -736,17 +746,17 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
           select count(*)::int as n from privado.moderacao_chamada
            where mes = ${mes} and provedor = ${provedor}
         `;
-        if (Number(mesTotal.n) >= tetoMensal) return "teto_mensal" as ReservaChamada;
+        if (Number(mesTotal.n) >= tetoMensal) return { resultado: "teto_mensal", consumoMes: Number(mesTotal.n) };
         const [fotoTotal] = await tx`
           select count(*)::int as n from privado.moderacao_chamada
            where midia_id = ${midiaId}::uuid
         `;
-        if (Number(fotoTotal.n) >= maximoPorFoto) return "limite_foto" as ReservaChamada;
+        if (Number(fotoTotal.n) >= maximoPorFoto) return { resultado: "limite_foto", consumoMes: Number(mesTotal.n) };
         await tx`
           insert into privado.moderacao_chamada (midia_id, provedor, mes)
           values (${midiaId}::uuid, ${provedor}, ${mes})
         `;
-        return "ok" as ReservaChamada;
+        return { resultado: "ok", consumoMes: Number(mesTotal.n) + 1 };
       });
     },
     async liberarChamada(midiaId, provedor, mes) {
@@ -1017,7 +1027,7 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
       let aprovada = true;
       if (provedor.externo) {
         const mes = mesDe(agora());
-        const reserva = await sqlClient.reservarChamada(
+        const { resultado: reserva } = await sqlClient.reservarChamada(
           midia.id,
           provedor.nome,
           mes,

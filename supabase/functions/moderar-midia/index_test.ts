@@ -29,7 +29,7 @@ import {
   provedorLocal,
   provedorOpenAI,
   ProvedorModeracao,
-  ReservaChamada,
+  ResultadoReserva,
   sanitizarJpeg,
   temMagicBytesJpeg,
 } from "./index.ts";
@@ -641,17 +641,16 @@ function criarDeps(mundo: Mundo, extra: Partial<HandlerDeps> = {}): HandlerDeps 
         mundo.removidosDaFila.push(msgId);
         return Promise.resolve();
       },
-      reservarChamada: (midiaId, provedor, mes, teto, maximoPorFoto): Promise<ReservaChamada> => {
+      reservarChamada: (midiaId, provedor, mes, teto, maximoPorFoto): Promise<ResultadoReserva> => {
         if (quebrar(mundo, "reservar")) return Promise.reject(new Error("tabela de consumo indisponivel"));
         mundo.reservasPedidas.push({ mes, teto, maximoPorFoto });
-        if (mundo.reservas.filter((r) => r.mes === mes && r.provedor === provedor).length >= teto) {
-          return Promise.resolve("teto_mensal");
-        }
+        const doMes = () => mundo.reservas.filter((r) => r.mes === mes && r.provedor === provedor).length;
+        if (doMes() >= teto) return Promise.resolve({ resultado: "teto_mensal", consumoMes: doMes() });
         if (mundo.reservas.filter((r) => r.midia_id === midiaId).length >= maximoPorFoto) {
-          return Promise.resolve("limite_foto");
+          return Promise.resolve({ resultado: "limite_foto", consumoMes: doMes() });
         }
         mundo.reservas.push({ midia_id: midiaId, provedor, mes });
-        return Promise.resolve("ok");
+        return Promise.resolve({ resultado: "ok", consumoMes: doMes() });
       },
       liberarChamada: (midiaId, provedor, mes) => {
         const i = mundo.reservas.findLastIndex((r) => r.midia_id === midiaId && r.provedor === provedor && r.mes === mes);
