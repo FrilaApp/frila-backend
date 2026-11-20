@@ -23,6 +23,7 @@ import {
   HandlerDeps,
   HOST_PROD,
   lerTetoMensal,
+  limiarAvisoCota,
   MensagemModeracao,
   MOTIVOS_RECUSA,
   provedorAzure,
@@ -1167,6 +1168,123 @@ Deno.test("teto mensal: estourou no meio do lote, as já aprovadas ficam e as de
   assertEquals(mundo.midias.get(MIDIA_1)?.estado, "aprovada");
   assertEquals(mundo.midias.get(MIDIA_2)?.estado, "em_analise");
   assertEquals(mundo.chamadasProvedor, 1);
+});
+
+// ---------------------------------------------------------------------------------------
+// Aviso de cota mensal em 80%
+// ---------------------------------------------------------------------------------------
+
+const EVENTO_COTA_80 = "moderacao_cota_mensal_80";
+
+function gastar(mundo: Mundo, quantas: number, mes = "2026-11"): void {
+  for (let i = 0; i < quantas; i++) mundo.reservas.push({ midia_id: `gasta-${mes}-${i}`, provedor: "mock", mes });
+}
+
+function avisos80(mundo: Mundo): Array<Record<string, unknown>> {
+  return mundo.alertas.filter((a) => a.evento === EVENTO_COTA_80);
+}
+
+Deno.test("cota 80%: o limiar é 80% do teto, arredondado para cima", () => {
+  assertEquals(limiarAvisoCota(10), 8);
+  assertEquals(limiarAvisoCota(5000), 4000);
+  assertEquals(limiarAvisoCota(7), 6); // 5,6 sobe para 6
+  assertEquals(limiarAvisoCota(15), 12);
+  assertEquals(limiarAvisoCota(1), 1);
+  assertEquals(limiarAvisoCota(0), 0);
+});
+
+Deno.test("cota 80%: abaixo de 80% não avisa", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 6); // a chamada desta foto leva o mês a 7 de 10
+  await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(avisos80(mundo), []);
+});
+
+Deno.test("cota 80%: ao chegar em 80% avisa uma vez, no formato dos alertas de teto", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 7); // a chamada desta foto leva o mês a 8 de 10
+  const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(corpo.aprovadas, 1); // o aviso não bloqueia a moderação
+  assertEquals(avisos80(mundo), [{
+    evento: EVENTO_COTA_80,
+    provedor: "mock",
+    mes: "2026-11",
+    teto: 10,
+    consumo: 8,
+    limiar_percentual: 80,
+  }]);
+});
+
+Deno.test("cota 80%: acima de 80% não repete, nem na mesma rodada nem nas seguintes", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  semear(mundo, MIDIA_2, IMAGEM_BOA);
+  gastar(mundo, 6); // as duas fotos levam o mês a 7 e a 8: só a segunda cruza
+  const deps = criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } });
+  await rodar(deps);
+  assertEquals(avisos80(mundo).length, 1);
+
+  const MIDIA_3 = "b4c00000-0000-4000-8000-000000000003";
+  semear(mundo, MIDIA_3, IMAGEM_BOA);
+  await rodar(deps); // 9 de 10
+  assertEquals(avisos80(mundo).length, 1);
+});
+
+Deno.test("cota 80%: no teto continua o alerta existente e o aviso de 80% não volta", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 10); // já no teto
+  const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals((corpo.pendentes as unknown[]).length, 1);
+  assertEquals(mundo.alertas, [{ evento: "moderacao_teto_mensal_estourado", provedor: "mock", mes: "2026-11", teto: 10 }]);
+});
+
+Deno.test("cota 80%: a última chamada permitida (100%) não gera segundo aviso de 80%", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 9); // esta chamada leva o mês a 10 de 10
+  await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(avisos80(mundo), []);
+});
+
+Deno.test("cota 80%: a virada de mês zera a conta e o aviso volta a valer no mês novo", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 8, "2026-11"); // novembro já passou dos 80%
+  let agora = new Date("2026-12-01T03:00:00Z");
+  const deps = criarDeps(mundo, {
+    provedor: provedorMock(mundo),
+    env: { MODERACAO_TETO_MENSAL: "10" },
+    agora: () => agora,
+  });
+  await rodar(deps); // dezembro: 1 de 10
+  assertEquals(avisos80(mundo), []);
+
+  const MIDIA_3 = "b4c00000-0000-4000-8000-000000000003";
+  semear(mundo, MIDIA_3, IMAGEM_BOA);
+  gastar(mundo, 6, "2026-12"); // 1 + 6 = 7; a próxima chamada leva dezembro a 8
+  agora = new Date("2026-12-15T12:00:00Z");
+  await rodar(deps);
+  assertEquals(avisos80(mundo).map((a) => [a.mes, a.consumo]), [["2026-12", 8]]);
+});
+
+Deno.test("cota 80%: dois pedidos simultâneos em 80% geram um único aviso", async () => {
+  const mundo = novoMundo();
+  const msgA = semear(mundo, MIDIA_1, IMAGEM_BOA);
+  const msgB = semear(mundo, MIDIA_2, IMAGEM_BOA);
+  gastar(mundo, 6); // as duas chamadas levam o mês a 7 e a 8
+  const env = { MODERACAO_TETO_MENSAL: "10" };
+  // Dois workers sobre o mesmo consumo, cada um com a sua mensagem.
+  const pedido = (msg: MensagemModeracao) => {
+    const deps = criarDeps(mundo, { provedor: provedorMock(mundo), env });
+    deps.sqlClient!.lerLote = () => Promise.resolve([msg]);
+    return rodar(deps);
+  };
+  await Promise.all([pedido(msgA), pedido(msgB)]);
+  assertEquals(avisos80(mundo).length, 1);
+  assertEquals(mundo.reservas.length, 8);
 });
 
 Deno.test("teto mensal zero bloqueia qualquer provedor externo, mas não o local", async () => {

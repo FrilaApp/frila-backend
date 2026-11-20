@@ -51,6 +51,8 @@ const MEMORIA_MAXIMA_DECODIFICACAO_MB = 96;
 
 /** Teto mensal padrão: a cota gratuita do Azure Content Safety. Zero chamadas pagas. */
 const TETO_MENSAL_PADRAO = 5000;
+/** Percentual do teto mensal que dispara o aviso de cota (uma vez por mês). */
+const PERCENTUAL_AVISO_COTA = 80;
 /** Severidade do Azure (0, 2, 4, 6) a partir da qual a foto é reprovada. */
 const AZURE_SEVERIDADE_REPROVACAO = 4;
 /** Limite de imagem do Azure Content Safety; acima disso vai a miniatura. */
@@ -546,6 +548,11 @@ export function exigirProvedorReal(provedor: ProvedorModeracao, supabaseUrl: str
   }
 }
 
+/** Consumo mensal (em chamadas) a partir do qual se avisa que a cota está acabando: 80% do teto. */
+export function limiarAvisoCota(tetoMensal: number): number {
+  return Math.ceil((tetoMensal * PERCENTUAL_AVISO_COTA) / 100);
+}
+
 export function lerTetoMensal(env: FonteEnv): number {
   const bruto = env.MODERACAO_TETO_MENSAL?.trim();
   if (!bruto) return TETO_MENSAL_PADRAO;
@@ -1027,7 +1034,7 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
       let aprovada = true;
       if (provedor.externo) {
         const mes = mesDe(agora());
-        const { resultado: reserva } = await sqlClient.reservarChamada(
+        const { resultado: reserva, consumoMes } = await sqlClient.reservarChamada(
           midia.id,
           provedor.nome,
           mes,
@@ -1041,6 +1048,19 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
         if (reserva === "limite_foto") {
           alerta({ evento: "moderacao_limite_por_foto", provedor: provedor.nome, midia_id: midia.id });
           throw new FalhaTransitoria("limite_por_foto", 0);
+        }
+        // O aviso é por mês e por limiar: só a reserva que leva o consumo EXATAMENTE ao limiar o emite.
+        // `consumoMes` vem da transação que grava sob a trava, então duas reservas simultâneas nunca
+        // leem o mesmo número e um mês novo recomeça em 1.
+        if (consumoMes === limiarAvisoCota(tetoMensal)) {
+          alerta({
+            evento: "moderacao_cota_mensal_80",
+            provedor: provedor.nome,
+            mes,
+            teto: tetoMensal,
+            consumo: consumoMes,
+            limiar_percentual: PERCENTUAL_AVISO_COTA,
+          });
         }
         try {
           aprovada = (await provedor.analisar({ original: originalRecodificado, miniatura })).aprovada;
