@@ -17,11 +17,12 @@ Os volumes dos cenários são **hipótese de volume, não dado de produto**. O C
 | S1 | A | 200 x 2 x 6 | 1 dia |
 | S2 | A | 200 x 2 x 6 | 7 dias |
 | S3 | B | 1.000 x 3 x 10 | 30 dias |
+| S6 | B | 1.000 x 3 x 10 | 45 dias |
 | S4 | B | 1.000 x 3 x 10 | 365 dias |
 | S5 | B | 1.000 x 3 x 10 | 1.825 dias (5 anos) |
 | S3_membro5 | B | igual a S3 | 30 dias, com o leitor membro de 5 casas em vez de 1 |
 
-O histórico de cada casa tem 365 dias, as vagas são espalhadas uniformemente e a janela começa no primeiro dia. Com esse espalhamento, a janela de 1 dia (S1) contém cerca de 1 vaga e a de 7 dias (S2) cerca de 4 (DEDUZIDO da fórmula do gerador; o relatório imprime o número real em `VOLUME_JANELA`). Se uma casa média real concentra mais vagas por semana, ajuste `-v vagas` no gerador antes de tirar conclusão de S1 e S2.
+O histórico de cada casa tem 365 dias, as vagas são espalhadas uniformemente e a janela começa no primeiro dia. Com esse espalhamento, a janela de 1 dia (S1) contém cerca de 1 vaga e a de 7 dias (S2) cerca de 4 (DEDUZIDO da fórmula do gerador; o relatório imprime o número real em `VOLUME_JANELA`). A janela de 45 dias (S6) começa no início do histórico gerado (como as outras); mede o VOLUME da janela (≈ 123 vagas), não modela "hoje −30/+15". Se uma casa média real concentra mais vagas por semana, ajuste `-v vagas` no gerador antes de tirar conclusão de S1 e S2.
 
 ## Garantias de segurança
 
@@ -38,14 +39,14 @@ Da raiz do repositório, com o banco local de pé e o seed aplicado:
 
 ```bash
 ./scripts/medir-painel.sh --listar                       # só imprime os cenários; não toca o banco
-./scripts/medir-painel.sh --saida ~/medicao-painel-1zoj  # mede S1 a S5 e S3_membro5
+./scripts/medir-painel.sh --saida ~/medicao-painel-1zoj  # mede S1 a S6 e S3_membro5
 ```
 
 Variações:
 
 ```bash
 ./scripts/medir-painel.sh --cenarios S1,S2 --saida DIR   # só a casa A
-./scripts/medir-painel.sh --cenarios S3,S4,S5 --saida DIR
+./scripts/medir-painel.sh --cenarios S3,S4,S5,S6 --saida DIR
 PERMITIR_BASE_POVOADA=sim ./scripts/medir-painel.sh --saida DIR
 AMOSTRAS=10 AQUECIMENTO=3 ./scripts/medir-painel.sh --saida DIR   # são os padrões
 AUTO_EXPLAIN_MIN_MS=0 ./scripts/medir-painel.sh --cenarios S3 --saida DIR  # plano de todas as consultas internas (saída grande)

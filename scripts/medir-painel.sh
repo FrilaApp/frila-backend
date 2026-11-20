@@ -17,7 +17,7 @@
 #
 # Uso:
 #   ./scripts/medir-painel.sh --listar                 só imprime os cenários e sai (não toca o banco)
-#   ./scripts/medir-painel.sh                          mede S1 a S5 e o controle S3_membro5
+#   ./scripts/medir-painel.sh                          mede S1 a S6 e o controle S3_membro5
 #   ./scripts/medir-painel.sh --cenarios S1,S2         mede só esses (S3_membro5 acompanha S3)
 #   ./scripts/medir-painel.sh --saida DIR              grava relatório e saídas brutas em DIR
 #
@@ -50,12 +50,12 @@ AMOSTRAS="${AMOSTRAS:-10}"
 AQUECIMENTO="${AQUECIMENTO:-3}"
 TIMEOUT_MS="${STATEMENT_TIMEOUT_MS:-600000}"
 PERMITIR_BASE_POVOADA="${PERMITIR_BASE_POVOADA:-nao}"
-CENARIOS="S1,S2,S3,S4,S5"
+CENARIOS="S1,S2,S3,S4,S5,S6"
 SAIDA=""
 listar=false
 
 # Cenário = rótulo:janela_em_dias. A casa A (200 vagas x 2 posições x 6 candidatos) serve S1
-# e S2; a casa B (1000 x 3 x 10, mais 4 casas extras para o controle) serve S3, S4, S5 e
+# e S2; a casa B (1000 x 3 x 10, mais 4 casas extras para o controle) serve S3, S4, S5, S6 e
 # S3_membro5. O histórico tem 365 dias e a janela começa no primeiro deles.
 CASA_A="200 2 6 0"
 CASA_B="1000 3 10 4"
@@ -83,8 +83,8 @@ done
 
 for r in $(printf '%s' "$CENARIOS" | tr ',' ' '); do
   case "$r" in
-    S1|S2|S3|S4|S5) : ;;
-    *) nao_medi "cenário desconhecido: '$r' (use S1, S2, S3, S4, S5)" ;;
+    S1|S2|S3|S4|S5|S6) : ;;
+    *) nao_medi "cenário desconhecido: '$r' (use S1, S2, S3, S4, S5, S6)" ;;
   esac
 done
 numero "$AMOSTRAS" && [ "$AMOSTRAS" -ge 1 ] || nao_medi "AMOSTRAS precisa ser um inteiro >= 1 (recebi '$AMOSTRAS')"
@@ -99,6 +99,7 @@ if $listar; then
   printf 'S2           A     200 x 2 x 6                     7 dias\n'
   printf 'S3           B     1000 x 3 x 10                   30 dias\n'
   printf 'S3_membro5   B     1000 x 3 x 10                   30 dias, leitor membro de 5 casas\n'
+  printf 'S6           B     1000 x 3 x 10                   45 dias\n'
   printf 'S4           B     1000 x 3 x 10                   365 dias\n'
   printf 'S5           B     1000 x 3 x 10                   1825 dias (5 anos)\n'
   printf '(hipótese de volume, não dado de produto)\n'
@@ -249,12 +250,13 @@ if pedido S1 || pedido S2; then
   fi
 fi
 
-if pedido S3 || pedido S4 || pedido S5; then
+if pedido S3 || pedido S4 || pedido S5 || pedido S6; then
   specs_b=()
   pedido S3 && specs_b+=("S3:30:0")
+  pedido S6 && specs_b+=("S6:45:0")
   pedido S4 && specs_b+=("S4:365:0")
   pedido S5 && specs_b+=("S5:1825:0")
-  # O controle liga as casas extras, então roda por último para não contaminar S4 e S5.
+  # O controle liga as casas extras, então roda por último para não contaminar S4, S5 e S6.
   pedido S3 && specs_b+=("S3_membro5:30:1")
   # shellcheck disable=SC2086 # CASA_B é "vagas posicoes candidatos extras", palavras separadas de propósito
   if rodar_casa B $CASA_B "${AUTO_EXPLAIN_MIN_MS:-1}" "${specs_b[@]}"; then
