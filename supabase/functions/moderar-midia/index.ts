@@ -1070,16 +1070,9 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
           tetoMensal,
           msg.reanalise ? 2 : 1,
         );
-        if (reserva === "teto_mensal") {
-          alerta({ evento: "moderacao_teto_mensal_estourado", provedor: provedor.nome, mes, teto: tetoMensal });
-          throw new FalhaTransitoria("teto_mensal", 0);
-        }
-        if (reserva === "limite_foto") {
-          alerta({ evento: "moderacao_limite_por_foto", provedor: provedor.nome, midia_id: midia.id });
-          throw new FalhaTransitoria("limite_por_foto", 0);
-        }
         // O banco decide, sob a mesma trava da conta: consumo no limiar ou acima E marca (provedor, mês,
-        // limiar) ainda não gravada. Um aviso por mês e por limiar, mesmo que o teto mude no meio do mês.
+        // limiar) ainda não gravada (ou pendente com lease vencido). Um aviso por mês e por limiar, mesmo
+        // que a reserva falhe por teto mensal ou limite por foto (B-080 ajuste 2).
         if (avisarCota) {
           alerta({
             evento: "moderacao_cota_mensal_80",
@@ -1098,6 +1091,14 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
               mes,
             });
           }
+        }
+        if (reserva === "teto_mensal") {
+          alerta({ evento: "moderacao_teto_mensal_estourado", provedor: provedor.nome, mes, teto: tetoMensal });
+          throw new FalhaTransitoria("teto_mensal", 0);
+        }
+        if (reserva === "limite_foto") {
+          alerta({ evento: "moderacao_limite_por_foto", provedor: provedor.nome, midia_id: midia.id });
+          throw new FalhaTransitoria("limite_por_foto", 0);
         }
         try {
           aprovada = (await provedor.analisar({ original: originalRecodificado, miniatura })).aprovada;
