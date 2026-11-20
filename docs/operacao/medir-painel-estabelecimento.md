@@ -114,3 +114,48 @@ Fatos da execução, sem interpretação: S4 e S5 têm a mesma contagem na janel
 Leitura contra a referência do plano (mediana até 100 ms e resposta até cerca de 200 KB, lendo S1 e S2): S1 e S2 ficam abaixo dos dois limites. Os ramos "`Seq Scan` em `posicao` ou `ocorrencia`" e "índice" da tabela de decisão **não podem ser avaliados** sem o plano interno. A decisão (índice, janela limitada ou paginação) é do Cauê ou do Jota; paginação muda contrato e exige o ok do Fabrício (UI).
 
 Depende de humano ou de Prod (fora do alcance da medição local): confirmar volumes plausíveis por casa e o teto de latência aceitável do painel (Cauê ou Jota); medir o tamanho real de `posicao`, `ocorrencia` e `vaga` no Prod, somente leitura, antes de qualquer índice. Não medido nessa execução: autovacuum e versões mortas deixadas pelo `rollback`.
+
+### Segunda execução (Forja, 20/11/2026)
+
+Execução em 2026-11-20 06:22:28 (-0300), no commit `c1b74c1`, Postgres 17.6, papel `supabase_admin` (superusuário: `t`, com `auto_explain` carregado com sucesso), 10 amostras e 3 aquecimentos por cenário, banco local sem carga concorrente via `fila.sh`. Resíduo após rollback: 0 estabelecimentos `Casa pesada`, 18 usuários antes e 18 depois. Os números vêm do `relatorio.txt` e dos arquivos `plano-*.txt` e `explain-*.txt` copiados para `orquestracao/retornos/B-078-medicao/`.
+
+| Cenário | Janela | Vagas / posições / candidaturas / turnos na janela | Mediana (ms) | Mín (ms) | Máx (ms) | Resposta (bytes) | `explain` Execution Time (ms) | `explain` Buffers (shared hit) | `Seq Scan` em posicao/ocorrencia/vaga |
+|---|---|---|---|---|---|---|---|---|---|
+| S1 | 1 dia | 1 / 2 / 12 / 2 | 1,41 | 1,38 | 1,82 | 1.774 | 1,743 | 474 | 13 / 1 / 1 (loops=20) |
+| S2 | 7 dias | 4 / 8 / 48 / 7 | 5,20 | 5,16 | 5,35 | 6.740 | 5,213 | 1.669 | 43 / 1 / 1 (loops=20) |
+| S3 | 30 dias | 83 / 249 / 2.490 / 199 | 177,39 | 173,57 | 199,66 | 181.433 | 188,572 | 106.885 | 2 / 0 / 0 (loops=249) |
+| S6 | 45 dias | 124 / 372 / 3.720 / 298 | 267,27 | 257,91 | 314,18 | 271.185 | 261,212 | 159.970 | 2 / 0 / 0 (loops=372) |
+| S4 | 365 dias | 1.000 / 3.000 / 30.000 / 2.400 | 2.136,32 | 2.125,20 | 2.333,19 | 2.187.017 | 2.405,209 | 1.281.026 | 9 / 0 / 0 (loops=3000) |
+| S5 | 1.825 dias | 1.000 / 3.000 / 30.000 / 2.400 | 2.402,50 | 2.324,16 | 2.522,29 | 2.187.017 | 2.448,006 | 1.281.026 | 5 / 0 / 0 (loops=3000) |
+| S3_membro5 | 30 dias, leitor em 5 casas | 83 / 249 / 2.490 / 199 | 182,81 | 177,81 | 188,06 | 181.433 | 180,165 | 109.573 | 2 / 0 / 0 (loops=249) |
+
+#### Comparação com a referência do plano (mediana ≤ 100 ms e resposta ≤ ~200 KB)
+
+- **S1 (1 dia):** Mediana de 1,41 ms (≤ 100 ms) e resposta de 1.774 bytes (≤ ~200 KB). Ambos dentro da referência.
+- **S2 (7 dias):** Mediana de 5,20 ms (≤ 100 ms) e resposta de 6.740 bytes (≤ ~200 KB). Ambos dentro da referência.
+- **S6 (45 dias):** Mediana de 267,27 ms (> 100 ms; excede em ~2,67x) e resposta de 271.185 bytes (~265 KB, > ~200 KB; excede em ~35%).
+
+#### Linhas do plano de execução (`auto_explain`)
+
+Em **S6** (`plano-S6.txt`):
+- `Seq Scan` em `posicao`:
+  - Linha 122: `->  Seq Scan on posicao pc  (cost=0.00..93.74 rows=3 width=16) (actual time=0.004..0.074 rows=3 loops=124)` com `Filter: (vaga_id = v.id)` e `Rows Removed by Filter: 3176` (Buffers: shared hit=6696).
+  - Linha 139: `->  Seq Scan on posicao p  (cost=0.00..93.74 rows=3 width=53) (actual time=0.004..0.073 rows=3 loops=124)` com `Filter: (vaga_id = v.id)` e `Rows Removed by Filter: 3176` (Buffers: shared hit=6696).
+- `Seq Scan` em `ocorrencia`: 0 ocorrências. Usa `Index Scan using ocorrencia_posicao_id on ocorrencia o` (linha 155).
+- `Seq Scan` em `vaga`: 0 ocorrências. Usa `Bitmap Heap Scan on vaga v` com `Bitmap Index Scan on publicacao_unica` (linhas 92 e 98).
+- Maior `loops=`: 372 (linhas 126 e 143, em `Index Scan using candidatura_pendente on candidatura c` e `Index Scan using turno_por_posicao on turno t`).
+
+Em **S3** (`plano-S3.txt`):
+- `Seq Scan` em `posicao`:
+  - Linha 198: `->  Seq Scan on posicao pc  (cost=0.00..93.74 rows=3 width=16) (actual time=0.004..0.075 rows=3 loops=83)` com `Filter: (vaga_id = v.id)` e `Rows Removed by Filter: 3176` (Buffers: shared hit=4482).
+  - Linha 215: `->  Seq Scan on posicao p  (cost=0.00..93.74 rows=3 width=53) (actual time=0.004..0.074 rows=3 loops=83)` com `Filter: (vaga_id = v.id)` e `Rows Removed by Filter: 3176` (Buffers: shared hit=4482).
+- `Seq Scan` em `ocorrencia`: 0 ocorrências. Usa `Index Scan using ocorrencia_posicao_id on ocorrencia o` (linha 231).
+- `Seq Scan` em `vaga`: 0 ocorrências. Usa `Bitmap Heap Scan on vaga v` (linha 168).
+- Maior `loops=`: 249 (linhas 202 e 219).
+
+#### Apontamento de índice no plano
+
+O formato textual de saída do `auto_explain` do PostgreSQL não gera mensagens explícitas de "índice faltando". No entanto, o plano de execução de S6 e S3 evidencia a falta de índice cobrindo a condição `posicao.vaga_id = v.id`:
+- Em S6, as linhas 122 e 139 do `plano-S6.txt` mostram `Seq Scan on posicao pc` e `Seq Scan on posicao p` com `Filter: (vaga_id = v.id)`, descartando 3.176 linhas por iteração (`Rows Removed by Filter: 3176`) ao longo de 124 iterações (`loops=124`).
+- Em S3, as linhas 198 e 215 do `plano-S3.txt` mostram o mesmo `Seq Scan on posicao` com `Filter: (vaga_id = v.id)`, descartando 3.176 linhas por iteração em 83 iterações (`loops=83`).
+- Apenas a consulta parcial `posicao_abertas` possui índice cobrindo `vaga_id` (onde `estado = 'aberta'`), que não foi executada no plano (linha 110 de `plano-S6.txt`: `never executed`); não existe índice em `posicao(vaga_id)` para as posições em geral.
