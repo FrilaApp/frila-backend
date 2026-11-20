@@ -16,7 +16,7 @@
 -- Massa sintética; o arquivo desfaz tudo no rollback.
 
 begin;
-select plan(40);
+select plan(43);
 
 create temp table ids as
 select 'c8920000-0000-4000-8000-000000000001'::uuid as usuario;
@@ -193,6 +193,20 @@ select is((select count(*)::int from privado.moderacao_chamada where provedor = 
   0, 'nenhuma chamada gravada para parâmetros de limiar inválidos');
 select is((select count(*)::int from privado.moderacao_aviso_cota where provedor = 'inv_test'),
   0, 'nenhuma marca de aviso gravada para parâmetros de limiar inválidos');
+
+-- 9. O CHECK da tabela (1..100) segue valendo para quem escreve direto, mesmo com a função validando antes:
+-- sem estas asserções o portão de mutação acha a restrição sem cobertura (CI do #579, 20/11/2026).
+select throws_ok(
+  $$ insert into privado.moderacao_aviso_cota (provedor, mes, limiar_percentual) values ('check_dir', '2026-11', 0) $$,
+  '23514', 'new row for relation "moderacao_aviso_cota" violates check constraint "moderacao_aviso_cota_limiar_valido"',
+  'a tabela recusa limiar 0 com o CHECK, mesmo escrita direto');
+select throws_ok(
+  $$ insert into privado.moderacao_aviso_cota (provedor, mes, limiar_percentual) values ('check_dir', '2026-11', 101) $$,
+  '23514', 'new row for relation "moderacao_aviso_cota" violates check constraint "moderacao_aviso_cota_limiar_valido"',
+  'a tabela recusa limiar 101 com o CHECK, mesmo escrita direto');
+select lives_ok(
+  $$ insert into privado.moderacao_aviso_cota (provedor, mes, limiar_percentual) values ('check_dir', '2026-11', 100) $$,
+  'a tabela aceita o limite superior 100');
 
 select * from finish();
 rollback;
