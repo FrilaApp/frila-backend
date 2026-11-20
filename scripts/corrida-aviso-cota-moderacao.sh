@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2015,SC2329
 # Prova de concorrência do aviso de cota mensal da moderação de mídia (cartão yPhXgTCY).
 # O pgTAP usa uma sessão e não enxerga corrida. Aqui duas conexões chamam
 # privado.reservar_chamada_moderacao ao mesmo tempo, com o consumo do mês no limiar de 80%, e só uma
