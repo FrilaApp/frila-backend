@@ -13,6 +13,7 @@ import { assert, assertEquals, assertFalse, assertRejects } from "jsr:@std/asser
 import jpeg from "npm:jpeg-js@0.4.4";
 import {
   caminhoMiniatura,
+  confirmarAvisoViaFuncao,
   criarProvedor,
   dimensoesValidas,
   ErroConfiguracao,
@@ -507,13 +508,14 @@ interface Mundo {
   reservas: Array<{ midia_id: string; provedor: string; mes: string }>;
   /** Espelho de privado.moderacao_aviso_cota: chave `provedor|mes|limiar`. */
   marcasAviso: Set<string>;
+  confirmacoesAviso: Array<{ provedor: string; mes: string; limiarPercentual: number }>;
   alertas: Array<Record<string, unknown>>;
   chamadasStorage: string[];
   chamadasProvedor: number;
   lerLoteArgs: Array<[number, number]>;
   reservasPedidas: Array<{ mes: string; teto: number; maximoPorFoto: number }>;
   falhaStorage?: (metodo: string, caminho: string) => FalhaStorage;
-  falhaBanco?: Partial<Record<"obterMidia" | "marcarAprovada" | "marcarRecusada" | "lerLote" | "reservar", () => boolean>>;
+  falhaBanco?: Partial<Record<"obterMidia" | "marcarAprovada" | "marcarRecusada" | "lerLote" | "reservar" | "confirmarAviso", () => boolean>>;
   apiExterna?: (url: string, init?: RequestInit) => Response | Promise<Response>;
 }
 
@@ -525,6 +527,7 @@ function novoMundo(): Mundo {
     removidosDaFila: [],
     reservas: [],
     marcasAviso: new Set(),
+    confirmacoesAviso: [],
     alertas: [],
     chamadasStorage: [],
     chamadasProvedor: 0,
@@ -667,6 +670,11 @@ function criarDeps(mundo: Mundo, extra: Partial<HandlerDeps> = {}): HandlerDeps 
       liberarChamada: (midiaId, provedor, mes) => {
         const i = mundo.reservas.findLastIndex((r) => r.midia_id === midiaId && r.provedor === provedor && r.mes === mes);
         if (i >= 0) mundo.reservas.splice(i, 1);
+        return Promise.resolve();
+      },
+      confirmarAvisoCota: (provedor, mes, limiarPercentual) => {
+        if (quebrar(mundo, "confirmarAviso")) return Promise.reject(new Error("erro na confirmacao"));
+        mundo.confirmacoesAviso.push({ provedor, mes, limiarPercentual });
         return Promise.resolve();
       },
     },
@@ -1346,6 +1354,130 @@ Deno.test("cota 80%: dois pedidos simultâneos em 80% geram um único aviso", as
   await Promise.all([pedido(msgA), pedido(msgB)]);
   assertEquals(avisos80(mundo).length, 1);
   assertEquals(mundo.reservas.length, 8);
+});
+
+Deno.test("cota 80%: avisarCota=true emite alerta e chama confirmarAvisoCota uma vez", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 7); // leva o mês a 8 de 10
+  const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(corpo.aprovadas, 1);
+  assertEquals(avisos80(mundo).length, 1);
+  assertEquals(mundo.confirmacoesAviso, [{ provedor: "mock", mes: "2026-11", limiarPercentual: 80 }]);
+});
+
+Deno.test("cota 80%: confirmarAvisoCota com erro não derruba moderação e emite alerta de não confirmado", async () => {
+  const mundo = novoMundo();
+  mundo.falhaBanco = { confirmarAviso: () => true };
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 7); // leva o mês a 8 de 10
+  const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(corpo.aprovadas, 1);
+  assertEquals(mundo.midias.get(MIDIA_1)?.estado, "aprovada");
+  assertEquals(avisos80(mundo).length, 1);
+  const naoConfirmados = mundo.alertas.filter((a) => a.evento === "moderacao_cota_aviso_nao_confirmado");
+  assertEquals(naoConfirmados, [{
+    evento: "moderacao_cota_aviso_nao_confirmado",
+    provedor: "mock",
+    mes: "2026-11",
+  }]);
+});
+
+Deno.test("cota 80%: avisarCota=false não chama confirmarAvisoCota", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 5); // leva o mês a 6 de 10 -> avisarCota = false
+  const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(corpo.aprovadas, 1);
+  assertEquals(avisos80(mundo).length, 0);
+  assertEquals(mundo.confirmacoesAviso.length, 0);
+});
+
+Deno.test("cota 80%: reserva teto_mensal com avisarCota=true emite alerta, confirma e mantém falha de teto_mensal", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  const deps = criarDeps(mundo, { provedor: provedorMock(mundo) });
+  deps.sqlClient!.reservarChamada = () => Promise.resolve({ resultado: "teto_mensal", consumoMes: 10, avisarCota: true });
+  const { corpo } = await rodar(deps);
+  assertEquals(avisos80(mundo).length, 1);
+  assertEquals(mundo.confirmacoesAviso, [{ provedor: "mock", mes: "2026-11", limiarPercentual: 80 }]);
+  assertEquals(mundo.chamadasProvedor, 0);
+  assertEquals(mundo.removidosDaFila.length, 0);
+  assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise");
+  assertEquals(corpo.aprovadas, 0);
+  assertEquals((corpo.pendentes as Array<{ motivo: string }>)[0]?.motivo, "teto_mensal");
+  assertEquals(mundo.alertas.some((a) => a.evento === "moderacao_teto_mensal_estourado"), true);
+});
+
+Deno.test("cota 80%: reserva limite_foto com avisarCota=true emite alerta, confirma e mantém falha de limite_foto", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  const deps = criarDeps(mundo, { provedor: provedorMock(mundo) });
+  deps.sqlClient!.reservarChamada = () => Promise.resolve({ resultado: "limite_foto", consumoMes: 8, avisarCota: true });
+  const { corpo } = await rodar(deps);
+  assertEquals(avisos80(mundo).length, 1);
+  assertEquals(mundo.confirmacoesAviso, [{ provedor: "mock", mes: "2026-11", limiarPercentual: 80 }]);
+  assertEquals(mundo.chamadasProvedor, 0);
+  assertEquals(mundo.removidosDaFila.length, 0);
+  assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise");
+  assertEquals(corpo.aprovadas, 0);
+  assertEquals((corpo.pendentes as Array<{ motivo: string }>)[0]?.motivo, "limite_por_foto");
+  assertEquals(mundo.alertas.some((a) => a.evento === "moderacao_limite_por_foto"), true);
+});
+
+Deno.test("cota 80%: avisarCota=false em teto_mensal e limite_foto não emite alerta nem chama confirmação", async () => {
+  const mundoTeto = novoMundo();
+  semear(mundoTeto, MIDIA_1, IMAGEM_BOA);
+  const depsTeto = criarDeps(mundoTeto, { provedor: provedorMock(mundoTeto) });
+  depsTeto.sqlClient!.reservarChamada = () => Promise.resolve({ resultado: "teto_mensal", consumoMes: 10, avisarCota: false });
+  await rodar(depsTeto);
+  assertEquals(avisos80(mundoTeto).length, 0);
+  assertEquals(mundoTeto.confirmacoesAviso.length, 0);
+
+  const mundoFoto = novoMundo();
+  semear(mundoFoto, MIDIA_1, IMAGEM_BOA);
+  const depsFoto = criarDeps(mundoFoto, { provedor: provedorMock(mundoFoto) });
+  depsFoto.sqlClient!.reservarChamada = () => Promise.resolve({ resultado: "limite_foto", consumoMes: 8, avisarCota: false });
+  await rodar(depsFoto);
+  assertEquals(avisos80(mundoFoto).length, 0);
+  assertEquals(mundoFoto.confirmacoesAviso.length, 0);
+});
+
+Deno.test("cota 80%: confirmarAvisoCota com erro em teto_mensal e limite_foto não altera desfecho", async () => {
+  const mundoTeto = novoMundo();
+  mundoTeto.falhaBanco = { confirmarAviso: () => true };
+  semear(mundoTeto, MIDIA_1, IMAGEM_BOA);
+  const depsTeto = criarDeps(mundoTeto, { provedor: provedorMock(mundoTeto) });
+  depsTeto.sqlClient!.reservarChamada = () => Promise.resolve({ resultado: "teto_mensal", consumoMes: 10, avisarCota: true });
+  const { corpo: corpoTeto } = await rodar(depsTeto);
+  assertEquals(avisos80(mundoTeto).length, 1);
+  assertEquals(mundoTeto.alertas.some((a) => a.evento === "moderacao_cota_aviso_nao_confirmado"), true);
+  assertEquals(mundoTeto.chamadasProvedor, 0);
+  assertEquals((corpoTeto.pendentes as Array<{ motivo: string }>)[0]?.motivo, "teto_mensal");
+
+  const mundoFoto = novoMundo();
+  mundoFoto.falhaBanco = { confirmarAviso: () => true };
+  semear(mundoFoto, MIDIA_1, IMAGEM_BOA);
+  const depsFoto = criarDeps(mundoFoto, { provedor: provedorMock(mundoFoto) });
+  depsFoto.sqlClient!.reservarChamada = () => Promise.resolve({ resultado: "limite_foto", consumoMes: 8, avisarCota: true });
+  const { corpo: corpoFoto } = await rodar(depsFoto);
+  assertEquals(avisos80(mundoFoto).length, 1);
+  assertEquals(mundoFoto.alertas.some((a) => a.evento === "moderacao_cota_aviso_nao_confirmado"), true);
+  assertEquals(mundoFoto.chamadasProvedor, 0);
+  assertEquals((corpoFoto.pendentes as Array<{ motivo: string }>)[0]?.motivo, "limite_por_foto");
+});
+
+Deno.test("cota 80%: confirmarAvisoViaFuncao chama a função do banco e lê o resultado", async () => {
+  const chamadas: Array<{ texto: string; valores: unknown[] }> = [];
+  const sql = (partes: TemplateStringsArray, ...valores: unknown[]) => {
+    chamadas.push({ texto: partes.join("?"), valores });
+    return Promise.resolve([{ confirmou: true }]);
+  };
+  const r = await confirmarAvisoViaFuncao(sql, "azure", "2026-11", 80);
+  assertEquals(r, true);
+  assertEquals(chamadas.length, 1);
+  assertEquals(chamadas[0].texto.includes("privado.confirmar_aviso_cota_moderacao"), true);
+  assertEquals(chamadas[0].valores, ["azure", "2026-11", 80]);
 });
 
 Deno.test("teto mensal zero bloqueia qualquer provedor externo, mas não o local", async () => {

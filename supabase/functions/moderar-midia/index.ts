@@ -616,6 +616,21 @@ export async function reservarViaFuncao(
   };
 }
 
+/** Confirma a emissão do aviso de cota mensal chamando privado.confirmar_aviso_cota_moderacao. */
+export async function confirmarAvisoViaFuncao(
+  sql: SqlTag,
+  provedor: string,
+  mes: string,
+  limiarPercentual: number,
+): Promise<boolean> {
+  const linhas = await sql`
+    select privado.confirmar_aviso_cota_moderacao(
+             ${provedor}::text, ${mes}::text, ${limiarPercentual}::integer) as confirmou
+  `;
+  const linha = linhas[0];
+  return linha?.confirmou === true;
+}
+
 export interface SqlClient {
   lerLote: (quantidade: number, visibilidade: number) => Promise<MensagemModeracao[]>;
   obterMidia: (id: string) => Promise<MidiaModeracao | null>;
@@ -636,6 +651,8 @@ export interface SqlClient {
   ) => Promise<ResultadoReserva>;
   /** Devolve a reserva quando a chamada nem chegou a produzir veredito (falha de rede). */
   liberarChamada: (midiaId: string, provedor: string, mes: string) => Promise<void>;
+  /** Confirma a emissão do aviso de cota gravando emitido_em na marca. */
+  confirmarAvisoCota: (provedor: string, mes: string, limiarPercentual: number) => Promise<void>;
   encerrar?: () => Promise<void>;
 }
 
@@ -783,6 +800,9 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
             where midia_id = ${midiaId}::uuid and provedor = ${provedor} and mes = ${mes}
          )
       `;
+    },
+    async confirmarAvisoCota(provedor, mes, limiarPercentual) {
+      await confirmarAvisoViaFuncao(sql as unknown as SqlTag, provedor, mes, limiarPercentual);
     },
     async encerrar() {
       await sql.end({ timeout: 2 });
@@ -1050,16 +1070,9 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
           tetoMensal,
           msg.reanalise ? 2 : 1,
         );
-        if (reserva === "teto_mensal") {
-          alerta({ evento: "moderacao_teto_mensal_estourado", provedor: provedor.nome, mes, teto: tetoMensal });
-          throw new FalhaTransitoria("teto_mensal", 0);
-        }
-        if (reserva === "limite_foto") {
-          alerta({ evento: "moderacao_limite_por_foto", provedor: provedor.nome, midia_id: midia.id });
-          throw new FalhaTransitoria("limite_por_foto", 0);
-        }
         // O banco decide, sob a mesma trava da conta: consumo no limiar ou acima E marca (provedor, mês,
-        // limiar) ainda não gravada. Um aviso por mês e por limiar, mesmo que o teto mude no meio do mês.
+        // limiar) ainda não gravada (ou pendente com lease vencido). Um aviso por mês e por limiar, mesmo
+        // que a reserva falhe por teto mensal ou limite por foto (B-080 ajuste 2).
         if (avisarCota) {
           alerta({
             evento: "moderacao_cota_mensal_80",
@@ -1069,6 +1082,23 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
             consumo: consumoMes,
             limiar_percentual: PERCENTUAL_AVISO_COTA,
           });
+          try {
+            await sqlClient.confirmarAvisoCota(provedor.nome, mes, PERCENTUAL_AVISO_COTA);
+          } catch (_err) {
+            alerta({
+              evento: "moderacao_cota_aviso_nao_confirmado",
+              provedor: provedor.nome,
+              mes,
+            });
+          }
+        }
+        if (reserva === "teto_mensal") {
+          alerta({ evento: "moderacao_teto_mensal_estourado", provedor: provedor.nome, mes, teto: tetoMensal });
+          throw new FalhaTransitoria("teto_mensal", 0);
+        }
+        if (reserva === "limite_foto") {
+          alerta({ evento: "moderacao_limite_por_foto", provedor: provedor.nome, midia_id: midia.id });
+          throw new FalhaTransitoria("limite_por_foto", 0);
         }
         try {
           aprovada = (await provedor.analisar({ original: originalRecodificado, miniatura })).aprovada;

@@ -120,7 +120,7 @@ verificar_rodada() {
   ry=$(grep -E '^ok\|' "$TMP/$i-y.out" | head -1)
   avisos=$(printf '%s\n%s\n' "$rx" "$ry" | grep -c '|true$' || true)
   marcas=$(psql -c "select count(*) from privado.moderacao_aviso_cota where provedor = '$prov' and mes = '$MES' and limiar_percentual = 80;")
-  printf '    rodada %02d  x: %s (status %s)  y: %s (status %s)  marcas: %s\n' \
+  printf '    rodada %-4s  x: %s (status %s)  y: %s (status %s)  marcas: %s\n' \
     "$i" "${rx:--}" "$sx" "${ry:--}" "$sy" "$marcas"
   # Conexão que morre não disputa nada: sem as duas em status 0 e com `ok`, a rodada não conta.
   [ "$sx" = 0 ] && [ "$sy" = 0 ] && [ -n "$rx" ] && [ -n "$ry" ] && [ "$avisos" = 1 ] && [ "$marcas" = 1 ]

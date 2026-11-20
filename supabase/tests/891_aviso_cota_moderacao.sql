@@ -14,7 +14,7 @@
 -- Massa sintética; o arquivo desfaz tudo no rollback.
 
 begin;
-select plan(33);
+select plan(35);
 
 create temp table ids as
 select 'c8910000-0000-4000-8000-000000000001'::uuid as usuario;
@@ -116,7 +116,13 @@ select is((select count(*)::int from privado.moderacao_aviso_cota where provedor
 -- 7. O limiar fora de 1..100 não passa
 select throws_ok(
   $$ select * from privado.reservar_chamada_moderacao(pg_temp.m(19), 'invalido', '2026-11', 10, 1, 0) $$,
-  '23514', null, 'limiar 0% é recusado pelo CHECK da marca');
+  '22023', 'limiar_invalido', 'limiar 0% é recusado na entrada');
+select throws_ok(
+  $$ select * from privado.reservar_chamada_moderacao(pg_temp.m(19), 'invalido', '2026-11', 10, 1, 101) $$,
+  '22023', 'limiar_invalido', 'limiar 101% é recusado na entrada');
+select throws_ok(
+  $$ select * from privado.reservar_chamada_moderacao(pg_temp.m(19), 'invalido', '2026-11', 10, 1, -1) $$,
+  '22023', 'limiar_invalido', 'limiar -1% é recusado na entrada');
 
 select throws_ok(
   $$ select * from privado.reservar_chamada_moderacao(pg_temp.m(19), 'nulo', '2026-11', null, 1) $$,
