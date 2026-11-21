@@ -81,7 +81,7 @@ insert into public.profissional_preferencia_chamada (profissional_id, aceita_de)
 select p.id, 'so_cnpj' from public.profissional p where p.usuario_id = 'c8300000-0000-4000-8000-000000000004';
 -- D e H pausados até o fim do mês: só o H, que passa pelas três recusas, pode ver "pausado".
 insert into public.profissional_preferencia_chamada (profissional_id, pausado_ate)
-select p.id, '2026-11-30' from public.profissional p
+select p.id, current_date + 7 from public.profissional p
  where p.usuario_id in ('c8300000-0000-4000-8000-000000000005', 'c8300000-0000-4000-8000-000000000009');
 -- Aparelhos: o mínimo de chamada_direta é iOS 1.2.0; o Android não tem mínimo.
 insert into public.dispositivo (usuario_id, token_fcm, plataforma, versao_app) values
