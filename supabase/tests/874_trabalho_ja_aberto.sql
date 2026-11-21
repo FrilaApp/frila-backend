@@ -137,7 +137,7 @@ insert into public.equipe_confianca (estabelecimento_id, profissional_id)
 select c, pg_temp.p(n) from generate_series(11, 33) n, unnest(array[pg_temp.casa(1), pg_temp.casa(2)]) c;
 -- 13 está em pausa de chamadas.
 insert into public.profissional_preferencia_chamada (profissional_id) values (pg_temp.p(13));
-update public.profissional_preferencia_chamada set pausado_ate = '2026-11-30' where profissional_id = pg_temp.p(13);
+update public.profissional_preferencia_chamada set pausado_ate = current_date + 7 where profissional_id = pg_temp.p(13);
 select pg_temp.turno(pg_temp.casa(1), pg_temp.p(33), '2026-11-01 10:00-03');
 
 update privado.recurso set ligado = true where chave = 'chamada_direta';

@@ -86,6 +86,11 @@ select is(
 );
 
 -- ── 3. Os 5 Casos de Aceite do Critério 2 ─────────────────────────────────────
+-- Snapshot da North Star antes de inserir os casos para comparação por delta:
+create temp table base_747 as
+select semana_inicio, turnos_concluidos_com_presenca_verificada as n
+  from metrica.north_star_semanal;
+
 -- Criação de contas e estabelecimentos de teste isolados (prefixo a747)
 
 -- Contratante real e Estabelecimento
@@ -169,9 +174,10 @@ values ('a7470000-0000-4000-8000-000000000051', 'a7470000-0000-4000-8000-0000000
         '2026-11-10 10:05:00-03', 'geolocalizado', 50, 'verificado', 15000);
 
 select is(
-  (select turnos_concluidos_com_presenca_verificada
+  coalesce((select turnos_concluidos_com_presenca_verificada
      from metrica.north_star_semanal
-    where semana_inicio = '2026-11-09'::date),
+    where semana_inicio = '2026-11-09'::date), 0::bigint)
+  - coalesce((select n from base_747 where semana_inicio = '2026-11-09'::date), 0::bigint),
   1::bigint,
   'caso 1: posição cumprida com turno verificado é contabilizada na semana'
 );
@@ -201,9 +207,10 @@ values ('a7470000-0000-4000-8000-000000000052', 'a7470000-0000-4000-8000-0000000
         '2026-11-11 10:10:00-03', 'manual', null, 'nao_verificado', 15000);
 
 select is(
-  (select turnos_concluidos_com_presenca_verificada
+  coalesce((select turnos_concluidos_com_presenca_verificada
      from metrica.north_star_semanal
-    where semana_inicio = '2026-11-09'::date),
+    where semana_inicio = '2026-11-09'::date), 0::bigint)
+  - coalesce((select n from base_747 where semana_inicio = '2026-11-09'::date), 0::bigint),
   1::bigint,
   'caso 2: posição cumprida com turno nao_verificado NÃO incrementa a North Star'
 );
@@ -233,9 +240,10 @@ values ('a7470000-0000-4000-8000-000000000053', 'a7470000-0000-4000-8000-0000000
         null, null, null, 'nao_verificado', 15000);
 
 select is(
-  (select turnos_concluidos_com_presenca_verificada
+  coalesce((select turnos_concluidos_com_presenca_verificada
      from metrica.north_star_semanal
-    where semana_inicio = '2026-11-09'::date),
+    where semana_inicio = '2026-11-09'::date), 0::bigint)
+  - coalesce((select n from base_747 where semana_inicio = '2026-11-09'::date), 0::bigint),
   1::bigint,
   'caso 3: posição cancelada NÃO incrementa a North Star'
 );
@@ -265,9 +273,10 @@ values ('a7470000-0000-4000-8000-000000000054', 'a7470000-0000-4000-8000-0000000
         '2026-11-13 10:05:00-03', 'geolocalizado', 50, 'verificado', 15000);
 
 select is(
-  (select turnos_concluidos_com_presenca_verificada
+  coalesce((select turnos_concluidos_com_presenca_verificada
      from metrica.north_star_semanal
-    where semana_inicio = '2026-11-09'::date),
+    where semana_inicio = '2026-11-09'::date), 0::bigint)
+  - coalesce((select n from base_747 where semana_inicio = '2026-11-09'::date), 0::bigint),
   1::bigint,
   'caso 4a: profissional de demonstração NÃO incrementa a North Star'
 );
@@ -297,9 +306,10 @@ values ('a7470000-0000-4000-8000-000000000055', 'a7470000-0000-4000-8000-0000000
         '2026-11-14 10:05:00-03', 'geolocalizado', 50, 'verificado', 15000);
 
 select is(
-  (select turnos_concluidos_com_presenca_verificada
+  coalesce((select turnos_concluidos_com_presenca_verificada
      from metrica.north_star_semanal
-    where semana_inicio = '2026-11-09'::date),
+    where semana_inicio = '2026-11-09'::date), 0::bigint)
+  - coalesce((select n from base_747 where semana_inicio = '2026-11-09'::date), 0::bigint),
   1::bigint,
   'caso 4b: contratante de demonstração NÃO incrementa a North Star'
 );
@@ -329,9 +339,10 @@ values ('a7470000-0000-4000-8000-000000000056', 'a7470000-0000-4000-8000-0000000
         '2026-11-14 15:05:00-03', 'geolocalizado', 50, 'verificado', 15000);
 
 select is(
-  (select turnos_concluidos_com_presenca_verificada
+  coalesce((select turnos_concluidos_com_presenca_verificada
      from metrica.north_star_semanal
-    where semana_inicio = '2026-11-09'::date),
+    where semana_inicio = '2026-11-09'::date), 0::bigint)
+  - coalesce((select n from base_747 where semana_inicio = '2026-11-09'::date), 0::bigint),
   1::bigint,
   'caso 4c: profissional membro da equipe Frila NÃO incrementa a North Star'
 );
@@ -362,17 +373,20 @@ values ('a7470000-0000-4000-8000-000000000057', 'a7470000-0000-4000-8000-0000000
         '2026-11-15 18:05:00-03', 'geolocalizado', 50, 'verificado', 15000);
 
 select is(
-  (select turnos_concluidos_com_presenca_verificada
+  coalesce((select turnos_concluidos_com_presenca_verificada
      from metrica.north_star_semanal
-    where semana_inicio = '2026-11-09'::date),
+    where semana_inicio = '2026-11-09'::date), 0::bigint)
+  - coalesce((select n from base_747 where semana_inicio = '2026-11-09'::date), 0::bigint),
   2::bigint,
   'caso 5a: turno que termina domingo 23h30 BRT cai na semana de domingo (início 2026-11-09)'
 );
 
-select ok(
-  not exists (
-    select 1 from metrica.north_star_semanal where semana_inicio = '2026-11-16'::date
-  ),
+select is(
+  coalesce((select turnos_concluidos_com_presenca_verificada
+     from metrica.north_star_semanal
+    where semana_inicio = '2026-11-16'::date), 0::bigint)
+  - coalesce((select n from base_747 where semana_inicio = '2026-11-16'::date), 0::bigint),
+  0::bigint,
   'caso 5a: turno domingo 23h30 BRT NÃO cai na semana seguinte (2026-11-16)'
 );
 
@@ -401,9 +415,10 @@ values ('a7470000-0000-4000-8000-000000000058', 'a7470000-0000-4000-8000-0000000
         '2026-11-15 20:05:00-03', 'geolocalizado', 50, 'verificado', 15000);
 
 select is(
-  (select turnos_concluidos_com_presenca_verificada
+  coalesce((select turnos_concluidos_com_presenca_verificada
      from metrica.north_star_semanal
-    where semana_inicio = '2026-11-16'::date),
+    where semana_inicio = '2026-11-16'::date), 0::bigint)
+  - coalesce((select n from base_747 where semana_inicio = '2026-11-16'::date), 0::bigint),
   1::bigint,
   'caso 5b: turno que termina segunda 00h30 BRT cai na semana seguinte (início 2026-11-16)'
 );

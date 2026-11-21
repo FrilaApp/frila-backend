@@ -143,7 +143,7 @@ create temp table pref_res as
   select pg_temp.como('80900000-0000-4000-8000-000000000001',
     $$select public.definir_preferencia_chamadas(
         aceita_de_quem_ja_trabalhou => true,
-        pausado_ate => '2026-11-25'::date,
+        pausado_ate => current_date + 7,
         antecedencia_minima_h => 24,
         aceita_de => 'so_cnpj'
       )$$) as r;
