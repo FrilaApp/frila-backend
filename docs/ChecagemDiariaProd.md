@@ -123,6 +123,10 @@ O script executa 7 blocos estruturados de checagem:
   - Contagem total de usuários ativos, estabelecimentos e vagas cadastradas.
 - **Tempo de leitura:** 30 segundos.
 
+### Fora do script, por enquanto · O WAL e o slot do registro de acessos
+- Com a coleta do registro de acessos ligada, rode também a conferência da seção 3 de `docs/RunbookWalESlot.md`: o `wal_status` e o atraso do slot, a pasta do WAL, os jobs `consumir_registro_acesso` e `verificar_saude`, e o disco pela Management API.
+- O disco do Prod é de 2 GB, e o WAL avança ~480 MB/h. Ela ainda não está no `checagem-diaria.sh`.
+
 ---
 
 ## 4. Matriz de Decisão e Planos de Ação (Vereditos)
