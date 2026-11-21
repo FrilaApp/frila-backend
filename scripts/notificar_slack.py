@@ -17,6 +17,8 @@ Casos atendidos:
   4. Mantém o Prod vivo / Alertas de banco (Fase 2 de bB0tV5R8, compatível com probe pg_cron):
      - Falha de integridade/jobs atrasados.
      - Recuperação ("voltou").
+  5. Aviso manual (--tipo aviso_manual): texto livre de quem dispara o workflow, com `&`, `<` e `>` escapados
+     (sem menção nem link) e limitado a 1000 caracteres.
 
 Segurança e Privacidade (RN15):
   - Zero PII: nenhuma mensagem transporta nome de usuário, telefone, e-mail ou dados pessoais.
@@ -36,6 +38,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
+LIMITE_AVISO_MANUAL = 1000
+
 
 def obter_webhook_url(args_url: str | None) -> str | None:
     """Retorna a URL do webhook do Slack a partir dos argumentos ou ambiente."""
@@ -47,6 +51,33 @@ def obter_webhook_url(args_url: str | None) -> str | None:
         return env_url.strip()
 
     return None
+
+
+_ESCAPES_MRKDWN = {"&": "&amp;", "<": "&lt;", ">": "&gt;"}
+
+
+def escapar_mrkdwn_limitado(texto: str, limite: int) -> str:
+    """
+    Torna o texto livre inerte para o Slack e o limita a `limite` caracteres já escapados.
+
+    O Slack trata `<...>` como marcação: `<!channel>`, `<!here>`, `<!everyone>` e `<!subteam^ID>`
+    avisam o canal ou um grupo, `<@ID>` avisa uma pessoa, `<#ID>` e `<url|rótulo>` viram link.
+    A regra documentada do Slack é trocar só `&`, `<` e `>` por `&amp;`, `&lt;` e `&gt;`; o Slack
+    mostra os caracteres originais, sem interpretá-los. Vale para todos de uma vez, sem lista de menções.
+    URL solta continua virando link sozinha. O corte é feito por caractere original, para não partir
+    uma entidade ao meio.
+    """
+    pecas = [_ESCAPES_MRKDWN.get(c, c) for c in texto]
+    if sum(len(p) for p in pecas) <= limite:
+        return "".join(pecas)
+    saida: list[str] = []
+    usado = 0
+    for peca in pecas:
+        if usado + len(peca) > limite - 1:
+            break
+        saida.append(peca)
+        usado += len(peca)
+    return "".join(saida) + "…"
 
 
 def construir_payload(
@@ -461,6 +492,7 @@ def main() -> int:
         "backup_ausente",
         "alerta_banco",
         "alerta_banco_recuperado",
+        "aviso_manual",
         "generico",
     ], help="Tipo padronizado de mensagem")
     parser.add_argument("--status", choices=["sucesso", "falha", "aguardando", "aviso"], default="aviso")
@@ -533,6 +565,13 @@ def main() -> int:
         status = "sucesso"
         titulo = titulo or "🟢 Alerta de Banco Resolvido: Jobs pg_cron Normalizados"
         mensagem = mensagem or "Os jobs essenciais de despacho e vigia do pg_cron voltaram a responder dentro do prazo."
+    elif args.tipo == "aviso_manual":
+        status = "aviso"
+        titulo = titulo or "Aviso da equipe"
+        mensagem = mensagem.strip()
+        if not mensagem:
+            parser.error("--tipo aviso_manual exige --mensagem não vazia")
+        mensagem = escapar_mrkdwn_limitado(mensagem, LIMITE_AVISO_MANUAL)
 
     if not titulo:
         parser.error("Informe --titulo ou utilize --tipo padronizado (--tipo ci_falha, entrega, etc.)")
