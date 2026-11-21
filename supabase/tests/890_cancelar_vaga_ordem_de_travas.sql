@@ -176,6 +176,8 @@ begin
      and exists (select 1 from public.posicao p where p.id = new.posicao_id and p.vaga_id = g.id);
   return null;
 end $$;
+-- ver o comentário do 420 (lock antes do create trigger)
+lock table public.ocorrencia in access exclusive mode;
 create trigger t890_encerra_no_meio after insert on public.ocorrencia
   for each row execute function public.t890_encerra_no_meio();
 select is(pg_temp.r('c8900000-0000-4000-8000-000000000001',

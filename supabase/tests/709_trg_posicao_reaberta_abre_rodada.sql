@@ -34,6 +34,9 @@ set local frila.agora = '2026-10-20 12:00:00+00';
 
 select plan(20);
 
+-- ver o comentário do 420 (lock antes do create trigger)
+lock table public.posicao in access exclusive mode;
+
 -- ── 1. Metadados e Privilégios Mínimos ───────────────────────────────────────
 
 select has_trigger(
