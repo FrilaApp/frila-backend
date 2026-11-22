@@ -739,13 +739,13 @@ Deno.test("handler: sem segredo ou com segredo errado responde 401 e não lê a 
   assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise");
 });
 
-Deno.test("handler: aceita o segredo também por Authorization: Bearer", async () => {
+Deno.test("handler: recusa o segredo apenas por Authorization: Bearer sem x-agendador-secret (BE-03)", async () => {
   const mundo = novoMundo();
   const resp = await handler(
     new Request("http://localhost/", { method: "POST", headers: { Authorization: `Bearer ${MOCK_SECRET}` } }),
     criarDeps(mundo),
   );
-  assertEquals(resp.status, 200);
+  assertEquals(resp.status, 401);
   await resp.body?.cancel();
 });
 

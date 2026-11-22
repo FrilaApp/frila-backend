@@ -66,7 +66,7 @@ Deno.test("despachar: recusa requisição sem autenticação válida com 401", a
   assertEquals(resHeaderInvalido.status, 401);
 });
 
-Deno.test("despachar: aceita autenticação via Bearer token", async () => {
+Deno.test("despachar: recusa autenticação via Authorization: Bearer sem x-agendador-secret (BE-03)", async () => {
   const req = new Request("http://localhost/functions/v1/despachar", {
     method: "POST",
     headers: {
@@ -79,7 +79,7 @@ Deno.test("despachar: aceita autenticação via Bearer token", async () => {
     agendadorSecret: SEGREDO_TESTE,
     sqlClient: criarMockSqlClient(),
   });
-  assertEquals(res.status, 200);
+  assertEquals(res.status, 401);
 });
 
 Deno.test("despachar: lança erro se AGENDADOR_SECRET não estiver configurado", async () => {

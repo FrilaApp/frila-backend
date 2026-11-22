@@ -271,7 +271,7 @@ Deno.test("Bloqueio 1: não aceita SUPABASE_SERVICE_ROLE_KEY como substituto do 
   assertEquals(res.status, 401);
 });
 
-Deno.test("Bloqueio 1: aceita AGENDADOR_SECRET via x-agendador-secret ou Bearer", async () => {
+Deno.test("Bloqueio 1: aceita AGENDADOR_SECRET via x-agendador-secret e recusa apenas Bearer (BE-03)", async () => {
   const sa = await gerarContaDeServicoTeste();
 
   const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
@@ -310,7 +310,7 @@ Deno.test("Bloqueio 1: aceita AGENDADOR_SECRET via x-agendador-secret ou Bearer"
     serviceAccount: sa,
     fetchFn: mockFetch,
   });
-  assertEquals(resBearer.status, 200);
+  assertEquals(resBearer.status, 401);
 });
 
 // ── Bloqueio 2: Whitelist de payload do FCM (RN15) ─────────────────────────────
