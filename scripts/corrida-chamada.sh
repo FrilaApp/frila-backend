@@ -1785,7 +1785,7 @@ for i in $(seq 1 "$RODADAS"); do
   g1=$(id "$m" 20); vaga_direta "$m" 20 3
   ca=$(id "$m" 30); cm=$(id "$m" 31); cb=$(id "$m" 32)
   # B-085: desfragmenta e compacta a tabela para alocação física sequencial determinística das tuplas
-  psql -c "vacuum full public.chamada;" >/dev/null
+  psql -c "vacuum full public.chamada;" >/dev/null || { falhou "rodada $i (26): vacuum full falhou"; erros=$((erros + 1)); continue; }
   psql >/dev/null <<SQL
 insert into public.chamada (id, vaga_id, profissional_id, estabelecimento_id, criada_por, expira_em, lembrete_em, chave) values
   ('$cb', '$g1', (select id from public.profissional where usuario_id = '$p3'), '$(id "$m" 10)', '$casa', now() + interval '2 hours', now() + interval '1 hour', gen_random_uuid()),
