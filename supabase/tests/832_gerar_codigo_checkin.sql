@@ -235,6 +235,8 @@ select ok((select e[2] !~ '[0-9]{6}' and e[2] ~ 'zz_832_sem_codigo' from e1),
 alter table privado.checkin_codigo drop constraint zz_832_sem_codigo;
 -- not_null_violation, também da classe 23: um gatilho anula uma coluna obrigatória na linha que já tem o código.
 create function privado.zz_832_anula() returns trigger language plpgsql as $$ begin new.erros := null; return new; end $$;
+-- ver o comentário do 420 (lock antes do create trigger)
+lock table privado.checkin_codigo in access exclusive mode;
 create trigger zz_832_anula before update on privado.checkin_codigo for each row execute function privado.zz_832_anula();
 create temp table e2 as select pg_temp.erro_cru(pg_temp.t('a')) as e;
 select is((select e[1] from e2), '23502', 'not_null_violation na escrita: o mesmo SQLSTATE');

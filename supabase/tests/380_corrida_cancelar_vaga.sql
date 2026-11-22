@@ -150,6 +150,8 @@ begin
   return new;
 end $$;
 
+-- ver o comentário do 420 (lock antes do create trigger)
+lock table public.posicao in access exclusive mode;
 create trigger teste_candidato_chega_no_meio
   before update of estado on public.posicao
   for each row execute function public.teste_candidato_chega_no_meio();

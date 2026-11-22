@@ -114,6 +114,8 @@ select is((privado.limpar_trilha_e_sessoes_auth(6, 1) ->> 'trilha_antiga')::int,
 -- ── Erro de privilégio no esquema auth: registra e segue ─────────────────────
 create function privado.zz_823_nega() returns trigger language plpgsql as $$
 begin raise exception 'permission denied for table audit_log_entries' using errcode = '42501'; end $$;
+-- ver o comentário do 420 (lock antes do create trigger)
+lock table auth.audit_log_entries in access exclusive mode;
 create trigger zz_823_nega before delete on auth.audit_log_entries for each row execute function privado.zz_823_nega();
 select pg_temp.trilha('c8230000-0000-4000-8000-0000000000c1', interval '7 months',
   '{"action":"login","actor_id":"c8230000-0000-4000-8000-000000000002","actor_username":"u2@t823.test"}');
