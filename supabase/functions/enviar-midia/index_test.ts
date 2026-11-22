@@ -195,3 +195,54 @@ Deno.test("enviar-midia: nenhum log traz token, URL assinada ou chave de serviç
     assert(!texto.includes(segredo), `log vazou ${segredo.slice(0, 8)}…`);
   }
 });
+
+Deno.test("BE-01: enviar-midia reutiliza o cliente Postgres de módulo entre PUTs e descarta em erro", async () => {
+  const { encerrarClientes } = await import("./index.ts");
+  await encerrarClientes();
+
+  let criados = 0;
+  let encerrados = 0;
+  let falhar = false;
+
+  const criarCliente = (_url: string) => {
+    criados++;
+    const fn = (() => {
+      if (falhar) {
+        falhar = false;
+        return Promise.reject(new Error("conexao_perdida"));
+      }
+      return Promise.resolve([{ caminho: null }]);
+    }) as unknown as ReturnType<NonNullable<Parameters<typeof handler>[1]>["criarCliente"] extends ((url: string) => infer R) | undefined ? () => R : never>;
+    (fn as unknown as { end: () => Promise<void> }).end = () => {
+      encerrados++;
+      return Promise.resolve();
+    };
+    return fn;
+  };
+
+  try {
+    const baseDeps = {
+      dbUrl: "postgres://teste:teste@127.0.0.1:54322/enviar_midia_pool_teste",
+      criarCliente,
+      registrar: () => {},
+    };
+
+    const r1 = await handler(pedido(), baseDeps);
+    assertEquals(r1.status, 401);
+    const r2 = await handler(pedido(), baseDeps);
+    assertEquals(r2.status, 401);
+    assertEquals(criados, 1);
+    assertEquals(encerrados, 0);
+
+    falhar = true;
+    const r3 = await handler(pedido(), baseDeps);
+    assertEquals(r3.status, 503);
+    assertEquals(encerrados, 1);
+
+    const r4 = await handler(pedido(), baseDeps);
+    assertEquals(r4.status, 401);
+    assertEquals(criados, 2);
+  } finally {
+    await encerrarClientes();
+  }
+});
