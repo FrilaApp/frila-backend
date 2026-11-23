@@ -54,11 +54,18 @@ CENARIOS="S1,S2,S3,S4,S5,S6"
 SAIDA=""
 listar=false
 
-# Cenário = rótulo:janela_em_dias. A casa A (200 vagas x 2 posições x 6 candidatos) serve S1
-# e S2; a casa B (1000 x 3 x 10, mais 4 casas extras para o controle) serve S3, S4, S5, S6 e
-# S3_membro5. O histórico tem 365 dias e a janela começa no primeiro deles.
-CASA_A="200 2 6 0"
-CASA_B="1000 3 10 4"
+# Cenário = rótulo:janela_em_dias. Casa = "vagas posições candidatos casas_extras dias_de_histórico".
+# A casa A (90 vagas x 2 posições x 6 candidatos em 30 dias, 3 vagas por dia, o máximo que o
+# gerador aceita) serve S1 e S2 com uma semana concentrada: 3 vagas em 1 dia e 21 em 7 dias.
+# Espalhada em 365 dias (200 vagas), a janela de 1 dia tinha 1 vaga e a de 7 dias, 4. A casa B
+# (1000 x 3 x 10 em 365 dias, mais 4 casas extras para o controle) serve S3, S4, S5, S6 e
+# S3_membro5. Em ambas a janela começa no primeiro dia do histórico. Volume é HIPÓTESE.
+CASA_A="90 2 6 0 30"
+CASA_B="1000 3 10 4 365"
+
+# Piso de vagas dentro da janela. Abaixo dele o cenário não é medido: sai como erro (2), não como
+# número. Cobre o fixture, não o desempenho: S1 e S2 já saíram "medidos" com 1 e 4 vagas.
+piso_vagas() { case "$1" in S1) printf 2 ;; S2) printf 5 ;; *) printf 0 ;; esac; }
 
 nao_medi() { printf '✗ NÃO MEDI: %s\n' "$1" >&2; exit 2; }
 numero() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
@@ -95,8 +102,8 @@ case "$PERMITIR_BASE_POVOADA" in sim|nao) : ;; *) nao_medi "PERMITIR_BASE_POVOAD
 
 if $listar; then
   printf 'rótulo       casa  vagas x posições x candidatos   janela\n'
-  printf 'S1           A     200 x 2 x 6                     1 dia\n'
-  printf 'S2           A     200 x 2 x 6                     7 dias\n'
+  printf 'S1           A     90 x 2 x 6 (30 dias de histórico) 1 dia\n'
+  printf 'S2           A     90 x 2 x 6 (30 dias de histórico) 7 dias\n'
   printf 'S3           B     1000 x 3 x 10                   30 dias\n'
   printf 'S3_membro5   B     1000 x 3 x 10                   30 dias, leitor membro de 5 casas\n'
   printf 'S6           B     1000 x 3 x 10                   45 dias\n'
@@ -149,16 +156,17 @@ linha "volumes: HIPÓTESE do plano, não dado de produto. Tempo local não trans
 linha ""
 
 # Monta o fluxo de SQL de uma casa: variáveis, begin, gerador, um bloco por cenário, rollback.
-# Argumentos: vagas posicoes candidatos extras ae_min_ms "rotulo:janela_dias:ligar_extras"...
+# Argumentos: vagas posicoes candidatos extras dias ae_min_ms "rotulo:janela_dias:ligar_extras"...
 montar_sql() {
-  local vagas="$1" posicoes="$2" candidatos="$3" extras="$4" ae_ms="$5"
-  shift 5
+  local vagas="$1" posicoes="$2" candidatos="$3" extras="$4" dias="$5" ae_ms="$6"
+  shift 6
   local spec rotulo janela ligar
   printf '%s\n' '\set ON_ERROR_STOP on' '\set casa_pesada 1'
   printf '\\set vagas %s\n' "$vagas"
   printf '\\set posicoes %s\n' "$posicoes"
   printf '\\set candidatos %s\n' "$candidatos"
   printf '\\set casas_extras %s\n' "$extras"
+  printf '\\set dias %s\n' "$dias"
   printf '\\set permitir_base_povoada %s\n' "$PERMITIR_BASE_POVOADA"
   printf '\\set amostras %s\n' "$AMOSTRAS"
   printf '\\set aquecimento %s\n' "$AQUECIMENTO"
@@ -214,6 +222,13 @@ resumir() { # casa rotulo
     linha "✗ $rot: NÃO MEDIDO (nenhuma linha MEDIDA em $erros)"
     return 1
   fi
+  local vagas_janela piso
+  vagas_janela=$(printf '%s' "$volume" | sed -n 's/.* vagas=\([0-9]*\) .*/\1/p')
+  piso=$(piso_vagas "$rot")
+  if ! numero "$vagas_janela" || [ "$vagas_janela" -lt "$piso" ]; then
+    linha "✗ $rot: NÃO MEDIDO (a janela tem '${vagas_janela:-?}' vagas; o piso do cenário é $piso: volume insuficiente para sustentar o número)"
+    return 1
+  fi
   linha "● $rot"
   linha "  $volume"
   linha "  $medida"
@@ -242,7 +257,7 @@ if pedido S1 || pedido S2; then
   specs_a=()
   pedido S1 && specs_a+=("S1:1:0")
   pedido S2 && specs_a+=("S2:7:0")
-  # shellcheck disable=SC2086 # CASA_A é "vagas posicoes candidatos extras", palavras separadas de propósito
+  # shellcheck disable=SC2086 # CASA_A é "vagas posicoes candidatos extras dias", palavras separadas de propósito
   if rodar_casa A $CASA_A "${AUTO_EXPLAIN_MIN_MS:-0}" "${specs_a[@]}"; then
     for spec in "${specs_a[@]}"; do resumir A "${spec%%:*}" || falhas=$((falhas + 1)); done
   else
@@ -258,7 +273,7 @@ if pedido S3 || pedido S4 || pedido S5 || pedido S6; then
   pedido S5 && specs_b+=("S5:1825:0")
   # O controle liga as casas extras, então roda por último para não contaminar S4, S5 e S6.
   pedido S3 && specs_b+=("S3_membro5:30:1")
-  # shellcheck disable=SC2086 # CASA_B é "vagas posicoes candidatos extras", palavras separadas de propósito
+  # shellcheck disable=SC2086 # CASA_B é "vagas posicoes candidatos extras dias", palavras separadas de propósito
   if rodar_casa B $CASA_B "${AUTO_EXPLAIN_MIN_MS:-1}" "${specs_b[@]}"; then
     for spec in "${specs_b[@]}"; do resumir B "${spec%%:*}" || falhas=$((falhas + 1)); done
   else
