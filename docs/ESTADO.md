@@ -155,8 +155,8 @@ Estado de cada PR conferido com `gh pr view <n> --json state,mergedAt` em 23/11/
 
 - **#573** (mesclado em 18/11): `cancelar_vaga` trava a vaga antes das posições abertas (issue #572, fechada em 18/11).
 - **#574** (mesclado em 19/11): o ESTADO anterior, medido em `add668b`.
-- **#571** (mesclado em 19/11): tokens de upload de uso único (RN14).
-- **RN14 (verificação de identidade) saiu do produto em 19/11/2026** (decisão do Cauê, `produto/AGORA.md`). O **#578** (função receptora `enviar-documento-verificacao`, mesclado em 20/11) foi revertido pelo **#580** (mesclado em 20/11); a lista de Edge Functions de hoje não a tem (`git ls-tree -d --name-only origin/develop:supabase/functions`). O #571 segue na `develop`.
+- **#571** (mesclado em 19/11): tokens de upload de uso único (RN14). **Removido da `develop` em 23/11** (B-091): a migração `20261123150000_remover_upload_verificacao_identidade.sql` desfaz a `20261118100000` (que fica no repositório, imutável), e o pgTAP 890, a corrida `corrida-token-upload-verificacao.sh`, o passo do `ci.yml` e as 5 linhas do mapa de mutação saíram. O Prod nunca recebeu a 20261118100000 (pacote 23, 23/11).
+- **RN14 (verificação de identidade) saiu do produto em 19/11/2026** (decisão do Cauê, `produto/AGORA.md`). O **#578** (função receptora `enviar-documento-verificacao`, mesclado em 20/11) foi revertido pelo **#580** (mesclado em 20/11); a lista de Edge Functions de hoje não a tem (`git ls-tree -d --name-only origin/develop:supabase/functions`). O #571 foi removido da `develop` em 23/11 (B-091), como descrito acima.
 - **#576** (mesclado em 20/11): cenário S6 e 2ª medição do `painel_estabelecimento`; o **#570** (mesclado em 23/11) acrescentou S1 e S2 com mais vagas, piso de cobertura e a 3ª medição. Detalhe em `docs/operacao/medir-painel-estabelecimento.md`.
 - **#577** (mesclado em 20/11): aviso quando a cota mensal de moderação de mídia chega a 80%; corrigido pelo **#579** (mesclado em 20/11, entrega durável com lease e retentativa). Migrações `20261120100000` e `20261120200000`.
 - **#588** (mesclado em 22/11): runbook do WAL e do slot; substitui o #462, que foi fechado.
