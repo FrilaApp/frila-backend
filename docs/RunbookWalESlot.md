@@ -119,7 +119,27 @@ E o disco, fora do banco, pela Management API: `GET /v1/projects/hbjkkcenbudiezm
 
 **Decisão (Orquestrador 2, 22/11/2026):** o vigia de `pg_cron` parado é um workflow do GitHub Actions, de 10 em 10 min, que chama a Edge Function `saude` e avisa o Slack (#alertas-prod). Sem fornecedor novo, sem conta nova e sem token externo; o repositório é público, então os minutos são grátis. Isso substitui a escolha do HetrixTools do desenho original (que também descartava o Actions). O cartão é o `bB0tV5R8`.
 
-**Ainda não existe.** Não há workflow chamando a `saude` além do `mantem-prod-vivo.yml`, uma vez por dia. O novo workflow fica para **depois do pacote 23 do Prod**, porque precisa da `saude` com a sonda operacional (#532) no Prod. É mudança de CI: entra em PR próprio, com o OK de quem confere CI.
+**Existe desde o B-092.1 (cartão `bB0tV5R8`).** O workflow é `.github/workflows/vigia-saude.yml` e a lógica está em `scripts/vigia_saude.py` (teste: `scripts/teste-vigia-saude.sh`). O `mantem-prod-vivo.yml` continua como está: faz um GET por dia só para o projeto não pausar, e não avisa por conta própria além do `notifica-slack.yml`.
+
+**Como funciona**
+- O `schedule` roda `*/10 * * * *` **na branch padrão (`develop`)**: ao mesclar o PR, o vigia passa a rodar sozinho contra o Prod. Também roda à mão (`workflow_dispatch`, com a opção `dry_run` para só imprimir o aviso no log).
+- Faz GET na URL da variável de repositório `FRILA_PROD_URL_SAUDE` (a mesma do `mantem-prod-vivo.yml`). Só lê; não grava nada no Prod. Permissões: `contents: read` e `actions: read`. Só `schedule` e `workflow_dispatch`: PR de fork nunca lê o secret.
+- Se não vier HTTP 200 com `{"ok":true}` (503 `atrasado` ou `degradado`, timeout, erro de rede, corpo estranho), espera ~60 s e tenta de novo. **Só a segunda falha conta.**
+- Avisa o Slack pelo `scripts/notificar-slack.sh`, com o secret `SLACK_WEBHOOK_URL` que já existe. Nenhum segredo novo; a URL e o webhook nunca vão para o log nem para a mensagem.
+- **Sem enxurrada.** O estado é a conclusão das execuções anteriores do próprio workflow (API do Actions, `GITHUB_TOKEN`), então **a execução fica vermelha enquanto a saúde está fora** (é o registro do estado, não bug). Quatro avisos possíveis: o primeiro, na confirmação da queda; um lembrete a cada ~1 h de queda contínua; um aviso de volta ao normal; e o de vigia atrasado (abaixo). Nas execuções entre eles, fica calado.
+- **Vigia atrasado.** Se a execução anterior do vigia tiver mais de 45 min, a execução seguinte avisa o Slack ("ficou sem rodar"): o `schedule` do GitHub atrasa e pula execuções em hora de pico. Execução cancelada ou pulada não conta como queda nem como boa.
+
+**Ligar e desligar**
+- **Ligar:** crie a variável `FRILA_PROD_URL_SAUDE` (Settings → Secrets and variables → Actions → Variables, `https://<project-ref>.supabase.co/functions/v1/saude`) **antes** de mesclar. Sem ela, o primeiro aviso do vigia diz "variável não configurada" e a execução fica vermelha, como pede um alarme que não pode passar em silêncio.
+- **Desligar** (manutenção longa, por exemplo): `gh workflow disable vigia-saude.yml`; religar com `gh workflow enable vigia-saude.yml`. Ao religar, o primeiro aviso pode ser o de "vigia atrasado". É esperado.
+- **Janela de deploy:** a confirmação de 60 s cobre piscada curta. Uma queda real de mais de ~1 min durante um deploy avisa e, quando voltar, o Slack recebe o aviso de volta ao normal.
+
+**Limites conhecidos (não escondê-los)**
+- "10 min" é nominal: o `schedule` pode atrasar mais de 15 min. O aviso de vigia atrasado sai **depois** do atraso, na execução que voltar a rodar.
+- **Não detecta o próprio desaparecimento total.** Se o GitHub desativar o agendamento (60 dias sem atividade no repositório) ou ninguém religar o workflow, nenhuma execução roda para avisar. A repo tem atividade quase diária; mesmo assim, na conferência da seção 3 confira em Actions → Vigia da saúde do Prod que há execução nas últimas horas. Para fechar a lacuna, o caminho é um segundo olhar a partir de outro workflow agendado (por exemplo, o job horário do `notifica-slack.yml`); fica como cartão futuro, fora do B-092.1.
+- O histórico lido vai a 300 execuções (~50 h). Queda contínua mais longa que isso para de gerar lembretes.
+- Se a API do Actions falhar, o vigia decide sem histórico: avisa a queda a mais, nunca fica em silêncio.
+- Erro de envio ao Slack só vira `::warning::` no log; não altera o resultado da execução (o estado vive na conclusão).
 
 **O que a `saude` já cobre (develop, #514 e #532):** a idade dos jobs `reprocessar_despacho`, `verificar_saude`, `processar_fila_email` e, com a coleta ligada, `consumir_registro_acesso`; a idade das filas de e-mail e de despacho; falhas do `pg_net` e do SMTP. Responde 503 com `atrasado` ou `degradado`, sem nome de job no corpo público. **Não cobre** o slot nem o disco: a conferência da seção 3 continua manual.
 
@@ -127,4 +147,4 @@ E o disco, fora do banco, pela Management API: `GET /v1/projects/hbjkkcenbudiezm
 - O `schedule` do GitHub **pode atrasar mais de 15 min** (e pular execuções) em hora de pico. Um "10 min" nominal não é um alerta em 10 min.
 - O GitHub **desliga os agendamentos depois de 60 dias sem atividade no repositório**. Sem aviso, o vigia some. O monitor precisa **alertar a própria falha** (por exemplo, um passo que avisa o Slack se a última execução passou de um limite, ou um lembrete no plantão para reativar o workflow).
 - O segredo do webhook do Slack fica **só como secret do repositório**, nunca no código, no log nem em PR.
-- O workflow só lê: faz `HEAD` ou `GET` na `saude` e não grava nada.
+- O workflow só lê: faz `GET` na `saude` e não grava nada.
