@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.107
+  version: 0.2.108
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -116,6 +116,21 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.108, de 23/11/2026.** Limites de valor da diária por posição (BE-02, decisão de 23/11/2026).
+    Piso e teto operacionais para o valor da diária por posição em novas publicações e chamadas diretas:
+    piso R$ 50,00 (5.000 centavos) e teto R$ 2.000,00 (200.000 centavos). Os limites são parâmetros
+    centralizados em fonte única no banco (`privado.limites_valor_diaria_centavos()`), ajustáveis conforme a
+    evolução e calibragem do piloto.
+    - **Recusa:** valores fora da faixa respondem `422 campo_invalido` com `details: valor_centavos` (ou
+      `vagas[<i>].valor_centavos` na escala em lote). Se `valor_centavos` for nulo, a validação de presença
+      (`422 campo_obrigatorio`) tem precedência sobre a validação numérica de limites.
+    - **Escopo e transições:** aplicado em `publicar_vaga`, `publicar_escala`, `republicar_vaga`,
+      `republicar_posicoes_restantes` e `chamar_profissional` (ao criar vaga direta nova).
+    - **Dados históricos:** vagas criadas antes da migração continuam válidas e transitam de estado
+      (cancelamento, check-in, checkout, encerramento) normalmente sem serem bloqueadas.
+
+    ---
 
     **Versão 0.2.107, de 22/11/2026.** Regra 4 do aceite tardio aprovada (decisão do JP de 22/11/2026).
     Aceite tardio é confirmação em `inicio_em − 15 min` ou depois (borda incluída); os parâmetros
@@ -1882,7 +1897,9 @@ info:
       ter sentido na v1.1, quando o modo passar a existir e houver antecedência para
       recusar. Um cliente que trate os dois como o mesmo erro vai dizer "publique com mais
       antecedência" para quem escolheu um modo que ainda não existe.
-    - **`422 campo_invalido` com o campo em `details`** para `valor_centavos` não positivo,
+    - **`422 campo_invalido` com o campo em `details`** para `valor_centavos` fora dos limites
+      permitidos (a partir da 0.2.108: piso R$ 50,00 e teto R$ 2.000,00 por posição, ajustáveis no
+      servidor; originalmente na 0.2.5, não positivo),
       `posicoes` fora de 1..200, `funcao_id` fora do catálogo e `ponto` com latitude ou
       longitude fora da faixa. Antes isso chegava ao cliente como violação de restrição do
       banco, que ele não sabe ler.
@@ -3702,6 +3719,12 @@ paths:
         (`escolher_candidato`). Até a 0.2.23 o modo seleção era recusado com `campo_invalido` e
         `details: modo`.
 
+        **Limites de valor (BE-02, 0.2.108):** `valor_centavos` por posição deve estar entre o
+        piso (R$ 50,00 / 5.000 centavos) e o teto (R$ 2.000,00 / 200.000 centavos) operacionais do
+        servidor. Valores fora da faixa recebem `422 campo_invalido` com `details: valor_centavos`.
+        Os limites são centralizados em parâmetro do sistema (`privado.limites_valor_diaria_centavos()`)
+        e ajustáveis pelo time. Valor nulo recebe `422 campo_obrigatorio`.
+
         `chave` torna o reenvio seguro: a mesma chave devolve a mesma vaga, com as mesmas posições,
         e não enfileira o despacho de novo.
       x-requisitos: [RF04, RF09, RN02, RN03, RN04, RN18, RN24, UC01]
@@ -3782,7 +3805,11 @@ paths:
           `details: vagas`;
         - até 100 posições somadas nos itens (a soma conta só os `posicoes` inteiros de 1 a 100; o
           item com `posicoes` ausente ou fora disso é recusado depois, no próprio item). Acima:
-          `422 campo_invalido`, `details: posicoes`.
+          `422 campo_invalido`, `details: posicoes`;
+        - valor da diária por posição de cada item: entre o piso (R$ 50,00) e o teto (R$ 2.000,00)
+          operacionais do servidor (BE-02, 0.2.108); fora da faixa: `422 campo_invalido`,
+          `details: vagas[<i>].valor_centavos`. Qualquer item recusado desfaz a escala inteira
+          (transação atômica).
 
         O limite geral de escrita por minuto vale, como em toda operação.
 
@@ -4638,8 +4665,10 @@ paths:
         `expira_em` = menor entre envio + 12 h e início − 1 h; entre 22 h e 7 h (America/Sao_Paulo), o
         envio conta a partir das 7 h, salvo início antes das 10 h (RN31).
 
-        **Valor:** `valor_centavos` é o total fechado do trabalho, que o profissional recebe (RN01,
-        RN29). Os termos não mudam com chamada aberta.
+        **Valor (BE-02, 0.2.108):** `valor_centavos` é o total fechado do trabalho, que o profissional
+        recebe (RN01, RN29). Em novas chamadas diretas (sem `vaga_id`), obedece aos limites de diária
+        por posição do servidor (piso R$ 50,00 e teto R$ 2.000,00, ajustáveis via parâmetro); fora da
+        faixa: `422 campo_invalido` com `details: valor_centavos`. Os termos não mudam com chamada aberta.
 
         **Limites (RN33, RN34):** 1 chamada aberta por par estabelecimento e profissional
         (`409 chamada_ja_aberta`); 24 h depois de recusa (`422 profissional_indisponivel`,
@@ -7165,7 +7194,10 @@ components:
     Centavos:
       type: integer
       minimum: 1
-      description: Valor em centavos de real, inteiro (RN18).
+      description: |
+        Valor em centavos de real, inteiro (RN18). Em novas publicações de vagas e chamadas diretas,
+        o valor da diária por posição obedece aos limites operacionais do servidor (piso R$ 50,00 e
+        teto R$ 2.000,00 por posição, BE-02, 0.2.108), centralizados em parâmetro ajustável no banco.
       example: 12000
     Telefone:
       type: string
