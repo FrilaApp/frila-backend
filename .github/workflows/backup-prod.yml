@@ -81,10 +81,14 @@ jobs:
         run: |
           set -Eeuo pipefail
           sudo install -d /etc/apt/keyrings
-          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg
+          # Falha de rede no apt/curl derrubou o backup de 11/11 (#545): cada passo de rede tem nova
+          # tentativa com espera crescente (15/30/60 s, 4 tentativas) e, esgotadas, o passo falha.
+          CHAVE_PGDG="$RUNNER_TEMP/pgdg.asc"
+          ./scripts/com-novas-tentativas.sh curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o "$CHAVE_PGDG"
+          sudo gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg "$CHAVE_PGDG"
           echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends postgresql-client-17 age
+          ./scripts/com-novas-tentativas.sh sudo apt-get update -qq
+          ./scripts/com-novas-tentativas.sh sudo apt-get install -y --no-install-recommends postgresql-client-17 age
           echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
 
       - name: Conferir versões das ferramentas
@@ -158,6 +162,13 @@ jobs:
             echo "| Retenção no bucket | 14 dias (Lifecycle Rule) |"
             echo "| Concluído em | $(date -u +'%Y-%m-%d %H:%M:%S UTC') |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verificar limite de armazenamento do backup
+        env:
+          BACKUP_KEEP: 14
+          BACKUP_LIMITE_GB: ${{ vars.BACKUP_LIMITE_GB || 10 }}
+        run: |
+          ./scripts/verifica-limite-backup.sh "$BACKUP_DIR"
 
       - name: Limpar pasta temporária de backup no runner
         if: always()

@@ -150,6 +150,35 @@ export async function sendFcmMessage(
     }
   }
 
+  // Aparelho web (B-038): só o bloco webpush (WebpushConfig do FCM v1), sem apns nem android.
+  // https://firebase.google.com/docs/reference/fcm/rest/v1/projects.messages#WebpushConfig
+  // Sem fcm_options.link: o payload não traz link de destino (a whitelist só deixa UUIDs).
+  // B-054: só data (tipo e ids), sem notification nem título/corpo. O sw.js da web mostra texto
+  // neutro (#886, decisão A), então o texto não precisa viajar pelo FCM.
+  if (payload.plataforma === "web") {
+    return await postarMensagem(url, accessToken, fetchFn, {
+      token: payload.token,
+      data,
+      webpush: { data },
+    });
+  }
+
+  const apnsPayload: Record<string, unknown> = {
+    aps: {
+      alert: {
+        title: payload.title,
+        body: payload.body,
+      },
+      sound: "default",
+      badge: 1,
+      "mutable-content": 1,
+    },
+  };
+
+  if (data.vinculo_id) {
+    apnsPayload.vinculo_id = data.vinculo_id;
+  }
+
   const message: Record<string, unknown> = {
     token: payload.token,
     data,
@@ -158,20 +187,25 @@ export async function sendFcmMessage(
       ttl: TTL_ANDROID,
     },
     apns: {
-      payload: {
-        aps: {
-          alert: {
-            title: payload.title,
-            body: payload.body,
-          },
-          sound: "default",
-          badge: 1,
-          "mutable-content": 1,
-        },
+      // Sem estes dois cabeçalhos o APNs trata o push como de baixa prioridade e o aparelho em
+      // repouso não acende a tela (medido no TestFlight 1.0.0, hQDlvpHi).
+      headers: {
+        "apns-priority": "10",
+        "apns-push-type": "alert",
       },
+      payload: apnsPayload,
     },
   };
 
+  return await postarMensagem(url, accessToken, fetchFn, message);
+}
+
+async function postarMensagem(
+  url: string,
+  accessToken: string,
+  fetchFn: typeof fetch,
+  message: Record<string, unknown>,
+): Promise<FcmSendResult> {
   const body: Record<string, unknown> = { message };
 
   try {

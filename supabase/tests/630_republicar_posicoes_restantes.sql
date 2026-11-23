@@ -39,6 +39,19 @@ on conflict (id) do update set eh_teste = true;
 -- Estamos em 02/11/2026 12:00:00 UTC
 select set_config('frila.agora', '2026-11-02 12:00:00+00', true);
 
+-- O relógio do produto também no DEFAULT da coluna, e não só nas funções: `publicar_vaga`
+-- não passa `publicado_em` no insert, então a coluna cai no `default now()` da tabela e
+-- ignora o `frila.agora` deste teste. O `check selecao_com_antecedencia` compara
+-- `inicio_em > publicado_em + 24 h`, então a vaga de seleção que o cenário publica para
+-- 05/11 20:00 passou a violar a regra a partir das 20:00 UTC de 04/11 — bomba-relógio que
+-- não existia na véspera e reprova a CI sem ninguém ter mudado código. Medido em 04/11.
+--
+-- O `alter` vive dentro da transação do teste e desaparece no `rollback`: o esquema da
+-- tabela volta intacto. A correção definitiva é `publicar_vaga` passar `privado.agora()`
+-- no insert (ou a tabela ter esse default), e isso é cartão próprio: mexer na função de
+-- publicação para destravar a CI de outro cartão seria escopo que ninguém pediu.
+alter table public.vaga alter column publicado_em set default privado.agora();
+
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$
 begin

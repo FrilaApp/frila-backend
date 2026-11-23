@@ -4,7 +4,7 @@
 # Executa 5 conferências obrigatórias antes de qualquer corte ou publicação
 # de tag no frila-prod (RNF12 e padrões operacionais do projeto):
 #   1. Ancestralidade: a tag (ou commit alvo) DEVE ser ancestral de origin/develop (sem fallback para HEAD silencioso).
-#   2. Janela RNF12: não permite corte dentro da janela proibida (quinta a domingo, 16h-02h SP).
+#   2. Janela RNF12, quando ativa (RNF12_ATIVA=1): não permite corte dentro da janela proibida (quinta a domingo, 16h-02h SP).
 #   3. CHANGELOG: a versão semântica da tag deve estar documentada no commit alvo (git show <commit>:CHANGELOG.md).
 #   4. Migrações imutáveis: nenhuma migração já existente em origin/main pode ter sido alterada (sem falso verde).
 #   5. Migrações sem colisão: nenhuma migração com timestamp duplicado ou formato inválido.
@@ -137,7 +137,13 @@ if ! "$SCRIPT_DIR/janela-de-manutencao.sh"; then
   echo "  De quinta a domingo das 16h às 02h (horário de São Paulo) o deploy em Prod é bloqueado." >&2
   exit 1
 fi
-echo "✓ [2/5] Janela RNF12: fora da janela proibida."
+# Janela de pico da RNF12 suspensa (decisão do Cauê, 08/11/2026): sem RNF12_ATIVA=1, o janela-de-manutencao.sh
+# não confere a janela, e este passo não pode dizer que conferiu.
+if [ "${RNF12_ATIVA:-}" = "1" ]; then
+  echo "✓ [2/5] Janela RNF12: fora da janela proibida."
+else
+  echo "✓ [2/5] Janela RNF12: não conferida (janela de pico da RNF12 suspensa até 10 mil usuários ativos; a meta de 99,5% segue; RNF12_ATIVA=1 religa)."
+fi
 
 # ─────────────────────────────────────────────────────────────
 # 3. CHANGELOG com a versão semântica NO COMMIT ALVO

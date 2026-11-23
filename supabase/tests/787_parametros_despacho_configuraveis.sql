@@ -27,6 +27,8 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
+select set_config('frila.agora', '2026-10-20 12:00:00+00', true);
+
 select plan(29);
 
 -- ── O cenário ─────────────────────────────────────────────────────────────────
@@ -56,7 +58,7 @@ begin
   insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
   values ('cccccccc-0787-0000-0000-000000000001', v_estab, 'administrador');
 
-  select id into v_funcao from public.funcao where nome = 'garçom';
+  select id into v_funcao from public.funcao where nome = 'cumim';
 
   insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em) values
     ('aaaaaaaa-0787-0000-0000-000000000001','profissional','Perto','+5561999990781','perto787@t.test','1995-01-01','2026-09-22', now()),

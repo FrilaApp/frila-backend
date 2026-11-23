@@ -460,6 +460,36 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
+# Expurgo das mídias de verificação de identidade (RN14 · cartão ZZ0WTtu4).
+# Invocada pelo agendador, que manda o segredo no cabeçalho x-agendador-secret (validado na
+# própria Edge Function). verify_jwt fica desligado porque quem chama é o Postgres, que não
+# tem sessão de usuário; com ele ligado, o gateway recusa a chamada antes de a função rodar.
+[functions.expurgar-midias]
+enabled = true
+verify_jwt = false
+
+# Moderação de mídia e sanitização de fotos de perfil (cartão B4c · RN37 · RN15).
+# Invocada pelo agendador com segredo x-agendador-secret ou Bearer.
+# verify_jwt fica desligado porque quem chama é o Postgres/agendador.
+[functions.moderar-midia]
+enabled = true
+verify_jwt = false
+
+# Recebe o JPEG da foto de perfil e grava no bucket privado (contrato 0.2.63). O app envia
+# sem sessão, por desenho: quem autoriza é o token opaco de uso único da upload_url.
+# verify_jwt fica desligado porque, ligado, o gateway recusaria o envio antes de a função rodar.
+[functions.enviar-midia]
+enabled = true
+verify_jwt = false
+
+# Abre a foto de perfil por um link temporário (B-020, contrato 0.2.82): confere o token opaco de 1 h
+# no banco e serve os bytes da miniatura (image/jpeg, private, no-store). O app abre a imagem sem sessão
+# (AsyncImage), por desenho: quem autoriza é o token. verify_jwt ligado recusaria a imagem no gateway.
+[functions.ler-midia]
+enabled = true
+verify_jwt = false
+
+
 
 
 [analytics]

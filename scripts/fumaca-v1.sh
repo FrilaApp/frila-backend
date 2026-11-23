@@ -56,7 +56,7 @@ if [ -z "$ANON" ]; then
 fi
 
 CODIGO="${DEMONSTRACAO_CODIGO:-}"
-EMAILS="${DEMONSTRACAO_EMAILS:-revisao-contratante@frila.app,revisao-profissional@frila.app}"
+EMAILS="${DEMONSTRACAO_EMAILS:-revisao-contratante@frilabr.com,revisao-profissional@frilabr.com}"
 CONTRATANTE="${EMAILS%%,*}"
 PROFISSIONAL="${EMAILS##*,}"
 

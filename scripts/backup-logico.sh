@@ -5,12 +5,49 @@ set -Eeuo pipefail
 umask 077
 export LC_ALL=C
 export COPYFILE_DISABLE=1
+# A senha da BACKUP_DB_URL vai só no ambiente do psql (e do pg_dump, filho dele), nunca na linha de comando,
+# que aparece no `ps` (B-027.j). Sem senha na URL, nada muda.
+# shellcheck source=/dev/null
+. "$(dirname -- "${BASH_SOURCE[0]}")/pg-sem-senha.sh"
 
 etapa='validar configuração'
 temporario=''
 trava=''
 tem_trava=0
 falhar() { printf 'ERRO: %s\n' "$1" >&2; exit 1; }
+classificar_erro() {
+  local texto="${1:-}"
+  local codigo="outro"
+  local mensagem="Erro não classificado durante a execução do pg_dump."
+
+  if printf '%s\n' "$texto" | grep -E -i -q "password authentication failed|authentication failed|no password was provided|PAM authentication failed|Ident authentication failed"; then
+    codigo="autenticacao_recusada"
+    mensagem="Autenticação recusada: verifique usuário e senha de conexão."
+  elif printf '%s\n' "$texto" | grep -E -i -q "snapshot .*does not exist|exported snapshot|invalid snapshot identifier|could not import snapshot"; then
+    codigo="snapshot_indisponivel"
+    mensagem="Snapshot da transação indisponível ou expirado."
+  elif printf '%s\n' "$texto" | grep -E -i -q "permission denied|must be owner of|must be member of|insufficient privilege|row-level security"; then
+    codigo="permissao_negada"
+    mensagem="Permissão negada: privilégios insuficientes para tabelas ou objetos."
+  elif printf '%s\n' "$texto" | grep -E -i -q "timeout expired|connection timed out|statement timeout|idle_in_transaction_session_timeout|canceling statement due to statement timeout"; then
+    codigo="timeout_conexao"
+    mensagem="Tempo limite de conexão esgotado (timeout)."
+  elif printf '%s\n' "$texto" | grep -E -i -q "server does not support SSL|SSL connection has been closed|SSL error|certificate verify failed|sslmode"; then
+    codigo="ssl_exigido"
+    mensagem="Falha na negociação SSL/TLS com o servidor."
+  elif printf '%s\n' "$texto" | grep -E -i -q "No space left on device|disk full|out of disk space"; then
+    codigo="espaco_em_disco"
+    mensagem="Espaço insuficiente em disco."
+  elif printf '%s\n' "$texto" | grep -E -i -q "server version mismatch|server version|unsupported version"; then
+    codigo="versao_incompativel"
+    mensagem="Incompatibilidade de versão entre cliente e servidor."
+  elif printf '%s\n' "$texto" | grep -E -i -q "could not translate host name|Name or service not known|nodename nor servname provided|No route to host|could not connect to server|connection to server.*failed|connection to database.*failed|Connection refused|server closed the connection unexpectedly"; then
+    codigo="host_inalcancavel"
+    mensagem="Host inalcançável: servidor ou pooler não responde no endereço configurado."
+  fi
+
+  printf '%s|%s\n' "$codigo" "$mensagem"
+}
 limpar() {
   local codigo=$?
   trap - EXIT
@@ -33,6 +70,8 @@ trap 'falhar "backup interrompido."' HUP INT TERM
 [[ -n "${BACKUP_PUBLIC_KEY:-}" ]] || falhar 'defina BACKUP_PUBLIC_KEY (destinatário age ou caminho do certificado público PEM).'
 [[ -n "${BACKUP_DIR:-}" ]] || falhar 'defina BACKUP_DIR, pasta dedicada fora de qualquer repositório.'
 case "$BACKUP_DB_URL" in postgres://*|postgresql://*) ;; *) falhar 'BACKUP_DB_URL deve ser uma conexão PostgreSQL.' ;; esac
+separar_senha_da_url "$BACKUP_DB_URL" || falhar 'BACKUP_DB_URL fora do formato esperado (a URL não é mostrada).'
+export BACKUP_DB_URL_SEM_SENHA="$PG_URL_SEM_SENHA"
 retencao="${BACKUP_KEEP:-14}"
 [[ "$retencao" =~ ^[1-9][0-9]{0,5}$ ]] || falhar 'BACKUP_KEEP deve ser um inteiro entre 1 e 999999.'
 for comando in pg_dump psql git tar; do
@@ -40,7 +79,7 @@ for comando in pg_dump psql git tar; do
 done
 etapa='consultar versão do servidor (somente leitura)'
 versao_servidor=$(PGSSLMODE="${PGSSLMODE:-require}" PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-15}" \
-  psql -X -qAt --no-password --set ON_ERROR_STOP=1 --dbname "$BACKUP_DB_URL" \
+  com_senha_da_url psql -X -qAt --no-password --set ON_ERROR_STOP=1 --dbname "$BACKUP_DB_URL_SEM_SENHA" \
     --command "BEGIN READ ONLY; SELECT current_setting('server_version_num'); COMMIT;" 2>/dev/null)
 [[ "$versao_servidor" =~ ^[0-9]{5,6}$ ]] || falhar 'não foi possível validar a versão do servidor.'
 etapa='consultar versão do pg_dump'
@@ -100,9 +139,9 @@ etapa='gerar dump e suplemento de extensões no mesmo snapshot'
 # A sessão psql mantém o snapshot vivo enquanto seu filho pg_dump o utiliza.
 # O catálogo define o suplemento; só o log transitório autorizado é excluído.
 export BACKUP_WORK_DIR="$temporario"
-PGSSLMODE="${PGSSLMODE:-require}" PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-15}" \
-  psql -X -qAt --no-password --set ON_ERROR_STOP=1 --dbname "$BACKUP_DB_URL" \
-    --set suplemento="$temporario/extensoes.sql" >/dev/null 2>&1 <<'SQL'
+if ! PGSSLMODE="${PGSSLMODE:-require}" PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-15}" \
+  com_senha_da_url psql -X -qAt --no-password --set ON_ERROR_STOP=1 --dbname "$BACKUP_DB_URL_SEM_SENHA" \
+    --set suplemento="$temporario/extensoes.sql" 2>"$temporario/psql.err" >/dev/null <<'SQL'
 BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL DateStyle = 'ISO';
 SET LOCAL IntervalStyle = 'postgres';
@@ -136,11 +175,58 @@ WHERE c.relkind = 'r' AND NOT c.oid = ANY(coalesce(e.extconfig, ARRAY[]::oid[]))
 ORDER BY n.nspname, c.relname
 \gexec
 \o
-\! pg_dump --dbname "$BACKUP_DB_URL" --no-password --format=custom --snapshot="$BACKUP_SNAPSHOT" --exclude-table-data=net._http_response --file "$BACKUP_WORK_DIR/banco.dump" >/dev/null 2>&1 && touch "$BACKUP_WORK_DIR/dump-concluido"
+\! pg_dump --dbname "$BACKUP_DB_URL_SEM_SENHA" --no-password --format=custom --snapshot="$BACKUP_SNAPSHOT" --exclude-table-data=net._http_response --file "$BACKUP_WORK_DIR/banco.dump" 2>"$BACKUP_WORK_DIR/pg_dump.err" >/dev/null && touch "$BACKUP_WORK_DIR/dump-concluido"
 COMMIT;
 SQL
-[[ -f "$temporario/dump-concluido" ]] || falhar 'pg_dump falhou; suplemento não publicado.'
-[[ -s "$temporario/banco.dump" ]] || falhar 'pg_dump não gerou conteúdo.'
+then
+  : # Falha do psql capturada via psql.err e verificada abaixo
+fi
+
+if [[ ! -f "$temporario/dump-concluido" ]]; then
+  erro_coletado=''
+  if [[ -s "$temporario/pg_dump.err" ]]; then
+    erro_coletado=$(cat "$temporario/pg_dump.err")
+  fi
+  if [[ -s "$temporario/psql.err" ]]; then
+    if [[ -n "$erro_coletado" ]]; then
+      erro_coletado=$(printf '%s\n--- psql ---\n%s' "$erro_coletado" "$(cat "$temporario/psql.err")")
+    else
+      erro_coletado=$(cat "$temporario/psql.err")
+    fi
+  fi
+
+  classificacao=$(classificar_erro "$erro_coletado")
+  codigo_erro="${classificacao%%|*}"
+  mensagem_erro="${classificacao#*|}"
+
+  printf 'Diagnóstico do erro: [%s] %s\n' "$codigo_erro" "$mensagem_erro" >&2
+
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -w "$GITHUB_STEP_SUMMARY" ]]; then
+    {
+      echo "### ❌ Falha no Backup Lógico (pg_dump)"
+      echo
+      echo "**Diagnóstico seguro:**"
+      echo "- **Código:** \`$codigo_erro\`"
+      echo "- **Descrição:** $mensagem_erro"
+    } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+  fi
+
+  falhar 'pg_dump falhou; suplemento não publicado.'
+fi
+
+if [[ ! -s "$temporario/banco.dump" ]]; then
+  printf 'Diagnóstico do erro: [outro] pg_dump não gerou conteúdo.\n' >&2
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" && -w "$GITHUB_STEP_SUMMARY" ]]; then
+    {
+      echo "### ❌ Falha no Backup Lógico (pg_dump)"
+      echo
+      echo "**Diagnóstico seguro:**"
+      echo "- **Código:** \`outro\`"
+      echo "- **Descrição:** pg_dump não gerou conteúdo."
+    } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+  fi
+  falhar 'pg_dump não gerou conteúdo.'
+fi
 tempo_dump=$((SECONDS - inicio))
 
 etapa='empacotar dump e suplemento'

@@ -1,10 +1,10 @@
 -- 735_rpc_blindagem_global_catalogo.sql
 --
--- Cobertura transversal e auditoria do catálogo das 44 RPCs expostas no schema public:
+-- Cobertura transversal e auditoria do catálogo das 66 RPCs expostas no schema public:
 --   * Censo estrito de rotinas públicas (pg_proc e pg_namespace).
 --   * Auditoria de SECURITY DEFINER e search_path="" em 100% das rotinas.
---   * Blindagem absoluta contra acesso anônimo: apenas public.configuracao_do_app
---     possui privilégio de EXECUTE concedido a anon (43 RPCs estritamente negadas).
+--   * Blindagem absoluta contra acesso anônimo: apenas public.configuracao_do_app e
+--     public.vaga_publica (0.2.100) possuem privilégio de EXECUTE concedido a anon.
 --   * Revogação universal de EXECUTE do papel público (PUBLIC) em todas as rotinas.
 --   * Prova de mutação dinâmica: detecção imediata caso qualquer RPC sofra grant inadvertido a anon.
 --   * Prova de idempotência por chave em public.republicar_vaga(uuid, timestamptz, timestamptz, uuid)
@@ -18,9 +18,9 @@ values (true, true)
 on conflict (id) do update set eh_teste = true;
 
 set local "frila.agora" = '2026-11-20 12:00:00+00';
-set local "frila.agendador_secret" = 'segredo_teste_agendador_123';
+set local frila.agendador_secret = 'segredo-de-teste';
 
-select plan(28);
+select plan(31);
 
 -- 2. Helpers de autenticação e contexto
 create or replace function pg_temp.autenticar(p_id uuid, p_role text default 'authenticated')
@@ -38,18 +38,18 @@ $$;
 -- PARTE 1: Censo de Rotinas e Blindagem de Catálogo do Schema public
 -- ============================================================================
 
--- Total de rotinas existentes em public (44 RPCs + 1 event trigger + 3 helpers)
+-- Total de rotinas existentes em public (67 RPCs + 1 event trigger + 3 helpers)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace),
-  48::bigint,
-  'censo de catalogo: schema public contem exatamente 48 rotinas catalogadas'
+  82::bigint,
+  'censo de catalogo: schema public contem exatamente 82 rotinas catalogadas (com buscar_profissionais, 0.2.88, aceitar_termos, 0.2.90, publicar_escala, 0.2.96, vaga_publica, 0.2.100, e membros_do_estabelecimento, 0.2.103)'
 );
 
--- Total de rotinas declaradas como SECURITY DEFINER (44 RPCs + 1 event trigger rls_auto_enable)
+-- Total de rotinas declaradas como SECURITY DEFINER (67 RPCs + 1 event trigger rls_auto_enable)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prosecdef = true),
-  45::bigint,
-  'seguranca de privilegios: exatamente 45 rotinas sao SECURITY DEFINER (44 RPCs + rls_auto_enable)'
+  79::bigint,
+  'seguranca de privilegios: exatamente 79 rotinas sao SECURITY DEFINER (78 RPCs + rls_auto_enable)'
 );
 
 -- 100% das rotinas de public possuem search_path="" estrito configurado em proconfig
@@ -57,45 +57,45 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and p.proconfig @> array['search_path=""']),
-  48::bigint,
-  'mitigacao de sequestro de schema: 100% das rotinas (48 de 48) possuem search_path="" estrito'
+  82::bigint,
+  'mitigacao de sequestro de schema: 100% das rotinas (82 de 82) possuem search_path="" estrito'
 );
 
--- Apenas 1 única função possui privilégio de execução concedido ao papel anon
+-- Apenas 2 funções possuem privilégio de execução concedido ao papel anon
 select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and has_function_privilege('anon', p.oid, 'execute')),
-  1::bigint,
-  'superficie anonima: exatamente 1 rotina em public e executavel pelo papel anon'
+  2::bigint,
+  'superficie anonima: exatamente 2 rotinas em public sao executaveis pelo papel anon'
 );
 
--- Prova nominal de que a única função executável por anon é configuracao_do_app
+-- Prova nominal de que as funções executáveis por anon são configuracao_do_app e vaga_publica (0.2.100)
 select is(
-  (select p.proname::text
+  (select array_agg(p.proname::text order by p.proname)
    from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and has_function_privilege('anon', p.oid, 'execute')),
-  'configuracao_do_app'::text,
-  'rotina anonima autorizada e estritamente configuracao_do_app'
+  array['configuracao_do_app', 'vaga_publica'],
+  'rotinas anonimas autorizadas: estritamente configuracao_do_app e vaga_publica'
 );
 
--- 47 rotinas possuem EXECUTE estritamente FALSO para o papel anon
+-- 70 rotinas possuem EXECUTE estritamente FALSO para o papel anon
 select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and not has_function_privilege('anon', p.oid, 'execute')),
-  47::bigint,
-  'superficie anonima blindada: 47 de 48 rotinas negam execucao para o papel anon'
+  80::bigint,
+  'superficie anonima blindada: 80 de 82 rotinas negam execucao para o papel anon'
 );
 
--- Papel authenticated possui EXECUTE concedido em exatamente 44 RPCs
+-- Papel authenticated possui EXECUTE concedido em exatamente 67 RPCs
 select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and has_function_privilege('authenticated', p.oid, 'execute')),
-  44::bigint,
-  'superficie autenticada: exatamente 44 RPCs publicas concedem execucao a authenticated'
+  78::bigint,
+  'superficie autenticada: exatamente 78 RPCs publicas concedem execucao a authenticated'
 );
 
 -- Papel authenticated NÃO possui privilégio em rotinas internas (erro, conta_em_json, perfil_profissional_em_json, rls_auto_enable)
@@ -131,14 +131,21 @@ select ok(not has_function_privilege('anon', 'public.cancelar_posicao(uuid, text
 select ok(not has_function_privilege('anon', 'public.cancelar_vaga(uuid, text)', 'execute'),
   'RPC critica blindada: anon nao executa cancelar_vaga');
 
-select ok(not has_function_privilege('anon', 'public.fazer_checkin(uuid, integer, timestamp with time zone)', 'execute'),
-  'RPC critica blindada: anon nao executa fazer_checkin');
+select ok(not has_function_privilege('anon', 'public.fazer_checkin(uuid, integer, timestamp with time zone, jsonb)', 'execute'),
+  'RPC critica blindada: anon nao executa fazer_checkin (com sinais, 0.2.68)');
+
+select is((select count(*)::int from pg_proc where proname = 'fazer_checkin' and pronamespace = 'public'::regnamespace), 1,
+  'fazer_checkin tem uma assinatura só: a de três argumentos saiu, e não há sobrecarga (PGRST203)');
 
 select ok(not has_function_privilege('anon', 'public.fazer_checkout(uuid, integer, timestamp with time zone)', 'execute'),
   'RPC critica blindada: anon nao executa fazer_checkout');
 
 select ok(not has_function_privilege('anon', 'public.confirmar_checkin_manual(uuid)', 'execute'),
   'RPC critica blindada: anon nao executa confirmar_checkin_manual');
+select ok(not has_function_privilege('anon', 'public.gerar_codigo_checkin(uuid)', 'execute'),
+  'RPC critica blindada: anon nao executa gerar_codigo_checkin (0.2.68)');
+select ok(not has_function_privilege('anon', 'public.validar_codigo_checkin(uuid, text, integer)', 'execute'),
+  'RPC critica blindada: anon nao executa validar_codigo_checkin (0.2.68)');
 
 select ok(not has_function_privilege('anon', 'public.reabrir_por_atraso(uuid)', 'execute'),
   'RPC critica blindada: anon nao executa reabrir_por_atraso');
@@ -172,7 +179,7 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and has_function_privilege('anon', p.oid, 'execute')),
-  2::bigint,
+  3::bigint,
   'mutante de privilegio: censo detecta imediatamente vazamento de EXECUTE para anon'
 );
 
@@ -183,8 +190,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and has_function_privilege('anon', p.oid, 'execute')),
-  1::bigint,
-  'restauracao canonica: censo de privilegios anônimos retorna estritamente a 1'
+  2::bigint,
+  'restauracao canonica: censo de privilegios anônimos retorna estritamente a 2'
 );
 
 -- ============================================================================

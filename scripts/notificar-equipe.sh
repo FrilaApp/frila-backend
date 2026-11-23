@@ -9,8 +9,8 @@
 # Destinatários padrão: Cauê, Jotapê e Fabrício. `--para` aceita repetição e lista
 # separada por vírgula.
 #
-# A lógica mora em `notificar_equipe.py`, do mesmo jeito que a ponte do quadro mora em
-# `bancada_trello.py`: shell para achar as coisas, Python para falar o protocolo.
+# A lógica mora em `notificar_equipe.py`: shell para achar as coisas, Python para falar o
+# protocolo.
 #
 # O que este invólucro faz, e o `.py` não: achar a raiz do repositório, carregar o `.env`
 # e dizer alto quando ele não existe — sem derrubar o pipeline por causa disso, porque um

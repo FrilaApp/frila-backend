@@ -40,7 +40,7 @@ DESTINATARIOS_PADRAO = (
     "fbtostadev@gmail.com",
 )
 
-REMETENTE_PADRAO = "nao-responda@frila.app"
+REMETENTE_PADRAO = "verificacao@frilabr.com"
 
 USO = (
     "uso: notificar-equipe.sh --assunto <texto> --corpo <texto> "

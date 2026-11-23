@@ -50,19 +50,21 @@ create temp table ids_auditoria as select
   'b6910000-0000-4000-8000-000000000001'::uuid as ent_id,
   'b6910000-0000-4000-8000-000000000002'::uuid as autor_id;
 
+-- Os ids ficam numa faixa que a sequência não alcança (10^12 + n): as corridas e o ciclo da CI gravam milhares
+-- de linhas de auditoria antes desta suíte, e um id fixo baixo colidiria com elas. A ordem relativa é a mesma.
 -- Inserção intencionalmente fora de ordem cronológica e fora de ordem de id
 -- para validar que a ordenação final provém do ORDER BY a.em, a.id e não da ordem física do heap.
 insert into privado.auditoria_ciclo (id, entidade, entidade_id, acao, estado_anterior, estado_novo, autor_id, em)
 overriding system value
 values
   -- Fora de ordem cronológica e com IDs que desrespeitam a ordem física:
-  (600, 'turno',   (select ent_id from ids_auditoria), 'mudou_estado', 'pendente',  'verificado', (select autor_id from ids_auditoria), '2030-06-01 23:59:59+00'),
-  (900, 'posicao', (select ent_id from ids_auditoria), 'mudou_estado', 'aberta',    'confirmada', (select autor_id from ids_auditoria), '2030-06-01 12:00:00+00'),
-  (700, 'vaga',    (select ent_id from ids_auditoria), 'criou',        null,        'publicada',  (select autor_id from ids_auditoria), '2030-06-01 00:00:00+00'),
-  (800, 'posicao', (select ent_id from ids_auditoria), 'mudou_estado', 'aberta',    'cancelada',   (select autor_id from ids_auditoria), '2030-06-01 12:00:00+00'),
+  (1000000000600, 'turno',   (select ent_id from ids_auditoria), 'mudou_estado', 'pendente',  'verificado', (select autor_id from ids_auditoria), '2030-06-01 23:59:59+00'),
+  (1000000000900, 'posicao', (select ent_id from ids_auditoria), 'mudou_estado', 'aberta',    'confirmada', (select autor_id from ids_auditoria), '2030-06-01 12:00:00+00'),
+  (1000000000700, 'vaga',    (select ent_id from ids_auditoria), 'criou',        null,        'publicada',  (select autor_id from ids_auditoria), '2030-06-01 00:00:00+00'),
+  (1000000000800, 'posicao', (select ent_id from ids_auditoria), 'mudou_estado', 'aberta',    'cancelada',   (select autor_id from ids_auditoria), '2030-06-01 12:00:00+00'),
   -- Fora do intervalo semiaberto [de, ate):
-  (500, 'turno',   (select ent_id from ids_auditoria), 'mudou_estado', 'verificado','cumprido',   (select autor_id from ids_auditoria), '2030-06-02 00:00:00+00'),
-  (400, 'vaga',    (select ent_id from ids_auditoria), 'criou',        null,        'publicada',  (select autor_id from ids_auditoria), '2030-05-31 23:59:59+00');
+  (1000000000500, 'turno',   (select ent_id from ids_auditoria), 'mudou_estado', 'verificado','cumprido',   (select autor_id from ids_auditoria), '2030-06-02 00:00:00+00'),
+  (1000000000400, 'vaga',    (select ent_id from ids_auditoria), 'criou',        null,        'publicada',  (select autor_id from ids_auditoria), '2030-05-31 23:59:59+00');
 
 select is(
   jsonb_array_length(privado.auditoria_do_periodo('2030-06-01 00:00:00+00', '2030-06-02 00:00:00+00')),

@@ -1,9 +1,12 @@
-# Runbook de hotfix e rollback no pico do piloto
+# Runbook de hotfix e rollback
 
-Como publicar uma correção no `frila-prod` e como desfazer uma migração enquanto o piloto
-roda, sem cair na janela proibida da RNF12 (quinta a domingo, das 16h às 2h, horário de São
-Paulo). Escrito em 28/10/2026 a partir do que existe em `.github/workflows/entrega.yml` e em
+Como publicar uma correção no `frila-prod` e como desfazer uma migração. Escrito em 28/10/2026 a partir do que existe em `.github/workflows/entrega.yml` e em
 `scripts/`; o que mede o estado real do repositório no GitHub vem marcado com a data.
+
+**A janela de pico da RNF12 (quinta a domingo, das 16h às 2h, horário de São Paulo) só volta com 10 mil usuários ativos (decisão do Cauê, 08/11/2026); a meta de 99,5% segue.** Até lá, o passo `Fora da janela proibida (RNF12)` do workflow Entrega não roda (só roda com a variável do repositório `RNF12_ATIVA=1`), e `scripts/janela-de-manutencao.sh` não confere a janela: sai 0 com o
+aviso "Janela de pico da RNF12 suspensa". Os comandos de medir a janela deste runbook só medem com `RNF12_ATIVA=1`
+na frente (por exemplo, `RNF12_ATIVA=1 ./scripts/janela-de-manutencao.sh`), e qualquer valor
+além de vazio, `0` e `1` sai 2.
 
 Convenção: tudo que não tem `arquivo:linha` nem medição é **"proposta, a confirmar"**.
 O que o repositório não prova está na seção 7.
@@ -18,15 +21,15 @@ Aqui entra o que falta em torno dele: a janela, a tag e o pico.
 
 | Decisão | Quem | Fonte |
 |---|---|---|
-| Declarar hotfix e publicar em Prod | Os sócios têm comando total; quem leva o hotfix até a tag responde por ele | `AGENTS.md`, "Quem é quem" |
-| Aprovar o PR do hotfix | Qualquer um dos quatro sócios, menos quem abriu o PR, lendo o diff inteiro (migração e push são faixa vermelha) | `AGENTS.md`, "Aprovar e mesclar" |
-| Mesclar com a CI ainda rodando ou vermelha | Só em emergência, registrada no PR | `AGENTS.md`, "Aprovar e mesclar" |
+| Declarar hotfix e publicar em Prod | Os sócios têm comando total; quem leva o hotfix até a tag responde por ele | `AGENTS.md`, "Regras do time" |
+| Aprovar o PR do hotfix | Qualquer um dos quatro sócios, menos quem abriu o PR, lendo o diff inteiro (migração e push são faixa vermelha) | `AGENTS.md`, "Regras do time" (Revisão) |
+| Mesclar com a CI ainda rodando ou vermelha | Só em emergência, registrada no PR | `AGENTS.md`, "Branch e PR" |
 | Aprovar o job de Prod no Environment | Revisor do Environment `frila-prod`. O Environment possui 4 revisores cadastrados (`cauecarneiro`, `fbtostadev`, `jotape12-Dev`, `silvaaszx`) com auto-aprovação prevenida (`prevent_self_review: true`) e bypass de admin ativo (fonte: medido via GitHub API em 30/10) | `entrega.yml:126-127`; GitHub API |
 | Aplicar patch à mão em Prod | `[DONO]`, termo de `docs/RUNBOOK-INCIDENTES.md` (por exemplo, linha 224) que o documento não define | `RUNBOOK-INCIDENTES.md` |
-| Exceção à janela proibida | Proposta, a confirmar: `[DONO]`, com motivo e hora registrados no PR ou no cartão | não existe regra escrita |
+| Exceção à janela proibida (só com a RNF12 ativa) | Proposta, a confirmar: `[DONO]`, com motivo e hora registrados no PR | não existe regra escrita |
 
 O agente de IA prepara, testa e abre o PR. Ele nunca aprova nem mescla, e não empurra a tag
-de Prod (`AGENTS.md`, "Limites").
+de Prod (`AGENTS.md`, "Regras do time").
 
 ---
 
@@ -54,7 +57,7 @@ de Prod (`AGENTS.md`, "Limites").
 ### Como a janela é aplicada
 
 O passo `Fora da janela proibida (RNF12)` (`entrega.yml:139-140`) roda
-`./scripts/janela-de-manutencao.sh`. A conta está em `scripts/janela-de-manutencao.sh:34-35`:
+`./scripts/janela-de-manutencao.sh`. A conta está em `scripts/janela-de-manutencao.sh:71-72`:
 
 - bloqueado: quinta a domingo a partir das 16h, e sexta a segunda antes das 2h (a madrugada
   ainda é a noite anterior);
@@ -70,7 +73,7 @@ horas depois da tag, então a janela é medida quando o job **começa**, e não 
 criada. Os casos de borda estão em `scripts/teste-entrega.sh:36-46` (por exemplo, quinta
 15h59 passa, quinta 16h não, sexta 1h59 não, sexta 2h passa).
 
-Para saber agora: `./scripts/janela-de-manutencao.sh` (a variável `FRILA_AGORA`, linha 11, é
+Para saber agora: `./scripts/janela-de-manutencao.sh` (a variável `FRILA_AGORA`, linha 18, é
 só de autoteste; o workflow não a define, e defini-la seria uma mudança em `entrega.yml`
 visível em PR).
 
@@ -83,33 +86,33 @@ visível em PR).
    antes de planejar o prazo.
 2. **Decidir** (seção 1): quem leva o hotfix e quem aprova o PR.
 3. **Reproduzir e escrever o teste que falha.** pgTAP vermelho primeiro (`AGENTS.md`,
-   "Testes"). Sem teste que reproduza, o hotfix é palpite.
+   "Rodar e testar"). Sem teste que reproduza, o hotfix é palpite.
 4. **Branch a partir da `develop`:**
    `git fetch origin develop && git switch -c sX/<assunto> origin/develop`.
    Não existe branch de hotfix saindo da `main`: o job de Prod recusa tag fora da
    `develop` (`entrega.yml:143-148`).
-5. **Gate local** (`AGENTS.md`, "Comandos e gate local"): `supabase db reset`,
+5. **Gate local** (`AGENTS.md`, "Rodar e testar"): `supabase db reset`,
    `supabase test db`, `./scripts/ciclo-completo.sh`, `./scripts/mutacao.sh`,
    `./scripts/lint-conhecido.sh`, `./scripts/advisor-conhecido.sh`. Se tocou Edge Function,
    `deno test --allow-all --no-check`.
 6. **PR para `develop`** (`gh pr create --base develop`), com o que foi e o que não foi
-   executado. A CI leva ~50 min (`AGENTS.md`); um hotfix real mede o prazo contando com isso,
-   ou com a exceção de emergência registrada no PR.
+   executado. A CI leva cerca de 24 min (medido em 16/11/2026 em 37 runs completos e verdes de 14 a 16/11: mínimo 11,9 min, mediana 24,4, p90 27,4, máximo 103,9;
+   run de referência `43703361286`, 23 min 26 s, com "Migrações e pgTAP" como o job mais longo). A fila do GitHub pode levar o tempo bem acima disso
+   (o máximo medido passa de 1 h 40), então um hotfix real conta com a mediana e reserva folga, ou usa a exceção de emergência registrada no PR.
 7. **Aprovação e merge** por outro sócio (seção 1).
 8. **Acompanhar o `frila-dev`.** O merge dispara a entrega para o `frila-dev`
    (`entrega.yml:56`) e depois o `desvio-dev` (`:84-119`). Confira o efeito do hotfix lá
    antes de seguir para Prod.
 9. **Checar a janela de novo** e só então criar a tag no commit já mesclado na `develop`:
    `git tag backend-vX.Y.Z <sha> && git push origin backend-vX.Y.Z`. O padrão do nome é
-   `backend-v*` (`entrega.yml:20`). Nenhuma tag existe ainda (medido em 28/10), e o esquema
-   de numeração é proposta, a confirmar.
+   `backend-v*` (`entrega.yml:20`). As tags existentes (medido em 16/11/2026) são `backend-v1.1.0` e
+   `backend-v1.1.1`; o esquema de numeração do próximo hotfix segue sendo proposta, a confirmar.
 10. **Aprovar o job de Prod** se o Environment tiver revisor (`entrega.yml:126-127`).
     Acompanhe os passos da seção 2 até o `desvio.sh` terminar verde.
-11. **Registrar** no PR e no cartão: SHA, tag, hora, resultado do `desvio.sh`. No fim do dia,
-    `scripts/bancada-sync.sh` leva o dia ao vault.
+11. **Registrar** no PR: SHA, tag, hora, resultado do `desvio.sh`.
 
 Smoke depois da publicação: `GET` na função `saude` do Prod só lê no caminho de sucesso
-(`select 1`, `supabase/functions/saude/index.ts`); no de falha, grava uma linha em
+(`select 1` e, desde `25f475a` (#514), a idade dos jobs `reprocessar_despacho` e `verificar_saude` em `cron.job_run_details`; `supabase/functions/saude/index.ts`); no de falha, grava uma linha em
 `registrar_falha_execucao` (`mantem-prod-vivo.yml:9`). Não rode `ciclo-completo.sh` nem `demonstracao.sh`
 contra o Prod, porque gravam dados; a decisão de gravar em produção é do `[DONO]`.
 
@@ -132,8 +135,9 @@ na CI: `scripts/migracoes-imutaveis.sh:12` lista os arquivos modificados ou remo
    (recuperável com `git show <commit-anterior>:supabase/migrations/<arquivo>.sql`),
    mantendo `set search_path = ''` e os `grant`/`revoke`.
 4. **Dado não volta.** `drop column` apaga o conteúdo. Mudança destrutiva em duas fases
-   (acrescenta e escreve nos dois; só depois remove), por `AGENTS.md`, "Migrações". Backup
-   do Prod: ver seção 7, ainda não configurado.
+   (acrescenta e escreve nos dois; só depois remove), por `AGENTS.md`, "Banco e migrações". Backup
+   do Prod: existe backup lógico diário (`.github/workflows/backup-prod.yml`); o que ele garante e o que
+   não garante está na seção 7. Sem restaurar esse backup, `drop column` em Prod não tem volta.
 5. **pgTAP** que prova o estado revertido e as regras de negócio intactas;
    `supabase db reset` e `supabase test db` verdes.
 6. **PR → `develop` → `frila-dev` → tag → `frila-prod`**, o mesmo caminho da seção 3, sob a
@@ -155,6 +159,8 @@ Para o procedimento e padrões de reversão de migrações que já foram aplicad
 
 ## 5. Tag em horário proibido
 
+> Só vale com a RNF12 ativa (variável do repositório `RNF12_ATIVA=1`). Hoje o passo da janela não roda e não há horário proibido.
+
 O que acontece (fatos da seção 2): a tag dispara o workflow; o job de Prod espera o
 Environment; quando começa, o passo da janela mede o relógio de São Paulo e, dentro da
 janela, reprova antes de qualquer migração ou deploy.
@@ -164,11 +170,11 @@ janela, reprova antes de qualquer migração ou deploy.
    `Fora da janela proibida (RNF12)` vermelho e os passos `Migrações e semente` e
    `Edge Functions` sem execução.
 3. **Espere abrir.** Fora da janela: de sexta 2h às 16h; sábado e domingo das 2h às 16h;
-   segunda das 2h até quinta às 16h (derivado de `janela-de-manutencao.sh:34-35`).
+   segunda das 2h até quinta às 16h (derivado de `janela-de-manutencao.sh:71-72`).
 4. **Reexecute o job** na aba Actions depois das 2h. Ele usa o mesmo commit da tag. Se o
    hotfix mudou, é tag nova, em commit da `develop`. Não mova nem apague tag.
 5. **Se o dano de esperar for maior que o de publicar** (proposta, a confirmar): o `[DONO]`
-   decide a exceção e registra no PR ou no cartão o motivo, a hora e o que será aplicado.
+   decide a exceção e registra no PR o motivo, a hora e o que será aplicado.
    O workflow não tem exceção. O caminho que existe é à mão, com
    `./scripts/aplicar-remoto.sh <ref-prod>` e `supabase functions deploy --project-ref <ref>`,
    que não passam pela janela nem pela checagem da tag na `develop`. Depois rode
@@ -192,8 +198,11 @@ janela, reprova antes de qualquer migração ou deploy.
 
 Medido em 28/10/2026 com `gh` e `git ls-remote` (só leitura), salvo indicação.
 
-- **Nenhuma tag `backend-v*` existe** (`git ls-remote --tags origin` vazio). O job `frila-prod`
-  nunca rodou a partir de tag; nenhuma execução real prova a seção 2 em Prod.
+- **Existem duas tags `backend-v*`** (medido em 16/11/2026 com `gh api repos/FrilaApp/frila-backend/tags`):
+  `backend-v1.1.0` (`61ed48f`, 04/11) e `backend-v1.1.1` (`e14a8d2`, 05/11). O job `frila-prod`
+  rodou a partir delas com sucesso (runs `41826751600` e `42059164212`; job inteiro em 2,1 e 1,7 min, passo
+  "Edge Functions" em 16 s e 12 s), então a seção 2 está provada em Prod para esses dois casos. Nenhum dos dois
+  foi hotfix nem rollback. Depois de 05/11 o Prod recebeu pacotes por roteiro manual, fora de tag (`docs/ESTADO.md`, seção do `frila-prod`).
 - **O Environment `frila-prod` possui regra de proteção ativa com revisores obrigatórios:**
   possui regra de proteção `required_reviewers` com 4 revisores (`cauecarneiro`, `fbtostadev`,
   `jotape12-Dev`, `silvaaszx`), `prevent_self_review: true` e `can_admins_bypass: true`
@@ -210,16 +219,24 @@ Medido em 28/10/2026 com `gh` e `git ls-remote` (só leitura), salvo indicação
 - **Fila bloqueada por migração falha** (seção 4): inferência, nunca exercida. Sair dela
   (editar a migração com exceção na CI, ou preparar o Prod à mão) é decisão do `[DONO]`.
 - **Reexecutar o job** depois da janela: não se provou se pede nova aprovação do Environment.
-- **Rollback de Edge Function:** o repositório não tem procedimento. `supabase functions
-  deploy` (`entrega.yml:165-166`) publica o código da tag. Proposta, a confirmar: PR de revert
-  na `develop` e tag nova. Se o Supabase guarda versões anteriores para voltar: não
-  encontrado (buscado em: `entrega.yml`, `scripts/`, `docs/`).
-- **Backup do Prod não está configurado.** `docs/BackupDoProd.md:282-296`: "Não foi criado/
-  carregado plist nem configurado serviço ou segredo do prod". Sem backup, `drop column`
-  em Prod não tem volta.
+- **Rollback de Edge Function:** o procedimento está em
+  [`docs/RunbookRollbackEdgeFunction.md`](RunbookRollbackEdgeFunction.md). `supabase functions
+  deploy` (`entrega.yml:165-166`) publica o código da tag. Se o Supabase guarda versões anteriores para voltar: não
+  encontrado (buscado em: `entrega.yml`, `scripts/`, `docs/`, e na página de deploy da documentação do Supabase, lida em 16/11/2026).
+  Nunca se executou um rollback de função em Prod.
+- **Backup do Prod existe, com limites** (corrigido em 16/11/2026; o texto anterior dizia "não
+  está configurado"). MEDIDO com `gh api` em `backup-prod.yml`: 13 execuções agendadas, 12 com
+  sucesso e 1 com falha (04/11, a estreia); a última execução agendada com sucesso foi a de 16/11; cada execução começa entre 6,8 e 10,3 h depois do
+  horário `0 7 * * *` UTC. Descrição do fluxo: `docs/BackupDoProd.md`, seção "Configuração do prod e
+  agendamento diário". DEDUZIDO: o backup mais novo pode ter até ~34 h (24 h + o atraso máximo
+  medido). NAO MEDIDO: restauração de um arquivo real do bucket (os ensaios restauram o script em
+  banco local), custódia da chave privada `age`, ciclo de vida de 14 dias do bucket, RPO e RTO
+  declarados. `drop column` em Prod só volta com a restauração desse backup, em banco novo, e perde
+  o que entrou depois dele.
 - **Nunca se executou um rollback real em Prod**, nem um hotfix de ponta a ponta.
-- **`mantem-prod-vivo.yml`:** a variável `FRILA_PROD_URL_SAUDE` não existe (nenhuma variável
-  de repositório, medido em 28/10), então o job falha até alguém criá-la. Que a chamada
+- **`mantem-prod-vivo.yml`:** a variável `FRILA_PROD_URL_SAUDE` existe (MEDIDO em 16/11/2026
+  com `gh api repos/FrilaApp/frila-backend/actions/variables`: é a única variável de repositório,
+  `total_count` 1; em 28/10 não existia). Que a chamada
   diária impeça a pausa do projeto só se comprova esperando mais de sete dias; que o
   Supabase conte uma chamada à função como "uso": não encontrado.
 - **`renova-contas-de-revisao.yml`:** o script chamado, `scripts/renovar-demonstracao.sh`,

@@ -7,8 +7,8 @@
 --
 --   200  a configuração da plataforma, com os cinco campos de ConfiguracaoDoApp
 --   422  plataforma ausente (campo_obrigatorio) ou fora do enum (campo_invalido)
---   404  plataforma do enum sem configuração gravada — hoje android e web, que ainda
---        não têm loja. Documentado no contrato 0.2.16.
+--   404  plataforma do enum sem configuração gravada (contrato 0.2.16). Desde 20261117060000 as
+--        três plataformas têm linha; o teste apaga a da web na transação para provar o 404.
 --
 -- A tabela fica em `privado`: nenhuma chave do app lê a linha direto, só pela função.
 
@@ -41,26 +41,26 @@ end $$;
 
 -- ── A função existe e tem as portas certas ────────────────────────────────────
 
-select has_function('public', 'configuracao_do_app', array['text'],
-  'public.configuracao_do_app(plataforma text) existe');
+select has_function('public', 'configuracao_do_app', array['text', 'text'],
+  'public.configuracao_do_app(plataforma text, versao_app text) existe (0.2.65)');
 
 select ok(
-  has_function_privilege('anon', 'public.configuracao_do_app(text)', 'execute'),
+  has_function_privilege('anon', 'public.configuracao_do_app(text, text)', 'execute'),
   'anon executa: o app abaixo da versão mínima ainda não tem sessão');
 
 select ok(
-  has_function_privilege('authenticated', 'public.configuracao_do_app(text)', 'execute'),
+  has_function_privilege('authenticated', 'public.configuracao_do_app(text, text)', 'execute'),
   'authenticated também: o app com sessão aberta faz a mesma pergunta');
 
--- A exceção é por nome. Se uma segunda função de public aparecer liberada para anon,
--- este teste acusa — a regra "anon não lê nada" tem exatamente uma exceção.
+-- A exceção é por nome. Se outra função de public aparecer liberada para anon, este teste
+-- acusa: a regra "anon não lê nada" tem exatamente duas exceções (vaga_publica, 0.2.100).
 select is(
   (select array_agg(p.proname::text order by p.proname)
      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
     where n.nspname = 'public'
       and has_function_privilege('anon', p.oid, 'execute')),
-  array['configuracao_do_app'],
-  'configuracao_do_app é a única função de public que anon executa');
+  array['configuracao_do_app', 'vaga_publica'],
+  'configuracao_do_app e vaga_publica (0.2.100) são as únicas funções de public que anon executa');
 
 -- O auxiliar de versão é privado: nem o app, com ou sem sessão, nem o PostgREST o chamam.
 -- O `service_role` recebe o execute explícito, como toda função `privado.*`.
@@ -85,14 +85,17 @@ select is(
     'versao_minima',      '0.1.0',
     'versao_recomendada', '0.1.0',
     'url_da_loja',        'https://apps.apple.com/app/id6815311991',
-    'mensagem',           null),
+    'mensagem',           null,
+    'recursos',           jsonb_build_object('foto_de_perfil', false, 'chamada_direta', false, 'perfil_rico', false,
+                                             'checkin_por_codigo', false,
+                                             'busca_profissionais', false)),
   'anon lê a configuração do iOS: a mínima inicial é a versão do build de hoje, e não bloqueia ninguém');
 
 select is(
   (select array_agg(k order by k)
      from jsonb_object_keys(pg_temp.anonimo($$ select public.configuracao_do_app('ios') $$)) k),
-  array['mensagem','plataforma','url_da_loja','versao_minima','versao_recomendada'],
-  'ConfiguracaoDoApp: os cinco campos do contrato, e mensagem presente mesmo nula');
+  array['mensagem','plataforma','recursos','url_da_loja','versao_minima','versao_recomendada'],
+  'ConfiguracaoDoApp: os cinco campos do contrato, mensagem presente mesmo nula, e os recursos (0.2.54)');
 
 select is(
   pg_temp.anonimo($$ select public.configuracao_do_app('ios') $$) -> 'mensagem',
@@ -117,7 +120,10 @@ select is(
     'versao_minima',      '1.2.10',
     'versao_recomendada', '1.3.0',
     'url_da_loja',        'https://apps.apple.com/app/id6815311991',
-    'mensagem',           'Corrigimos um defeito grave. Atualize para continuar.'),
+    'mensagem',           'Corrigimos um defeito grave. Atualize para continuar.',
+    'recursos',           jsonb_build_object('foto_de_perfil', false, 'chamada_direta', false, 'perfil_rico', false,
+                                             'checkin_por_codigo', false,
+                                             'busca_profissionais', false)),
   'subir a versão mínima na tabela muda a resposta na hora, sem deploy de app');
 
 select is(
@@ -176,16 +182,18 @@ select is(
 
 -- ── 404: plataforma do enum, sem configuração ─────────────────────────────────
 
+delete from privado.configuracao_app where plataforma = 'web';
+
 select throws_ok(
-  $$ select pg_temp.anonimo($x$ select public.configuracao_do_app('android') $x$) $$,
+  $$ select pg_temp.anonimo($x$ select public.configuracao_do_app('web') $x$) $$,
   'PGRST',
   '{"code" : "nao_encontrado", "message" : "nao_encontrado", "details" : "plataforma", "hint" : null}',
-  'android ainda não tem loja: 404, e não uma URL inventada');
+  'plataforma do enum sem linha gravada: 404, e não uma URL inventada');
 
 select is(
   pg_temp.status_de($$ select pg_temp.anonimo($x$ select public.configuracao_do_app('web') $x$) $$),
   404,
-  'web idem, com status 404');
+  'web sem configuração usa status 404');
 
 -- ── A tabela: fechada para as chaves do app ───────────────────────────────────
 

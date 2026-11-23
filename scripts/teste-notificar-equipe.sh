@@ -23,7 +23,7 @@ trap 'rm -rf "$TMP"' EXIT
 # teste precisa controlar o ambiente inteiro para não tocar em SMTP nenhum.
 rodar() {
   local saida_arquivo="$TMP/saida"
-  env -u SMTP_USER -u SMTP_PASS -u SMTP_TLS SMTP_HOST="" SMTP_SENDER="nao-responda@frila.app" \
+  env -u SMTP_USER -u SMTP_PASS -u SMTP_TLS SMTP_HOST="" SMTP_SENDER="verificacao@frilabr.com" \
     python3 "$ALVO" "$@" >"$saida_arquivo" 2>&1
   codigo=$?
   saida="$(cat "$saida_arquivo")"

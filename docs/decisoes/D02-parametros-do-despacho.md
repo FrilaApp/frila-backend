@@ -1,6 +1,6 @@
 # D02 — Parâmetros do despacho: raio, teto e urgência
 
-**Estado:** aceita a estrutura, **valores pendentes de dado do piloto** ·
+**Estado:** aceita a estrutura; **os valores mudam quando houver dado de uso real** ·
 **Cartão:** [`2RsO30sX`](https://trello.com/c/2RsO30sX) ·
 **Requisitos:** RN05, RN23 · **Decisão técnica:** D2 ·
 **Data:** 04/11/2026
@@ -18,7 +18,7 @@ Três números decidem quem recebe aviso de vaga, e nenhum dos três nasceu de m
 Os dois da RN23 já eram configuráveis desde o cartão `ee3MT3fH`: mudam com um `update` e
 o despacho lê a cada decisão. O raio da RN05 **não era** — trocar 15 km por 12 km exigia
 migração, revisão, merge e deploy, o que é lento demais para um ajuste de operação que o
-piloto pode pedir numa segunda-feira. [MEDIDO: `grep -n 15000` nas migrações; o literal
+uso real pode pedir numa segunda-feira. [MEDIDO: `grep -n 15000` nas migrações; o literal
 aparece em `privado.elegiveis`]
 
 Esta decisão trata **só da estrutura**: tirar o raio do código e colocá-lo onde os outros
@@ -35,23 +35,22 @@ dado que ainda não existe.
   quando a chave não existe — de propósito: teto ausente não pode virar "sem teto".
 - O raio era o literal `15000` em `extensions.ST_DWithin(p.ponto_base, v.ponto, 15000)`,
   dentro da CTE `candidatos as materialized` de `privado.elegiveis`.
-- As views do painel do piloto existem e respondem: `metrica.funil_geral`,
+- As views do painel de métricas existem e respondem: `metrica.funil_geral`,
   `metrica.funil_por_dia`, `metrica.funil_por_vaga`, `metrica.funil_por_estabelecimento`,
   `metrica.funil_confirmacoes`, `metrica.north_star_semanal`.
 - Nenhuma view do painel traz **distância do confirmado**. A terceira pergunta do cartão
   não tem resposta pronta no painel; a consulta está na seção "Como medir", e se virar
   rotina merece uma view própria, em cartão próprio.
 
-**[NÃO MEDIDO] Os valores do piloto.**
+**[NÃO MEDIDO] Os valores com uso real.**
 
-Não há dado de piloto em 04/11/2026. O cartão depende do GA de métricas da App Store
-(27/11) e do relatório pós-lançamento (T-0020), e o banco local só tem dados de
+Não havia dado de uso real em 04/11/2026: o banco local só tem dados de
 demonstração — `metrica.funil_geral` responde `vagas_publicadas = 10`,
 `notificacoes_enviadas = 1`, `candidaturas = 6`, `confirmacoes = 10`, números de cenário
 sintético que não sustentam decisão nenhuma sobre raio ou teto.
 
 **Portanto: nenhum dos três valores muda nesta decisão.** 15 km, 30 min e 2 h seguem como
-estão. O que muda é que, quando o número do piloto chegar, o ajuste é um `update` e não um
+estão. O que muda é que, quando o número do uso real chegar, o ajuste é um `update` e não um
 PR de migração.
 
 ## A decisão
@@ -83,7 +82,7 @@ PR de migração.
    grava o parâmetro com confirmação, para o ajuste não exigir que alguém monte um
    `update` à mão em produção.
 
-## Como medir, quando o piloto existir
+## Como medir, quando houver uso real
 
 As três perguntas do cartão, na ordem em que respondem:
 
@@ -131,14 +130,14 @@ select percentile_disc(0.50) within group (order by d) as p50_metros,
 
 Para a próxima pessoa não precisar reinterpretar os números:
 
-| Sinal no piloto | Leitura | Ajuste candidato |
+| Sinal no uso real | Leitura | Ajuste candidato |
 |---|---|---|
 | `p99` da distância dos confirmados bem abaixo de 15 km (ex.: < 9 km) e vagas sem candidato perto de 0 | O raio notifica gente que nunca aceita | Reduzir `raio_maximo_metros` para perto do `p99` observado |
 | Vagas sem candidato acima de ~15% com `p99` colado em 15 km | O raio está cortando quem aceitaria | Aumentar `raio_maximo_metros` |
 | Candidaturas por notificação caindo com volume de notificação subindo | Ruído: avisa demais, converte menos | Aumentar `teto_janela` (menos avisos, mais agrupamento) |
 | Vaga de urgência chegando com o turno já começado | A antecedência de 2 h é curta para o tempo real de deslocamento | Aumentar `urgente_antecedencia` |
 
-Nenhum destes gatilhos foi observado: não há piloto. São os limiares acordados **antes** do
+Nenhum destes gatilhos foi observado ainda: não havia uso real. São os limiares acordados **antes** do
 dado chegar, que é quando a régua ainda é honesta.
 
 ## Consequências

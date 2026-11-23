@@ -12,7 +12,7 @@ publicar → notificar → candidatar → confirmar → executar → avaliar
 ```
 
 Loja em 13/11/2026. O que entra em cada versão está em
-[`05-ESCOPO-DO-MVP.md`](https://github.com/FrilaApp/frila-docs/blob/main/produto/05-ESCOPO-DO-MVP.md);
+[`05-ESCOPO-DO-MVP.md`](https://github.com/FrilaApp/frila-documentacao/blob/main/historico/produto/05-ESCOPO-DO-MVP.md);
 o plano de trabalho, no [quadro do Trello](https://trello.com/b/0eyqvbRJ/frila).
 
 ## Rodar
@@ -63,7 +63,6 @@ supabase start -x vector,logflare
 | `./scripts/desvio.sh <ref>` | Compara o projeto remoto com o que as migrações constroem |
 | `./scripts/teste-entrega.sh` | Autoteste da janela de manutenção e do desvio |
 | `./scripts/ciclo-completo.sh` | Smoke test: `criar_conta` → `publicar_vaga` → `candidatar` → check-in → `avaliar` |
-| `./scripts/bancada-sync.sh` | Leva o trabalho do dia para o vault da Bancada |
 
 ## Estrutura
 
@@ -76,7 +75,7 @@ supabase/
 
 contrato/openapi.yaml   Espelho do contrato do Frila. Divergência quebra a CI
 .claude/agents/         Os cinco agentes do pipeline, versionados
-scripts/                bancada-sync, ciclo-completo
+scripts/                ciclo-completo e demais scripts de operação
 ```
 
 ## Ambientes
@@ -85,7 +84,7 @@ scripts/                bancada-sync, ciclo-completo
 |---|---|
 | local | Cada dev, com `supabase start`. Migração destrutiva e teste de corrida moram aqui |
 | `frila-dev` | Compartilhado: integração com o iOS e o TestFlight |
-| `frila-prod` | Produção (`hbjkkcenbudiezmamiak` · `sa-east-1`): em uso pelo app 0.5.5 no TestFlight e 9 Edge Functions ativas desde 27/10 (fonte: issue #352). Deploy via tag `backend-v*` com aprovação de revisor |
+| `frila-prod` | Produção (`hbjkkcenbudiezmamiak` · `sa-east-1`), usada pelo app da App Store. Deploy via tag `backend-v*` com aprovação de revisor |
 
 A chave de serviço fica fora do app e fora do git: só o agendador e a CI a usam.
 
@@ -108,7 +107,7 @@ Ninguém aplica migração nem publica Edge Function à mão. O workflow `Entreg
 | Tag `backend-v*` num commit da `develop` | Pede aprovação no Environment `frila-prod`, confere a janela abaixo e faz o mesmo no `frila-prod` |
 
 Para publicar em produção: `git tag backend-v0.3.0 origin/develop && git push origin
-backend-v0.3.0`, e um revisor aprova em *Actions*. Dentro da janela proibida o job recusa;
+backend-v0.3.0`, e um revisor aprova em *Actions*. Dentro da janela proibida, quando a RNF12 está ativa (`RNF12_ATIVA=1`), o job recusa;
 rode de novo depois das 2h.
 
 **Desvio.** `scripts/desvio.sh <project_ref>` compara o remoto com o banco que as
@@ -128,6 +127,8 @@ sem o segredo do agendador, porque sem ele `publicar_vaga` falha.
 público: nenhum segredo vai para o workflow.
 
 ### Janela de migração (RNF12)
+
+**Hoje desligada:** a janela só volta com 10 mil usuários ativos (decisão do Cauê, 08/11/2026). Até lá, o workflow Entrega não confere o horário (o passo só roda com a variável do repositório `RNF12_ATIVA=1`). Quando voltar, vale a regra abaixo.
 
 Migração em `frila-prod` **nunca** de quinta a domingo entre 16h e 2h, horário de
 Brasília (19h às 5h UTC). É o pico do food service, e um turno que não abre porque o
@@ -160,9 +161,9 @@ select setconfig from pg_db_role_setting s join pg_roles r on r.oid = s.setrole
  where r.rolname = 'authenticator';   -- traz pgrst.db_pre_request=requisicao.conferir_limite
 ```
 
-### Painel de métricas do piloto e contas da equipe
+### Painel de métricas e contas da equipe
 
-As views de métricas do funil do piloto residem no schema `metrica` (`metrica.funil_geral`, `metrica.funil_por_estabelecimento`, `metrica.funil_por_dia`), com acesso restrito a `service_role`. Podem ser consultadas diretamente pelo terminal:
+As views de métricas do funil residem no schema `metrica` (`metrica.funil_geral`, `metrica.funil_por_estabelecimento`, `metrica.funil_por_dia`), com acesso restrito a `service_role`. Podem ser consultadas diretamente pelo terminal:
 
 ```bash
 ./scripts/funil.sh
@@ -217,10 +218,10 @@ Environment `frila-backup`: `BACKUP_DB_URL`, `BACKUP_PUBLIC_KEY`, `BACKUP_S3_END
 | O quê | Onde |
 |---|---|
 | Histórico formal de versões (1.0.0+) | [`CHANGELOG.md`](CHANGELOG.md) |
-| Documentos de produto, contrato da API, requisitos | [`FrilaApp/frila-docs`](https://github.com/FrilaApp/frila-docs) |
-| Modelagem de banco, diagramas, decisões técnicas | [`FrilaApp/Bancada`](https://github.com/FrilaApp/Bancada) · `doc-harness/07 - Arquitetura/` |
-| Registro do processo, para os mentores | https://bancada-buu.pages.dev |
+| Documentos de produto, contrato da API, requisitos | [`FrilaApp/frila-documentacao`](https://github.com/FrilaApp/frila-documentacao) |
 | App iOS | [`FrilaApp/frila-frontend`](https://github.com/FrilaApp/frila-frontend) · `iOS/` |
+
+> A ponte da Bancada (vault de registros e `bancada-sync`) foi descontinuada em 04/11/2026.
 
 > O cartão `S0 · Infra · Criar o projeto no Supabase` diz que o backend fica em
 > `Frila/supabase/`. Mudou em 22/09: o código do backend vive aqui. O contrato continua
@@ -231,9 +232,9 @@ Environment `frila-backup`: `BACKUP_DB_URL`, `BACKUP_PUBLIC_KEY`, `BACKUP_S3_END
 Um cartão do Trello por vez, do quadro ao merge.
 
 - **Branch base e destino de PR: SEMPRE `develop`**: todo branch parte de `origin/develop` (`git fetch origin develop && git checkout -b sX/<slug> origin/develop`), todo PR deve ser aberto com `--base develop` (`gh pr create --base develop`), e o merge de PR aprovado entra exclusivamente na `develop`. A branch `main` é estritamente reservada para releases estáveis de produção.
-- O pipeline, os agentes e as regras que o código segue estão em [`CLAUDE.md`](CLAUDE.md).
+- O pipeline, os agentes e as regras que o código segue estão em [`AGENTS.md`](AGENTS.md).
 
 ## Time
 
 Cauê Carneiro · Fabrício Tosta · João Paulo Albuquerque · Júlia Clovandi · Matheus Silva
-— FrilaApp (antes BlendOps), Challenge 18 do Apple Developer Academy.
+— FrilaApp (antes BlendOps).

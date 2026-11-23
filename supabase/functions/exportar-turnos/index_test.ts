@@ -1010,20 +1010,114 @@ Deno.test("seguranca csv: CSV inicia com BOM UTF-8 (\\uFEFF) para compatibilidad
   assert(csv.startsWith("\uFEFF"), "CSV deve iniciar com BOM UTF-8 (\\uFEFF)");
 });
 
-Deno.test("seguranca CORS / metodos: requisicao OPTIONS recebe 405 metodo_nao_permitido e nao expoe Access-Control-Allow-Origin aberto", async () => {
+const ORIGEM_PERMITIDA = "https://painel.exemplo.test";
+const ORIGEM_FORA = "https://site-malicioso.com";
+
+function chamarComCors(e: Espiao, req: Request, origensCors: string): Promise<Response> {
+  return handler(req, {
+    fetchFn: e.fetchFn,
+    sqlClient: e.sql,
+    supabaseUrl: URL_BASE,
+    anonKey: ANON,
+    origensCors,
+  });
+}
+
+function requisicaoComOrigem(origem: string, metodo = "POST"): Request {
+  const req = requisicao(undefined, "token-valido", metodo);
+  const headers = new Headers(req.headers);
+  headers.set("Origin", origem);
+  return new Request(req, { headers });
+}
+
+Deno.test("seguranca CORS / lista vazia: requisicao OPTIONS recebe 405 metodo_nao_permitido e nao expoe Access-Control-Allow-Origin", async () => {
   const e = criarEspiao();
   const req = new Request(`${URL_BASE}/functions/v1/exportar-turnos`, {
     method: "OPTIONS",
-    headers: { Origin: "https://site-malicioso.com" },
+    headers: { Origin: ORIGEM_FORA },
   });
-  const res = await chamar(e, req);
+  const res = await chamarComCors(e, req, "");
 
   assertEquals(res.status, 405);
   const corpo = await res.json();
   assertEquals(corpo.code, "metodo_nao_permitido");
   assertEquals(res.headers.get("Access-Control-Allow-Origin"), null, "nao deve refletir nem conceder CORS curinga");
+  assertEquals(res.headers.get("Vary"), null, "lista vazia preserva o comportamento anterior");
   assertEquals(e.pedidos, [], "OPTIONS nao deve tocar no banco");
   assertEquals(e.chamadasAuth, [], "OPTIONS nao deve chamar Auth");
+});
+
+Deno.test("cors exportar-turnos: preflight de origem na lista devolve 204 com ACAO igual a origem, Vary e sem tocar em Auth nem banco", async () => {
+  const e = criarEspiao();
+  const res = await chamarComCors(e, requisicaoComOrigem(ORIGEM_PERMITIDA, "OPTIONS"), ORIGEM_PERMITIDA);
+
+  assertEquals(res.status, 204);
+  assertEquals(res.headers.get("Access-Control-Allow-Origin"), ORIGEM_PERMITIDA);
+  assertEquals(res.headers.get("Access-Control-Allow-Methods"), "POST, OPTIONS");
+  assertEquals(res.headers.get("Access-Control-Allow-Headers"), "authorization, content-type, apikey, x-client-info");
+  assertEquals(res.headers.get("Vary"), "Origin");
+  assertEquals(res.headers.get("Access-Control-Allow-Credentials"), null);
+  assertEquals(e.pedidos, [], "preflight nao deve tocar no banco");
+  assertEquals(e.chamadasAuth, [], "preflight nao deve chamar Auth");
+});
+
+Deno.test("cors exportar-turnos: preflight de origem fora da lista nao recebe ACAO", async () => {
+  const e = criarEspiao();
+  const res = await chamarComCors(e, requisicaoComOrigem(ORIGEM_FORA, "OPTIONS"), ORIGEM_PERMITIDA);
+
+  assertEquals(res.status, 405);
+  assertEquals((await res.json()).code, "metodo_nao_permitido");
+  assertEquals(res.headers.get("Access-Control-Allow-Origin"), null);
+  assertEquals(res.headers.get("Vary"), "Origin");
+  assertEquals(e.chamadasAuth, []);
+});
+
+Deno.test("cors exportar-turnos: POST real do CSV de origem na lista leva ACAO e Vary, e mantem no-store", async () => {
+  const e = criarEspiao();
+  const res = await chamarComCors(e, requisicaoComOrigem(ORIGEM_PERMITIDA), ORIGEM_PERMITIDA);
+
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("Content-Type"), "text/csv; charset=utf-8");
+  assertEquals(res.headers.get("Cache-Control"), "no-store");
+  assertEquals(res.headers.get("Access-Control-Allow-Origin"), ORIGEM_PERMITIDA);
+  assertEquals(res.headers.get("Vary"), "Origin");
+  assert((await res.text()).length > 0);
+});
+
+Deno.test("cors exportar-turnos: POST real de origem fora da lista nao leva ACAO", async () => {
+  const e = criarEspiao();
+  const res = await chamarComCors(e, requisicaoComOrigem(ORIGEM_FORA), ORIGEM_PERMITIDA);
+
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("Access-Control-Allow-Origin"), null);
+  assertEquals(res.headers.get("Vary"), "Origin");
+});
+
+Deno.test("cors exportar-turnos: 401 e 204 sem turnos de origem na lista tambem levam ACAO", async () => {
+  const e401 = criarEspiao(TURNOS_MOCK, false);
+  const r401 = await chamarComCors(e401, requisicaoComOrigem(ORIGEM_PERMITIDA), ORIGEM_PERMITIDA);
+  assertEquals(r401.status, 401);
+  assertEquals(r401.headers.get("Access-Control-Allow-Origin"), ORIGEM_PERMITIDA);
+
+  const eVazio = criarEspiao([]);
+  const r204 = await chamarComCors(eVazio, requisicaoComOrigem(ORIGEM_PERMITIDA), ORIGEM_PERMITIDA);
+  assertEquals(r204.status, 204);
+  assertEquals(r204.headers.get("Access-Control-Allow-Origin"), ORIGEM_PERMITIDA);
+});
+
+Deno.test("cors exportar-turnos: asterisco na configuracao nao vira curinga", async () => {
+  const e = criarEspiao();
+  const original = console.warn;
+  console.warn = () => {};
+  try {
+    const res = await chamarComCors(e, requisicaoComOrigem(ORIGEM_FORA), "*");
+    assertEquals(res.headers.get("Access-Control-Allow-Origin"), null);
+    const pre = await chamarComCors(e, requisicaoComOrigem(ORIGEM_FORA, "OPTIONS"), "*");
+    assertEquals(pre.status, 405);
+    assertEquals(pre.headers.get("Access-Control-Allow-Origin"), null);
+  } finally {
+    console.warn = original;
+  }
 });
 
 Deno.test("exportar-turnos: falha interna em gerarPdfFn retorna 500 erro_interno", async () => {

@@ -42,12 +42,12 @@ select pg_temp.como('c7000000-0000-4000-8000-000000000002',
 -- ── 1. Privilégios e Molde da RPC registrar_dispositivo ───────────────────────
 
 select is(
-  has_function_privilege('authenticated', 'public.registrar_dispositivo(text, text)', 'execute'),
+  has_function_privilege('authenticated', 'public.registrar_dispositivo(text, text, text)', 'execute'),
   true,
   'public.registrar_dispositivo é executável por authenticated');
 
 select is(
-  has_function_privilege('anon', 'public.registrar_dispositivo(text, text)', 'execute'),
+  has_function_privilege('anon', 'public.registrar_dispositivo(text, text, text)', 'execute'),
   false,
   'public.registrar_dispositivo não é executável por anon');
 

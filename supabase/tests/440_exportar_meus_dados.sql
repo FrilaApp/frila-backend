@@ -17,7 +17,7 @@
 -- avaliações; Zélia (b…01) administra o Bar do Cerrado (c…01).
 
 begin;
-select plan(69);
+select plan(70);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -107,8 +107,8 @@ create temp table d as select privado.meus_dados((select ana from ids)) as j;
 
 select is(
   (select string_agg(k, ',' order by k) from jsonb_object_keys((select j from d)) k),
-  'avaliacoes_dadas,avaliacoes_recebidas,bloqueios,candidaturas,conta,despachos,disponibilidade,dispositivos,equipe_confianca,estabelecimentos,eventos_app,gerado_em,notificacoes,ocorrencias,pedido_de_exclusao,perfil_profissional,turnos',
-  'o corpo tem exatamente as dezessete chaves de MeusDados, e nenhuma a mais');
+  'avaliacoes_dadas,avaliacoes_recebidas,bloqueios,candidaturas,chamadas,checkins_por_codigo,conta,despachos,disponibilidade,dispositivos,equipe_confianca,estabelecimentos,eventos_app,gerado_em,midias,notificacoes,ocorrencias,pedido_de_exclusao,perfil_profissional,registros_aceita_chamadas,turnos',
+  'o corpo tem exatamente as vinte e uma chaves de MeusDados, e nenhuma a mais (checkins_por_codigo desde a 0.2.68, registros_aceita_chamadas desde a 0.2.88)');
 
 select is(
   (select jsonb_typeof(j->'eventos_app') from d), 'array',
@@ -241,6 +241,10 @@ insert into cobertas values
   ('usuario',                'conta'),
   ('profissional',           'perfil_profissional'),
   ('profissional_funcao',    'perfil_profissional.funcoes'),
+  -- Destino aprovado para consolidação no contrato 0.2.58; implementação em fatia seguinte.
+  ('profissional_servico',   'perfil_profissional'),
+  ('profissional_servico_especialidade', 'perfil_profissional'),
+  ('profissional_regiao',    'perfil_profissional'),
   ('disponibilidade',        'disponibilidade e perfil_profissional.disponibilidades'),
   ('dispositivo',            'dispositivos, sem o token'),
   ('membro_estabelecimento', 'estabelecimentos'),
@@ -256,16 +260,26 @@ insert into cobertas values
   ('despacho',               'despachos'),
   ('equipe_confianca',       'equipe_confianca'),
   ('pedido_de_exclusao',     'pedido_de_exclusao'),
-  ('evento_app',             'eventos_app');
+  ('evento_app',             'eventos_app'),
+  ('chamada',                'chamadas'),
+  ('profissional_preferencia_chamada', 'perfil_profissional.preferencia_chamadas');
 
 create temp table fora (t text, motivo text);
 insert into fora values
   ('evento',               'agenda da casa, e não do titular'),
   ('entrada_demonstracao', 'conta de revisão da App Store: não há titular de dado pessoal aqui');
 
+-- Dado do titular que a exportação ainda não traz porque o contrato não o declara:
+-- Agora todas as tabelas estão cobertas (chamadas e preferências consolidadas no 0.2.58/0.2.59).
+create temp table pendente_de_contrato (t text, motivo text);
+
 create temp table nao_pessoais (t text, motivo text);
 insert into nao_pessoais values
-  ('funcao', 'catálogo de funções do setor, igual para todo mundo');
+  ('funcao', 'catálogo de funções do setor, igual para todo mundo'),
+  ('categoria', 'categorias do catálogo de funções, igual para todo mundo (RN44)'),
+  ('especialidade', 'especialidades curadas de cada função, igual para todo mundo (RN44)'),
+  ('funcao_sinonimo', 'como se chama cada função, igual para todo mundo (RN44)'),
+  ('regiao_administrativa', 'regiões administrativas do DF, igual para todo mundo (RN44)');
 
 create temp table catalogo as
   select tablename::text as t from pg_tables where schemaname = 'public';
@@ -274,6 +288,7 @@ select is(
   (select string_agg(t, ',' order by t) from catalogo
     where t not in (select t from cobertas)
       and t not in (select t from fora)
+      and t not in (select t from pendente_de_contrato)
       and t not in (select t from nao_pessoais)),
   null,
   'toda tabela de public está coberta, declarada como exceção ou declarada como impessoal (critério 1)');
@@ -281,10 +296,10 @@ select is(
 select is(
   (select string_agg(t, ',' order by t)
      from (select t from cobertas union all select t from fora
-           union all select t from nao_pessoais) x
+           union all select t from pendente_de_contrato union all select t from nao_pessoais) x
     where t not in (select t from catalogo)),
   null,
-  'e nenhuma das três listas cita tabela que não existe mais');
+  'e nenhuma das quatro listas cita tabela que não existe mais');
 
 -- Aqui havia uma asserção que fixava a divergência: seis tabelas com dado do titular que
 -- o contrato não declarava. O cartão IrtkCWDz a resolveu, as sete entraram em `cobertas`, e
@@ -295,6 +310,10 @@ select is(
   (select string_agg(t, ',' order by t) from fora),
   'entrada_demonstracao,evento',
   'só duas tabelas ficam de fora, e nenhuma delas guarda dado do titular');
+
+-- A pendência de chamadas foi resolvida neste PR (0.2.58 e 0.2.59 cobrem chamadas e preferências).
+select is((select string_agg(t, ',' order by t) from pendente_de_contrato), null,
+  'nenhuma tabela espera o aditivo de MeusDados');
 
 -- ── 5b. As sete coleções do contrato 0.2.27 ──────────────────────────────────
 -- Uma asserção por campo, e cada uma também cobra o que o campo NÃO leva. Sem a segunda

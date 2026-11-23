@@ -28,7 +28,7 @@ crash generalizado no lançamento), **a contenção deve ser imediata**. Não se
 a abertura de branch, revisão de PR e execução da esteira de CI (~35 minutos).
 
 ### Por que é isento da Janela Proibida RNF12?
-- A regra **RNF12** e o script `scripts/janela-de-manutencao.sh` proíbem a aplicação de
+- A regra **RNF12** (a janela de pico, quinta a domingo, das 16h às 2h, vale a partir de 10 mil usuários ativos, por decisão do Cauê em 08/11/2026; a meta de 99,5% segue) e o script `scripts/janela-de-manutencao.sh` proíbem a aplicação de
   **migrações estruturais DDL** de quinta a domingo, das 16h às 02h (horário de pico do food service),
   para prevenir bloqueios de catálogo e riscos de indisponibilidade.
 - Alterar a versão mínima em `privado.configuracao_app` é uma operação **DML pontual de 1 linha**

@@ -58,14 +58,14 @@ assert_aceita() {
 # ── Caso 1: sem DEMONSTRACAO_ATIVA_ATE (o estado real do frila-dev em 20/10/2026,
 # porque este script nunca a gravava) — é exatamente o que apaga a porta em silêncio.
 cat > "$tmp/sem_ativa_ate.env" <<EOF
-DEMONSTRACAO_EMAILS=revisao-contratante@frila.app,revisao-profissional@frila.app
+DEMONSTRACAO_EMAILS=revisao-contratante@frilabr.com,revisao-profissional@frilabr.com
 DEMONSTRACAO_CODIGO=codigo-de-teste-valido
 EOF
 assert_recusa "sem DEMONSTRACAO_ATIVA_ATE" "$tmp/sem_ativa_ate.env"
 
 # ── Caso 2: DEMONSTRACAO_ATIVA_ATE no passado — janela já vencida, mesmo fail-closed.
 cat > "$tmp/ativa_ate_passado.env" <<EOF
-DEMONSTRACAO_EMAILS=revisao-contratante@frila.app,revisao-profissional@frila.app
+DEMONSTRACAO_EMAILS=revisao-contratante@frilabr.com,revisao-profissional@frilabr.com
 DEMONSTRACAO_CODIGO=codigo-de-teste-valido
 DEMONSTRACAO_ATIVA_ATE=$PASSADO
 EOF
@@ -73,7 +73,7 @@ assert_recusa "DEMONSTRACAO_ATIVA_ATE no passado" "$tmp/ativa_ate_passado.env"
 
 # ── Caso 3: DEMONSTRACAO_ATIVA_ATE sem fuso explícito — ambíguo, a Edge Function também recusa.
 cat > "$tmp/ativa_ate_sem_fuso.env" <<EOF
-DEMONSTRACAO_EMAILS=revisao-contratante@frila.app,revisao-profissional@frila.app
+DEMONSTRACAO_EMAILS=revisao-contratante@frilabr.com,revisao-profissional@frilabr.com
 DEMONSTRACAO_CODIGO=codigo-de-teste-valido
 DEMONSTRACAO_ATIVA_ATE=$FUTURO_SEM_FUSO
 EOF
@@ -81,7 +81,7 @@ assert_recusa "DEMONSTRACAO_ATIVA_ATE sem fuso" "$tmp/ativa_ate_sem_fuso.env"
 
 # ── Caso 4: tudo válido, com DEMONSTRACAO_ATIVA_ATE futura e com fuso — deve aceitar.
 cat > "$tmp/valido.env" <<EOF
-DEMONSTRACAO_EMAILS=revisao-contratante@frila.app,revisao-profissional@frila.app
+DEMONSTRACAO_EMAILS=revisao-contratante@frilabr.com,revisao-profissional@frilabr.com
 DEMONSTRACAO_CODIGO=codigo-de-teste-valido
 DEMONSTRACAO_ATIVA_ATE=$FUTURO
 EOF

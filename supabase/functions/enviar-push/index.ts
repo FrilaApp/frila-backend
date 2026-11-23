@@ -57,6 +57,18 @@ export interface SqlClient {
     tipo: string,
   ) => Promise<{ title: string; body: string } | null>;
   reivindicarLotePendentes?: (limite: number) => Promise<NotificacaoLinha[]>;
+  /**
+   * 0.2.66 (portão (c) do corte por versão): ids dos aparelhos cuja `versao_app` alcança o mínimo
+   * de `chamada_direta` da plataforma, decidido no banco por `privado.recurso_na_versao`. Sem este
+   * método, nenhum aviso `chamada_*` sai (fechado por padrão).
+   */
+  aparelhosQueRecebemChamada?: (aparelhos: AparelhoParaVersao[]) => Promise<string[]>;
+}
+
+export interface AparelhoParaVersao {
+  id: string;
+  plataforma: string;
+  versao_app?: string | null;
 }
 
 export interface Dependencias {
@@ -110,6 +122,8 @@ const CHAVES_UUID_PERMITIDAS = [
   "posicao_id",
   "turno_id",
   "estabelecimento_id",
+  "chamada_id",
+  "midia_id",
 ] as const;
 
 export function filtrarDataPayloadFcm(
@@ -405,11 +419,11 @@ export function titulosECorposPorTipo(
         body: "Check-in manual registrado, aguardando confirmação do contratante.",
       };
     case "cancelamento":
-      // Caso 17 da planilha: a casa reabriu a vaga por falta de check-in.
+      // Caso 17 da planilha (alinhado ao D-13, decisão JP 15/11/2026): falta por atraso declarada pela casa.
       if (variaveis.reaberturaPorAtraso) {
         return {
-          title: "Turno cancelado por atraso",
-          body: "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.",
+          title: "Participação cancelada por atraso",
+          body: "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.",
         };
       }
       return {
@@ -430,6 +444,62 @@ export function titulosECorposPorTipo(
       return {
         title: "Conta reativada",
         body: "Sua conta foi reativada e está pronta para uso.",
+      };
+    case "chamada_recebida":
+      return {
+        title: "Nova chamada",
+        body: "Um contratante quer você para um trabalho. Toque para ver os detalhes e responder.",
+      };
+    case "chamada_lembrete":
+      return {
+        title: "Chamada esperando resposta",
+        body: "Você tem uma chamada esperando resposta. Toque para responder antes do prazo.",
+      };
+    case "chamada_aceita":
+      return {
+        title: "Chamada aceita",
+        body: "A sua chamada foi aceita. Toque para ver o turno confirmado.",
+      };
+    case "chamada_recusada":
+      return {
+        title: "Chamada recusada",
+        body: "A chamada foi recusada. Você pode chamar outra pessoa ou publicar para todos.",
+      };
+    case "chamada_expirada":
+      return {
+        title: "Chamada vencida",
+        body: "A chamada venceu sem resposta.",
+      };
+    case "chamada_cancelada":
+      return {
+        title: "Chamada cancelada",
+        body: "O contratante cancelou a chamada. Nada muda para você.",
+      };
+    case "chamada_encerrada":
+      return {
+        title: "Trabalho preenchido",
+        body: "O contratante fechou com outro profissional. Nada muda para você.",
+      };
+    case "midia_recusada":
+      return {
+        title: "Foto não publicada",
+        body: "Use uma foto sua, com rosto visível, sem texto nem dados pessoais.",
+      };
+    case "turno_nao_verificado":
+      return {
+        title: "Turno não verificado",
+        body: "A presença no turno não foi confirmada dentro do prazo. O turno foi encerrado como não verificado.",
+      };
+    // 0.2.77: Lembretes à casa sobre chegada não confirmada (RN15, RN22)
+    case "lembrete_30min_fim_turno":
+      return {
+        title: "Chegada a confirmar",
+        body: "Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos.",
+      };
+    case "lembrete_fim_turno":
+      return {
+        title: "Turno encerrado",
+        body: "O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas.",
       };
     default:
       return {
@@ -491,6 +561,21 @@ export function criarSqlClient(deps?: Dependencias): SqlClient {
             p_enviada_em => ${params.enviadaEm ?? null}::timestamptz
           )
         `;
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
+    async aparelhosQueRecebemChamada(aparelhos: AparelhoParaVersao[]): Promise<string[]> {
+      if (aparelhos.length === 0) return [];
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        const lista = aparelhos.map((a) => ({ id: a.id, plataforma: a.plataforma, versao_app: a.versao_app ?? null }));
+        const res = await sql`
+          select x.id
+            from jsonb_to_recordset(${sql.json(lista)}) as x(id text, plataforma text, versao_app text)
+           where privado.recurso_na_versao('chamada_direta', x.plataforma, x.versao_app)
+        `;
+        return res.map((r) => String(r.id));
       } finally {
         await sql.end({ timeout: 2 });
       }
@@ -653,6 +738,7 @@ export async function processarEnvioPush(
   }
 
   let notificacoes: NotificacaoLinha[] = [];
+  let loteReivindicado = false;
 
   if (notificacaoId) {
     const res = await fetchFn(
@@ -672,6 +758,7 @@ export async function processarEnvioPush(
     if (sqlClient && sqlClient.reivindicarLotePendentes) {
       try {
         notificacoes = await sqlClient.reivindicarLotePendentes(limite);
+        loteReivindicado = true;
       } catch (err) {
         const errMensagem = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
         console.error("Erro ao reivindicar lote com SKIP LOCKED:", errMensagem);
@@ -726,8 +813,13 @@ export async function processarEnvioPush(
   }> = [];
 
   for (const n of notificacoes) {
-    // 0. Não reenvia antes do vencimento do backoff exponencial
-    if (n.proxima_tentativa_em && new Date(n.proxima_tentativa_em).getTime() > Date.now()) {
+    // 0. Não reenvia antes do vencimento do backoff exponencial. O lote reivindicado já
+    // passou por esse filtro no banco (proxima_tentativa_em <= agora) e a coluna agora guarda
+    // o lease, não um backoff: reavaliar aqui pularia todo item do lote.
+    if (
+      !loteReivindicado &&
+      n.proxima_tentativa_em && new Date(n.proxima_tentativa_em).getTime() > Date.now()
+    ) {
       relatorio.push({
         notificacao_id: n.id,
         status: "pendente",
@@ -752,26 +844,84 @@ export async function processarEnvioPush(
       continue;
     }
 
-    // 2. Busca todos os aparelhos registrados da conta destinatária
-    const dispRes = await fetchFn(
-      `${supabaseUrl}/rest/v1/dispositivo?usuario_id=eq.${n.usuario_id}&select=id,token_fcm,plataforma,vinculo_id`,
-      { headers: dbHeaders },
-    );
-
-    const aparelhos: Array<{ id: string; token_fcm: string; plataforma: string; vinculo_id?: string }> =
-      dispRes.ok ? await dispRes.json() : [];
-
-    if (aparelhos.length === 0) {
-      // Usuário sem nenhum aparelho registrado
+    // 2. Busca todos os aparelhos registrados da conta destinatária. Se a LEITURA falha (rede, 5xx),
+    // não se sabe se há aparelho: é erro passageiro, com backoff, e não "sem_dispositivo" permanente
+    // (D-19: no frila-dev o aviso da casa falhou assim com 1 aparelho registrado).
+    let aparelhos: Array<{ id: string; token_fcm: string; plataforma: string; vinculo_id?: string; versao_app?: string | null }>;
+    try {
+      const dispRes = await fetchFn(
+        `${supabaseUrl}/rest/v1/dispositivo?usuario_id=eq.${n.usuario_id}&select=id,token_fcm,plataforma,vinculo_id,versao_app`,
+        { headers: dbHeaders },
+      );
+      if (!dispRes.ok) throw new Error(`dispositivo_http_${dispRes.status}`);
+      const lidos = await dispRes.json();
+      if (!Array.isArray(lidos)) throw new Error("dispositivo_resposta_invalida");
+      aparelhos = lidos;
+    } catch (_e) {
+      const novaTentativa = n.tentativas + 1;
+      const teto = 5;
+      const atingiuTeto = novaTentativa >= teto;
+      const proximaTentativa = atingiuTeto ? null : calcularProximaTentativa(novaTentativa);
       await sqlClient.gravarFalhaPush({
         notificacaoId: n.id,
-        motivo: "sem_dispositivo",
+        motivo: "erro_transitorio: leitura_de_aparelho",
+        permanente: false,
+        teto: teto,
+        proximaTentativaEm: proximaTentativa ? proximaTentativa.toISOString() : null,
+      });
+      relatorio.push({
+        notificacao_id: n.id,
+        status: atingiuTeto ? "falhou" : "pendente",
+        detalhe: "erro_transitorio: leitura_de_aparelho",
+      });
+      continue;
+    }
+
+    // B5e / CD-RF13, revisto na 0.2.66 (portão (c) do corte por versão): o aviso de chamada direta só
+    // sai para aparelho cuja versao_app alcança o mínimo de chamada_direta da plataforma, o mesmo que
+    // decide recursos.chamada_direta em configuracao_do_app e que chamar_profissional exige. Quem
+    // decide é o banco (privado.recurso_na_versao). Sem a consulta, nada sai: fechado por padrão,
+    // como o resto do corte. Se a consulta falhar, também nada sai agora, mas o aviso volta com
+    // backoff, como erro transitório: uma falha de rede não vira "versão não suportada" para sempre.
+    if (n.tipo.startsWith("chamada_") && aparelhos.length > 0) {
+      let recebem: Set<string>;
+      try {
+        recebem = new Set(
+          sqlClient.aparelhosQueRecebemChamada ? await sqlClient.aparelhosQueRecebemChamada(aparelhos) : [],
+        );
+      } catch (_e) {
+        const novaTentativa = n.tentativas + 1;
+        const teto = 5;
+        const atingiuTeto = novaTentativa >= teto;
+        const proximaTentativa = atingiuTeto ? null : calcularProximaTentativa(novaTentativa);
+        await sqlClient.gravarFalhaPush({
+          notificacaoId: n.id,
+          motivo: "erro_transitorio: versao_do_aparelho",
+          permanente: false,
+          teto: teto,
+          proximaTentativaEm: proximaTentativa ? proximaTentativa.toISOString() : null,
+        });
+        relatorio.push({
+          notificacao_id: n.id,
+          status: atingiuTeto ? "falhou" : "pendente",
+          detalhe: "erro_transitorio: versao_do_aparelho",
+        });
+        continue;
+      }
+      aparelhos = aparelhos.filter((a) => recebem.has(a.id));
+    }
+
+    if (aparelhos.length === 0) {
+      // Usuário sem nenhum aparelho registrado ou suportado
+      await sqlClient.gravarFalhaPush({
+        notificacaoId: n.id,
+        motivo: n.tipo.startsWith("chamada_") ? "versao_nao_suportada" : "sem_dispositivo",
         permanente: true,
       });
       relatorio.push({
         notificacao_id: n.id,
         status: "falhou",
-        detalhe: "sem_dispositivo",
+        detalhe: n.tipo.startsWith("chamada_") ? "versao_nao_suportada" : "sem_dispositivo",
       });
       continue;
     }

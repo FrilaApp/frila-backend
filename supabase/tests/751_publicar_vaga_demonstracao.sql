@@ -35,8 +35,8 @@ end $$;
 select privado.renovar_dados_demonstracao();
 
 create temp table ids as select
-  (select id from auth.users where lower(email) = 'revisao-contratante@frila.app' limit 1) as contratante,
-  (select id from auth.users where lower(email) = 'revisao-profissional@frila.app' limit 1) as profissional,
+  (select id from auth.users where lower(email) = 'revisao-contratante@frilabr.com' limit 1) as contratante,
+  (select id from auth.users where lower(email) = 'revisao-profissional@frilabr.com' limit 1) as profissional,
   'c7510000-0000-4000-8000-000000000001'::uuid as real_profissional,
   (select id from public.estabelecimento where nome = 'Bar da Revisão' limit 1) as estab_demo,
   (select id from public.funcao where nome = 'garçom' limit 1) as garcom;

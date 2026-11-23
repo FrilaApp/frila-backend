@@ -118,6 +118,15 @@ executar_mutacoes() {
     "select null;" \
     "suspender-conta.sql: estado da conta não foi alterado para suspensa"
 
+  # Mutação 3B: consultar-ocorrencias.sql sem a coluna chamada_id (CD-S13)
+  rodar_mutacao \
+    "consultar-ocorrencias.sql (tira o.chamada_id da listagem)" \
+    "$tmp_dir" \
+    "consultar-ocorrencias.sql" \
+    "o.chamada_id," \
+    "" \
+    "consultar-ocorrencias.sql: chamada_id da denúncia de teste não aparece na listagem"
+
   # Mutação 4: moderar-conteudo.sql ignorando ação de ocultar
   rodar_mutacao \
     "moderar-conteudo.sql (ignora chamada de moderação)" \
@@ -153,6 +162,8 @@ ALVO_ID=""
 PUB_ID=""
 ESTAB_ID=""
 VAGA_ID=""
+PROF_ID=""
+CHAMADA_ID=""
 OC_SUPORTE_1=""
 OC_SUPORTE_2=""
 OC_DENUNCIA=""
@@ -171,6 +182,7 @@ limpar() {
          or usuario_id in ('$OPERADOR_ID', '$ALVO_ID', '$PUB_ID')
          or estabelecimento_id = '$ESTAB_ID'
          or id in ('$OC_SUPORTE_1', '$OC_SUPORTE_2', '$OC_DENUNCIA');
+      delete from public.chamada where id = '$CHAMADA_ID';
       delete from public.despacho where vaga_id = '$VAGA_ID';
       delete from public.posicao where vaga_id = '$VAGA_ID';
       delete from public.vaga where id = '$VAGA_ID';
@@ -178,6 +190,7 @@ limpar() {
       delete from public.estabelecimento where id = '$ESTAB_ID';
       delete from public.notificacao where usuario_id in ('$OPERADOR_ID', '$ALVO_ID', '$PUB_ID');
       delete from privado.conta_equipe where usuario_id = '$OPERADOR_ID';
+      delete from public.profissional where id = '$PROF_ID';
       delete from public.usuario where id in ('$OPERADOR_ID', '$ALVO_ID', '$PUB_ID');
       commit;
     " >/dev/null; then
@@ -232,6 +245,9 @@ PUB_ID=$(uuid_gen)
 ESTAB_ID=$(uuid_gen)
 VAGA_ID=$(uuid_gen)
 CHAVE_VAGA=$(uuid_gen)
+PROF_ID=$(uuid_gen)
+CHAMADA_ID=$(uuid_gen)
+CHAVE_CHAMADA=$(uuid_gen)
 OC_SUPORTE_1=$(uuid_gen)
 OC_SUPORTE_2=$(uuid_gen)
 OC_DENUNCIA=$(uuid_gen)
@@ -281,15 +297,22 @@ psql_cmd -c "
     '$CHAVE_VAGA', '$PUB_ID'
   );
 
-  -- 4. Ocorrências iniciais
+  -- 4. Profissional (o alvo) e a chamada direta em que ele denuncia a casa (CD-S13)
+  insert into public.profissional (id, usuario_id, ponto_base)
+  values ('$PROF_ID', '$ALVO_ID', 'POINT(-47.8825 -15.7942)'::extensions.geography);
+
+  insert into public.chamada (id, vaga_id, profissional_id, estabelecimento_id, criada_por, expira_em, chave)
+  values ('$CHAMADA_ID', '$VAGA_ID', '$PROF_ID', '$ESTAB_ID', '$PUB_ID', now() + interval '1 day', '$CHAVE_CHAMADA');
+
+  -- 5. Ocorrências iniciais
   insert into public.ocorrencia (id, tipo, autor_id, usuario_id, motivo, origem, criada_em)
   values
     ('$OC_SUPORTE_1', 'suporte', '$ALVO_ID', '$ALVO_ID', 'Chamado teste sem email 1', 'app', now()),
     ('$OC_SUPORTE_2', 'suporte', '$ALVO_ID', '$ALVO_ID', 'Chamado teste sem email 2', 'app', now());
 
-  insert into public.ocorrencia (id, tipo, autor_id, estabelecimento_id, motivo, relato, origem, criada_em)
+  insert into public.ocorrencia (id, tipo, autor_id, estabelecimento_id, motivo, relato, origem, criada_em, chamada_id)
   values
-    ('$OC_DENUNCIA', 'denuncia', '$ALVO_ID', '$ESTAB_ID', 'outro', 'Relato teste denuncia operacao', 'app', now());
+    ('$OC_DENUNCIA', 'denuncia', '$ALVO_ID', '$ESTAB_ID', 'outro', 'Relato teste denuncia operacao', 'app', now(), '$CHAMADA_ID');
 " >/dev/null
 
 CRIOU_FIXTURES=1
@@ -307,7 +330,11 @@ if ! printf '%s\n' "$saida_consulta" | grep -qF "Relato teste denuncia operacao"
   echo "✗ consultar-ocorrencias.sql: relato da ocorrência de teste não encontrado na listagem" >&2
   exit 1
 fi
-echo "  ✓ consultar-ocorrencias.sql: listou ocorrência aberta com protocolo $PROTO_DENUNCIA"
+if ! printf '%s\n' "$saida_consulta" | grep -qF "$CHAMADA_ID"; then
+  echo "✗ consultar-ocorrencias.sql: chamada_id da denúncia de teste não aparece na listagem" >&2
+  exit 1
+fi
+echo "  ✓ consultar-ocorrencias.sql: listou ocorrência aberta com protocolo $PROTO_DENUNCIA e a chamada dela"
 
 # ── Teste 2: fechar-chamado-sem-email.sql ─────────────────────────────────────
 # Caso 2A: Fechar por ID com resultado default ('sem_email_recebido')

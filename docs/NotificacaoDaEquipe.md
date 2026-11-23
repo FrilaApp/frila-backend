@@ -77,7 +77,7 @@ chamar o `.py` direto num ambiente controlado, como a suíte de testes faz.
 | `SMTP_PORT` | `587` | `465` usa TLS implícito; `587` e `25` sobem por STARTTLS |
 | `SMTP_USER` | — | Opcional: sem usuário e senha, não há `login` |
 | `SMTP_PASS` | — | Nunca aparece em log, nem em mensagem de erro |
-| `SMTP_SENDER` | `nao-responda@frila.app` | Remetente. Endereço inválido desliga o envio |
+| `SMTP_SENDER` | `verificacao@frilabr.com` | Remetente. Endereço inválido desliga o envio |
 | `SMTP_TLS` | `1` | `0` desliga TLS e STARTTLS, para apontar o Mailpit local |
 
 As mesmas variáveis já estão no `.env.example` da raiz, seção

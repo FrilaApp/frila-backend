@@ -27,6 +27,9 @@
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
 select plan(20);
+-- Fluxo legado do check-in (geolocalizado a até 200 m, verificado na hora): desde 20261112230000 a chave
+-- checkin_por_codigo nasce ligada para todas as casas; este teste prova o fluxo sem o código, então a desliga aqui.
+update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -356,8 +359,10 @@ select throws_ok(
 );
 
 -- ── 20. configuracaoDoApp: 404 nao_encontrado ──────────────────────────────────
+-- As três plataformas têm linha desde 20261117060000; apaga a da web na transação.
+delete from privado.configuracao_app where plataforma = 'web';
 select throws_ok(
-  $$ select public.configuracao_do_app('android') $$,
+  $$ select public.configuracao_do_app('web') $$,
   'PGRST',
   pg_temp.erro('nao_encontrado', 'plataforma'),
   '20. configuracaoDoApp: plataforma sem linha devolve 404 nao_encontrado'

@@ -24,7 +24,7 @@ import {
   GravarAceitePushParams,
   VariaveisDoTexto,
 } from "./index.ts";
-import { FcmServiceAccount, sendFcmMessage, getAccessToken } from "./fcm.ts";
+import { FcmServiceAccount, FcmMessagePayload, sendFcmMessage, getAccessToken } from "./fcm.ts";
 
 const SEGREDO_TESTE = "frila-teste-segredo-agendador-local";
 
@@ -186,8 +186,14 @@ Deno.test("FCM client: envia android por tipo com TTL, data e apns intactos (200
       ttl: "86400s",
     }, `Configuração Android para ${tipo ?? "tipo ausente"}`);
     assertEquals(corpoFCM?.message?.data, data ?? {});
-    // iOS: alerta segue estruturado em apns.payload.aps.alert com mutable-content
+    // iOS: alerta segue estruturado em apns.payload.aps.alert com mutable-content, e os
+    // cabeçalhos do APNs pedem entrega imediata: sem apns-priority 10 e apns-push-type alert,
+    // o aparelho em repouso recebe o push sem acender a tela (hQDlvpHi).
     assertEquals(corpoFCM?.message?.apns, {
+      headers: {
+        "apns-priority": "10",
+        "apns-push-type": "alert",
+      },
       payload: {
         aps: {
           alert: {
@@ -198,6 +204,7 @@ Deno.test("FCM client: envia android por tipo com TTL, data e apns intactos (200
           badge: 1,
           "mutable-content": 1,
         },
+        ...(data?.vinculo_id ? { vinculo_id: data.vinculo_id } : {}),
       },
     });
   }
@@ -447,6 +454,80 @@ Deno.test("Bloqueio 3: worker não reenvia notificação antes do vencimento de 
   assertEquals(data.relatorio[0].status, "pendente");
   assertEquals(data.relatorio[0].detalhe, "aguardando_backoff");
   assertEquals(fcmDisparado, false, "FCM não deve ser chamado antes do vencimento do backoff");
+});
+
+Deno.test("Lote reivindicado: o lease recém-gravado em proxima_tentativa_em não é lido como backoff (hQDlvpHi)", async () => {
+  // Medido no Prod: reivindicar_lote_push devolvia a proxima_tentativa_em NOVA (agora + 5 min)
+  // e o laço pulava todo item do lote como aguardando_backoff; o lote nunca enviava nada.
+  // O item vem do lote reivindicado, que o banco já filtrou por proxima_tentativa_em <= agora:
+  // o laço não reavalia o backoff nele.
+  const sa = await gerarContaDeServicoTeste();
+  const chamadasAceite: GravarAceitePushParams[] = [];
+  const lease = new Date(Date.now() + 300000).toISOString();
+  const sqlClient: SqlClient = {
+    ...criarMockSqlClient({ chamadasAceite }),
+    reivindicarLotePendentes: () =>
+      Promise.resolve([
+        {
+          id: "a1000000-0000-4000-8000-000000000001",
+          usuario_id: "u1000000-0000-4000-8000-000000000001",
+          tipo: "vaga",
+          referencia_id: "v1000000-0000-4000-8000-000000000001",
+          payload: {},
+          tentativas: 0,
+          estado_entrega: "pendente",
+          proxima_tentativa_em: lease,
+          urgente: false,
+        },
+      ]),
+  };
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL) => {
+    const url = input.toString();
+    if (url === "http://mock-oauth/token") {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([{ id: "disp-1", token_fcm: "fcm_token_device_1", plataforma: "ios" }]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    if (url.includes("/messages:send")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ name: "projects/frila-test-project/messages/msg_lote" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+    body: JSON.stringify({ origem: "fila" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient,
+  });
+
+  assertEquals(res.status, 200);
+  const data = await res.json();
+  assertEquals(data.relatorio[0].status, "enviada", "o item reivindicado deve ser enviado, não pulado");
+  assertEquals(chamadasAceite.length, 1, "o aceite do FCM deve ser gravado");
 });
 
 Deno.test("Bloqueio 3: erro transitório agenda proxima_tentativa_em no banco", async () => {
@@ -848,11 +929,11 @@ Deno.test("Planilha: início sem check-in (caso 13) e atraso de 15 min (caso 16)
 
 Deno.test("Planilha: cancelamento por reabertura por atraso (caso 17), e só ele", () => {
   assertEquals(titulosECorposPorTipo("cancelamento", {}, { reaberturaPorAtraso: true }), {
-    title: "Turno cancelado por atraso",
-    body: "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.",
+    title: "Participação cancelada por atraso",
+    body: "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.",
   });
   const generico = titulosECorposPorTipo("cancelamento", {});
-  assert(generico.title !== "Turno cancelado por atraso",
+  assert(generico.title !== "Participação cancelada por atraso",
     "cancelamento comum não pode dizer que foi atraso");
 });
 
@@ -922,8 +1003,8 @@ Deno.test("Envio: cancelamento com ocorrência reabertura_por_atraso sai com o t
 
   assertEquals(res.status, 200);
   assert(consultouOcorrencia, "o motivo do cancelamento é lido do banco no envio");
-  assertEquals(enviado.title, "Turno cancelado por atraso");
-  assertEquals(enviado.body, "O contratante reabriu a vaga por falta de check-in. O turno foi cancelado.");
+  assertEquals(enviado.title, "Participação cancelada por atraso");
+  assertEquals(enviado.body, "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.");
 });
 
 Deno.test("Lembretes 24h e 3h: interpolação Opção A homologada (k5R4tzjC)", async () => {
@@ -1209,6 +1290,62 @@ Deno.test("Ciclo do token: depois de sair da conta, nenhuma notificação sai pa
   assertEquals(relatorio.status, "falhou");
   assertEquals(relatorio.detalhe, "sem_dispositivo");
   assertEquals(enviados, [], "Aparelho que saiu da conta não recebe push");
+});
+
+// ── D-19: a leitura dos aparelhos falhou não é "sem aparelho" ─────────────────
+//
+// No frila-dev (13/11, 01:30), o avaliacao_disponivel da casa falhou como sem_dispositivo,
+// permanente, com 1 aparelho registrado: a leitura de `dispositivo` falhou e a função seguiu com a
+// lista vazia. Falha da leitura é erro passageiro: nada sai agora e o aviso volta com backoff.
+
+function mockLeituraDeAparelhoFalha(
+  modo: "http_503" | "rede",
+  enviados: string[],
+): typeof fetch {
+  const base = mockCicloDoToken(
+    [{ usuario_id: CONTA_A, token_fcm: TOKEN_COMPARTILHADO }],
+    { "a3000000-0000-4000-8000-0000000000d1": CONTA_A },
+    enviados,
+  );
+  return (input: RequestInfo | URL, init?: RequestInit) => {
+    if (input.toString().includes("/rest/v1/dispositivo?")) {
+      return modo === "rede"
+        ? Promise.reject(new TypeError("error sending request: connection reset"))
+        : Promise.resolve(new Response('{"message":"upstream"}', { status: 503 }));
+    }
+    return base(input, init);
+  };
+}
+
+for (const modo of ["http_503", "rede"] as const) {
+  Deno.test(`D-19: leitura de aparelhos falhou (${modo}): nada sai e o aviso volta como erro transitório`, async () => {
+    const enviados: string[] = [];
+    const chamadasFalha: GravarFalhaPushParams[] = [];
+    const item = await enviarNotificacao(
+      "a3000000-0000-4000-8000-0000000000d1",
+      mockLeituraDeAparelhoFalha(modo, enviados),
+      criarMockSqlClient({ chamadasFalha }),
+    );
+    assertEquals(item.status, "pendente");
+    assertEquals(item.detalhe, "erro_transitorio: leitura_de_aparelho");
+    assertEquals(enviados, []);
+    assertEquals(chamadasFalha.length, 1);
+    assertEquals(chamadasFalha[0].permanente, false, "não vira sem_dispositivo permanente");
+    assertEquals(chamadasFalha[0].motivo, "erro_transitorio: leitura_de_aparelho");
+    assert(typeof chamadasFalha[0].proximaTentativaEm === "string", "volta com backoff");
+  });
+}
+
+Deno.test("D-19: a leitura que responde lista vazia continua sendo sem_dispositivo permanente", async () => {
+  const enviados: string[] = [];
+  const chamadasFalha: GravarFalhaPushParams[] = [];
+  const item = await enviarNotificacao(
+    "a3000000-0000-4000-8000-0000000000d2",
+    mockCicloDoToken([], { "a3000000-0000-4000-8000-0000000000d2": CONTA_B }, enviados),
+    criarMockSqlClient({ chamadasFalha }),
+  );
+  assertEquals(item.detalhe, "sem_dispositivo");
+  assertEquals(chamadasFalha[0]?.permanente, true);
 });
 
 // ── Textos de vaga e teto da RN23 (cartão ee3MT3fH) ───────────────────────────
@@ -1944,6 +2081,41 @@ Deno.test("BsXIZHOw: textos de suspensao e reativacao cabem no iPhone SE e nao t
   assert(!reat.body.includes("Contestação"), "o motivo da reativação não vai no corpo do push");
 });
 
+// Contrato 0.2.62 / RN15, RN22: Aviso de turno não verificado aos dois lados
+Deno.test("0.2.62: turno_nao_verificado tem titulo e corpo conforme contrato e cabe na tela bloqueada", () => {
+  const notif = titulosECorposPorTipo("turno_nao_verificado", {});
+  assertEquals(notif, {
+    title: "Turno não verificado",
+    body: "A presença no turno não foi confirmada dentro do prazo. O turno foi encerrado como não verificado.",
+  });
+  assert(notif.title.length <= 32, "título de turno_nao_verificado cabe na tela bloqueada do iPhone SE");
+  assert(!notif.body.includes("@"), "não contém e-mail");
+  assert(!notif.body.includes("+55"), "não contém telefone");
+});
+
+// Contrato 0.2.77 / RN15, RN22: Lembretes à casa sobre chegada não confirmada (30min antes e no fim)
+Deno.test("0.2.77: lembrete_30min_fim_turno e lembrete_fim_turno tem titulo e corpo conforme contrato e cabem na tela bloqueada", () => {
+  const lembrete30 = titulosECorposPorTipo("lembrete_30min_fim_turno", {});
+  assertEquals(lembrete30, {
+    title: "Chegada a confirmar",
+    body: "Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos.",
+  });
+  assert(lembrete30.title.length <= 40, "título de lembrete_30min_fim_turno cabe no iPhone SE");
+  assert(lembrete30.body.length <= 110, "corpo de lembrete_30min_fim_turno cabe no iPhone SE");
+  assert(!lembrete30.body.includes("@"), "não contém e-mail");
+  assert(!lembrete30.body.includes("+55"), "não contém telefone");
+
+  const lembreteFim = titulosECorposPorTipo("lembrete_fim_turno", {});
+  assertEquals(lembreteFim, {
+    title: "Turno encerrado",
+    body: "O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas.",
+  });
+  assert(lembreteFim.title.length <= 40, "título de lembrete_fim_turno cabe no iPhone SE");
+  assert(lembreteFim.body.length <= 110, "corpo de lembrete_fim_turno cabe no iPhone SE");
+  assert(!lembreteFim.body.includes("@"), "não contém e-mail");
+  assert(!lembreteFim.body.includes("+55"), "não contém telefone");
+});
+
 // Hardening de Produção (cartão kT7NhMGV): B7, B5, B4, B3
 Deno.test("kT7NhMGV / B7: processarEnvioPush recusa notificacao_id invalido com 422 campo_invalido", async () => {
   const req = new Request("http://localhost/functions/v1/enviar-push", {
@@ -2296,6 +2468,9 @@ Deno.test("Cartão h6RoObK6: corpo enviado ao FCM traz apns.payload.aps['mutable
   assertEquals(corpoEnviado.message.data?.tipo, "vaga");
   assertEquals(corpoEnviado.message.data?.vaga_id, "d0000000-0000-4000-8000-000000000001");
 
+  // 0.2.62 (RN15): apns.payload traz vinculo_id para a Notification Service Extension
+  assertEquals(corpoEnviado.message.apns?.payload?.vinculo_id, "11111111-1111-4000-8000-000000000001");
+
   // 4. Alerta com título e corpo no APNs para iOS, e nenhum dado pessoal novo no payload
   assertEquals(corpoEnviado.message.notification, undefined);
   assertEquals(corpoEnviado.message.apns?.payload?.aps?.alert?.title, "Nova vaga no Frila");
@@ -2323,6 +2498,31 @@ Deno.test("Contrato 0.2.30: vinculo_id não entra em notificacao.payload e filtr
   assertEquals((filtrado as Record<string, string>).vinculo_id, undefined);
 });
 
+Deno.test("0.2.62 (RN15): sendFcmMessage propaga vinculo_id no payload apns para interceptação por FrilaNotificationService", async () => {
+  let requestEnviado: any = null;
+  const mockFetch: typeof fetch = (_input: RequestInfo | URL, init?: RequestInit) => {
+    requestEnviado = JSON.parse(init?.body as string);
+    return Promise.resolve(new Response(JSON.stringify({ name: "projects/frila-test/messages/msg-vinculo" }), { status: 200 }));
+  };
+
+  const payload: FcmMessagePayload = {
+    token: "token-teste-ios",
+    title: "Vaga disponível",
+    body: "Confira a nova vaga",
+    plataforma: "ios",
+    data: {
+      tipo: "vaga",
+      vinculo_id: "99999999-9999-4000-8000-999999999999",
+    },
+  };
+
+  const resultado = await sendFcmMessage("frila-test", "mock-token", payload, { fetchFn: mockFetch });
+  assertEquals(resultado.ok, true);
+  assertEquals(requestEnviado.message.apns?.payload?.vinculo_id, "99999999-9999-4000-8000-999999999999");
+  assertEquals(requestEnviado.message.apns?.payload?.aps?.["mutable-content"], 1);
+  assertEquals(requestEnviado.message.data?.vinculo_id, "99999999-9999-4000-8000-999999999999");
+});
+
 // ── Auditoria de Privacidade (RN10, RN15, LGPD) ──────────────────────────────
 
 Deno.test("RN15 / LGPD: nenhum título ou corpo vaza dados pessoais mesmo com variáveis interpoladas", () => {
@@ -2342,6 +2542,9 @@ Deno.test("RN15 / LGPD: nenhum título ou corpo vaza dados pessoais mesmo com va
     "avaliacao_disponivel",
     "suspensao",
     "reativacao",
+    "turno_nao_verificado",
+    "lembrete_30min_fim_turno",
+    "lembrete_fim_turno",
     "tipo_desconhecido_fallback",
   ];
 
@@ -3500,6 +3703,106 @@ Deno.test("RN15 / Android data-only: aparelho Android recebe titulo e corpo em d
   }
 });
 
+Deno.test("B-054: aparelho web recebe só data (tipo e ids), sem título nem corpo no corpo enviado ao FCM", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  // deno-lint-ignore no-explicit-any
+  let corpoEnviado: any = null;
+
+  const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    if (url.includes("/token")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "b5400000-0000-4000-8000-000000000001",
+              usuario_id: "c5400000-0000-4000-8000-000000000001",
+              tipo: "vaga",
+              referencia_id: "d5400000-0000-4000-8000-000000000001",
+              payload: {
+                vaga_id: "d5400000-0000-4000-8000-000000000001",
+                funcao: "garcom",
+                regiao: "Asa Sul",
+              },
+              tentativas: 0,
+              estado_entrega: "pendente",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: "disp-web-1",
+              token_fcm: "fcm_token_navegador_web_12345",
+              plataforma: "web",
+              vinculo_id: "54545454-5454-4000-8000-000000000001",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    if (url.includes("/messages:send") && init?.body) {
+      corpoEnviado = JSON.parse(init.body as string);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ name: "projects/frila-test/messages/msg-web-so-data" }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }
+    return Promise.reject(new Error(`URL não tratada no mock: ${url}`));
+  };
+
+  const req = new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+    body: JSON.stringify({ notificacao_id: "b5400000-0000-4000-8000-000000000001" }),
+  });
+
+  const res = await processarEnvioPush(req, {
+    serviceAccount: sa,
+    fetchFn: mockFetch,
+    fcmApiUrl: "http://mock-fcm/messages:send",
+    sqlClient: criarMockSqlClient(),
+  });
+
+  assertEquals(res.status, 200);
+  assert(corpoEnviado !== null, "mensagem FCM deve ter sido enviada");
+
+  const dataEsperado = {
+    tipo: "vaga",
+    vaga_id: "d5400000-0000-4000-8000-000000000001",
+    vinculo_id: "54545454-5454-4000-8000-000000000001",
+  };
+  assertEquals(corpoEnviado, {
+    message: {
+      token: "fcm_token_navegador_web_12345",
+      data: dataEsperado,
+      webpush: { data: dataEsperado },
+    },
+  });
+
+  // Nem o título, nem o corpo, nem a função ou a região (que só servem para montar o texto) viajam.
+  const json = JSON.stringify(corpoEnviado);
+  for (const proibido of ["Nova vaga no Frila", "Garçom", "garcom", "Asa Sul", "\"title\"", "\"body\"", "titulo", "corpo"]) {
+    assert(!json.includes(proibido), `'${proibido}' não pode ir no corpo enviado ao aparelho web`);
+  }
+});
+
 Deno.test("sendFcmMessage: data-only puro para plataforma android injeta titulo e corpo em data se ausentes", async () => {
   const sa = await gerarContaDeServicoTeste();
   // deno-lint-ignore no-explicit-any
@@ -3572,4 +3875,146 @@ Deno.test("enviar-push: helpers capitalizar e formatarHorario tratam nulos e ent
 
   assertEquals(formatarHorario("data-invalida"), undefined);
   assertEquals(formatarHorario(""), undefined);
+});
+
+// ── 0.2.66: o aviso chamada_* segue o mínimo de chamada_direta da plataforma ──
+// Portão (c) do corte por versão. Quem decide é o banco (privado.recurso_na_versao), pelo
+// sqlClient; aqui o mock faz o papel do banco. Dois aparelhos da mesma conta: um no mínimo e
+// um abaixo dele.
+
+function fetchDeChamada(tipo: string, enviados: string[]): typeof fetch {
+  return (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString();
+    if (url === "http://mock-oauth/token") {
+      return Promise.resolve(new Response(
+        JSON.stringify({ access_token: "token-oauth-ok", token_type: "Bearer", expires_in: 3600 }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ));
+    }
+    if (url.includes("/rest/v1/notificacao?id=eq.")) {
+      return Promise.resolve(new Response(JSON.stringify([{
+        id: "a2660000-0000-4000-8000-000000000001",
+        usuario_id: "u2660000-0000-4000-8000-000000000001",
+        tipo,
+        referencia_id: "c2660000-0000-4000-8000-000000000001",
+        payload: { chamada_id: "c2660000-0000-4000-8000-000000000001", vaga_id: "d2660000-0000-4000-8000-000000000001" },
+        tentativas: 0,
+        estado_entrega: "pendente",
+        proxima_tentativa_em: null,
+      }]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/rest/v1/dispositivo?usuario_id=eq.")) {
+      return Promise.resolve(new Response(JSON.stringify([
+        { id: "disp-novo", token_fcm: "fcm_token_aparelho_novo", plataforma: "ios", versao_app: "1.2.0" },
+        { id: "disp-velho", token_fcm: "fcm_token_aparelho_velho", plataforma: "ios", versao_app: "1.1.0" },
+      ]), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }
+    if (url.includes("/messages:send")) {
+      const corpo = JSON.parse(String(init?.body ?? "{}"));
+      enviados.push(corpo?.message?.token);
+      return Promise.resolve(new Response(
+        JSON.stringify({ name: "projects/frila-test-project/messages/msg_266" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ));
+    }
+    return Promise.reject(new Error(`URL não tratada: ${url}`));
+  };
+}
+
+function pedidoDeChamada(): Request {
+  return new Request("http://localhost/functions/v1/enviar-push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-agendador-secret": SEGREDO_TESTE },
+    body: JSON.stringify({ notificacao_id: "a2660000-0000-4000-8000-000000000001" }),
+  });
+}
+
+Deno.test("0.2.66: chamada_recebida só sai para o aparelho que alcança o mínimo de chamada_direta", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const enviados: string[] = [];
+  const perguntados: unknown[] = [];
+  const sqlClient: SqlClient = {
+    ...criarMockSqlClient(),
+    aparelhosQueRecebemChamada: (aparelhos) => {
+      perguntados.push(...aparelhos);
+      return Promise.resolve(["disp-novo"]);
+    },
+  };
+  const res = await processarEnvioPush(pedidoDeChamada(), {
+    serviceAccount: sa, fetchFn: fetchDeChamada("chamada_recebida", enviados),
+    fcmApiUrl: "http://mock-fcm/messages:send", sqlClient,
+  });
+  assertEquals(res.status, 200);
+  assertEquals((await res.json()).relatorio[0].status, "enviada");
+  assertEquals(enviados, ["fcm_token_aparelho_novo"], "só o aparelho no mínimo recebe");
+  assertEquals(perguntados.length, 2, "o banco decide sobre os dois aparelhos da conta");
+  assertEquals((perguntados[1] as { versao_app: string }).versao_app, "1.1.0", "com a versão e a plataforma de cada um");
+});
+
+Deno.test("0.2.66: nenhum aparelho no mínimo: nada sai e o aviso falha como versao_nao_suportada", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const enviados: string[] = [];
+  const chamadasFalha: GravarFalhaPushParams[] = [];
+  const sqlClient: SqlClient = {
+    ...criarMockSqlClient({ chamadasFalha }),
+    aparelhosQueRecebemChamada: () => Promise.resolve([]),
+  };
+  const res = await processarEnvioPush(pedidoDeChamada(), {
+    serviceAccount: sa, fetchFn: fetchDeChamada("chamada_recebida", enviados),
+    fcmApiUrl: "http://mock-fcm/messages:send", sqlClient,
+  });
+  assertEquals((await res.json()).relatorio[0].detalhe, "versao_nao_suportada");
+  assertEquals(enviados.length, 0);
+  assertEquals(chamadasFalha[0]?.permanente, true);
+});
+
+Deno.test("0.2.66: sem a consulta de versão no sqlClient, nenhum chamada_* sai (fechado por padrão)", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const enviados: string[] = [];
+  const res = await processarEnvioPush(pedidoDeChamada(), {
+    serviceAccount: sa, fetchFn: fetchDeChamada("chamada_lembrete", enviados),
+    fcmApiUrl: "http://mock-fcm/messages:send", sqlClient: criarMockSqlClient(),
+  });
+  assertEquals((await res.json()).relatorio[0].detalhe, "versao_nao_suportada");
+  assertEquals(enviados.length, 0, "o aparelho 1.2.0 não recebe sem o banco dizer que pode");
+});
+
+Deno.test("0.2.66: a consulta de versão falhou: nada sai agora e o aviso volta como erro transitório", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const enviados: string[] = [];
+  const chamadasFalha: GravarFalhaPushParams[] = [];
+  const sqlClient: SqlClient = {
+    ...criarMockSqlClient({ chamadasFalha }),
+    aparelhosQueRecebemChamada: () => Promise.reject(new Error("conexão recusada")),
+  };
+  const res = await processarEnvioPush(pedidoDeChamada(), {
+    serviceAccount: sa, fetchFn: fetchDeChamada("chamada_recebida", enviados),
+    fcmApiUrl: "http://mock-fcm/messages:send", sqlClient,
+  });
+  const item = (await res.json()).relatorio[0];
+  assertEquals(item.status, "pendente");
+  assertEquals(item.detalhe, "erro_transitorio: versao_do_aparelho");
+  assertEquals(enviados.length, 0);
+  assertEquals(chamadasFalha[0]?.permanente, false, "não vira falha permanente");
+  assert(typeof chamadasFalha[0]?.proximaTentativaEm === "string", "volta com backoff");
+});
+
+Deno.test("0.2.66: aviso que não é de chamada não passa pelo filtro de versão", async () => {
+  const sa = await gerarContaDeServicoTeste();
+  const enviados: string[] = [];
+  let perguntou = false;
+  const sqlClient: SqlClient = {
+    ...criarMockSqlClient(),
+    aparelhosQueRecebemChamada: () => {
+      perguntou = true;
+      return Promise.resolve([]);
+    },
+  };
+  const res = await processarEnvioPush(pedidoDeChamada(), {
+    serviceAccount: sa, fetchFn: fetchDeChamada("vaga", enviados),
+    fcmApiUrl: "http://mock-fcm/messages:send", sqlClient,
+  });
+  assertEquals((await res.json()).relatorio[0].status, "enviada");
+  assertEquals(enviados.sort(), ["fcm_token_aparelho_novo", "fcm_token_aparelho_velho"], "os dois aparelhos recebem");
+  assertEquals(perguntou, false);
 });

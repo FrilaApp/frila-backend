@@ -118,9 +118,31 @@ select set_eq(
     -- Varre saúde, filas, falhas e emite alertas à equipe (cartão 5bPJvMIo).
     'verificar_saude',
     -- Purga periódica de notificações com mais de 60 dias (K-001, LGPD art. 37).
-    'limpar_notificacoes_antigas'
+    'limpar_notificacoes_antigas',
+    -- Acorda a Edge Function `enviar-push` quando há notificação pendente (cartão hQDlvpHi).
+    'processar_fila_push',
+    -- Dispara limpar-contas-orfas e expurgar-midias por pg_net (cartão bebr4VIE).
+    'limpar_contas_orfas_diaria',
+    'expurgar_midias_diaria',
+    -- Processa a fila de moderação de mídia periódica (B4c / RN37).
+    'processar_fila_moderacao_midia',
+    -- Expurgo horário de mídias recusadas ou não publicadas (B4b / RN37).
+    'expurgar_midias_horario',
+    -- Jobs de expiração e lembrete de chamadas diretas (B5c / RN31).
+    'expirar_chamadas_diretas',
+    'lembrar_chamadas_diretas',
+    -- Consumidor do registro de acessos, a cada minuto (LGPD-J6 R11, Marco Civil art. 15).
+    'consumir_registro_acesso',
+    -- Limpa a trilha do Auth e as sessões paradas há mais de 6 meses (LGPD-J6 T2b, 20261108120000).
+    'limpar_trilha_e_sessoes_auth',
+    -- Apaga o valor do código de check-in vencido, a cada minuto (check-in por código, LGPD).
+    'apagar_codigos_checkin_vencidos',
+    -- Apaga o convite de membro 30 dias depois de vencer ou ser aceito, uma vez por dia (LGPD, 20261112200000).
+    'apagar_convites_membro_vencidos',
+    -- Apaga o contador de buscas de profissionais com mais de um dia, uma vez por dia (CD-B09, 20261116210000).
+    'limpar_contador_busca'
   ],
-  'Os jobs agendados são exatamente os quatorze conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os vinte e seis conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;

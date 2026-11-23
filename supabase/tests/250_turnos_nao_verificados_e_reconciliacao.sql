@@ -17,7 +17,10 @@
 -- Ids próprios, começando em `b6000000`.
 
 begin;
-select plan(40);
+select plan(54);
+-- Fluxo legado do check-in (geolocalizado a até 200 m, verificado na hora): desde 20261112230000 a chave
+-- checkin_por_codigo nasce ligada para todas as casas; este teste prova o fluxo sem o código, então a desliga aqui.
+update privado.recurso set ligado = false where chave = 'checkin_por_codigo';
 
 insert into privado.ambiente (eh_teste) values (true);
 
@@ -84,6 +87,11 @@ select has_function('privado', 'fechar_turnos_passados', array[]::text[],
 
 select has_function('privado', 'reconciliar_comparecimento', array[]::text[],
   'função privado.reconciliar_comparecimento existe');
+
+select ok(
+  'turno_nao_verificado' = any (enum_range(null::public.tipo_notificacao)::text[]),
+  'tipo_notificacao inclui turno_nao_verificado'
+);
 
 -- ACLs: authenticated não tem acesso a jobs ou tabela de divergência
 select is(
@@ -242,8 +250,9 @@ select is(
   'check-in manual nasce pendente'
 );
 
--- O turno 2 termina e a casa NÃO confirmou. O relógio avança além do fim do turno 2.
-select set_config('frila.agora', (select (t2_fim + interval '10 minutes')::text from horarios), true);
+-- O turno 2 termina e a casa NÃO confirmou. Com a confirmação tardia de 24h (20261112100000),
+-- o turno permanece pendente durante as 24h após fim_em. O relógio avança além da tolerância de 24h.
+select set_config('frila.agora', (select (t2_fim + interval '24 hours 10 minutes')::text from horarios), true);
 
 -- Executa o job de fechamento de turnos passados
 select ok(
@@ -254,7 +263,7 @@ select ok(
 select is(
   (select t.verificacao::text from public.turno t where t.id = (select turno2 from turnos_teste)),
   'nao_verificado',
-  'Critério 1: check-in manual não confirmado até o fim vira nao_verificado'
+  'Critério 1: check-in manual não confirmado após fim + 24h vira nao_verificado'
 );
 
 select is(
@@ -267,6 +276,78 @@ select is(
   (select p.turnos_realizados from public.profissional p where p.id = (select prof from ids)),
   1,
   'Critério 1: turnos_realizados continua 1 (nao_verificado fica fora)'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno2 from turnos_teste)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000e1'),
+  1::bigint,
+  'Critério 1: profissional recebe turno_nao_verificado após check-in manual expirado'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno2 from turnos_teste)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000d1'),
+  1::bigint,
+  'Critério 1: contratante recebe turno_nao_verificado após check-in manual expirado'
+);
+
+-- Deduplicação atômica e idempotência: segunda execução de fechar_turnos_passados não duplica avisos
+select is(
+  privado.fechar_turnos_passados(),
+  0,
+  'Critério 1: segunda execução imediata de fechar_turnos_passados retorna 0 afetados'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno2 from turnos_teste)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000e1'),
+  1::bigint,
+  'Critério 1: profissional continua com exatamente 1 notificação após reexecução'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno2 from turnos_teste)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000d1'),
+  1::bigint,
+  'Critério 1: contratante continua com exatamente 1 notificação após reexecução'
+);
+
+-- Prova que privado.marca_notificacao registrou a marca durável atômica
+select is(
+  (select count(*) from privado.marca_notificacao m
+    where m.tipo = 'turno_nao_verificado'
+      and m.referencia_id = (select turno2 from turnos_teste)),
+  2::bigint,
+  'Critério 1: marca_notificacao gravou exatamente 1 marca por destinatário (profissional + contratante)'
+);
+
+-- Tentativa de chamada direta simultânea a privado.notificar é deduplicada atomicamente
+select ok(
+  privado.notificar(
+    'b6000000-0000-4000-8000-0000000000e1',
+    'turno_nao_verificado',
+    (select turno2 from turnos_teste),
+    jsonb_build_object('turno_id', (select turno2 from turnos_teste))
+  ) is not null,
+  'privado.notificar retorna id da notificação existente sem erro'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno2 from turnos_teste)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000e1'),
+  1::bigint,
+  'privado.notificar não duplica notificação para o mesmo usuário e referência'
 );
 
 -- ── 4. Critério (2): Turno confirmado sem check-in até o fim → cancelamento por no-show ──
@@ -354,6 +435,51 @@ select is(
   'Critério 2: taxa de comparecimento cai para 0.500 com a falta por no-show (1 verificado / 2 denominador)'
 );
 
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno_id from noshow_ids)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000e1'),
+  1::bigint,
+  'Critério 2: profissional recebe turno_nao_verificado após cancelamento por no-show'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and n.referencia_id = (select turno_id from noshow_ids)
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000d1'),
+  1::bigint,
+  'Critério 2: contratante recebe turno_nao_verificado após cancelamento por no-show'
+);
+
+-- Deduplicação no cancelamento por no-show:
+select is(
+  privado.fechar_turnos_passados(),
+  0,
+  'Critério 2: segunda execução imediata de fechar_turnos_passados não reprocessa no-show'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and (n.referencia_id = (select turno_id from noshow_ids)
+           or n.payload->>'posicao_id' = (select posicao_id::text from noshow_ids))
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000e1'),
+  1::bigint,
+  'Critério 2: profissional continua com exatamente 1 notificação após reexecução de no-show'
+);
+
+select is(
+  (select count(*) from public.notificacao n
+    where n.tipo = 'turno_nao_verificado'
+      and (n.referencia_id = (select turno_id from noshow_ids)
+           or n.payload->>'posicao_id' = (select posicao_id::text from noshow_ids))
+      and n.usuario_id = 'b6000000-0000-4000-8000-0000000000d1'),
+  1::bigint,
+  'Critério 2: contratante continua com exatamente 1 notificação após reexecução de no-show'
+);
+
 -- ── 5. Critério (3): Reconciliação corrige divergência forçada e a registra ───────
 
 -- Força divergência na taxa e em turnos_realizados
@@ -417,14 +543,18 @@ select matches(
   'Critério 4: public.perfil_publico delega para privado.perfil_publico_profissional'
 );
 
--- (b) privado.perfil_publico_profissional lê taxa_comparecimento diretamente de public.profissional p
+-- (b) privado.perfil_publico_profissional delega a reputação a privado.reputacao_profissional (0.2.88, o helper único
+--     do perfil e do cartão da busca), que lê taxa_comparecimento diretamente de public.profissional p
 --     sem funções agregadas (avg, sum, count) sobre a taxa e sem varrer public.turno
 select ok(
-  pg_get_functiondef('privado.perfil_publico_profissional'::regproc) ~* '''taxa_comparecimento'',\s*p\.taxa_comparecimento'
-  and pg_get_functiondef('privado.perfil_publico_profissional'::regproc) ~* '''turnos_realizados'',\s*p\.turnos_realizados'
+  pg_get_functiondef('privado.perfil_publico_profissional'::regproc) ~* 'privado\.reputacao_profissional\(p\.id\)'
+  and pg_get_functiondef('privado.reputacao_profissional'::regproc) ~* '''taxa_comparecimento'',\s*p\.taxa_comparecimento'
+  and pg_get_functiondef('privado.reputacao_profissional'::regproc) ~* '''turnos_realizados'',\s*p\.turnos_realizados'
+  and pg_get_functiondef('privado.reputacao_profissional'::regproc) !~* '(avg|sum)\s*\([^)]*taxa'
+  and pg_get_functiondef('privado.reputacao_profissional'::regproc) !~* 'from\s+public\.turno'
   and pg_get_functiondef('privado.perfil_publico_profissional'::regproc) !~* '(avg|sum)\s*\([^)]*taxa'
   and pg_get_functiondef('privado.perfil_publico_profissional'::regproc) !~* 'from\s+public\.turno',
-  'Critério 4: corpo de privado.perfil_publico_profissional lê taxa_comparecimento em cache de profissional sem agregação'
+  'Critério 4: perfil_publico_profissional delega a privado.reputacao_profissional, e os dois corpos leem taxa_comparecimento em cache de profissional sem agregação'
 );
 
 -- (c) EXPLAIN da chamada real de public.perfil_publico não gera nó Aggregate

@@ -64,6 +64,9 @@ export interface SqlClient {
     prazo: string | null,
   ) => Promise<void>;
   registrarFalha: (ocorrenciaId: string, codigo: string) => Promise<number>;
+  // Rastro da falha de envio em `privado.falha_execucao` (origem `enviar_email`), que o
+  // `/saude` lê. Só o código, sem destinatário nem texto de erro (RN15). Cartão bB0tV5R8.
+  registrarFalhaOperacional: (codigo: string) => Promise<void>;
   concluir: (msgId: number) => Promise<void>;
 }
 
@@ -73,6 +76,8 @@ export interface Dependencias {
   sqlClient?: SqlClient;
   dbUrl?: string;
   caixaDaEquipe?: string;
+  caixaDosCasos?: string;
+  caixaResponderPara?: string;
 }
 
 const AGENDADOR_SECRET = Deno.env.get("AGENDADOR_SECRET");
@@ -85,10 +90,52 @@ function segredoValido(req: Request, agendadorSecret?: string): boolean {
   return segredoAgendadorValido(req, secret ?? "");
 }
 
+const CAIXA_DE_SUPORTE = "suporte@frilabr.com";
+
+// A forma mínima de um endereço: um @ só, parte local e domínio com ponto, sem espaço.
+// Fica aqui, e não no `validarDestinatario`, que só barra injeção de cabeçalho e é usado
+// em outros lugares.
+const FORMA_MINIMA_DE_EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
 // A caixa da Equipe Frila é segredo de ambiente, e não linha de tabela: ela não é dado
 // do produto, muda com o provedor de e-mail e não deve viajar num `db reset`.
+// É SÓ para os alertas técnicos do monitoramento (tipo `alerta`). Os casos de usuário
+// (denúncia, contestação, revisão de despacho) vão para a `caixaDosCasos`. Ela nunca vira
+// o Reply-To do e-mail que sai para fora (esse é o `caixaResponderPara`).
 export function caixaDaEquipe(injetada?: string): string {
-  return (injetada || Deno.env.get("EMAIL_EQUIPE") || "suporte@frilabr.com").trim();
+  return (injetada || Deno.env.get("EMAIL_EQUIPE") || CAIXA_DE_SUPORTE).trim();
+}
+
+// Para onde vai o aviso interno de um caso de usuário: denúncia, contestação e revisão de
+// despacho. Lê o EMAIL_CASOS; se faltar, vier vazio, falhar no `validarDestinatario` ou
+// não tiver a forma mínima de e-mail, é a caixa de suporte. Nunca cai no EMAIL_EQUIPE:
+// o caso traz dado pessoal e não pode ir parar na caixa dos alertas técnicos só porque a
+// variável não foi configurada.
+export function caixaDosCasos(injetada?: string): string {
+  return caixaValida([injetada, Deno.env.get("EMAIL_CASOS")]);
+}
+
+// Para onde vai a resposta de quem recebeu o protocolo (o Reply-To ao autor). Lê o
+// EMAIL_RESPONDER_PARA; se faltar, vier vazia, falhar no `validarDestinatario` ou não
+// tiver a forma mínima de e-mail, é a caixa de suporte. Nunca
+// cai no EMAIL_EQUIPE: a resposta do usuário traz dado pessoal e não pode ir parar num
+// destino interno só porque a variável de atendimento não foi configurada.
+export function caixaResponderPara(injetada?: string): string {
+  return caixaValida([injetada, Deno.env.get("EMAIL_RESPONDER_PARA")]);
+}
+
+// A guarda das caixas que não podem cair no EMAIL_EQUIPE: a primeira candidata não vazia
+// vale se passar no `validarDestinatario` e tiver a forma mínima de e-mail; senão (ou se
+// todas faltarem) é a caixa de suporte.
+function caixaValida(candidatas: Array<string | undefined>): string {
+  for (const candidata of candidatas) {
+    if (candidata === undefined || candidata.trim() === "") continue;
+    const valor = candidata.trim();
+    return validarDestinatario(valor) && FORMA_MINIMA_DE_EMAIL.test(valor)
+      ? valor
+      : CAIXA_DE_SUPORTE;
+  }
+  return CAIXA_DE_SUPORTE;
 }
 
 function obterDbUrl(injetada?: string): string {
@@ -158,6 +205,15 @@ export function criarSqlClient(deps?: Dependencias): SqlClient {
         return Number(r[0]?.tentativas ?? 0);
       }),
 
+    registrarFalhaOperacional: (codigo) =>
+      com(async (sql) => {
+        await sql`
+          select privado.registrar_falha_execucao(
+            'enviar_email'::text, ${codigo}::text, null
+          )
+        `;
+      }),
+
     concluir: (msgId) =>
       com(async (sql) => {
         await sql`select privado.concluir_email(${msgId}::bigint)`;
@@ -170,6 +226,24 @@ export interface LinhaDoRelatorio {
   status: "enviado" | "pendente" | "arquivado";
   detalhe?: string;
 }
+
+// Falha de envio que a sonda `/saude` precisa ver. Quando o pedido é arquivado sem ter
+// saído, a fila fica vazia e nada mais denuncia o problema: o alerta que explicaria a
+// falha é justamente o que não saiu. O registro não pode impedir o arquivamento, e por
+// isso nunca relança.
+async function registrarRastroDaFalha(sql: SqlClient, codigo: string): Promise<void> {
+  try {
+    await sql.registrarFalhaOperacional(codigo);
+  } catch {
+    // Sem detalhe: a mensagem do driver pode trazer a URL do banco.
+    console.error("enviar-email: não gravei o rastro da falha de envio");
+  }
+}
+
+// Recusa que diz algo sobre a infraestrutura de e-mail, e não sobre a caixa de uma
+// pessoa. Um 550 para um endereço digitado errado não é incidente: acenderia a sonda por
+// causa de um usuário. Já a caixa da equipe e as falhas de autenticação e de conexão são.
+const CODIGOS_DE_INFRAESTRUTURA = new Set(["falha_de_autenticacao", "falha_de_conexao"]);
 
 // Um pedido de alerta do monitoramento (cartão 5bPJvMIo). Não tem ocorrência: nada é
 // registrado no banco além do arquivamento do pedido.
@@ -192,6 +266,7 @@ async function processarAlerta(
     : undefined;
   const modelo = alertaParaEquipe(codigo, valor);
   if (!validarDestinatario(equipe) || !validarTextoCabecalhoSmtp(modelo.assunto)) {
+    await registrarRastroDaFalha(sql, "destinatario_invalido");
     await sql.concluir(pedido.msg_id);
     return { msg_id: pedido.msg_id, status: "arquivado", detalhe: "destinatario_invalido" };
   }
@@ -205,6 +280,7 @@ async function processarAlerta(
   if (r.transitorio && pedido.read_ct < TETO_DE_LEITURAS) {
     return { msg_id: pedido.msg_id, status: "pendente", detalhe: r.codigo };
   }
+  await registrarRastroDaFalha(sql, r.codigo ?? "erro_nao_classificado");
   await sql.concluir(pedido.msg_id);
   return { msg_id: pedido.msg_id, status: "arquivado", detalhe: r.codigo };
 }
@@ -213,7 +289,8 @@ async function processarOcorrencia(
   pedido: PedidoDaFila,
   tipo: string,
   enviar: Enviar,
-  equipe: string,
+  casos: string,
+  responderParaAutor: string,
   sql: SqlClient,
 ): Promise<LinhaDoRelatorio> {
   const ocorrenciaId = typeof pedido.mensagem.ocorrencia_id === "string"
@@ -232,7 +309,7 @@ async function processarOcorrencia(
   }
 
   const destinos: Array<{ destino: Destino; para: string }> = [];
-  if (dados.equipe_pendente) destinos.push({ destino: "equipe", para: equipe });
+  if (dados.equipe_pendente) destinos.push({ destino: "equipe", para: casos });
   if (dados.autor_pendente && dados.autor_email) {
     destinos.push({ destino: "autor", para: dados.autor_email });
   }
@@ -243,6 +320,7 @@ async function processarOcorrencia(
   }
 
   let ultimoErro: ResultadoEnvio | null = null;
+  let rastroDaSonda: string | null = null;
 
   for (const { destino, para } of destinos) {
     const modelo = modeloDe(tipo, destino, dados);
@@ -254,7 +332,7 @@ async function processarOcorrencia(
       return { msg_id: pedido.msg_id, status: "arquivado", detalhe: "tipo_desconhecido" };
     }
 
-    const responderPara = destino === "autor" ? equipe : undefined;
+    const responderPara = destino === "autor" ? responderParaAutor : undefined;
 
     if (
       !validarDestinatario(para) ||
@@ -271,7 +349,8 @@ async function processarOcorrencia(
       assunto: modelo.assunto,
       texto: modelo.texto,
       // A Equipe Frila só responde por e-mail: a resposta de quem recebeu o protocolo
-      // tem de cair na caixa dela, e não no remetente que não lê.
+      // tem de cair na caixa de atendimento, e não no remetente que não lê nem na
+      // caixa dos alertas (EMAIL_EQUIPE).
       responderPara,
     };
 
@@ -280,6 +359,13 @@ async function processarOcorrencia(
       await sql.registrarEnviado(ocorrenciaId, destino, dados.prazo_resposta_ate ?? null);
     } else {
       ultimoErro = r;
+      const codigoDaFalha = r.codigo ?? "erro_nao_classificado";
+      if (
+        rastroDaSonda === null &&
+        (destino === "equipe" || CODIGOS_DE_INFRAESTRUTURA.has(codigoDaFalha))
+      ) {
+        rastroDaSonda = codigoDaFalha;
+      }
     }
   }
 
@@ -297,6 +383,7 @@ async function processarOcorrencia(
     return { msg_id: pedido.msg_id, status: "pendente", detalhe: codigo };
   }
 
+  if (rastroDaSonda !== null) await registrarRastroDaFalha(sql, rastroDaSonda);
   await sql.concluir(pedido.msg_id);
   return {
     msg_id: pedido.msg_id,
@@ -354,6 +441,8 @@ export async function processarEnvioEmail(
 
   const sql = criarSqlClient(deps);
   const equipe = caixaDaEquipe(deps.caixaDaEquipe);
+  const casos = caixaDosCasos(deps.caixaDosCasos);
+  const responderParaAutor = caixaResponderPara(deps.caixaResponderPara);
 
   const pedidos = await sql.lerFilaEmail(limite, vt);
   if (pedidos.length === 0) {
@@ -366,7 +455,9 @@ export async function processarEnvioEmail(
     if (tipo === "alerta") {
       relatorio.push(await processarAlerta(pedido, enviar, equipe, sql));
     } else {
-      relatorio.push(await processarOcorrencia(pedido, tipo, enviar, equipe, sql));
+      relatorio.push(
+        await processarOcorrencia(pedido, tipo, enviar, casos, responderParaAutor, sql),
+      );
     }
   }
 

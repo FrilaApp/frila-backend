@@ -783,17 +783,115 @@ Deno.test("porta: validacao estrita do formato Authorization Bearer rejeita malf
   assertEquals(chamouFetchPositivo, true);
 });
 
-Deno.test("seguranca CORS / metodos: requisicao OPTIONS recebe 405 metodo_nao_permitido e nao expoe Access-Control-Allow-Origin aberto", async () => {
-  const req = new Request("http://localhost/functions/v1/excluir-conta", {
-    method: "OPTIONS",
-    headers: { Origin: "https://site-malicioso.com" },
-  });
-  const res = await handler(req, mockDeps({}));
+const ORIGEM_PERMITIDA = "https://painel.exemplo.test";
+const ORIGEM_FORA = "https://site-malicioso.com";
+
+function requisicaoComOrigem(origem: string, metodo = "POST"): Request {
+  const init: RequestInit = {
+    method: metodo,
+    headers: { Authorization: "Bearer token-valido", "Content-Type": "application/json", Origin: origem },
+  };
+  if (metodo === "POST") init.body = JSON.stringify({ confirmar: true });
+  return new Request("http://localhost/functions/v1/excluir-conta", init);
+}
+
+function depsComCors(origensCors: string, opcoes: Parameters<typeof mockDeps>[0] = {}): HandlerDeps {
+  return { ...mockDeps(opcoes), origensCors };
+}
+
+Deno.test("seguranca CORS / lista vazia: requisicao OPTIONS recebe 405 metodo_nao_permitido e nao expoe Access-Control-Allow-Origin", async () => {
+  const res = await handler(requisicaoComOrigem(ORIGEM_FORA, "OPTIONS"), depsComCors(""));
 
   assertEquals(res.status, 405);
   const corpo = await res.json();
   assertEquals(corpo.code, "metodo_nao_permitido");
   assertEquals(res.headers.get("Access-Control-Allow-Origin"), null, "nao deve refletir nem conceder CORS curinga");
+  assertEquals(res.headers.get("Vary"), null, "lista vazia preserva o comportamento anterior");
+});
+
+Deno.test("cors excluir-conta: preflight de origem na lista devolve 204 com ACAO igual a origem, Vary e sem tocar em Auth, banco nem Admin API", async () => {
+  const ordem: string[] = [];
+  let chamouAdmin = false;
+  let chamouFetch = false;
+  const deps = depsComCors(ORIGEM_PERMITIDA, { ordem, onAdminDelete: () => (chamouAdmin = true) });
+  const fetchOriginal = deps.fetchFn!;
+  deps.fetchFn = ((...args: Parameters<typeof fetch>) => {
+    chamouFetch = true;
+    return fetchOriginal(...args);
+  }) as typeof fetch;
+
+  const res = await handler(requisicaoComOrigem(ORIGEM_PERMITIDA, "OPTIONS"), deps);
+
+  assertEquals(res.status, 204);
+  assertEquals(res.headers.get("Access-Control-Allow-Origin"), ORIGEM_PERMITIDA);
+  assertEquals(res.headers.get("Access-Control-Allow-Methods"), "POST, OPTIONS");
+  assertEquals(res.headers.get("Access-Control-Allow-Headers"), "authorization, content-type, apikey, x-client-info");
+  assertEquals(res.headers.get("Vary"), "Origin");
+  assertEquals(res.headers.get("Access-Control-Allow-Credentials"), null);
+  assertEquals(ordem, [], "preflight nao deve tocar no banco");
+  assertEquals(chamouFetch, false, "preflight nao deve chamar Auth");
+  assertEquals(chamouAdmin, false, "preflight nunca pode apagar conta");
+});
+
+Deno.test("cors excluir-conta: preflight de origem fora da lista nao recebe ACAO", async () => {
+  const res = await handler(requisicaoComOrigem(ORIGEM_FORA, "OPTIONS"), depsComCors(ORIGEM_PERMITIDA));
+
+  assertEquals(res.status, 405);
+  assertEquals((await res.json()).code, "metodo_nao_permitido");
+  assertEquals(res.headers.get("Access-Control-Allow-Origin"), null);
+  assertEquals(res.headers.get("Vary"), "Origin");
+});
+
+Deno.test("cors excluir-conta: POST real de origem na lista leva ACAO e Vary", async () => {
+  const res = await handler(requisicaoComOrigem(ORIGEM_PERMITIDA), depsComCors(ORIGEM_PERMITIDA));
+
+  assertEquals(res.status, 202);
+  assertEquals(res.headers.get("Access-Control-Allow-Origin"), ORIGEM_PERMITIDA);
+  assertEquals(res.headers.get("Vary"), "Origin");
+});
+
+Deno.test("cors excluir-conta: POST real de origem fora da lista nao leva ACAO", async () => {
+  const res = await handler(requisicaoComOrigem(ORIGEM_FORA), depsComCors(ORIGEM_PERMITIDA));
+
+  assertEquals(res.status, 202);
+  assertEquals(res.headers.get("Access-Control-Allow-Origin"), null);
+  assertEquals(res.headers.get("Vary"), "Origin");
+});
+
+Deno.test("cors excluir-conta: 401, 422 e 500 de origem na lista tambem levam ACAO", async () => {
+  const r401 = await handler(requisicaoComOrigem(ORIGEM_PERMITIDA), depsComCors(ORIGEM_PERMITIDA, { authOk: false }));
+  assertEquals(r401.status, 401);
+  assertEquals(r401.headers.get("Access-Control-Allow-Origin"), ORIGEM_PERMITIDA);
+
+  const semConfirmar = new Request("http://localhost/functions/v1/excluir-conta", {
+    method: "POST",
+    headers: { Authorization: "Bearer token-valido", "Content-Type": "application/json", Origin: ORIGEM_PERMITIDA },
+    body: JSON.stringify({}),
+  });
+  const r422 = await handler(semConfirmar, depsComCors(ORIGEM_PERMITIDA));
+  assertEquals(r422.status, 422);
+  assertEquals(r422.headers.get("Access-Control-Allow-Origin"), ORIGEM_PERMITIDA);
+
+  const r500 = await handler(
+    requisicaoComOrigem(ORIGEM_PERMITIDA),
+    depsComCors(ORIGEM_PERMITIDA, { erroAoRegistrar: { code: "XX000", message: "falha" } }),
+  );
+  assertEquals(r500.status, 500);
+  assertEquals(r500.headers.get("Access-Control-Allow-Origin"), ORIGEM_PERMITIDA);
+});
+
+Deno.test("cors excluir-conta: asterisco na configuracao nao vira curinga", async () => {
+  const original = console.warn;
+  console.warn = () => {};
+  try {
+    const res = await handler(requisicaoComOrigem(ORIGEM_FORA), depsComCors("*"));
+    assertEquals(res.headers.get("Access-Control-Allow-Origin"), null);
+    const pre = await handler(requisicaoComOrigem(ORIGEM_FORA, "OPTIONS"), depsComCors("*"));
+    assertEquals(pre.status, 405);
+    assertEquals(pre.headers.get("Access-Control-Allow-Origin"), null);
+  } finally {
+    console.warn = original;
+  }
 });
 
 Deno.test("excluir-conta: corpo com JSON quebrado ou invalido retorna 422 campo_obrigatorio confirmar", async () => {
