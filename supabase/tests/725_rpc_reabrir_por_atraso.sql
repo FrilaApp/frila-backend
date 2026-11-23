@@ -47,7 +47,7 @@
 
 begin;
 set local frila.agendador_secret = 'segredo-de-teste';
-select plan(33);
+select plan(34);
 
 -- Snapshot da definição original da RPC para conferência da restauração canônica
 create temp table _def_orig as
@@ -482,14 +482,17 @@ select throws_ok(
   'D06 substituto: tentativa a 14m59s da confirmacao recusa com 422 reabertura_antes_da_tolerancia'
 );
 
--- Caso 15m00s exatos pós-confirmação (18:35:00): '<' é falso, autoriza com falta!
+-- Caso 15m00s exatos pós-confirmação: autoriza a reabertura; Regra4 isenta o tardio.
 select set_config('frila.agora', '2026-11-12 18:35:00+00', true);
 
 select is(
-  (pg_temp.como('c7250000-0000-4000-8000-000000000001', $$ select public.reabrir_por_atraso('c7250000-0000-4000-8000-000000000203'::uuid) $$)->>'falta')::boolean,
+  (pg_temp.como('c7250000-0000-4000-8000-000000000001', $$ select public.reabrir_por_atraso('c7250000-0000-4000-8000-000000000203'::uuid) $$)->>'reaberta')::boolean,
   true,
   'D06 substituto: no instante exato de 15m00s da confirmacao (< e falso), a reabertura e autorizada'
 );
+
+select is((select falta from public.posicao where id='c7250000-0000-4000-8000-000000000203'),
+ false,'Regra4: substituto reaberto aos15min encerra sem falta');
 
 -- ── 5. Efeitos Colaterais Completos do Caminho Feliz ──────────────────────────
 -- Valida os efeitos da reabertura de Vaga 1 (realizada às 18:15:00, > 1h antes do término de 23:00)

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.106
+  version: 0.2.107
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -116,6 +116,21 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.107, de 22/11/2026.** Regra 4 do aceite tardio aprovada (decisão do JP de 22/11/2026).
+    Aceite tardio é confirmação em `inicio_em − 15 min` ou depois (borda incluída); os parâmetros
+    únicos aprovados são antecedência de 15 min, carência de 10 min e tempo hábil de 45 min.
+    Desistência do profissional até `confirmado_em + 10 min`, inclusive, não conta falta.
+    Reabertura pela casa continua após `greatest(inicio_em, confirmado_em) + 15 min`, mas encerra
+    esse profissional sem falta. Sem check-in e sem reabertura, o fechamento só marca falta se
+    `fim_em >= confirmado_em + 45 min`; usa o fim previsto, nunca o atraso do agendador.
+    Se o turno termina antes, encerra sem falta. Confirmação anterior a `inicio_em − 15 min`
+    conserva integralmente a regra anterior. `confirmado_em` ausente/nulo não presume aceite tardio.
+    Não muda candidatura, duração, valor integral, janela de check-in ou prazo de check-out.
+    Texto e telas do app, inclusive o push que hoje afirma falta em toda reabertura, ainda precisam
+    de decisão antes de liberar esta proposta.
+
+    ---
 
     **Versão 0.2.106, de 22/11/2026.** Correção simétrica do aviso a caminho para substitutos
     confirmados após o início (decisão do JP de 22/11/2026). A janela de `avisar_a_caminho`
@@ -5672,7 +5687,9 @@ paths:
         o turno ficou descoberto, para a casa distinguir da posição que voltou para a fila.
 
         Cancelamento do profissional com menos de 24 horas do início conta como falta; com mais de 24
-        horas, sai da taxa de comparecimento. Nenhum cancelamento suspende ninguém (RN13).
+        horas, sai da taxa de comparecimento. **Regra 4 (0.2.107):** quando a confirmação ocorreu em
+        `inicio_em − 15 min` ou depois, desistência até `confirmado_em + 10 min` (inclusive)
+        encerra sem falta; depois da carência volta a valer a regra normal. A casa não ganha falta. Nenhum cancelamento suspende ninguém (RN13).
 
         Reenvio idempotente (0.2.35): repetir a chamada após queda de rede pelo mesmo autor do
         cancelamento (o próprio profissional, ou o mesmo membro da casa) devolve `200` com o
@@ -5729,9 +5746,9 @@ paths:
         reabre a posição **sem despacho e sem notificação**; a casa pode chamar outra pessoa ou
         converter com `publicar_a_partir_da_chamada` até `fim_em − 1 h` (RF13 alterada, RN35).
 
-        Aos 15 minutos do início sem check-in, o contratante recebe o alerta e decide esperar ou
-        reabrir (D06). Reabrir marca falta do profissional e abre uma nova posição, que é notificada de
-        novo. Antes dos 15 minutos: `422 reabertura_antes_da_tolerancia`. Com check-in já feito: `409`.
+        Após `greatest(inicio_em, confirmado_em) + 15 min`, sem check-in, o contratante decide esperar ou
+        reabrir (D06). Reabrir abre uma nova posição, que é notificada de novo. **Regra 4 (0.2.107):** confirmado em
+        `inicio_em − 15 min` ou depois encerra sem falta; confirmado antes mantém a falta normal. Antes dos 15 minutos: `422 reabertura_antes_da_tolerancia`. Com check-in já feito: `409`.
       x-requisitos: [RF13, RF14, RN12, UC05, UC08]
       requestBody:
         required: true
@@ -7293,7 +7310,7 @@ components:
         | `lembrete_30min_fim_turno` | Membros da casa | Chegada a confirmar | Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos. |
         | `lembrete_fim_turno` | Membros da casa | Turno encerrado | O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas. |
 
-        **Cancelamento por atraso (0.2.84, D-13).** Disparado exclusivamente ao profissional quando a casa declara a falta por atraso (`reabrir_por_atraso`, RN12). Explicita que a saída decorreu de cancelamento da participação pelo estabelecimento e que conta como falta.
+        **Cancelamento por atraso (0.2.84, D-13).** Texto atualmente publicado; na Regra 4 (0.2.107), precisa distinguir a isenção de falta do aceite tardio antes do rollout. O texto novo depende do JP e não está implementado neste rascunho.
 
         | Tipo | Quem recebe | Título | Corpo |
         |---|---|---|---|
@@ -9058,7 +9075,9 @@ components:
         - `profissional`: ele mesmo desistiu. `falta` diz se a desistência contou (menos de 24
           horas do início). O texto que ele escreveu não volta.
         - `estabelecimento`: a casa cancelou a posição ou a vaga inteira. Não conta falta.
-        - `reabertura_por_atraso` e `no_show_sem_checkin`: sempre com `falta: true`.
+        - `reabertura_por_atraso` e `no_show_sem_checkin`: a flag `falta` é a decisão vigente do servidor.
+          Regra 4 (0.2.107): aceite tardio reaberto pela casa não conta; no-show só conta com pelo menos
+          45 min entre confirmação e fim previsto. As causas não mudam quando há isenção.
         - `outro`: o turno saiu sem escolha de nenhuma das partes. Não conta falta.
       properties:
         causa:
@@ -9082,7 +9101,7 @@ components:
           $ref: '#/components/schemas/Uuid'
         falta:
           type: boolean
-          description: Verdadeiro quando conta como falta do profissional (menos de 24 h, ou reabertura por atraso).
+          description: Verdadeiro quando conta como falta do profissional; Regra 4 (0.2.107) aplica carência e isenção de reabertura do aceite tardio.
         reaberta:
           type: boolean
           description: Falso quando o início já passou e o turno ficou descoberto.
@@ -9249,7 +9268,7 @@ components:
           description: |
             Verdadeiro quando conta como falta do profissional na taxa de comparecimento (RN12):
             desistência a menos de 24 horas do início, reabertura por atraso ou turno terminado sem
-            check-in. É o mesmo valor que `ResultadoCancelamento.falta` devolveu a quem cancelou.
+            check-in, ressalvadas a carência, a reabertura sem falta e o tempo hábil da Regra 4 (0.2.107). É o mesmo valor que `ResultadoCancelamento.falta` devolveu a quem cancelou.
         motivo:
           type: [string, 'null']
           description: |
