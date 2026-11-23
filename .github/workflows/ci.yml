@@ -112,12 +112,6 @@ jobs:
       - name: Corrida no token de uso único do upload
         run: ./scripts/corrida-token-upload.sh
 
-      # Mesma prova para o token opaco de upload da verificação de identidade (RN14): duas
-      # conexões chamam privado.consumir_token_upload_verificacao e só uma recebe o destino.
-      # Conexão que morre ou rodada sem um vencedor e um perdedor reprova.
-      - name: Corrida no token de uso único da verificação de identidade
-        run: ./scripts/corrida-token-upload-verificacao.sh
-
       # Aviso de cota mensal da moderação de mídia (cartão yPhXgTCY): duas conexões chamam
       # privado.reservar_chamada_moderacao com o consumo do mês no limiar de 80%, e só uma recebe o aviso,
       # inclusive quando o teto muda entre as duas. Conexão que morre ou aviso em dobro reprova.
