@@ -15,8 +15,7 @@
   "kv_namespaces": [
     {
       "binding": "ESTADO_VIGIA",
-      // Substituir pelo id retornado na criação do namespace, antes do deploy.
-      "id": "00000000000000000000000000000000"
+      "id": "f15e160fa6f74faeb43632694d35967f"
     }
   ]
 }
