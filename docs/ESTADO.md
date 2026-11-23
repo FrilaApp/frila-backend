@@ -20,30 +20,34 @@ do `frila-documentacao`: este arquivo não repete esse escopo.
 
 ## Em uma linha
 
-**A `develop` é o tronco e está à frente do `main` por 225 commits.** O `main` está em `a91780a`
-(merge do PR #392, 04/11/2026), e a única coisa que o `main` tem e a `develop` não são 3 commits de
-merge (0 fora merges). O último release anterior foi o PR #308 (`release/backend-v1.0.0`) em
-19/10/2026 (`8d19626`); as tags `backend-v*` existentes são `backend-v1.1.0` e `backend-v1.1.1`.
-A `develop` (ref `e625e7e` em 23/11/2026) possui
-**240 migrações**, **306 arquivos pgTAP** em `supabase/tests` (304 de regras + 2 de carga em `carga/`: `gerar_df.sql` e `gerar_casa_pesada.sql`),
-**13 Edge Functions** (14 diretórios com `_compartilhado`), **563 testes em Deno** (verde, 3 ignorados) e
-**94 scripts `.sh`** em `scripts/` (109 arquivos no total).
+**A `develop` é o tronco; o `main` é o ESPELHO DO PROD (decisão do time, 23/11/2026).** A cada pacote aplicado no Prod,
+abre-se um PR `prod/pacote-N` → `main` (merge commit, sem force), logo depois do Prod. O `main` está em `10fe6fc` (merge do
+#597, 23/11/2026): a árvore do pacote 23 (`d80626e` = `7d1c57f` sem a migração `20261118100000`) mais o #582 (só testes)
+e a remoção do pgTAP 890 e da corrida do #571. `supabase/migrations` e `supabase/functions` do `main` são idênticos ao `d80626e`
+(`git diff` vazio, mostrado no #597). Medido com `git rev-list --left-right --count origin/main...origin/develop` em
+23/11/2026: **7** commits só no `main` (os 3 merges de release antigos e os 4 do pacote 23) e **20** só na `develop`.
+O último release anterior foi o PR #308 (`release/backend-v1.0.0`) em 19/10/2026 (`8d19626`); as tags `backend-v*` existentes
+são `backend-v1.1.0` e `backend-v1.1.1`. Nenhuma tag `backend-v*` foi criada para o pacote 23 (entrou por roteiro).
+A `develop` (ref `af6c9fd` em 23/11/2026, tudo conferido de novo nesse commit) possui **241 migrações** (o `main`, 236, as do Prod),
+**306 arquivos pgTAP** em `supabase/tests` (304 de regras + 2 de carga em `carga/`: `gerar_df.sql` e `gerar_casa_pesada.sql`),
+**13 Edge Functions** (14 diretórios com `_compartilhado`) e **94 scripts `.sh`** em `scripts/` (113 arquivos no total, `find scripts -type f`).
+Os **563 testes em Deno** (verde, 3 ignorados) foram medidos em `e625e7e` e **não** foram remedidos depois das mesclas do #586 e do #587.
 
 Os números abaixo foram remedidos em 23/11/2026 (commit de referência `e625e7e` na `develop`), exceto onde a
 linha diz "não remedido em 23/11/2026":
 
 | | | Comando |
 |---|---|---|
-| Commits à frente do `main` | **225** (em 23/11, ref `e625e7e`; eram 205 em 18/11 e 71 em 01/11) | `git rev-list --count origin/main..origin/develop` |
-| Commits na `develop` desde `c25ef14` (01/11) | **256** | `git rev-list --count c25ef14..origin/develop` |
-| Migrações na `develop` | **240**, de `20260922150000` a `20261123100000` (veja `scripts/migracoes-sem-colisao.sh`) | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
-| Migrações no `main` | **130** | `git ls-tree -r --name-only origin/main -- supabase/migrations \| grep -c '\.sql$'` |
-| pgTAP | **306 arquivos** (304 de regras + 2 de carga), último `894_limites_valor_diaria_be02.sql`. Resultado de `supabase test db`: não remedido em 23/11/2026 (precisa do banco local da `develop`, compartilhado entre sessões; verde em 01/11 com 198 arquivos) | `find supabase/tests -name "*.sql" \| wc -l` |
+| Commits à frente do `main` | **20** (em 23/11, ref `af6c9fd`, depois do #597: o `main` passou a espelhar o Prod; eram 225 antes do espelho, em `e625e7e`, 205 em 18/11 e 71 em 01/11) | `git rev-list --count origin/main..origin/develop` |
+| Commits na `develop` desde `c25ef14` (01/11) | **266** (ref `af6c9fd`, 23/11) | `git rev-list --count c25ef14..origin/develop` |
+| Migrações na `develop` | **241**, de `20260922150000` a `20261123150000` (veja `scripts/migracoes-sem-colisao.sh`) | `git ls-tree -r --name-only origin/develop -- supabase/migrations \| grep -c '\.sql$'` |
+| Migrações no `main` | **236** (23/11, as do Prod; eram 130 até o #597) | `git ls-tree -r --name-only origin/main -- supabase/migrations \| grep -c '\.sql$'` |
+| pgTAP | **306 arquivos** (304 de regras + 2 de carga), último `895_remover_upload_verificacao_identidade.sql`. Resultado de `supabase test db`: não remedido em 23/11/2026 (precisa do banco local da `develop`, compartilhado entre sessões; verde em 01/11 com 198 arquivos) | `find supabase/tests -name "*.sql" \| wc -l` |
 | Portão `contrato-responde.sh` | **não remedido em 23/11/2026** (precisa de `supabase db reset`, que é do dono do banco local). Em 01/11: 151 de 151 recusas vigiadas e alcançadas, 46 de 50 respostas 200 validadas, 37 de 37 coleções. O que se mede sem banco (remedido em 23/11/2026, igual a 18/11): `VIGIADAS` tem **268** entradas, `ISENTAS` **24** e `PENDENTES` **2** em `scripts/contrato_responde.py` | `cd scripts && python3 -c "import contrato_responde as m; print(len(m.VIGIADAS), len(m.ISENTAS), len(m.PENDENTES))"` (precisa de `jsonschema`) |
 | Testes em Deno das Edge Functions | **563** passaram, **0** falharam, **3** ignorados | `deno test --allow-all --no-check --lock=deno.lock --frozen supabase/functions/ supabase/templates/` |
 | Edge Functions | **13** (14 diretórios, com `_compartilhado`): `despachar`, `entrar-demonstracao`, `enviar-email`, `enviar-midia`, `enviar-push`, `excluir-conta`, `exportar-meus-dados`, `exportar-turnos`, `expurgar-midias`, `ler-midia`, `limpar-contas-orfas`, `moderar-midia`, `saude` | `git ls-tree -d --name-only origin/develop:supabase/functions \| wc -l` |
 | Testes unitários em `exportar-turnos` | **55**, verde | `deno test --allow-all --no-check --lock=deno.lock --frozen supabase/functions/exportar-turnos/index_test.ts` |
-| Scripts em `scripts/` | **94** arquivos `.sh` (109 arquivos no total) | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
+| Scripts em `scripts/` | **94** arquivos `.sh` (113 arquivos no total, `find scripts -type f`) | `git ls-tree -r --name-only origin/develop -- scripts \| grep -c '\.sh$'` |
 | Contrato espelhado | **0.2.107**, byte a byte igual ao canônico do `frila-documentacao` (`api/openapi.yaml` na `main`, `87eeb69`, 23/11/2026) | `sed -n 's/^  version: *//p' contrato/openapi.yaml` |
 
 Um aviso sobre a contagem de pgTAP: `supabase/tests/*.sql` tem **304** arquivos de teste de regras,
@@ -165,6 +169,9 @@ Estado de cada PR conferido com `gh pr view <n> --json state,mergedAt` em 23/11/
 - **#586** e **#587** (mesclados em 23/11, 09h50): reaproveitam o pool de conexões Postgres em `saude` e `enviar-midia` (BE-01) e exigem o cabeçalho `x-agendador-secret` por padrão nas Edge Functions internas, sem aceitar `Authorization: Bearer` (BE-03). Revisados depois da mescla (`B-089`): aprovados, sem achado bloqueante.
 - **#590** (mesclado em 23/11): o ESTADO anterior, medido em `e625e7e`.
 - **#529** foi fechado sem merge; o #575 (mesclado em 19/11) o substituiu.
+- **Pacote 23 aplicado no Prod em 23/11/2026, 11h52 (BRT)** (corte `7d1c57f`, #581; árvore aplicada `d80626e`, sem a `20261118100000` do #571): 4 migrações numa transação (`20261117100000` saúde operacional, `20261120100000` e `20261120200000` aviso de cota da moderação, `20261120300000` fallback do `disparar_email`); topo `20261117200000` → `20261120300000`, 232 → 236 versões; Edge Functions por nome: `moderar-midia` v9→v10, `saude` v17→v18, `enviar-email` v18→v19; `excluir-conta`, `exportar-meus-dados` e `exportar-turnos` ficaram fora (CORS, ver abaixo). Verificação, desvio antes e depois e fumaça verdes; `saude` responde 200 `status: saudavel`. Exceção aceita pelo O2: a CI do `7d1c57f` estava vermelha só nos pgTAP 747 e 871 (data fixa, corrigidos pelo #582, fora do corte). Provas: `orquestracao/retornos/B-084-pacote-23-prod-retorno.md`.
+- **#594** (mesclado em 23/11, 13h29): o ESTADO com a fila de PRs. **#595** (mesclado em 23/11, 12h46): a migração `20261123150000_remover_upload_verificacao_identidade.sql` desfaz no banco a `20261118100000` (o #571; ver acima) e liberou as tags `backend-v*`: numa próxima tag, o `scripts/aplicar-remoto.sh` aplica a `20261118100000` (que o Prod não tem) e logo a `20261123150000`, que a desfaz. **#596** (mesclado em 23/11, 13h00): o vigia da `saude` do Prod no GitHub Actions, a cada 10 min, com aviso no Slack (`.github/workflows/vigia-saude.yml`, `docs/RunbookWalESlot.md` seção 6; o `schedule` roda na branch padrão, que é a `develop`). **#597** (mesclado em 23/11, 13h28, base `main`): o espelho do pacote 23.
+- **CORS das 3 funções fora do pacote 23** (`excluir-conta`, `exportar-meus-dados`, `exportar-turnos`; #530): **sem necessidade até a web chamar do navegador.** A web chama as 3 só pelo Worker (`Web/app/servidor/conta/*`) e a CSP de `frilabr.com/app` (`connect-src 'self'` e Firebase) nem deixa o navegador falar com o Supabase; os apps nativos não usam CORS. `CORS_ORIGENS_PERMITIDAS` segue ausente no Prod. Prova: `orquestracao/retornos/B-095-cors-3-funcoes.md`.
 
 ### A fila de PRs aberta em 23/11/2026
 
@@ -205,9 +212,18 @@ Medida com `gh pr list --state open` em 16/10:
 
 | | |
 |---|---|
-| local | `supabase start` · Postgres 17 (`major_version = 17` em `supabase/config.toml`) · **240** migrações na `develop` (veja `scripts/migracoes-sem-colisao.sh`), **130** no `main` (23/11/2026) |
+| local | `supabase start` · Postgres 17 (`major_version = 17` em `supabase/config.toml`) · **241** migrações na `develop` (veja `scripts/migracoes-sem-colisao.sh`), **236** no `main` (23/11/2026, as do Prod) |
 | `frila-dev` | `jcobftbhbqdikratzizz` · `sa-east-1` · **não remedido em 23/11/2026.** Em 01/11: SMTP próprio ativo (`smtp.gmail.com:465`, código de 6 dígitos) e entrega bloqueada por `frila.agendador_secret` (vide abaixo, onde o repositório hoje contradiz o bloqueio) |
-| `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **em uso** · **não remedido em 23/11/2026.** Último estado medido neste arquivo: pacote v1.1 aplicado em **08/11/2026** (topo `20261107370000`, 11 Edge Functions; detalhe abaixo). O `produto/AGORA.md` (frila-documentacao) registra pacotes posteriores no Prod, entre eles os pacotes 14 e 15 de 17/11/2026; esses não foram medidos contra o Prod por esta atualização · entrega só pela tag `backend-v*` (workflow Entrega) ou por roteiro combinado (`AGENTS.md`) |
+| `frila-prod` | `hbjkkcenbudiezmamiak` · `sa-east-1` · criado em 24/09, **em uso** · **não remedido em 23/11/2026.** Pacote 23 aplicado em **23/11/2026** (seção abaixo); último estado completo medido neste arquivo: pacote v1.1 aplicado em **08/11/2026** (topo `20261107370000`, 11 Edge Functions; detalhe abaixo). O `produto/AGORA.md` (frila-documentacao) registra pacotes posteriores no Prod, entre eles os pacotes 14 e 15 de 17/11/2026; esses não foram medidos contra o Prod por esta atualização · entrega só pela tag `backend-v*` (workflow Entrega) ou por roteiro combinado (`AGENTS.md`) |
+
+### O `frila-prod` em 23/11/2026 (medido logo após o pacote 23)
+
+Medido pelos scripts do roteiro do pacote 23 (somente leitura depois da aplicação; saídas em `orquestracao/lancamento-1-1/pacote-23/prod-7d1c57f/`):
+**236 versões** em `supabase_migrations.schema_migrations`, topo `20261120300000`, as 4 do pacote gravadas pela mesma transação (um `xmin`);
+**sem** a `20261118100000` (nem a tabela `privado.upload_verificacao_identidade`, nem a função `privado.consumir_token_upload_verificacao`);
+Edge Functions: `moderar-midia` v10, `saude` v18, `enviar-email` v19 (publicadas às 14:53 UTC), `excluir-conta` v15, `exportar-meus-dados` v16, `exportar-turnos` v15;
+fila de e-mail vazia e zero falha do `pg_net` nos últimos 15 min (antes e depois do deploy); `GET /functions/v1/saude` → `{"ok":true,"status":"saudavel"}`.
+O resto do Prod (jobs, segredos, tabelas) **não foi remedido** em 23/11/2026; vale a seção abaixo, de 08/11/2026.
 
 ### O `frila-prod` em 08/11/2026 (medido logo após o pacote v1.1; não remedido em 23/11/2026)
 
@@ -298,7 +314,7 @@ Histórico das versões integradas no backend até a 0.2.46 (**as versões 0.2.4
 
 Medido no banco de desenvolvimento com a `develop` em `c25ef14` (01/11/2026). **Esta seção não foi remedida em
 23/11/2026** (as listas de tabelas, RPCs e jobs precisam de um banco local na `develop` atual): a `develop` tem hoje
-240 migrações, então tabelas, RPCs e jobs novos não aparecem abaixo.
+241 migrações, então tabelas, RPCs e jobs novos não aparecem abaixo.
 
 - **22 tabelas** em `public`:
   ```
@@ -307,7 +323,7 @@ Medido no banco de desenvolvimento com a `develop` em `c25ef14` (01/11/2026). **
   funcao · membro_estabelecimento · notificacao · ocorrencia · pedido_de_exclusao
   posicao · profissional · profissional_funcao · turno · usuario · vaga
   ```
-- **123 migrações** aplicadas sequencialmente sem colisão em 01/11/2026 (em 23/11/2026 são **240**, sem colisão: `./scripts/migracoes-sem-colisao.sh`).
+- **123 migrações** aplicadas sequencialmente sem colisão em 01/11/2026 (em 23/11/2026 são **241**, sem colisão: `./scripts/migracoes-sem-colisao.sh`).
 - RLS ativado em todas as tabelas; escrita exclusivamente através de funções `security definer`.
 - **44 RPCs expostas a `authenticated`** (+ 1 pública `configuracao_do_app`):
   ```
@@ -357,7 +373,7 @@ banco local é compartilhado entre sessões; nessa linha vale a última medida, 
 | `./scripts/teste-contrato-responde.sh` | autoteste de schemas do contrato | 14 de 14 casos verdes | **14 de 14** casos verdes | **14 de 14** casos verdes (precisa de `jsonschema` no Python) |
 | `./scripts/teste-contrato-acompanha.sh` | PR que altera `public` acompanha contrato | 19 de 19 casos verdes | **19 de 19** casos verdes | **19 de 19** casos verdes |
 | `./scripts/relogio-em-testes.sh` | imunidade contra bombas-relógio de relógio | **108** arquivos pgTAP imunizados | **197** arquivos pgTAP imunizados | **304** arquivos pgTAP imunizados |
-| `./scripts/migracoes-sem-colisao.sh` | carimbos de migração únicos | **123** carimbos distintos | **123** carimbos distintos sem colisão | **240** carimbos distintos sem colisão |
+| `./scripts/migracoes-sem-colisao.sh` | carimbos de migração únicos | **123** carimbos distintos | **123** carimbos distintos sem colisão | **241** carimbos distintos sem colisão |
 | `./scripts/migracoes-imutaveis.sh` | migrações passadas não foram alteradas | verde | verde | verde (`Nenhuma migração existente foi tocada.`) |
 | `./scripts/planos-com-carga.sh` | caminho quente sob volume sintético do DF (PR #180, #196) | verde na CI | verde na CI (aquecimento prévio, melhor de 3 baterias) | **não remedido em 23/11/2026** |
 
@@ -467,7 +483,7 @@ loja, de pessoa ou de decisão fora do repositório **não foi remedido em 23/11
    deixou de listar o escopo.
 2. **O que está em voo no backend:** a fila de 6 PRs abertos e as 4 issues abertas de 23/11/2026, na seção "Onde cada
    coisa parou". `gh pr list --state open` e `gh issue list --state open` dão a lista de hoje.
-3. **Antes de escrever um contrato novo ou uma migração:** `git fetch`, parta de `origin/develop` (240 migrações,
+3. **Antes de escrever um contrato novo ou uma migração:** `git fetch`, parta de `origin/develop` (241 migrações,
    contrato 0.2.107 em 23/11/2026), rode `./scripts/migracoes-sem-colisao.sh` e procure o `create or replace function <nome>`
    na `develop` e nos PRs abertos (`AGENTS.md`).
 4. **Ambientes remotos (`frila-dev`, `frila-prod`):** não remedidos em 23/11/2026. Meça antes de afirmar o estado
