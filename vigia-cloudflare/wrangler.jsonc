@@ -4,6 +4,9 @@
   "compatibility_date": "2026-11-23",
   "account_id": "f3716d2e326f77f3cdcefe987365070b",
   "triggers": { "crons": ["*/5 * * * *"] },
+  // Só o cron faz o trabalho: sem endereço público *.workers.dev nem prévias.
+  "workers_dev": false,
+  "preview_urls": false,
   "vars": {
     "URL_SAUDE": "https://hbjkkcenbudiezmamiak.supabase.co/functions/v1/saude",
     "AVISO_TESTE": "",
