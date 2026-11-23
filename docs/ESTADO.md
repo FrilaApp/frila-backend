@@ -157,7 +157,7 @@ Medida com `gh pr list --state open` em 18/11/2026: **9 PRs abertos**, todos Dra
 
 | PR | Autor | Branch | O quê |
 |---|---|---|---|
-| #462 | `cauecarneiro` | `docs/runbook-wal-e-slot` | runbook do WAL e do slot do registro de acessos |
+| #462 | `cauecarneiro` | `docs/runbook-wal-e-slot` | runbook do WAL e do slot do registro de acessos (22/11/2026: substituído pelo #588; o #462 fecha depois da mescla) |
 | #513 | `jotape12-Dev` | `fix/a-caminho-substituto` | janela "a caminho" após confirmação (título cita espelho 0.2.97) |
 | #515 | `jotape12-Dev` | `feat/historico-faltas` | histórico de faltas por tipo só para o titular (espelho 0.2.98) |
 | #516 | `jotape12-Dev` | `feat/regra4-aceite-tardio` | prepara a Regra 4 do aceite tardio (espelho 0.2.99) |

@@ -35,7 +35,7 @@ em 16/11/2026, por volta das 22h30 (Brasília).
 |---|---|
 | O projeto grátis pausa depois de 7 dias sem uso, e só Owner ou Admin reativa | `.github/workflows/mantem-prod-vivo.yml`: um GET por dia (12:00 UTC) na função `saude`, que faz `select 1` e, desde o #514, confere a idade dos jobs do pg_cron. Job vermelho = o Prod fora ou jobs atrasados (503) |
 | Sem backup gerenciado com volta a um instante (PITR) | Backup lógico próprio, diário, cifrado (age) e guardado fora do Supabase por 14 dias (`docs/BackupDoProd.md`) |
-| Disco de 2 GB: o WAL ou um slot parado enchem o disco | Runbook do WAL e do slot (PR #462, ainda em aberto) e o alerta de cron parado (`probe_saude_cron`, #514) |
+| Disco de 2 GB: o WAL ou um slot parado enchem o disco | Runbook do WAL e do slot (`docs/RunbookWalESlot.md`; conferência ainda manual, fora do script) e a sonda de cron parado na `saude` (`probe_saude_cron`, #514; #532). O vigia externo (GitHub Actions → Slack) ainda não existe: vem depois do pacote 23 (`docs/RunbookWalESlot.md`, seção 6) |
 | Logs curtos (1 dia para API e banco, 1 hora para o Auth; supabase.com/pricing) | Falhas de execução gravadas no banco (`registrar_falha_execucao`) e o vigia de saúde |
 | Limite de 30 e-mails por hora no Auth, para o projeto inteiro | O valor do limite é conferido (`scripts/conferir-auth-remoto.sh`, D04). O alerta de uso da cota **ainda não existe** (anotado no cartão `ohSt4dg2`): até lá, o esgotamento só aparece quando o Auth recusa o envio |
 | Spend cap: passar da cota do plano deixa o projeto sem resposta ou só leitura, em vez de cobrar | Sem cobertura automática hoje; o gatilho "disco acima de 70%" abaixo reabre esta decisão |

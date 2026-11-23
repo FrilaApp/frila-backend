@@ -164,6 +164,8 @@ Falhas no segredo do agendador, queda do servidor SMTP ou credenciais inválidas
 - Limpeza de retenção LGPD não expurga eventos antigos às 06:30 UTC (`retencao_e_limpeza_diaria`).
 - Notificações periódicas de atraso ou fim de turno sem checkout não disparam.
 
+> **Com a coleta do registro de acessos ligada, o `pg_cron` parado também enche o disco:** a autoproteção do slot roda nos jobs `consumir_registro_acesso` e `verificar_saude`. Com o `pg_cron` inteiro parado, nenhum dos dois roda, e o slot retém ~480 MB/h até o servidor invalidá-lo com 1 GB (~2 h). Desligar a coleta e conferir o WAL: `docs/RunbookWalESlot.md`. A sonda da `saude` (#514 e #532) já mede a idade dos jobs, mas não o slot nem o disco; o vigia externo (GitHub Actions a cada 10 min → Slack) ainda não existe e vem depois do pacote 23 (`docs/RunbookWalESlot.md`, seção 6).
+
 ### Causa Raiz
 O banco possui jobs ativos agendados no `pg_cron`. O número cresce com cada job novo: o pgTAP `supabase/tests/390_agendamentos_do_pg_cron.sql` lista 26 nomes conhecidos na `develop` em `a55aab0` (contagem por `awk`, 16/11/2026) e falha se um job novo entrar sem entrar no teste. Todos invocam funções no formato canônico `select privado.<funcao>()`. Se uma migração revogar privilégios, alterar a assinatura da função sem valor default para argumentos, fixar um `search_path` que oculte tipos de dados ou introduzir uma exceção não tratada, o job falha em silêncio no background sem notificar o app.
 
