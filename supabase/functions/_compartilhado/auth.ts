@@ -3,7 +3,7 @@
 // Centraliza o núcleo de validação de autenticação:
 // 1. Comparação de segredos em tempo constante contra timing attacks (CWE-208 / RN15).
 // 2. Validação e extração do cabeçalho de autenticação Bearer para endpoints de usuário.
-// 3. Validação uniforme do segredo de agendador (x-agendador-secret / Bearer).
+// 3. Validação uniforme do segredo de agendador (x-agendador-secret; o Bearer só vale com `permitirBearer: true`, desde o #587).
 
 /**
  * Regex estrita para validação do formato do cabeçalho Authorization: Bearer <token>.
