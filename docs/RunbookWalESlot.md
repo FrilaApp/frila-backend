@@ -115,36 +115,69 @@ E o disco, fora do banco, pela Management API: `GET /v1/projects/hbjkkcenbudiezm
 - **Age:** o plantonista do dia roda a conferência e, no 🔴, desliga a coleta e segue o runbook do `pg_cron`.
 - **Decide:** o Cauê decide religar a coleta, apagar ou anotar um buraco, mudar o teto e subir de plano ou de disco. O que for mudança de banco vira migração nova (`docs/RunbookHotfixERollback.md`).
 
-## 6. Vigia externo: GitHub Actions a cada 10 min → Slack (decisão de 22/11/2026)
+## 6. Vigia externo: Cloudflare Worker a cada 5 min → Slack (B-098, 23/11/2026)
 
-**Decisão (Orquestrador 2, 22/11/2026):** o vigia de `pg_cron` parado é um workflow do GitHub Actions, de 10 em 10 min, que chama a Edge Function `saude` e avisa o Slack (#alertas-prod). Sem fornecedor novo, sem conta nova e sem token externo; o repositório é público, então os minutos são grátis. Isso substitui a escolha do HetrixTools do desenho original (que também descartava o Actions). O cartão é o `bB0tV5R8`.
-
-**Existe desde o B-092.1 (cartão `bB0tV5R8`).** O workflow é `.github/workflows/vigia-saude.yml` e a lógica está em `scripts/vigia_saude.py` (teste: `scripts/teste-vigia-saude.sh`). O `mantem-prod-vivo.yml` continua como está: faz um GET por dia só para o projeto não pausar, e não avisa por conta própria além do `notifica-slack.yml`.
+**O vigia principal é o Worker `frila-vigia-saude`**, na conta Cloudflare do Frila.
+Código, testes e roteiro completo: `vigia-cloudflare/LEIAME.md`. Substitui a escolha
+pelo Actions do B-092.1 (decisão de 22/11/2026, cartão `bB0tV5R8`).
 
 **Como funciona**
-- O `schedule` roda `*/10 * * * *` **na branch padrão (`develop`)**: ao mesclar o PR, o vigia passa a rodar sozinho contra o Prod. Também roda à mão (`workflow_dispatch`, com a opção `dry_run` para só imprimir o aviso no log).
-- Faz GET na URL da variável de repositório `FRILA_PROD_URL_SAUDE` (a mesma do `mantem-prod-vivo.yml`). Só lê; não grava nada no Prod. Permissões: `contents: read` e `actions: read`. Só `schedule` e `workflow_dispatch`: PR de fork nunca lê o secret.
-- Se não vier HTTP 200 com `{"ok":true}` (503 `atrasado` ou `degradado`, timeout, erro de rede, corpo estranho), espera ~60 s e tenta de novo. **Só a segunda falha conta.**
-- Avisa o Slack pelo `scripts/notificar-slack.sh`, com o secret `SLACK_WEBHOOK_URL` que já existe. Nenhum segredo novo; a URL e o webhook nunca vão para o log nem para a mensagem.
-- **Sem enxurrada.** O estado é a conclusão das execuções anteriores do próprio workflow (API do Actions, `GITHUB_TOKEN`), então **a execução fica vermelha enquanto a saúde está fora** (é o registro do estado, não bug). Quatro avisos possíveis: o primeiro, na confirmação da queda; um lembrete a cada ~1 h de queda contínua; um aviso de volta ao normal; e o de vigia atrasado (abaixo). Nas execuções entre eles, fica calado.
-- **Vigia atrasado.** Se a execução anterior do vigia tiver mais de 45 min, a execução seguinte avisa o Slack ("ficou sem rodar"): o `schedule` do GitHub atrasa e pula execuções em hora de pico. Execução cancelada ou pulada não conta como queda nem como boa.
+- Um Cron Trigger `*/5 * * * *` (UTC) chama `scheduled`. Faz GET na `URL_SAUDE`,
+  pública no `wrangler.jsonc`, sem gravar no Prod. HTTP 200 com `{"ok":true}` é saudável.
+- Se falhar, espera 60 s e tenta novamente: só a segunda falha conta. Timeout de
+  20 s por chamada. O endpoint HTTP do Worker responde somente `200 ok`, sem detalhes;
+  responder bem nesse endpoint não prova a execução do cron.
+- Primeiro alerta e lembrete a cada ~1 h começam por 🔴; recuperação única, com duração,
+  começa por 🟢. Se a execução anterior tiver mais de 15 min, avisa 🟠 na próxima execução.
+  URLs, tokens e corpos crus nunca entram em mensagem ou log; só `status` curto validado.
+- Estado no **Workers KV**, binding `ESTADO_VIGIA`, chave `estado`: marca da última
+  execução, início da queda, último aviso e etiqueta do teste. O ID do namespace está
+  em `vigia-cloudflare/wrangler.jsonc`, após sua criação pelo líder. Uma escrita por
+  execução reúne tudo. Inferência: 24 × 60 ÷ 5 = 288 escritas/dia, abaixo das 1.000
+  gratuitas/dia ([limites do KV](https://developers.cloudflare.com/kv/platform/limits/));
+  a cota é compartilhada pela conta. Sem recursos pagos.
+- Slack por `chat.postMessage`: **`SLACK_BOT_TOKEN` é secret do Worker**, lido só de `env`.
+  Canal em `SLACK_CANAL`, sem segredo. O bot precisa de `chat:write` e estar no canal.
+  Token do bot tem escopo maior que webhook dedicado; trocar fica como melhoria.
+  HTTP diferente de 200, JSON inválido ou `ok:false` só gera log sem corpo/token
+  (`error` apenas se curto e validado). Estado avança mesmo com falha de Slack.
 
-**Ligar e desligar**
-- **Ligar:** crie a variável `FRILA_PROD_URL_SAUDE` (Settings → Secrets and variables → Actions → Variables, `https://<project-ref>.supabase.co/functions/v1/saude`) **antes** de mesclar. Sem ela, o primeiro aviso do vigia diz "variável não configurada" e a execução fica vermelha, como pede um alarme que não pode passar em silêncio.
-- **Desligar** (manutenção longa, por exemplo): `gh workflow disable vigia-saude.yml`; religar com `gh workflow enable vigia-saude.yml`. Ao religar, o primeiro aviso pode ser o de "vigia atrasado". É esperado.
-- **Janela de deploy:** a confirmação de 60 s cobre piscada curta. Uma queda real de mais de ~1 min durante um deploy avisa e, quando voltar, o Slack recebe o aviso de volta ao normal.
+**Ligar, desligar e provar**
+- Comandos sempre pelo wrapper `orquestracao/scripts/wrangler-frila`, na pasta
+  `vigia-cloudflare/`. Nada de login/logout global. Deploy só pelo líder após autorização.
+- **Ligar:** conferir Workers Free; `wrangler-frila kv namespace create ESTADO_VIGIA`,
+  preencher o ID retornado no `wrangler.jsonc` (o marcador não é um namespace real),
+  cadastrar o secret com `wrangler-frila secret put SLACK_BOT_TOKEN` sem imprimir o
+  valor e executar `wrangler-frila deploy`. O roteiro detalhado está no LEIAME.
+- **Provar:** preencher `AVISO_TESTE` com etiqueta nova e publicar. Uma tentativa de
+  aviso `TESTE: ` é registrada no KV e não repete para a mesma etiqueta atual.
+  Confirmar o aviso no Slack e execuções **agendadas** com `wrangler-frila tail`
+  (o plano pede duas), depois esvaziar a variável e publicar de novo. Disparo manual
+  sozinho não prova o agendamento. O cron pode levar
+  [até 15 min para propagar](https://developers.cloudflare.com/workers/configuration/cron-triggers/).
+- **Suspender:** deixar `triggers.crons: []` e publicar. **Religar:** restaurar o cron
+  e publicar. **Remover o Worker:** `wrangler-frila delete`. Preservar o namespace KV;
+  ao religar, o aviso de atraso é esperado.
 
-**Limites conhecidos (não escondê-los)**
-- "10 min" é nominal: o `schedule` pode atrasar mais de 15 min. O aviso de vigia atrasado sai **depois** do atraso, na execução que voltar a rodar.
-- **Não detecta o próprio desaparecimento total.** Se o GitHub desativar o agendamento (60 dias sem atividade no repositório) ou ninguém religar o workflow, nenhuma execução roda para avisar. A repo tem atividade quase diária; mesmo assim, na conferência da seção 3 confira em Actions → Vigia da saúde do Prod que há execução nas últimas horas. Para fechar a lacuna, o caminho é um segundo olhar a partir de outro workflow agendado (por exemplo, o job horário do `notifica-slack.yml`); fica como cartão futuro, fora do B-092.1.
-- O histórico lido vai a 300 execuções (~50 h). Queda contínua mais longa que isso para de gerar lembretes.
-- Se a API do Actions falhar, o vigia decide sem histórico: avisa a queda a mais, nunca fica em silêncio.
-- Erro de envio ao Slack só vira `::warning::` no log; não altera o resultado da execução (o estado vive na conclusão).
+**Actions: segundo olhar, NÃO é confiável.** O agendador do GitHub atrasa horas:
+**medido em 23/11/2026: 0 execuções agendadas em 5 h** (fonte: brief B-098,
+`orquestracao/briefs/B-098-vigia-cloudflare.md`). O `.github/workflows/vigia-saude.yml`
+permanece com `scripts/vigia_saude.py`, seus secrets e a variável de repositório
+`FRILA_PROD_URL_SAUDE`, como observação adicional. Não substitui o Worker nem é
+prova de pontualidade. `mantem-prod-vivo.yml` continua sendo apenas o GET diário.
 
-**O que a `saude` já cobre (develop, #514 e #532):** a idade dos jobs `reprocessar_despacho`, `verificar_saude`, `processar_fila_email` e, com a coleta ligada, `consumir_registro_acesso`; a idade das filas de e-mail e de despacho; falhas do `pg_net` e do SMTP. Responde 503 com `atrasado` ou `degradado`, sem nome de job no corpo público. **Não cobre** o slot nem o disco: a conferência da seção 3 continua manual.
+**Limites conhecidos**
+- **Não detecta o próprio sumiço total.** O atraso só é percebido quando uma execução
+  volta a rodar. Conferir os últimos eventos agendados no Worker durante a seção 3.
+  O segundo olhar do Actions também pode atrasar ou deixar de executar.
+- KV tem consistência eventual: leitura antiga entre regiões ou disparo concorrente
+  pode repetir aviso. Manter um cron, preservar o namespace e evitar disparos manuais
+  simultâneos. Falha de KV vira log fixo; pode impedir registro/aviso nessa execução.
+- Falha de Slack não interrompe o cron, mas a tentativa não é reenviada até o próximo
+  aviso previsto. CPU/cotas do plano gratuito são limites reais, a conferir no deploy.
 
-**Limites do Actions que o desenho do workflow tem de tratar:**
-- O `schedule` do GitHub **pode atrasar mais de 15 min** (e pular execuções) em hora de pico. Um "10 min" nominal não é um alerta em 10 min.
-- O GitHub **desliga os agendamentos depois de 60 dias sem atividade no repositório**. Sem aviso, o vigia some. O monitor precisa **alertar a própria falha** (por exemplo, um passo que avisa o Slack se a última execução passou de um limite, ou um lembrete no plantão para reativar o workflow).
-- O segredo do webhook do Slack fica **só como secret do repositório**, nunca no código, no log nem em PR.
-- O workflow só lê: faz `GET` na `saude` e não grava nada.
+**O que a `saude` já cobre (develop, #514 e #532):** idade dos jobs
+`reprocessar_despacho`, `verificar_saude`, `processar_fila_email` e, com a coleta ligada,
+`consumir_registro_acesso`; idade das filas de e-mail e despacho; falhas do `pg_net` e
+SMTP. Responde 503 com `atrasado` ou `degradado`, sem nome de job no corpo público.
+**Não cobre** slot nem disco: a conferência da seção 3 continua manual.
