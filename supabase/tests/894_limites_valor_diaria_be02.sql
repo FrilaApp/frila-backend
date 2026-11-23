@@ -14,9 +14,10 @@
 --      de estado (ex: cancelamento), enquanto republicar_vaga de uma vaga histórica fora da faixa é
 --      recusada com 422 campo_invalido (valor_centavos).
 begin;
+set local frila.agendador_secret = 'segredo-de-teste';
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-23 12:00:00+00', true);
-select plan(23);
+select plan(26);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -98,7 +99,7 @@ create function pg_temp.sql_publicar_vaga(valor bigint) returns text language sq
     chave => %L,
     regiao_administrativa => 'Plano Piloto') $a$,
     (select f.id from public.funcao f where f.nome = 'garçom'),
-    valor,
+    coalesce(valor::text, 'null'),
     gen_random_uuid()) $$;
 
 create function pg_temp.sql_publicar_escala(vagas_json jsonb) returns text language sql as $$
@@ -284,6 +285,22 @@ select is(pg_temp.resultado('c8940000-0000-4000-8000-000000000001',
                       '2026-11-29 18:00+00', '2026-11-29 23:00+00', %L) $$, gen_random_uuid())),
   '{"sqlstate": "PGRST", "status": 422, "code": "campo_invalido", "details": "valor_centavos"}'::jsonb,
   '23. republicar_vaga de vaga histórica acima do teto (500000) -> 422 campo_invalido');
+
+-- ── 6. Cobertura adicional (revisão independente #589) ────────────────────────
+select is(pg_temp.resultado('c8940000-0000-4000-8000-000000000001', pg_temp.sql_publicar_vaga(null)),
+  '{"sqlstate": "PGRST", "status": 422, "code": "campo_obrigatorio", "details": "valor_centavos"}'::jsonb,
+  '24. publicar_vaga: valor_centavos NULL -> 422 campo_obrigatorio (não campo_invalido)');
+
+select is(pg_temp.resultado('c8940000-0000-4000-8000-000000000001',
+            pg_temp.sql_publicar_escala(jsonb_build_array(
+              pg_temp.item_escala(5000, '2026-11-26T18:00:00Z', '2026-11-26T23:00:00Z'),
+              pg_temp.item_escala(4999, '2026-11-26T19:00:00Z', '2026-11-26T23:30:00Z')))),
+  '{"sqlstate": "PGRST", "status": 422, "code": "campo_invalido", "details": "vagas[1].valor_centavos"}'::jsonb,
+  '25. publicar_escala heterogênea (item 0 válido 5000, item 1 inválido 4999) -> 422 vagas[1].valor_centavos');
+
+select is((select count(*)::int from public.evento where estabelecimento_id = 'c8940000-0000-4000-8000-0000000000e1'),
+  1,
+  '26. publicar_escala heterogênea recusada não grava evento adicional (atomicidade)');
 
 select * from finish();
 rollback;
