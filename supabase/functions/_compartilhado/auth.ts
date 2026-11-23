@@ -44,14 +44,14 @@ export function extrairBearerToken(autorizacao: string | null): string | null {
 export interface OpcoesValidarSegredo {
   /**
    * Se true, aceita também o segredo enviado via `Authorization: Bearer <segredo>`.
-   * Padrão: true.
+   * Padrão: false (BE-03 / DEF-01: exige cabeçalho dedicado `x-agendador-secret`).
    */
   permitirBearer?: boolean;
 }
 
 /**
  * Valida o segredo do agendador em tempo constante contra `x-agendador-secret`
- * ou alternativamente `Authorization: Bearer <segredo>` (se permitido).
+ * (ou alternativamente `Authorization: Bearer <segredo>` somente quando `permitirBearer: true`).
  */
 export function segredoAgendadorValido(
   req: Request,
@@ -67,7 +67,7 @@ export function segredoAgendadorValido(
     return true;
   }
 
-  const permitirBearer = opcoes.permitirBearer ?? true;
+  const permitirBearer = opcoes.permitirBearer ?? false;
   if (permitirBearer) {
     const authHeader = req.headers.get("Authorization") ?? "";
     const match = authHeader.match(/^Bearer\s+(.+)$/i);

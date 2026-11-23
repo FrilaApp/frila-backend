@@ -51,18 +51,22 @@ Deno.test("auth._compartilhado: segredoAgendadorValido valida via header x-agend
   assertEquals(segredoAgendadorValido(req, ""), false);
 });
 
-Deno.test("auth._compartilhado: segredoAgendadorValido valida via Authorization: Bearer por padrão", () => {
+Deno.test("auth._compartilhado: segredoAgendadorValido recusa Authorization: Bearer por padrão (BE-03)", () => {
   const req = new Request("http://localhost", {
     headers: { Authorization: "Bearer segredo-super-secreto" },
   });
-  assertEquals(segredoAgendadorValido(req, "segredo-super-secreto"), true);
+  assertEquals(segredoAgendadorValido(req, "segredo-super-secreto"), false);
   assertEquals(segredoAgendadorValido(req, "segredo-incorreto"), false);
 });
 
-Deno.test("auth._compartilhado: segredoAgendadorValido recusa Bearer quando permitirBearer é false", () => {
+Deno.test("auth._compartilhado: segredoAgendadorValido aceita Bearer somente quando permitirBearer é true", () => {
   const req = new Request("http://localhost", {
     headers: { Authorization: "Bearer segredo-super-secreto" },
   });
+  assertEquals(
+    segredoAgendadorValido(req, "segredo-super-secreto", { permitirBearer: true }),
+    true,
+  );
   assertEquals(
     segredoAgendadorValido(req, "segredo-super-secreto", { permitirBearer: false }),
     false,
