@@ -21,7 +21,7 @@ trocar por webhook dedicado fica como melhoria. Nunca imprimir nem versionar o t
 
 ## Validar e preparar (sem publicar)
 
-Na raiz do repositório: `node --test vigia-cloudflare/`.
+Na raiz do repositório: `node --test vigia-cloudflare/teste/vigia.test.js` (o arquivo explícito: a CI usa o Node padrão do runner, que não aceita pasta como argumento).
 Na pasta `vigia-cloudflare/`:
 `/Users/cauecarneiro/Documents/Projetos/Frila/orquestracao/scripts/wrangler-frila deploy --dry-run`.
 O `package.json` só declara ESM; não há instalação de pacotes.
