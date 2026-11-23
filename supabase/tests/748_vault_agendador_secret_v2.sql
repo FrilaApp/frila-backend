@@ -24,8 +24,9 @@ select ok(req_id is not null, funcao || ': só Vault retorna requisição')
 select is(q.headers->>'x-agendador-secret', 'segredo-sintetico-vault-748',
           r.funcao || ': só Vault preenche x-agendador-secret')
   from requisicoes_vault r left join net.http_request_queue q on q.id = r.req_id order by r.funcao;
-select is(q.headers->>'Authorization', 'Bearer segredo-sintetico-vault-748',
-          r.funcao || ': só Vault preenche Authorization')
+select is(q.headers->>'Authorization',
+          case when r.funcao = 'email' then null::text else 'Bearer segredo-sintetico-vault-748' end,
+          r.funcao || ': só Vault preenche Authorization apenas onde legado ainda envia')
   from requisicoes_vault r left join net.http_request_queue q on q.id = r.req_id order by r.funcao;
 
 -- Ambos: conferir os cabeçalhos das funções prova a prioridade efetiva do Vault.
@@ -39,8 +40,9 @@ select ok(req_id is not null, funcao || ': ambas as fontes retornam requisição
 select is(q.headers->>'x-agendador-secret', 'segredo-sintetico-vault-748',
           r.funcao || ': Vault tem prioridade sobre GUC em x-agendador-secret')
   from requisicoes_vault r left join net.http_request_queue q on q.id = r.req_id order by r.funcao;
-select is(q.headers->>'Authorization', 'Bearer segredo-sintetico-vault-748',
-          r.funcao || ': Vault tem prioridade sobre GUC em Authorization')
+select is(q.headers->>'Authorization',
+          case when r.funcao = 'email' then null::text else 'Bearer segredo-sintetico-vault-748' end,
+          r.funcao || ': Vault tem prioridade sobre GUC em Authorization apenas onde legado ainda envia')
   from requisicoes_vault r left join net.http_request_queue q on q.id = r.req_id order by r.funcao;
 
 -- Sem Vault: as mesmas funções usam o GUC de compatibilidade.
@@ -54,8 +56,9 @@ select ok(req_id is not null, funcao || ': fallback GUC retorna requisição')
 select is(q.headers->>'x-agendador-secret', 'segredo-sintetico-guc-748',
           r.funcao || ': fallback GUC preenche x-agendador-secret')
   from requisicoes_vault r left join net.http_request_queue q on q.id = r.req_id order by r.funcao;
-select is(q.headers->>'Authorization', 'Bearer segredo-sintetico-guc-748',
-          r.funcao || ': fallback GUC preenche Authorization')
+select is(q.headers->>'Authorization',
+          case when r.funcao = 'email' then null::text else 'Bearer segredo-sintetico-guc-748' end,
+          r.funcao || ': fallback GUC preenche Authorization apenas onde legado ainda envia')
   from requisicoes_vault r left join net.http_request_queue q on q.id = r.req_id order by r.funcao;
 
 -- Nenhuma fonte: preserva a exceção do despacho e o warning + null do e-mail.
