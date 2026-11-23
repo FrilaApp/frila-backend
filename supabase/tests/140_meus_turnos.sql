@@ -127,7 +127,7 @@ select is(
 select is(
   (select array_agg(k order by k) from lista, jsonb_object_keys((select j->0 from lista)) k),
   array['a_caminho_em','avaliacao','cancelamento','checkin_confirmado_em','checkin_distancia_m','checkin_em','checkin_tipo',
-        'checkout_distancia_m','checkout_em','contato_visivel_ate','contraparte','estado','id',
+        'checkout_distancia_m','checkout_em','confirmado_em','contato_visivel_ate','contraparte','estado','id',
         'pode_avaliar','posicao_id','vaga','valor_acordado_centavos','verificacao'],
   'cada turno traz exatamente os campos do schema Turno do contrato');
 

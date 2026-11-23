@@ -236,9 +236,9 @@ select ok((select (t_p4.t ? 'avaliacao') from t_p4),
 select is(
   (select array_agg(k order by k) from jsonb_object_keys((select t from t_p4)) k),
   array['a_caminho_em','avaliacao','cancelamento','checkin_confirmado_em','checkin_distancia_m','checkin_em','checkin_tipo',
-        'checkout_distancia_m','checkout_em','contato_visivel_ate','contraparte','estado','id',
+        'checkout_distancia_m','checkout_em','confirmado_em','contato_visivel_ate','contraparte','estado','id',
         'pode_avaliar','posicao_id','vaga','valor_acordado_centavos','verificacao'],
-  'Turno em meus_turnos contém todos os 18 campos do schema do contrato (sem regressão de estado e avaliacao da 0.2.31)');
+  'Turno em meus_turnos contém todos os 19 campos do schema do contrato (sem regressão de estado e avaliacao da 0.2.31)');
 
 -- Causa 2: profissional com falta (antecedência < 24h)
 create temp table vaga_falta as select pg_temp.pub(6, 'urgencia') as id;
