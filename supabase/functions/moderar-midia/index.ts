@@ -51,6 +51,8 @@ const MEMORIA_MAXIMA_DECODIFICACAO_MB = 96;
 
 /** Teto mensal padrão: a cota gratuita do Azure Content Safety. Zero chamadas pagas. */
 const TETO_MENSAL_PADRAO = 5000;
+/** Percentual do teto mensal que dispara o aviso de cota (uma vez por mês). */
+export const PERCENTUAL_AVISO_COTA = 80;
 /** Severidade do Azure (0, 2, 4, 6) a partir da qual a foto é reprovada. */
 const AZURE_SEVERIDADE_REPROVACAO = 4;
 /** Limite de imagem do Azure Content Safety; acima disso vai a miniatura. */
@@ -486,6 +488,66 @@ export function criarProvedor(env: FonteEnv, fetchFn: typeof fetch): ProvedorMod
   }
 }
 
+/** Hosts em que a pilha local do Supabase (CLI e contêineres) serve a API. */
+const HOSTS_AMBIENTE_LOCAL = new Set(["localhost", "127.0.0.1", "[::1]", "kong", "host.docker.internal"]);
+
+/**
+ * Host do projeto Supabase de produção (frila-prod). O provedor `local` nunca é aceito
+ * em produção, mesmo com MODERACAO_PERMITE_LOCAL=1 (falha fechada contra aprovação cega).
+ */
+export const HOST_PROD = "hbjkkcenbudiezmamiak.supabase.co";
+
+/**
+ * O código não tem flag de ambiente; o que a hospedagem e a pilha local definem de forma
+ * diferente é o host de SUPABASE_URL. Só host conhecido de pilha local conta como local:
+ * URL ilegível ou desconhecida conta como hospedagem real (falha fechada).
+ */
+export function ambienteLocal(supabaseUrl: string): boolean {
+  try {
+    return HOSTS_AMBIENTE_LOCAL.has(new URL(supabaseUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Determina se o provedor `local` é permitido:
+ * (a) na pilha local conhecida (localhost, 127.0.0.1, etc.); ou
+ * (b) quando MODERACAO_PERMITE_LOCAL=1 (após trim) e o host de SUPABASE_URL não for o de produção (HOST_PROD).
+ * Qualquer outro valor da variável não tem efeito.
+ */
+export function permiteProvedorLocal(supabaseUrl: string, env?: FonteEnv): boolean {
+  if (ambienteLocal(supabaseUrl)) {
+    return true;
+  }
+  const permite = env?.MODERACAO_PERMITE_LOCAL?.trim() === "1";
+  if (!permite) {
+    return false;
+  }
+  try {
+    const host = new URL(supabaseUrl).hostname;
+    return Boolean(host) && host !== HOST_PROD;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `local` aprova toda foto sem olhar para ela. Fora da pilha local isso seria moderação de
+ * mentira, então a função recusa subir com ele (ErroConfiguracao, que o handler devolve como
+ * 500 antes de tocar na fila). A mensagem cita só nomes de variável, nunca valor.
+ * No frila-dev, aceita `local` se MODERACAO_PERMITE_LOCAL=1; em produção (HOST_PROD),
+ * recusa sempre com o mesmo erro_configuracao.
+ */
+export function exigirProvedorReal(provedor: ProvedorModeracao, supabaseUrl: string, env?: FonteEnv): void {
+  if (provedor.nome === "local" && !permiteProvedorLocal(supabaseUrl, env)) {
+    throw new ErroConfiguracao(
+      "MODERACAO_PROVEDOR=local só é aceito em ambiente local: configure MODERACAO_PROVEDOR=azure " +
+        "(com AZURE_CONTENT_SAFETY_KEY e AZURE_CONTENT_SAFETY_ENDPOINT) ou openai (com OPENAI_API_KEY)",
+    );
+  }
+}
+
 export function lerTetoMensal(env: FonteEnv): number {
   const bruto = env.MODERACAO_TETO_MENSAL?.trim();
   if (!bruto) return TETO_MENSAL_PADRAO;
@@ -513,6 +575,62 @@ export interface MidiaModeracao {
 
 export type ReservaChamada = "ok" | "teto_mensal" | "limite_foto";
 
+/**
+ * Resultado de `reservarChamada`. `consumoMes` é o total do mês DEPOIS da reserva. `avisarCota` diz se
+ * ESTA reserva deve emitir o aviso de cota: o banco decide, na mesma transação e sob a mesma trava,
+ * pelo consumo no limiar ou acima dele e pela marca (provedor, mês, limiar) ainda não gravada.
+ */
+export interface ResultadoReserva {
+  resultado: ReservaChamada;
+  consumoMes: number;
+  avisarCota: boolean;
+}
+
+/** Cliente SQL reduzido ao que `reservarViaFuncao` usa: a tag de template do `postgres`. */
+export type SqlTag = (
+  partes: TemplateStringsArray,
+  ...valores: unknown[]
+) => PromiseLike<Array<Record<string, unknown>>>;
+
+/** Chama `privado.reservar_chamada_moderacao`, que confere teto e limite, grava o consumo e marca o aviso. */
+export async function reservarViaFuncao(
+  sql: SqlTag,
+  midiaId: string,
+  provedor: string,
+  mes: string,
+  tetoMensal: number,
+  maximoPorFoto: number,
+): Promise<ResultadoReserva> {
+  const linhas = await sql`
+    select resultado, consumo_mes, avisar_cota
+      from privado.reservar_chamada_moderacao(
+             ${midiaId}::uuid, ${provedor}::text, ${mes}::text,
+             ${tetoMensal}::integer, ${maximoPorFoto}::integer, ${PERCENTUAL_AVISO_COTA}::integer)
+  `;
+  const linha = linhas[0];
+  if (!linha) throw new Error("reservar_chamada_moderacao não devolveu linha");
+  return {
+    resultado: String(linha.resultado) as ReservaChamada,
+    consumoMes: Number(linha.consumo_mes),
+    avisarCota: linha.avisar_cota === true,
+  };
+}
+
+/** Confirma a emissão do aviso de cota mensal chamando privado.confirmar_aviso_cota_moderacao. */
+export async function confirmarAvisoViaFuncao(
+  sql: SqlTag,
+  provedor: string,
+  mes: string,
+  limiarPercentual: number,
+): Promise<boolean> {
+  const linhas = await sql`
+    select privado.confirmar_aviso_cota_moderacao(
+             ${provedor}::text, ${mes}::text, ${limiarPercentual}::integer) as confirmou
+  `;
+  const linha = linhas[0];
+  return linha?.confirmou === true;
+}
+
 export interface SqlClient {
   lerLote: (quantidade: number, visibilidade: number) => Promise<MensagemModeracao[]>;
   obterMidia: (id: string) => Promise<MidiaModeracao | null>;
@@ -530,9 +648,11 @@ export interface SqlClient {
     mes: string,
     tetoMensal: number,
     maximoPorFoto: number,
-  ) => Promise<ReservaChamada>;
+  ) => Promise<ResultadoReserva>;
   /** Devolve a reserva quando a chamada nem chegou a produzir veredito (falha de rede). */
   liberarChamada: (midiaId: string, provedor: string, mes: string) => Promise<void>;
+  /** Confirma a emissão do aviso de cota gravando emitido_em na marca. */
+  confirmarAvisoCota: (provedor: string, mes: string, limiarPercentual: number) => Promise<void>;
   encerrar?: () => Promise<void>;
 }
 
@@ -669,25 +789,8 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
     },
     // O consumo vive em `privado.moderacao_chamada`, que ainda precisa de migração própria.
     // Sem a tabela estas duas consultas falham, e falhar aqui é falhar fechado.
-    async reservarChamada(midiaId, provedor, mes, tetoMensal, maximoPorFoto) {
-      return await sql.begin(async (tx) => {
-        await tx`select pg_advisory_xact_lock(hashtext('moderacao_chamada'))`;
-        const [mesTotal] = await tx`
-          select count(*)::int as n from privado.moderacao_chamada
-           where mes = ${mes} and provedor = ${provedor}
-        `;
-        if (Number(mesTotal.n) >= tetoMensal) return "teto_mensal" as ReservaChamada;
-        const [fotoTotal] = await tx`
-          select count(*)::int as n from privado.moderacao_chamada
-           where midia_id = ${midiaId}::uuid
-        `;
-        if (Number(fotoTotal.n) >= maximoPorFoto) return "limite_foto" as ReservaChamada;
-        await tx`
-          insert into privado.moderacao_chamada (midia_id, provedor, mes)
-          values (${midiaId}::uuid, ${provedor}, ${mes})
-        `;
-        return "ok" as ReservaChamada;
-      });
+    reservarChamada(midiaId, provedor, mes, tetoMensal, maximoPorFoto) {
+      return reservarViaFuncao(sql as unknown as SqlTag, midiaId, provedor, mes, tetoMensal, maximoPorFoto);
     },
     async liberarChamada(midiaId, provedor, mes) {
       await sql`
@@ -697,6 +800,9 @@ function criarSqlClient(deps?: HandlerDeps): SqlClient {
             where midia_id = ${midiaId}::uuid and provedor = ${provedor} and mes = ${mes}
          )
       `;
+    },
+    async confirmarAvisoCota(provedor, mes, limiarPercentual) {
+      await confirmarAvisoViaFuncao(sql as unknown as SqlTag, provedor, mes, limiarPercentual);
     },
     async encerrar() {
       await sql.end({ timeout: 2 });
@@ -843,9 +949,15 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
   try {
     const env = deps?.env ?? Object.fromEntries(
       ["MODERACAO_PROVEDOR", "MODERACAO_TETO_MENSAL", "OPENAI_API_KEY", "AZURE_CONTENT_SAFETY_KEY",
-        "AZURE_CONTENT_SAFETY_ENDPOINT"].map((k) => [k, Deno.env.get(k)]),
+        "AZURE_CONTENT_SAFETY_ENDPOINT", "MODERACAO_PERMITE_LOCAL"].map((k) => [k, Deno.env.get(k)]),
     );
-    provedor = deps?.provedor ?? criarProvedor(env, fetchFn);
+    // Provedor injetado só existe nos testes (o entrypoint não passa deps); a guarda vale para o do ambiente.
+    if (deps?.provedor) {
+      provedor = deps.provedor;
+    } else {
+      provedor = criarProvedor(env, fetchFn);
+      exigirProvedorReal(provedor, supabaseUrl, env);
+    }
     tetoMensal = lerTetoMensal(env);
   } catch (err) {
     alerta({ evento: "moderacao_configuracao_invalida", detalhe: err instanceof Error ? err.message : "erro" });
@@ -951,13 +1063,35 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
       let aprovada = true;
       if (provedor.externo) {
         const mes = mesDe(agora());
-        const reserva = await sqlClient.reservarChamada(
+        const { resultado: reserva, consumoMes, avisarCota } = await sqlClient.reservarChamada(
           midia.id,
           provedor.nome,
           mes,
           tetoMensal,
           msg.reanalise ? 2 : 1,
         );
+        // O banco decide, sob a mesma trava da conta: consumo no limiar ou acima E marca (provedor, mês,
+        // limiar) ainda não gravada (ou pendente com lease vencido). Um aviso por mês e por limiar, mesmo
+        // que a reserva falhe por teto mensal ou limite por foto (B-080 ajuste 2).
+        if (avisarCota) {
+          alerta({
+            evento: "moderacao_cota_mensal_80",
+            provedor: provedor.nome,
+            mes,
+            teto: tetoMensal,
+            consumo: consumoMes,
+            limiar_percentual: PERCENTUAL_AVISO_COTA,
+          });
+          try {
+            await sqlClient.confirmarAvisoCota(provedor.nome, mes, PERCENTUAL_AVISO_COTA);
+          } catch (_err) {
+            alerta({
+              evento: "moderacao_cota_aviso_nao_confirmado",
+              provedor: provedor.nome,
+              mes,
+            });
+          }
+        }
         if (reserva === "teto_mensal") {
           alerta({ evento: "moderacao_teto_mensal_estourado", provedor: provedor.nome, mes, teto: tetoMensal });
           throw new FalhaTransitoria("teto_mensal", 0);

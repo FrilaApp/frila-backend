@@ -153,7 +153,7 @@ select pg_temp.u(n), 'tok-871-' || n || '-000000000000000000', 'ios', case n whe
 insert into public.profissional_preferencia_chamada (profissional_id, aceita_chamadas, aceita_chamadas_em, versao_texto_busca)
 select pg_temp.p(n), true, privado.agora(), 'busca-v1' from generate_series(11, 44) n where n not in (12, 13, 19, 31, 39);
 insert into public.profissional_preferencia_chamada (profissional_id) values (pg_temp.p(12)), (pg_temp.p(19)), (pg_temp.p(31)), (pg_temp.p(39));
-update public.profissional_preferencia_chamada set pausado_ate = '2026-11-20' where profissional_id in (pg_temp.p(15), pg_temp.p(31));
+update public.profissional_preferencia_chamada set pausado_ate = current_date + 1 where profissional_id in (pg_temp.p(15), pg_temp.p(31));
 update public.profissional_preferencia_chamada set aceita_de = 'so_cnpj' where profissional_id = pg_temp.p(22);
 update public.profissional_preferencia_chamada set aceita_de_quem_ja_trabalhou = false where profissional_id in (pg_temp.p(38), pg_temp.p(39));
 update public.profissional_preferencia_chamada set antecedencia_minima_h = 48 where profissional_id = pg_temp.p(24);

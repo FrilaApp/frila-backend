@@ -64,6 +64,9 @@ export interface SqlClient {
     prazo: string | null,
   ) => Promise<void>;
   registrarFalha: (ocorrenciaId: string, codigo: string) => Promise<number>;
+  // Rastro da falha de envio em `privado.falha_execucao` (origem `enviar_email`), que o
+  // `/saude` lê. Só o código, sem destinatário nem texto de erro (RN15). Cartão bB0tV5R8.
+  registrarFalhaOperacional: (codigo: string) => Promise<void>;
   concluir: (msgId: number) => Promise<void>;
 }
 
@@ -202,6 +205,15 @@ export function criarSqlClient(deps?: Dependencias): SqlClient {
         return Number(r[0]?.tentativas ?? 0);
       }),
 
+    registrarFalhaOperacional: (codigo) =>
+      com(async (sql) => {
+        await sql`
+          select privado.registrar_falha_execucao(
+            'enviar_email'::text, ${codigo}::text, null
+          )
+        `;
+      }),
+
     concluir: (msgId) =>
       com(async (sql) => {
         await sql`select privado.concluir_email(${msgId}::bigint)`;
@@ -214,6 +226,24 @@ export interface LinhaDoRelatorio {
   status: "enviado" | "pendente" | "arquivado";
   detalhe?: string;
 }
+
+// Falha de envio que a sonda `/saude` precisa ver. Quando o pedido é arquivado sem ter
+// saído, a fila fica vazia e nada mais denuncia o problema: o alerta que explicaria a
+// falha é justamente o que não saiu. O registro não pode impedir o arquivamento, e por
+// isso nunca relança.
+async function registrarRastroDaFalha(sql: SqlClient, codigo: string): Promise<void> {
+  try {
+    await sql.registrarFalhaOperacional(codigo);
+  } catch {
+    // Sem detalhe: a mensagem do driver pode trazer a URL do banco.
+    console.error("enviar-email: não gravei o rastro da falha de envio");
+  }
+}
+
+// Recusa que diz algo sobre a infraestrutura de e-mail, e não sobre a caixa de uma
+// pessoa. Um 550 para um endereço digitado errado não é incidente: acenderia a sonda por
+// causa de um usuário. Já a caixa da equipe e as falhas de autenticação e de conexão são.
+const CODIGOS_DE_INFRAESTRUTURA = new Set(["falha_de_autenticacao", "falha_de_conexao"]);
 
 // Um pedido de alerta do monitoramento (cartão 5bPJvMIo). Não tem ocorrência: nada é
 // registrado no banco além do arquivamento do pedido.
@@ -236,6 +266,7 @@ async function processarAlerta(
     : undefined;
   const modelo = alertaParaEquipe(codigo, valor);
   if (!validarDestinatario(equipe) || !validarTextoCabecalhoSmtp(modelo.assunto)) {
+    await registrarRastroDaFalha(sql, "destinatario_invalido");
     await sql.concluir(pedido.msg_id);
     return { msg_id: pedido.msg_id, status: "arquivado", detalhe: "destinatario_invalido" };
   }
@@ -249,6 +280,7 @@ async function processarAlerta(
   if (r.transitorio && pedido.read_ct < TETO_DE_LEITURAS) {
     return { msg_id: pedido.msg_id, status: "pendente", detalhe: r.codigo };
   }
+  await registrarRastroDaFalha(sql, r.codigo ?? "erro_nao_classificado");
   await sql.concluir(pedido.msg_id);
   return { msg_id: pedido.msg_id, status: "arquivado", detalhe: r.codigo };
 }
@@ -288,6 +320,7 @@ async function processarOcorrencia(
   }
 
   let ultimoErro: ResultadoEnvio | null = null;
+  let rastroDaSonda: string | null = null;
 
   for (const { destino, para } of destinos) {
     const modelo = modeloDe(tipo, destino, dados);
@@ -326,6 +359,13 @@ async function processarOcorrencia(
       await sql.registrarEnviado(ocorrenciaId, destino, dados.prazo_resposta_ate ?? null);
     } else {
       ultimoErro = r;
+      const codigoDaFalha = r.codigo ?? "erro_nao_classificado";
+      if (
+        rastroDaSonda === null &&
+        (destino === "equipe" || CODIGOS_DE_INFRAESTRUTURA.has(codigoDaFalha))
+      ) {
+        rastroDaSonda = codigoDaFalha;
+      }
     }
   }
 
@@ -343,6 +383,7 @@ async function processarOcorrencia(
     return { msg_id: pedido.msg_id, status: "pendente", detalhe: codigo };
   }
 
+  if (rastroDaSonda !== null) await registrarRastroDaFalha(sql, rastroDaSonda);
   await sql.concluir(pedido.msg_id);
   return {
     msg_id: pedido.msg_id,

@@ -9,10 +9,11 @@
 // Os JPEGs são reais (codificados com jpeg-js), porque sanitizar e gerar miniatura sobre
 // bytes inventados provaria só que o teste concorda consigo mesmo.
 
-import { assert, assertEquals, assertFalse } from "jsr:@std/assert@1.0.19";
+import { assert, assertEquals, assertFalse, assertRejects } from "jsr:@std/assert@1.0.19";
 import jpeg from "npm:jpeg-js@0.4.4";
 import {
   caminhoMiniatura,
+  confirmarAvisoViaFuncao,
   criarProvedor,
   dimensoesValidas,
   ErroConfiguracao,
@@ -21,14 +22,17 @@ import {
   gerarMiniaturaJpeg,
   handler,
   HandlerDeps,
+  HOST_PROD,
   lerTetoMensal,
+  PERCENTUAL_AVISO_COTA,
+  reservarViaFuncao,
   MensagemModeracao,
   MOTIVOS_RECUSA,
   provedorAzure,
   provedorLocal,
   provedorOpenAI,
   ProvedorModeracao,
-  ReservaChamada,
+  ResultadoReserva,
   sanitizarJpeg,
   temMagicBytesJpeg,
 } from "./index.ts";
@@ -502,13 +506,16 @@ interface Mundo {
   fila: MensagemModeracao[];
   removidosDaFila: number[];
   reservas: Array<{ midia_id: string; provedor: string; mes: string }>;
+  /** Espelho de privado.moderacao_aviso_cota: chave `provedor|mes|limiar`. */
+  marcasAviso: Set<string>;
+  confirmacoesAviso: Array<{ provedor: string; mes: string; limiarPercentual: number }>;
   alertas: Array<Record<string, unknown>>;
   chamadasStorage: string[];
   chamadasProvedor: number;
   lerLoteArgs: Array<[number, number]>;
   reservasPedidas: Array<{ mes: string; teto: number; maximoPorFoto: number }>;
   falhaStorage?: (metodo: string, caminho: string) => FalhaStorage;
-  falhaBanco?: Partial<Record<"obterMidia" | "marcarAprovada" | "marcarRecusada" | "lerLote" | "reservar", () => boolean>>;
+  falhaBanco?: Partial<Record<"obterMidia" | "marcarAprovada" | "marcarRecusada" | "lerLote" | "reservar" | "confirmarAviso", () => boolean>>;
   apiExterna?: (url: string, init?: RequestInit) => Response | Promise<Response>;
 }
 
@@ -519,6 +526,8 @@ function novoMundo(): Mundo {
     fila: [],
     removidosDaFila: [],
     reservas: [],
+    marcasAviso: new Set(),
+    confirmacoesAviso: [],
     alertas: [],
     chamadasStorage: [],
     chamadasProvedor: 0,
@@ -559,9 +568,11 @@ function quebrar(mundo: Mundo, nome: keyof NonNullable<Mundo["falhaBanco"]>): bo
 }
 
 function criarDeps(mundo: Mundo, extra: Partial<HandlerDeps> = {}): HandlerDeps {
+  // O Storage falso responde na URL que o handler recebe; o resto é "provedor externo".
+  const urlStorage = extra.supabaseUrl ?? MOCK_URL;
   const fetchFn = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (!url.startsWith(MOCK_URL)) {
+    if (!url.startsWith(urlStorage)) {
       mundo.chamadasProvedor += 1;
       if (!mundo.apiExterna) return Promise.reject(new Error(`chamada externa inesperada: ${url}`));
       return Promise.resolve(mundo.apiExterna(url, init));
@@ -638,21 +649,32 @@ function criarDeps(mundo: Mundo, extra: Partial<HandlerDeps> = {}): HandlerDeps 
         mundo.removidosDaFila.push(msgId);
         return Promise.resolve();
       },
-      reservarChamada: (midiaId, provedor, mes, teto, maximoPorFoto): Promise<ReservaChamada> => {
+      reservarChamada: (midiaId, provedor, mes, teto, maximoPorFoto): Promise<ResultadoReserva> => {
         if (quebrar(mundo, "reservar")) return Promise.reject(new Error("tabela de consumo indisponivel"));
         mundo.reservasPedidas.push({ mes, teto, maximoPorFoto });
-        if (mundo.reservas.filter((r) => r.mes === mes && r.provedor === provedor).length >= teto) {
-          return Promise.resolve("teto_mensal");
-        }
+        const doMes = () => mundo.reservas.filter((r) => r.mes === mes && r.provedor === provedor).length;
+        if (doMes() >= teto) return Promise.resolve({ resultado: "teto_mensal", consumoMes: doMes(), avisarCota: false });
         if (mundo.reservas.filter((r) => r.midia_id === midiaId).length >= maximoPorFoto) {
-          return Promise.resolve("limite_foto");
+          return Promise.resolve({ resultado: "limite_foto", consumoMes: doMes(), avisarCota: false });
         }
         mundo.reservas.push({ midia_id: midiaId, provedor, mes });
-        return Promise.resolve("ok");
+        // Mesma regra de privado.reservar_chamada_moderacao: consumo no limiar ou acima E marca ainda não gravada.
+        let avisarCota = false;
+        const chave = `${provedor}|${mes}|80`;
+        if (doMes() >= Math.ceil((teto * 80) / 100) && !mundo.marcasAviso.has(chave)) {
+          mundo.marcasAviso.add(chave);
+          avisarCota = true;
+        }
+        return Promise.resolve({ resultado: "ok", consumoMes: doMes(), avisarCota });
       },
       liberarChamada: (midiaId, provedor, mes) => {
         const i = mundo.reservas.findLastIndex((r) => r.midia_id === midiaId && r.provedor === provedor && r.mes === mes);
         if (i >= 0) mundo.reservas.splice(i, 1);
+        return Promise.resolve();
+      },
+      confirmarAvisoCota: (provedor, mes, limiarPercentual) => {
+        if (quebrar(mundo, "confirmarAviso")) return Promise.reject(new Error("erro na confirmacao"));
+        mundo.confirmacoesAviso.push({ provedor, mes, limiarPercentual });
         return Promise.resolve();
       },
     },
@@ -1167,6 +1189,297 @@ Deno.test("teto mensal: estourou no meio do lote, as já aprovadas ficam e as de
   assertEquals(mundo.chamadasProvedor, 1);
 });
 
+// ---------------------------------------------------------------------------------------
+// Aviso de cota mensal em 80%
+// ---------------------------------------------------------------------------------------
+
+const EVENTO_COTA_80 = "moderacao_cota_mensal_80";
+
+function gastar(mundo: Mundo, quantas: number, mes = "2026-11"): void {
+  for (let i = 0; i < quantas; i++) mundo.reservas.push({ midia_id: `gasta-${mes}-${i}`, provedor: "mock", mes });
+}
+
+function avisos80(mundo: Mundo): Array<Record<string, unknown>> {
+  return mundo.alertas.filter((a) => a.evento === EVENTO_COTA_80);
+}
+
+Deno.test("cota 80%: abaixo de 80% não avisa", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 6); // a chamada desta foto leva o mês a 7 de 10
+  await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(avisos80(mundo), []);
+});
+
+Deno.test("cota 80%: ao chegar em 80% avisa uma vez, no formato dos alertas de teto", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 7); // a chamada desta foto leva o mês a 8 de 10
+  const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(corpo.aprovadas, 1); // o aviso não bloqueia a moderação
+  assertEquals(avisos80(mundo), [{
+    evento: EVENTO_COTA_80,
+    provedor: "mock",
+    mes: "2026-11",
+    teto: 10,
+    consumo: 8,
+    limiar_percentual: 80,
+  }]);
+});
+
+Deno.test("cota 80%: acima de 80% não repete, nem na mesma rodada nem nas seguintes", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  semear(mundo, MIDIA_2, IMAGEM_BOA);
+  gastar(mundo, 6); // as duas fotos levam o mês a 7 e a 8: só a segunda cruza
+  const deps = criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } });
+  await rodar(deps);
+  assertEquals(avisos80(mundo).length, 1);
+
+  const MIDIA_3 = "b4c00000-0000-4000-8000-000000000003";
+  semear(mundo, MIDIA_3, IMAGEM_BOA);
+  await rodar(deps); // 9 de 10
+  assertEquals(avisos80(mundo).length, 1);
+});
+
+Deno.test("cota 80%: no teto continua o alerta existente e o aviso de 80% não volta", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 10); // já no teto
+  const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals((corpo.pendentes as unknown[]).length, 1);
+  assertEquals(mundo.alertas, [{ evento: "moderacao_teto_mensal_estourado", provedor: "mock", mes: "2026-11", teto: 10 }]);
+});
+
+Deno.test("cota 80%: de 8 a 10 de 10 avisa uma vez só, e a chamada seguinte bate no teto sem novo aviso", async () => {
+  const mundo = novoMundo();
+  const MIDIA_3 = "b4c00000-0000-4000-8000-000000000003";
+  const MIDIA_4 = "b4c00000-0000-4000-8000-000000000004";
+  for (const id of [MIDIA_1, MIDIA_2, MIDIA_3, MIDIA_4]) semear(mundo, id, IMAGEM_BOA);
+  gastar(mundo, 7); // as três primeiras levam o mês a 8, 9 e 10; a quarta já encontra o teto
+  const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(corpo.aprovadas, 3);
+  assertEquals(avisos80(mundo).map((a) => a.consumo), [8]);
+  assertEquals(mundo.alertas.filter((a) => a.evento === "moderacao_teto_mensal_estourado").length, 1);
+});
+
+Deno.test("cota 80%: teto reduzido no meio do mês (10 para 5, consumo 4) avisa uma vez e não repete", async () => {
+  const mundo = novoMundo();
+  const MIDIA_3 = "b4c00000-0000-4000-8000-000000000003";
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 3);
+  await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(avisos80(mundo), []); // 4 de 10: abaixo do limiar 8
+
+  semear(mundo, MIDIA_2, IMAGEM_BOA);
+  const deps = criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "5" } });
+  await rodar(deps); // 5 de 5: o limiar novo é 4, e o consumo já o alcançou
+  assertEquals(avisos80(mundo).map((a) => [a.teto, a.consumo]), [[5, 5]]);
+
+  semear(mundo, MIDIA_3, IMAGEM_BOA);
+  await rodar(deps); // no teto: só o alerta de teto
+  assertEquals(avisos80(mundo).length, 1);
+});
+
+Deno.test("cota 80%: teto reduzido abaixo do consumo atual avisa na primeira reserva que ainda cabe, e nunca mais no mês", async () => {
+  const mundo = novoMundo();
+  const MIDIA_3 = "b4c00000-0000-4000-8000-000000000003";
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 7);
+  await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "12" } }));
+  assertEquals(avisos80(mundo), []); // 8 de 12: o limiar é 10
+
+  semear(mundo, MIDIA_2, IMAGEM_BOA);
+  await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "9" } }));
+  assertEquals(avisos80(mundo).map((a) => [a.teto, a.consumo]), [[9, 9]]); // 9 de 9 passou do limiar 8
+
+  semear(mundo, MIDIA_3, IMAGEM_BOA);
+  await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "20" } }));
+  assertEquals(avisos80(mundo).length, 1); // teto de volta a 20: 10 de 20, a marca já existe
+});
+
+Deno.test("cota 80%: reservarViaFuncao chama a função do banco com o percentual e lê as colunas do resultado", async () => {
+  const chamadas: Array<{ texto: string; valores: unknown[] }> = [];
+  // As colunas `resultado`, `consumo_mes` e `avisar_cota` são as que o pgTAP 891 lê da função real.
+  const sql = (partes: TemplateStringsArray, ...valores: unknown[]) => {
+    chamadas.push({ texto: partes.join("?"), valores });
+    return Promise.resolve([{ resultado: "ok", consumo_mes: 8, avisar_cota: true }]);
+  };
+  const r = await reservarViaFuncao(sql, MIDIA_1, "azure", "2026-11", 10, 2);
+  assertEquals(r, { resultado: "ok", consumoMes: 8, avisarCota: true });
+  assertEquals(chamadas.length, 1);
+  assertEquals(chamadas[0].texto.includes("privado.reservar_chamada_moderacao"), true);
+  assertEquals(chamadas[0].valores, [MIDIA_1, "azure", "2026-11", 10, 2, PERCENTUAL_AVISO_COTA]);
+  assertEquals(PERCENTUAL_AVISO_COTA, 80);
+});
+
+Deno.test("cota 80%: reservarViaFuncao sem linha de resposta falha fechado", async () => {
+  const sql = () => Promise.resolve([]);
+  await assertRejects(() => reservarViaFuncao(sql, MIDIA_1, "azure", "2026-11", 10, 1));
+});
+
+Deno.test("cota 80%: a virada de mês zera a conta e o aviso volta a valer no mês novo", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 8, "2026-11"); // novembro já passou dos 80%
+  let agora = new Date("2026-12-01T03:00:00Z");
+  const deps = criarDeps(mundo, {
+    provedor: provedorMock(mundo),
+    env: { MODERACAO_TETO_MENSAL: "10" },
+    agora: () => agora,
+  });
+  await rodar(deps); // dezembro: 1 de 10
+  assertEquals(avisos80(mundo), []);
+
+  const MIDIA_3 = "b4c00000-0000-4000-8000-000000000003";
+  semear(mundo, MIDIA_3, IMAGEM_BOA);
+  gastar(mundo, 6, "2026-12"); // 1 + 6 = 7; a próxima chamada leva dezembro a 8
+  agora = new Date("2026-12-15T12:00:00Z");
+  await rodar(deps);
+  assertEquals(avisos80(mundo).map((a) => [a.mes, a.consumo]), [["2026-12", 8]]);
+});
+
+Deno.test("cota 80%: dois pedidos simultâneos em 80% geram um único aviso", async () => {
+  const mundo = novoMundo();
+  const msgA = semear(mundo, MIDIA_1, IMAGEM_BOA);
+  const msgB = semear(mundo, MIDIA_2, IMAGEM_BOA);
+  gastar(mundo, 6); // as duas chamadas levam o mês a 7 e a 8
+  const env = { MODERACAO_TETO_MENSAL: "10" };
+  // Dois workers sobre o mesmo consumo, cada um com a sua mensagem.
+  const pedido = (msg: MensagemModeracao) => {
+    const deps = criarDeps(mundo, { provedor: provedorMock(mundo), env });
+    deps.sqlClient!.lerLote = () => Promise.resolve([msg]);
+    return rodar(deps);
+  };
+  await Promise.all([pedido(msgA), pedido(msgB)]);
+  assertEquals(avisos80(mundo).length, 1);
+  assertEquals(mundo.reservas.length, 8);
+});
+
+Deno.test("cota 80%: avisarCota=true emite alerta e chama confirmarAvisoCota uma vez", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 7); // leva o mês a 8 de 10
+  const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(corpo.aprovadas, 1);
+  assertEquals(avisos80(mundo).length, 1);
+  assertEquals(mundo.confirmacoesAviso, [{ provedor: "mock", mes: "2026-11", limiarPercentual: 80 }]);
+});
+
+Deno.test("cota 80%: confirmarAvisoCota com erro não derruba moderação e emite alerta de não confirmado", async () => {
+  const mundo = novoMundo();
+  mundo.falhaBanco = { confirmarAviso: () => true };
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 7); // leva o mês a 8 de 10
+  const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(corpo.aprovadas, 1);
+  assertEquals(mundo.midias.get(MIDIA_1)?.estado, "aprovada");
+  assertEquals(avisos80(mundo).length, 1);
+  const naoConfirmados = mundo.alertas.filter((a) => a.evento === "moderacao_cota_aviso_nao_confirmado");
+  assertEquals(naoConfirmados, [{
+    evento: "moderacao_cota_aviso_nao_confirmado",
+    provedor: "mock",
+    mes: "2026-11",
+  }]);
+});
+
+Deno.test("cota 80%: avisarCota=false não chama confirmarAvisoCota", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  gastar(mundo, 5); // leva o mês a 6 de 10 -> avisarCota = false
+  const { corpo } = await rodar(criarDeps(mundo, { provedor: provedorMock(mundo), env: { MODERACAO_TETO_MENSAL: "10" } }));
+  assertEquals(corpo.aprovadas, 1);
+  assertEquals(avisos80(mundo).length, 0);
+  assertEquals(mundo.confirmacoesAviso.length, 0);
+});
+
+Deno.test("cota 80%: reserva teto_mensal com avisarCota=true emite alerta, confirma e mantém falha de teto_mensal", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  const deps = criarDeps(mundo, { provedor: provedorMock(mundo) });
+  deps.sqlClient!.reservarChamada = () => Promise.resolve({ resultado: "teto_mensal", consumoMes: 10, avisarCota: true });
+  const { corpo } = await rodar(deps);
+  assertEquals(avisos80(mundo).length, 1);
+  assertEquals(mundo.confirmacoesAviso, [{ provedor: "mock", mes: "2026-11", limiarPercentual: 80 }]);
+  assertEquals(mundo.chamadasProvedor, 0);
+  assertEquals(mundo.removidosDaFila.length, 0);
+  assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise");
+  assertEquals(corpo.aprovadas, 0);
+  assertEquals((corpo.pendentes as Array<{ motivo: string }>)[0]?.motivo, "teto_mensal");
+  assertEquals(mundo.alertas.some((a) => a.evento === "moderacao_teto_mensal_estourado"), true);
+});
+
+Deno.test("cota 80%: reserva limite_foto com avisarCota=true emite alerta, confirma e mantém falha de limite_foto", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  const deps = criarDeps(mundo, { provedor: provedorMock(mundo) });
+  deps.sqlClient!.reservarChamada = () => Promise.resolve({ resultado: "limite_foto", consumoMes: 8, avisarCota: true });
+  const { corpo } = await rodar(deps);
+  assertEquals(avisos80(mundo).length, 1);
+  assertEquals(mundo.confirmacoesAviso, [{ provedor: "mock", mes: "2026-11", limiarPercentual: 80 }]);
+  assertEquals(mundo.chamadasProvedor, 0);
+  assertEquals(mundo.removidosDaFila.length, 0);
+  assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise");
+  assertEquals(corpo.aprovadas, 0);
+  assertEquals((corpo.pendentes as Array<{ motivo: string }>)[0]?.motivo, "limite_por_foto");
+  assertEquals(mundo.alertas.some((a) => a.evento === "moderacao_limite_por_foto"), true);
+});
+
+Deno.test("cota 80%: avisarCota=false em teto_mensal e limite_foto não emite alerta nem chama confirmação", async () => {
+  const mundoTeto = novoMundo();
+  semear(mundoTeto, MIDIA_1, IMAGEM_BOA);
+  const depsTeto = criarDeps(mundoTeto, { provedor: provedorMock(mundoTeto) });
+  depsTeto.sqlClient!.reservarChamada = () => Promise.resolve({ resultado: "teto_mensal", consumoMes: 10, avisarCota: false });
+  await rodar(depsTeto);
+  assertEquals(avisos80(mundoTeto).length, 0);
+  assertEquals(mundoTeto.confirmacoesAviso.length, 0);
+
+  const mundoFoto = novoMundo();
+  semear(mundoFoto, MIDIA_1, IMAGEM_BOA);
+  const depsFoto = criarDeps(mundoFoto, { provedor: provedorMock(mundoFoto) });
+  depsFoto.sqlClient!.reservarChamada = () => Promise.resolve({ resultado: "limite_foto", consumoMes: 8, avisarCota: false });
+  await rodar(depsFoto);
+  assertEquals(avisos80(mundoFoto).length, 0);
+  assertEquals(mundoFoto.confirmacoesAviso.length, 0);
+});
+
+Deno.test("cota 80%: confirmarAvisoCota com erro em teto_mensal e limite_foto não altera desfecho", async () => {
+  const mundoTeto = novoMundo();
+  mundoTeto.falhaBanco = { confirmarAviso: () => true };
+  semear(mundoTeto, MIDIA_1, IMAGEM_BOA);
+  const depsTeto = criarDeps(mundoTeto, { provedor: provedorMock(mundoTeto) });
+  depsTeto.sqlClient!.reservarChamada = () => Promise.resolve({ resultado: "teto_mensal", consumoMes: 10, avisarCota: true });
+  const { corpo: corpoTeto } = await rodar(depsTeto);
+  assertEquals(avisos80(mundoTeto).length, 1);
+  assertEquals(mundoTeto.alertas.some((a) => a.evento === "moderacao_cota_aviso_nao_confirmado"), true);
+  assertEquals(mundoTeto.chamadasProvedor, 0);
+  assertEquals((corpoTeto.pendentes as Array<{ motivo: string }>)[0]?.motivo, "teto_mensal");
+
+  const mundoFoto = novoMundo();
+  mundoFoto.falhaBanco = { confirmarAviso: () => true };
+  semear(mundoFoto, MIDIA_1, IMAGEM_BOA);
+  const depsFoto = criarDeps(mundoFoto, { provedor: provedorMock(mundoFoto) });
+  depsFoto.sqlClient!.reservarChamada = () => Promise.resolve({ resultado: "limite_foto", consumoMes: 8, avisarCota: true });
+  const { corpo: corpoFoto } = await rodar(depsFoto);
+  assertEquals(avisos80(mundoFoto).length, 1);
+  assertEquals(mundoFoto.alertas.some((a) => a.evento === "moderacao_cota_aviso_nao_confirmado"), true);
+  assertEquals(mundoFoto.chamadasProvedor, 0);
+  assertEquals((corpoFoto.pendentes as Array<{ motivo: string }>)[0]?.motivo, "limite_por_foto");
+});
+
+Deno.test("cota 80%: confirmarAvisoViaFuncao chama a função do banco e lê o resultado", async () => {
+  const chamadas: Array<{ texto: string; valores: unknown[] }> = [];
+  const sql = (partes: TemplateStringsArray, ...valores: unknown[]) => {
+    chamadas.push({ texto: partes.join("?"), valores });
+    return Promise.resolve([{ confirmou: true }]);
+  };
+  const r = await confirmarAvisoViaFuncao(sql, "azure", "2026-11", 80);
+  assertEquals(r, true);
+  assertEquals(chamadas.length, 1);
+  assertEquals(chamadas[0].texto.includes("privado.confirmar_aviso_cota_moderacao"), true);
+  assertEquals(chamadas[0].valores, ["azure", "2026-11", 80]);
+});
+
 Deno.test("teto mensal zero bloqueia qualquer provedor externo, mas não o local", async () => {
   const mundo = novoMundo();
   semear(mundo, MIDIA_1, IMAGEM_BOA);
@@ -1275,6 +1588,188 @@ Deno.test("configuração inválida não vaza a chave no alerta", async () => {
   const mundo = novoMundo();
   await rodar(criarDeps(mundo, { env: { MODERACAO_PROVEDOR: "azure", AZURE_CONTENT_SAFETY_KEY: "chave-secreta-azure" } }));
   assertFalse(JSON.stringify(mundo.alertas).includes("chave-secreta-azure"));
+});
+
+// Guarda contra o provedor `local` fora do ambiente local (cartão Trello yPhXgTCY, item 1).
+// `local` aprova toda foto sem olhar para ela; em hospedagem real isso é moderação de mentira.
+// O sinal de ambiente é o host de SUPABASE_URL, que a hospedagem define e o código já exige.
+const URL_HOSPEDADA = "https://abcdefghijklmnopqrst.supabase.co";
+
+Deno.test("guarda: fora do ambiente local, sem provedor real, recusa com erro_configuracao e não toca na fila", async () => {
+  const envs: Array<Record<string, string>> = [
+    {},
+    { MODERACAO_PROVEDOR: "" },
+    { MODERACAO_PROVEDOR: "  " },
+    { MODERACAO_PROVEDOR: "local" },
+    { MODERACAO_PROVEDOR: " LOCAL " },
+  ];
+  for (const env of envs) {
+    const mundo = novoMundo();
+    semear(mundo, MIDIA_1, IMAGEM_BOA);
+    const { resp, corpo } = await rodar(criarDeps(mundo, { env, supabaseUrl: URL_HOSPEDADA }));
+    const rotulo = JSON.stringify(env);
+    assertEquals(resp.status, 500, rotulo);
+    assertEquals(corpo.code, "erro_configuracao", rotulo);
+    assertEquals(corpo.aprovadas, undefined, rotulo);
+    assertEquals(mundo.lerLoteArgs.length, 0, rotulo);
+    assertEquals(mundo.removidosDaFila.length, 0, rotulo);
+    assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise", rotulo);
+    assertEquals(mundo.alertas.length, 1, rotulo);
+    assertEquals(mundo.alertas[0].evento, "moderacao_configuracao_invalida", rotulo);
+    assert(String(mundo.alertas[0].detalhe).includes("MODERACAO_PROVEDOR"), rotulo);
+  }
+});
+
+Deno.test("guarda: o alerta da recusa não carrega a URL nem o valor de segredo", async () => {
+  const mundo = novoMundo();
+  await rodar(criarDeps(mundo, {
+    env: { MODERACAO_PROVEDOR: "local", AZURE_CONTENT_SAFETY_KEY: "chave-secreta-azure" },
+    supabaseUrl: URL_HOSPEDADA,
+  }));
+  const serializado = JSON.stringify(mundo.alertas);
+  assertEquals(mundo.alertas.length, 1);
+  assertFalse(serializado.includes("chave-secreta-azure"));
+  assertFalse(serializado.includes("abcdefghijklmnopqrst"));
+});
+
+Deno.test("guarda: SUPABASE_URL ilegível ou desconhecida conta como fora do ambiente local", async () => {
+  for (const supabaseUrl of ["isto-nao-e-url", "https://frila-dev.exemplo.com.br", "http://127.0.0.1.exemplo.com"]) {
+    const mundo = novoMundo();
+    const { resp, corpo } = await rodar(criarDeps(mundo, { env: {}, supabaseUrl }));
+    assertEquals(resp.status, 500, supabaseUrl);
+    assertEquals(corpo.code, "erro_configuracao", supabaseUrl);
+    assertEquals(mundo.lerLoteArgs.length, 0, supabaseUrl);
+  }
+});
+
+Deno.test("guarda: fora do ambiente local, com provedor real sintético configurado, segue e modera por ele", async () => {
+  const casos: Array<{ env: Record<string, string>; nome: string; resposta: unknown }> = [
+    {
+      env: { MODERACAO_PROVEDOR: "openai", OPENAI_API_KEY: "k-sintetica" },
+      nome: "openai",
+      resposta: { results: [{ flagged: false }] },
+    },
+    {
+      env: {
+        MODERACAO_PROVEDOR: "azure",
+        AZURE_CONTENT_SAFETY_KEY: "k-sintetica",
+        AZURE_CONTENT_SAFETY_ENDPOINT: "https://azure-sintetico.exemplo.test",
+      },
+      nome: "azure",
+      resposta: { categoriesAnalysis: [{ category: "Sexual", severity: 0 }, { category: "Violence", severity: 0 }] },
+    },
+  ];
+  for (const { env, nome, resposta } of casos) {
+    const mundo = novoMundo();
+    semear(mundo, MIDIA_1, IMAGEM_BOA);
+    mundo.apiExterna = () => json(resposta);
+    const { resp, corpo } = await rodar(criarDeps(mundo, { env, supabaseUrl: URL_HOSPEDADA }));
+    assertEquals(resp.status, 200, nome);
+    assertEquals(corpo.aprovadas, 1, nome);
+    assertEquals(mundo.chamadasProvedor, 1, nome);
+    assertEquals(mundo.reservas, [{ midia_id: MIDIA_1, provedor: nome, mes: "2026-11" }], nome);
+    assertEquals(mundo.alertas.length, 0, nome);
+  }
+});
+
+Deno.test("guarda: em ambiente local o provedor local segue valendo, sem variável e com MODERACAO_PROVEDOR=local", async () => {
+  const urls = ["http://127.0.0.1:54321", "http://localhost:54321", "http://[::1]:54321", "http://kong:8000", "http://host.docker.internal:54321"];
+  for (const supabaseUrl of urls) {
+    for (const env of [{}, { MODERACAO_PROVEDOR: "local" }]) {
+      const mundo = novoMundo();
+      semear(mundo, MIDIA_1, IMAGEM_BOA);
+      const { resp, corpo } = await rodar(criarDeps(mundo, { env, supabaseUrl }));
+      const rotulo = `${supabaseUrl} ${JSON.stringify(env)}`;
+      assertEquals(resp.status, 200, rotulo);
+      assertEquals(corpo.aprovadas, 1, rotulo);
+      assertEquals(mundo.chamadasProvedor, 0, rotulo);
+    }
+  }
+});
+
+const URL_PROD = `https://${HOST_PROD}`;
+
+Deno.test("guarda: no DEV com MODERACAO_PERMITE_LOCAL=1 e provedor local, aceita e modera", async () => {
+  const urlsDev = [
+    "https://abcdefghijklmnopqrst.supabase.co",
+    "https://jcobftbhbqdikratzizz.supabase.co",
+  ];
+  const envs = [
+    { MODERACAO_PERMITE_LOCAL: "1" },
+    { MODERACAO_PERMITE_LOCAL: " 1 " },
+    { MODERACAO_PROVEDOR: "local", MODERACAO_PERMITE_LOCAL: "1" },
+  ];
+  for (const supabaseUrl of urlsDev) {
+    for (const env of envs) {
+      const mundo = novoMundo();
+      semear(mundo, MIDIA_1, IMAGEM_BOA);
+      const { resp, corpo } = await rodar(criarDeps(mundo, { env, supabaseUrl }));
+      const rotulo = `${supabaseUrl} ${JSON.stringify(env)}`;
+      assertEquals(resp.status, 200, rotulo);
+      assertEquals(corpo.aprovadas, 1, rotulo);
+      assertEquals(mundo.chamadasProvedor, 0, rotulo);
+      assertEquals(mundo.midias.get(MIDIA_1)?.estado, "aprovada", rotulo);
+      assertEquals(mundo.alertas.length, 0, rotulo);
+    }
+  }
+});
+
+Deno.test("guarda: no DEV sem MODERACAO_PERMITE_LOCAL, recusa com 500 erro_configuracao", async () => {
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  const { resp, corpo } = await rodar(criarDeps(mundo, { env: {}, supabaseUrl: URL_HOSPEDADA }));
+  assertEquals(resp.status, 500);
+  assertEquals(corpo.code, "erro_configuracao");
+  assertEquals(corpo.aprovadas, undefined);
+  assertEquals(mundo.lerLoteArgs.length, 0);
+  assertEquals(mundo.removidosDaFila.length, 0);
+  assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise");
+  assertEquals(mundo.alertas.length, 1);
+  assertEquals(mundo.alertas[0].evento, "moderacao_configuracao_invalida");
+  assert(String(mundo.alertas[0].detalhe).includes("MODERACAO_PROVEDOR"));
+});
+
+Deno.test("guarda: no Prod (hbjkkcenbudiezmamiak) com MODERACAO_PERMITE_LOCAL=1, recusa com 500 erro_configuracao", async () => {
+  const envs = [
+    { MODERACAO_PERMITE_LOCAL: "1" },
+    { MODERACAO_PERMITE_LOCAL: " 1 " },
+    { MODERACAO_PROVEDOR: "local", MODERACAO_PERMITE_LOCAL: "1" },
+  ];
+  for (const env of envs) {
+    const mundo = novoMundo();
+    semear(mundo, MIDIA_1, IMAGEM_BOA);
+    const { resp, corpo } = await rodar(criarDeps(mundo, { env, supabaseUrl: URL_PROD }));
+    const rotulo = JSON.stringify(env);
+    assertEquals(resp.status, 500, rotulo);
+    assertEquals(corpo.code, "erro_configuracao", rotulo);
+    assertEquals(corpo.aprovadas, undefined, rotulo);
+    assertEquals(mundo.lerLoteArgs.length, 0, rotulo);
+    assertEquals(mundo.removidosDaFila.length, 0, rotulo);
+    assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise", rotulo);
+    assertEquals(mundo.alertas.length, 1, rotulo);
+    assertEquals(mundo.alertas[0].evento, "moderacao_configuracao_invalida", rotulo);
+    assert(String(mundo.alertas[0].detalhe).includes("MODERACAO_PROVEDOR"), rotulo);
+    assertFalse(JSON.stringify(mundo.alertas).includes("hbjkkcenbudiezmamiak"), rotulo);
+  }
+});
+
+Deno.test("guarda: MODERACAO_PERMITE_LOCAL com valor diferente de 1 recusa fora do ambiente local", async () => {
+  const valoresInvalidos = ["true", "0", "false", "sim", "yes", "2", "local", ""];
+  for (const valor of valoresInvalidos) {
+    const mundo = novoMundo();
+    semear(mundo, MIDIA_1, IMAGEM_BOA);
+    const env = { MODERACAO_PERMITE_LOCAL: valor };
+    const { resp, corpo } = await rodar(criarDeps(mundo, { env, supabaseUrl: URL_HOSPEDADA }));
+    const rotulo = `valor=${valor}`;
+    assertEquals(resp.status, 500, rotulo);
+    assertEquals(corpo.code, "erro_configuracao", rotulo);
+    assertEquals(corpo.aprovadas, undefined, rotulo);
+    assertEquals(mundo.lerLoteArgs.length, 0, rotulo);
+    assertEquals(mundo.removidosDaFila.length, 0, rotulo);
+    assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise", rotulo);
+    assertEquals(mundo.alertas.length, 1, rotulo);
+    assertEquals(mundo.alertas[0].evento, "moderacao_configuracao_invalida", rotulo);
+  }
 });
 
 Deno.test("MODERACAO_PROVEDOR=openai: uma chamada por foto, aprova quando não sinalizada", async () => {

@@ -92,6 +92,10 @@ begin
   return new;
 end $$;
 
+-- Lock exclusivo antes do create trigger: sem ele, o drop trigger mais adiante vira um UPGRADE
+-- de lock (SHARE ROW EXCLUSIVE → ACCESS EXCLUSIVE) e pode travar em deadlock contra um job
+-- do pg_cron que esteja lendo/escrevendo a tabela na virada do minuto (CI do #582, 21/11/2026).
+lock table public.posicao in access exclusive mode;
 create trigger teste_candidato_chega_no_meio_da_exclusao
   before update of estado on public.posicao
   for each row execute function public.teste_candidato_chega_no_meio_da_exclusao();

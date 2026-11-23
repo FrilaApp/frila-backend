@@ -3,12 +3,21 @@
 //   deno test --allow-all supabase/functions/saude/
 
 import { assertEquals, assertThrows } from "jsr:@std/assert@1.0.19";
-import { criarSqlProbe, getDbUrl, InfoSaudeCron, processarSaude, SqlProbe } from "./index.ts";
+import {
+  criarSqlProbe,
+  getDbUrl,
+  InfoSaudeCron,
+  InfoSaudeOperacional,
+  processarSaude,
+  SqlProbe,
+} from "./index.ts";
 
 function probeMock(opcoes: {
   ok?: boolean;
   erro?: boolean;
   jobs?: InfoSaudeCron;
+  operacional?: InfoSaudeOperacional;
+  operacionalLanca?: boolean;
   onRegistrarFalha?: (origem: string, codigo: string) => void;
 } = {}): SqlProbe {
   return {
@@ -20,6 +29,14 @@ function probeMock(opcoes: {
     },
     consultarJobs: opcoes.jobs !== undefined
       ? async () => opcoes.jobs!
+      : undefined,
+    consultarOperacional: opcoes.operacional !== undefined || opcoes.operacionalLanca
+      ? async () => {
+        if (opcoes.operacionalLanca) {
+          throw new Error("Falha simulada na consulta operacional");
+        }
+        return opcoes.operacional!;
+      }
       : undefined,
     registrarFalha: async (origem: string, codigo: string) => {
       opcoes.onRegistrarFalha?.(origem, codigo);
@@ -394,3 +411,231 @@ Deno.test("bB0tV5R8: GET retorna 503 quando job esta inativo (active = false)", 
 
 
 
+
+// ── bB0tV5R8 Fase 2: fila de e-mail, pg_net e SMTP entram na sonda ─────────────
+
+const JOBS_OK: InfoSaudeCron = {
+  saudavel: true,
+  status: "saudavel",
+  despacho_idade_segundos: 10,
+  vigia_idade_segundos: 20,
+  despacho_ativo: true,
+  vigia_ativo: true,
+};
+
+function operacional(sobrepor: Partial<InfoSaudeOperacional> = {}): InfoSaudeOperacional {
+  return {
+    saudavel: true,
+    status: "saudavel",
+    entrega_idade_segundos: 30,
+    entrega_ativo: true,
+    registro_idade_segundos: null,
+    registro_ativo: true,
+    fila_idade_segundos: null,
+    transporte_falhas: 0,
+    transporte_legivel: true,
+    entrega_falhas: 0,
+    ...sobrepor,
+  };
+}
+
+const OPERACIONAL_DOENTE = operacional({
+  saudavel: false,
+  status: "degradado",
+  fila_idade_segundos: 1200,
+  entrega_falhas: 2,
+});
+
+// Palavras que identificam infraestrutura. Nenhuma pode aparecer no corpo público (RN15).
+const NOMES_INTERNOS = [
+  "pgmq",
+  "q_email",
+  "q_despacho",
+  "pg_net",
+  "pgnet",
+  "smtp",
+  "cron",
+  "processar_fila_email",
+  "consumir_registro_acesso",
+  "falha_execucao",
+  "enviar_email",
+];
+
+Deno.test("bB0tV5R8 fase 2: GET retorna 503 degradado quando a sonda operacional esta doente e os jobs estao bem", async () => {
+  const falhas: string[] = [];
+  const req = new Request("http://localhost/functions/v1/saude", { method: "GET" });
+  const res = await processarSaude(req, {
+    sqlProbe: probeMock({
+      ok: true,
+      jobs: JOBS_OK,
+      operacional: OPERACIONAL_DOENTE,
+      onRegistrarFalha: (_o, c) => falhas.push(c),
+    }),
+  });
+
+  assertEquals(res.status, 503);
+  const json = await res.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.status, "degradado");
+  assertEquals(falhas, ["operacao_degradada"]);
+  // RN15: o corpo público não ganha número nem nome de fila, pg_net ou SMTP.
+  const texto = JSON.stringify(json).toLowerCase();
+  for (const nome of NOMES_INTERNOS) assertEquals(texto.includes(nome), false, nome);
+  assertEquals(json.fila_idade_segundos, undefined);
+  assertEquals(json.entrega_falhas, undefined);
+  assertEquals(json.transporte_falhas, undefined);
+});
+
+Deno.test("bB0tV5R8 fase 2: HEAD retorna 503 sem corpo quando a sonda operacional esta doente", async () => {
+  const req = new Request("http://localhost/functions/v1/saude", { method: "HEAD" });
+  const res = await processarSaude(req, {
+    sqlProbe: probeMock({ ok: true, jobs: JOBS_OK, operacional: OPERACIONAL_DOENTE }),
+  });
+
+  assertEquals(res.status, 503);
+  assertEquals(await res.text(), "");
+});
+
+Deno.test("bB0tV5R8 fase 2: GET e HEAD retornam 200 quando jobs e sonda operacional estao saudaveis", async () => {
+  const sqlProbe = probeMock({ ok: true, jobs: JOBS_OK, operacional: operacional() });
+
+  const get = await processarSaude(
+    new Request("http://localhost/functions/v1/saude", { method: "GET" }),
+    { sqlProbe },
+  );
+  assertEquals(get.status, 200);
+  const json = await get.json();
+  assertEquals(json.ok, true);
+  assertEquals(json.status, "saudavel");
+
+  const head = await processarSaude(
+    new Request("http://localhost/functions/v1/saude", { method: "HEAD" }),
+    { sqlProbe },
+  );
+  assertEquals(head.status, 200);
+  assertEquals(await head.text(), "");
+});
+
+Deno.test("bB0tV5R8 fase 2: job parado vence a sonda operacional no status publico", async () => {
+  const res = await processarSaude(
+    new Request("http://localhost/functions/v1/saude", { method: "GET" }),
+    {
+      sqlProbe: probeMock({
+        ok: true,
+        jobs: { ...JOBS_OK, saudavel: false, status: "atrasado", despacho_ativo: false },
+        operacional: OPERACIONAL_DOENTE,
+      }),
+    },
+  );
+
+  assertEquals(res.status, 503);
+  assertEquals((await res.json()).status, "atrasado");
+});
+
+Deno.test("bB0tV5R8 fase 2: sonda operacional doente derruba o HEAD mesmo sem consultarJobs", async () => {
+  const res = await processarSaude(
+    new Request("http://localhost/functions/v1/saude", { method: "HEAD" }),
+    { sqlProbe: probeMock({ ok: true, operacional: OPERACIONAL_DOENTE }) },
+  );
+
+  assertEquals(res.status, 503);
+});
+
+Deno.test("bB0tV5R8 fase 2: sem consultarOperacional o comportamento da fase 1 continua", async () => {
+  const res = await processarSaude(
+    new Request("http://localhost/functions/v1/saude", { method: "GET" }),
+    { sqlProbe: probeMock({ ok: true, jobs: JOBS_OK }) },
+  );
+
+  assertEquals(res.status, 200);
+  assertEquals((await res.json()).status, "saudavel");
+});
+
+Deno.test("bB0tV5R8 fase 2: consultarOperacional que lanca vira 503 indisponivel, em GET e em HEAD", async () => {
+  const falhas: string[] = [];
+  const get = await processarSaude(
+    new Request("http://localhost/functions/v1/saude", { method: "GET" }),
+    {
+      sqlProbe: probeMock({
+        ok: true,
+        jobs: JOBS_OK,
+        operacionalLanca: true,
+        onRegistrarFalha: (_o, c) => falhas.push(c),
+      }),
+    },
+  );
+  assertEquals(get.status, 503);
+  const json = await get.json();
+  assertEquals(json.ok, false);
+  assertEquals(json.status, "indisponivel");
+  assertEquals(falhas, ["conexao_falhou"]);
+
+  const head = await processarSaude(
+    new Request("http://localhost/functions/v1/saude", { method: "HEAD" }),
+    { sqlProbe: probeMock({ ok: true, jobs: JOBS_OK, operacionalLanca: true }) },
+  );
+  assertEquals(head.status, 503);
+  assertEquals(await head.text(), "");
+});
+
+Deno.test("bB0tV5R8 fase 2: o detalhe da sonda operacional vai so para o log, nunca para a resposta", async () => {
+  const linhas: string[] = [];
+  const original = console.log;
+  console.log = (...args: unknown[]) => {
+    linhas.push(args.map(String).join(" "));
+  };
+  let res: Response;
+  try {
+    res = await processarSaude(
+      new Request("http://localhost/functions/v1/saude", { method: "GET" }),
+      { sqlProbe: probeMock({ ok: true, jobs: JOBS_OK, operacional: OPERACIONAL_DOENTE }) },
+    );
+  } finally {
+    console.log = original;
+  }
+
+  assertEquals(res.status, 503);
+  const log = linhas.join("\n");
+  assertEquals(log.includes("1200"), true);
+  assertEquals(log.includes("entrega_falhas"), true);
+  assertEquals((await res.text()).includes("1200"), false);
+});
+
+Deno.test("bB0tV5R8 fase 2: o status vindo do banco nunca chega ao corpo público", async () => {
+  const res = await processarSaude(
+    new Request("http://localhost/functions/v1/saude", { method: "GET" }),
+    {
+      sqlProbe: probeMock({
+        ok: true,
+        jobs: JOBS_OK,
+        operacional: operacional({ saudavel: false, status: "fila_q_email_parada" }),
+      }),
+    },
+  );
+
+  assertEquals(res.status, 503);
+  const texto = await res.text();
+  assertEquals(JSON.parse(texto).status, "degradado");
+  assertEquals(texto.includes("q_email"), false);
+});
+
+// O SELECT de `criarSqlProbe` roda contra o banco, e nenhum teste Deno chega lá. Sem este
+// confronto, uma coluna renomeada na migração (ou um erro de digitação aqui) só aparece em
+// runtime, como 503 permanente. O pgTAP 875 prova a função; isto prova que a Edge Function
+// a lê pelos mesmos nomes.
+Deno.test("bB0tV5R8 fase 2: o SELECT da Edge Function lê exatamente as colunas que a migração devolve", async () => {
+  const migracao = await Deno.readTextFile(
+    new URL("../../migrations/20261117100000_saude_operacional.sql", import.meta.url),
+  );
+  const fonte = await Deno.readTextFile(new URL("./index.ts", import.meta.url));
+
+  const retorno = /returns table \(([\s\S]*?)\)\s*language/.exec(migracao);
+  const consulta = /select\s+((?:[a-z_]+,\s*)*[a-z_]+)\s+from privado\.consultar_saude_operacional\(\)/.exec(fonte);
+  assertEquals(retorno !== null && consulta !== null, true);
+
+  const colunasDaMigracao = retorno![1].split(",").map((c) => c.trim().split(/\s+/)[0]).sort();
+  const colunasLidas = consulta![1].split(",").map((c) => c.trim()).sort();
+
+  assertEquals(colunasLidas, colunasDaMigracao);
+  assertEquals(colunasLidas.length, 10);
+});
