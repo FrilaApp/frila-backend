@@ -65,15 +65,50 @@ export function getDbUrl(injetada?: string): string {
   return url;
 }
 
-export function criarSqlProbe(dbUrl?: string): SqlProbe {
+// Um cliente só por isolate (no máximo 2 conexões, idle_timeout 20s), criado na 1ª chamada e
+// reaproveitado entre ping, consultarJobs, consultarOperacional e requisições seguintes — em vez
+// de abrir e fechar 3 conexões TCP por GET/HEAD (mesmo padrão de ler-midia). Em erro de consulta,
+// o cliente é descartado e a próxima chamada cria outro.
+type Sql = ReturnType<typeof postgres>;
+const clientes = new Map<string, Sql>();
+
+function clienteDoModulo(
+  dbUrl: string,
+  criarCliente: (url: string) => Sql = (u) => postgres(u, { max: 2, idle_timeout: 20, connect_timeout: 3 }),
+): Sql {
+  let sql = clientes.get(dbUrl);
+  if (!sql) {
+    sql = criarCliente(dbUrl);
+    clientes.set(dbUrl, sql);
+  }
+  return sql;
+}
+
+function descartarCliente(dbUrl: string, sql: Sql): void {
+  if (clientes.get(dbUrl) === sql) clientes.delete(dbUrl);
+  sql.end({ timeout: 2 }).catch(() => {});
+}
+
+/** Encerra os clientes do módulo (para testes limpos sem conexão pendente). */
+export async function encerrarClientes(): Promise<void> {
+  const todos = [...clientes.values()];
+  clientes.clear();
+  await Promise.all(todos.map((sql) => sql.end({ timeout: 2 }).catch(() => {})));
+}
+
+export function criarSqlProbe(
+  dbUrl?: string,
+  criarCliente?: (url: string) => Sql,
+): SqlProbe {
   const url = getDbUrl(dbUrl);
 
-  const com = async <T>(fn: (sql: ReturnType<typeof postgres>) => Promise<T>): Promise<T> => {
-    const sql = postgres(url, { max: 1, connect_timeout: 3 });
+  const com = async <T>(fn: (sql: Sql) => Promise<T>): Promise<T> => {
+    const sql = clienteDoModulo(url, criarCliente);
     try {
       return await fn(sql);
-    } finally {
-      await sql.end({ timeout: 2 });
+    } catch (err) {
+      descartarCliente(url, sql);
+      throw err;
     }
   };
 
