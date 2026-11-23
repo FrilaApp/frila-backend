@@ -35,7 +35,7 @@ async function lerCorpo(resposta) {
 async function sondar(url, buscar) {
   try {
     const resposta = await buscar(url, {
-      method: 'GET', redirect: 'error', signal: AbortSignal.timeout(TIMEOUT_MS),
+      method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS),
       headers: { 'User-Agent': 'frila-vigia-saude' },
     });
     return interpretarResposta(resposta.status, await lerCorpo(resposta));
@@ -49,7 +49,7 @@ async function enviarAviso(texto, env, buscar, registrarErro) {
   try {
     if (!env.SLACK_BOT_TOKEN || !env.SLACK_CANAL) throw new Error('Configuração ausente');
     const resposta = await buscar('https://slack.com/api/chat.postMessage', {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(TIMEOUT_MS),
+      method: 'POST', redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS),
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${env.SLACK_BOT_TOKEN}`,
