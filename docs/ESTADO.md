@@ -162,11 +162,13 @@ Estado de cada PR conferido com `gh pr view <n> --json state,mergedAt` em 23/11/
 - **#588** (mesclado em 22/11): runbook do WAL e do slot; substitui o #462, que foi fechado.
 - **#513** e **#516** (mesclados em 23/11): espelhos do contrato 0.2.106 e 0.2.107.
 - **#589** (mesclado em 23/11): piso de R$ 50 e teto de R$ 2.000 no valor da diária (BE-02), migração `20261123100000`.
+- **#586** e **#587** (mesclados em 23/11, 09h50): reaproveitam o pool de conexões Postgres em `saude` e `enviar-midia` (BE-01) e exigem o cabeçalho `x-agendador-secret` por padrão nas Edge Functions internas, sem aceitar `Authorization: Bearer` (BE-03). Revisados depois da mescla (`B-089`): aprovados, sem achado bloqueante.
+- **#590** (mesclado em 23/11): o ESTADO anterior, medido em `e625e7e`.
 - **#529** foi fechado sem merge; o #575 (mesclado em 19/11) o substituiu.
 
 ### A fila de PRs aberta em 23/11/2026
 
-Medida com `gh pr list --state open` em 23/11/2026: **5 PRs abertos**, todos Draft, e **4 issues abertas**
+Medida com `gh pr list --state open` em 23/11/2026 (depois da mescla do #586 e do #587): **6 PRs abertos**, todos Draft, e **4 issues abertas**
 (`gh issue list --state open`). Em 18/11/2026 eram 9 PRs e 5 issues.
 
 | PR | Autor | Branch | O quê |
@@ -174,8 +176,9 @@ Medida com `gh pr list --state open` em 23/11/2026: **5 PRs abertos**, todos Dra
 | #515 | `jotape12-Dev` | `feat/historico-faltas` | histórico de faltas por tipo só para o titular (espelho 0.2.98) |
 | #561 | `silvaaszx` | `feat/slack-aviso-manual` | ação `aviso` no workflow de avisos do Slack |
 | #585 | `jotape12-Dev` | `fix/smtp-rejeitar-credencial-parcial` | `enviar-email` rejeita credencial SMTP parcial e relay remoto sem autenticação (DEF-02) |
-| #586 | `jotape12-Dev` | `fix/pool-conexoes-saude-enviar-midia` | reutiliza o pool de conexões Postgres em `saude` e `enviar-midia` (BE-01) |
-| #587 | `jotape12-Dev` | `fix/agendador-exigir-header-dedicado` | exige `x-agendador-secret` por padrão nas Edge Functions internas (BE-03) |
+| #591 | `jotape12-Dev` | `fix/disparar-email-sufixo-e-header-new01` | `disparar_email` troca só o sufixo `/despachar` e tira o `Authorization` redundante (NEW-01) |
+| #592 | `jotape12-Dev` | `docs/ordem-canonica-travas-be07` | ordem canônica de travas e teste executável (BE-07) |
+| #593 | `jotape12-Dev` | `feat/contrato-espelho-0.2.108-limites-diaria` | espelho do contrato 0.2.108, limites de valor da diária por posição (BE-02); a soma do `.sha256` não foi regravada e o `frila-documentacao#305` (0.2.108) segue em rascunho |
 
 Issues abertas: #519 (`meus_dados` do contratante, nome curto da contraparte), #396 (contato fora do app, Fase 2),
 #352 (infra do Prod, 4 entregas) e #297 (proteção ativa em `main` e `develop`). O estado de CI de cada PR não foi
@@ -462,7 +465,7 @@ loja, de pessoa ou de decisão fora do repositório **não foi remedido em 23/11
 
 1. **O que o produto pede agora:** `produto/AGORA.md` e `produto/modulos/` no `frila-documentacao`. Este arquivo
    deixou de listar o escopo.
-2. **O que está em voo no backend:** a fila de 5 PRs abertos e as 4 issues abertas de 23/11/2026, na seção "Onde cada
+2. **O que está em voo no backend:** a fila de 6 PRs abertos e as 4 issues abertas de 23/11/2026, na seção "Onde cada
    coisa parou". `gh pr list --state open` e `gh issue list --state open` dão a lista de hoje.
 3. **Antes de escrever um contrato novo ou uma migração:** `git fetch`, parta de `origin/develop` (240 migrações,
    contrato 0.2.107 em 23/11/2026), rode `./scripts/migracoes-sem-colisao.sh` e procure o `create or replace function <nome>`
