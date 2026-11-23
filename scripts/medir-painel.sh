@@ -238,12 +238,13 @@ resumir() { # casa rotulo
   if grep -q 'duration:' "$plano"; then
     local n_planos seq_posicao seq_ocorrencia seq_vaga max_loops
     n_planos=$(grep -c 'duration:' "$plano")
-    seq_posicao=$(grep -cE 'Seq Scan on (public\.)?posicao\b' "$plano")
-    seq_ocorrencia=$(grep -cE 'Seq Scan on (public\.)?ocorrencia\b' "$plano")
-    seq_vaga=$(grep -cE 'Seq Scan on (public\.)?vaga\b' "$plano")
+    # Conta só os nós que rodaram: "(never executed)" é ramo do plano que não foi percorrido.
+    seq_posicao=$(grep -E 'Seq Scan on (public\.)?posicao\b' "$plano" | grep -vc 'never executed')
+    seq_ocorrencia=$(grep -E 'Seq Scan on (public\.)?ocorrencia\b' "$plano" | grep -vc 'never executed')
+    seq_vaga=$(grep -E 'Seq Scan on (public\.)?vaga\b' "$plano" | grep -vc 'never executed')
     max_loops=$(grep -oE 'loops=[0-9]+' "$plano" | sed 's/loops=//' | sort -n | tail -1)
     linha "  consultas internas (auto_explain, uma chamada extra, $plano):"
-    linha "    planos registrados=$n_planos · Seq Scan em posicao=$seq_posicao, ocorrencia=$seq_ocorrencia, vaga=$seq_vaga · maior loops=${max_loops:-0}"
+    linha "    planos registrados=$n_planos · Seq Scan executados em posicao=$seq_posicao, ocorrencia=$seq_ocorrencia, vaga=$seq_vaga · maior loops=${max_loops:-0}"
   else
     linha "  consultas internas: NAO MEDIDO (auto_explain não registrou nada; veja AUTO_EXPLAIN_* em $erros)"
   fi
