@@ -14,15 +14,15 @@ Os volumes dos cenários são **hipótese de volume, não dado de produto**. O C
 
 | Cenário | Casa | Vagas x posições x candidaturas | Janela `de..ate` |
 |---|---|---|---|
-| S1 | A | 200 x 2 x 6 | 1 dia |
-| S2 | A | 200 x 2 x 6 | 7 dias |
+| S1 | A | 90 x 2 x 6, histórico de 30 dias | 1 dia |
+| S2 | A | 90 x 2 x 6, histórico de 30 dias | 7 dias |
 | S3 | B | 1.000 x 3 x 10 | 30 dias |
 | S6 | B | 1.000 x 3 x 10 | 45 dias |
 | S4 | B | 1.000 x 3 x 10 | 365 dias |
 | S5 | B | 1.000 x 3 x 10 | 1.825 dias (5 anos) |
 | S3_membro5 | B | igual a S3 | 30 dias, com o leitor membro de 5 casas em vez de 1 |
 
-O histórico de cada casa tem 365 dias, as vagas são espalhadas uniformemente e a janela começa no primeiro dia. Com esse espalhamento, a janela de 1 dia (S1) contém cerca de 1 vaga e a de 7 dias (S2) cerca de 4 (DEDUZIDO da fórmula do gerador; o relatório imprime o número real em `VOLUME_JANELA`). A janela de 45 dias (S6) começa no início do histórico gerado (como as outras); mede o VOLUME da janela (≈ 123 vagas), não modela "hoje −30/+15". Se uma casa média real concentra mais vagas por semana, ajuste `-v vagas` no gerador antes de tirar conclusão de S1 e S2.
+A casa B tem histórico de 365 dias, com as vagas espalhadas uniformemente, e a janela começa no primeiro dia. A casa A, que serve S1 e S2, tem histórico de 30 dias com 3 vagas por dia (o máximo que o gerador aceita, em faixas de 6 h): a janela de 1 dia (S1) contém 3 vagas e a de 7 dias (S2) contém 21 (DEDUZIDO da fórmula do gerador; confirmado na terceira execução, linha `VOLUME_JANELA`). Antes disso a casa A espalhava 200 vagas em 365 dias, e S1 e S2 tinham 1 e 4 vagas (primeira e segunda execuções abaixo); os números dessas duas execuções para S1 e S2 **não comparam** com os da terceira. O script recusa medir (`NAO MEDIDO`, saída 2) se a janela de S1 tiver menos de 2 vagas ou a de S2 menos de 5. A janela de 45 dias (S6) começa no início do histórico gerado (como as outras); mede o VOLUME da janela (≈ 123 vagas), não modela "hoje −30/+15". Os volumes de todos os cenários são **HIPÓTESE**: se uma casa real tem mais vagas por semana, ajuste `-v vagas` e `-v dias` no gerador antes de tirar conclusão de S1 e S2.
 
 ## Garantias de segurança
 
@@ -65,7 +65,7 @@ Saída do script: `0` mediu tudo o que foi pedido; `2` **NAO mediu** (ou mediu s
 | `bruto-casa-A.err.txt`, `bruto-casa-B.err.txt` | stderr: `NOTICE` com as medidas e o `LOG` do `auto_explain`. Erros também caem aqui. |
 | `explain-<cenário>.txt`, `plano-<cenário>.txt` | Os trechos de cada cenário extraídos dos brutos. |
 
-O resumo do plano é só contagem de `Seq Scan` em `posicao`, `ocorrencia` e `vaga` e o maior `loops=`; **a leitura do plano é humana, no arquivo `plano-<cenário>.txt`**.
+O resumo do plano é só contagem de `Seq Scan` executados (nós `never executed` não contam) em `posicao`, `ocorrencia` e `vaga` e o maior `loops=`; **a leitura do plano é humana, no arquivo `plano-<cenário>.txt`**.
 
 ## O que o relatório registra por cenário (P3.3 do plano)
 
@@ -167,3 +167,38 @@ O formato textual de saída do `auto_explain` do PostgreSQL não gera mensagens 
 - **Inferência:** um índice em `posicao(vaga_id)` tiraria no máximo esses ~6% a 8%; o grosso (≈ 2,2 ms por vaga) fica dentro do `SubPlan 6`, fora dos nós listados (o `auto_explain` aqui não loga as consultas internas das funções chamadas por posição, por exemplo `privado.perfil_publico_profissional`). Para confirmar, medir com `auto_explain.log_nested_statements = on`. Não foi feito.
 - **Fato:** o tempo cresce com o volume da janela: S6 tem 1,49× as vagas de S3 e 1,51× a mediana (267,27 ms ÷ 177,39 ms). Pela tabela de decisão deste roteiro, "índice sem mudar contrato" só resolve se o tempo estiver nos `Seq Scan`; aqui não parece estar. Limitar a janela ou paginar muda o contrato e é decisão do Cauê, com o ok do Fabrício (UI).
 - **Cuidado ao comparar com a 1ª execução:** os números das duas execuções diferem muito para o mesmo cenário (S3: 608,85 ms em 18/11 × 177,39 ms em 20/11; S4: 6.371 ms × 2.136 ms). Comparar cenários **dentro** de uma execução, não entre elas; a causa da diferença não foi investigada.
+
+### Terceira execução (22/11/2026)
+
+Motivo: a revisão do #570 pediu uma execução no head com `DB_USER=supabase_admin` e S1 e S2 com mais vagas. Comando (MEDIDO, da raiz do repositório, com 0 consultas ativas em `pg_stat_activity` imediatamente antes (só conexões ociosas dos serviços do Supabase)):
+
+```bash
+DB_USER=supabase_admin PGPASSWORD=postgres ./scripts/medir-painel.sh --saida DIR
+```
+
+O script fixa `PGPASSWORD=postgres` dentro do `docker exec` (DEDUZIDO do código); exportar a variável fora dele não muda a conexão.
+
+Execução em 2026-11-22 23:32 (-0300), no commit `03f2384` (o restante da branch depois dele só altera este documento), Postgres 17.6, papel `supabase_admin` (superusuário: `t`, `auto_explain` carregado), 10 amostras e 3 aquecimentos por cenário. Resíduo após rollback: 0 estabelecimentos `Casa pesada`, 18 usuários antes e 18 depois. Saída: 0.
+
+Estado do banco local (MEDIDO): 231 migrações aplicadas, a última `20261118100000`. O repositório tem 237 arquivos; as 6 versões ausentes no banco são `20261117100000`, `20261117190000`, `20261117200000`, `20261120100000`, `20261120200000` e `20261120300000`. Nenhuma delas cita `painel_estabelecimento` nem cria índice (MEDIDO por `grep`), e não foram aplicadas: o banco é compartilhado e não se mexe nele por causa de uma medição.
+
+| Cenário | Janela | Vagas / posições / candidaturas / turnos na janela | Mediana (ms) | Mín (ms) | Máx (ms) | Resposta (bytes) | `explain` Execution Time (ms) | `explain` Buffers (shared hit) | `Seq Scan` executados em posicao/ocorrencia/vaga (planos registrados, maior loops) |
+|---|---|---|---|---|---|---|---|---|---|
+| S1 | 1 dia | 3 / 6 / 36 / 6 | 4,02 | 3,59 | 6,24 | 5.108 | 4,291 | 1.363 | 15 / 0 / 1 (91, loops=9) |
+| S2 | 7 dias | 21 / 42 / 252 / 34 | 26,27 | 25,49 | 29,49 | 33.736 | 23,674 | 9.104 | 79 / 1 / 1 (597, loops=42) |
+| S3 | 30 dias | 83 / 249 / 2.490 / 199 | 203,28 | 190,88 | 219,76 | 181.432 | 189,931 | 113.855 | 2 / 0 / 0 (2, loops=249) |
+| S6 | 45 dias | 124 / 372 / 3.720 / 298 | 314,64 | 289,74 | 714,29 | 271.156 | 306,976 | 169.906 | 2 / 0 / 0 (11, loops=372) |
+| S4 | 365 dias | 1.000 / 3.000 / 30.000 / 2.400 | 2.621,46 | 2.228,19 | 2.820,98 | 2.186.748 | 2.671,742 | 1.353.083 | 314 / 0 / 0 (3.087, loops=3000) |
+| S5 | 1.825 dias | 1.000 / 3.000 / 30.000 / 2.400 | 2.822,68 | 2.535,99 | 3.343,10 | 2.186.748 | 2.910,561 | 1.353.083 | 699 / 0 / 0 (4.712, loops=3000) |
+| S3_membro5 | 30 dias, leitor em 5 casas | 83 / 249 / 2.490 / 199 | 456,54 | 353,05 | 1.041,54 | 181.432 | 558,267 | 114.751 | 53 / 0 / 0 (381, loops=249) |
+
+Todos os números da tabela são MEDIDOS nesta execução. O plano interno saiu preenchido em 7 de 7 cenários (na primeira execução, `NAO MEDIDO` em 6 de 6): o padrão `DB_USER=supabase_admin` conecta e o `auto_explain` carrega.
+
+Limites de leitura, sem interpretação do desempenho:
+
+- **A contagem de `Seq Scan` não compara entre cenários da casa B nem entre execuções.** O `auto_explain` da casa B registra só consultas internas com 1 ms ou mais (`AUTO_EXPLAIN_MIN_MS`, padrão 1; na casa A é 0). S4 e S5 têm o mesmo volume e a mesma resposta e registraram 3.087 e 4.712 planos; S3 registrou 2 planos nesta execução e 175 num ensaio feito minutos antes no commit `2c8ed18` (sem registro na tabela). Para comparar planos, rode com `AUTO_EXPLAIN_MIN_MS=0` (saída grande).
+- **O tempo varia entre execuções.** Medianas de S3 observadas: 608,85 ms (18/11, `postgres`), 177,39 ms (20/11, segunda execução), 366,22 ms (22/11, ensaio no `2c8ed18`, sem registro de tabela) e 203,28 ms (22/11, esta). Em S3_membro5 a mediana desta execução (456,54 ms) ficou acima da de S3 (203,28 ms); na primeira execução foi abaixo (368,36 ms contra 608,85 ms) e na segunda ficou próxima (182,81 ms contra 177,39 ms). A causa da variação não foi investigada. Compare cenários dentro de uma execução e não use uma mediana isolada.
+- Com 10 amostras não se afirma p95. O máximo de S6 (714,29 ms) e o de S3_membro5 (1.041,54 ms) são picos de uma amostra.
+- Volume é **HIPÓTESE**: S1 e S2 agora têm 3 e 21 vagas, mas 3 por dia é o limite do gerador. Uma casa com mais de 3 vagas por dia não é representável sem mudar o gerador.
+
+Não medido nesta execução: p95; autovacuum e versões mortas depois do `rollback`; consultas internas com menos de 1 ms na casa B; qualquer volume ou janela de produto (Cauê ou Jota); o tamanho real de `posicao`, `ocorrencia` e `vaga` no Prod. A decisão entre índice, janela limitada e paginação não está neste documento.
