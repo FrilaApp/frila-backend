@@ -1,0 +1,65 @@
+name: Vigia da saúde do Prod
+
+# Vigia externo do frila-prod (cartão bB0tV5R8; docs/RunbookWalESlot.md, seção 6).
+# A cada 10 min faz um GET na Edge Function `saude` e avisa o Slack (#alertas-prod) quando ela não
+# responde 200 com {"ok":true}. Só lê: não grava nada no Prod. A `saude` roda com `verify_jwt = false`
+# (supabase/config.toml), então não leva credencial.
+#
+# Quem decide o quê está em scripts/vigia_saude.py (e é testado por scripts/teste-vigia-saude.sh):
+#   - falhou? espera ~60 s e tenta de novo; só a segunda falha conta (evita alarme por piscada);
+#   - sem enxurrada: avisa na primeira confirmação, lembra a cada ~1 h e avisa a volta ao normal.
+#     O estado é a conclusão das execuções anteriores deste workflow (API do Actions, GITHUB_TOKEN):
+#     por isso a execução FICA VERMELHA quando a saúde está fora. É o registro do estado, não é bug;
+#   - vigia atrasado: se a última execução tiver mais de 45 min, avisa o Slack (o `schedule` do GitHub
+#     atrasa e pula execuções).
+#
+# Variável de repositório (não é segredo, é a URL pública da função): FRILA_PROD_URL_SAUDE
+#   ex.: https://<project-ref>.supabase.co/functions/v1/saude
+# Secret de repositório já existente: SLACK_WEBHOOK_URL (usado só pelo scripts/notificar-slack.sh;
+# sem ele o vigia roda e avisa no log que o Slack não foi configurado).
+#
+# Só `schedule` e `workflow_dispatch`: nada de pull_request, então PR de fork nunca lê o secret.
+# O `schedule` roda na branch padrão do repositório (develop). Para desligar: Actions → Vigia da
+# saúde do Prod → ⋯ → Disable workflow (ou `gh workflow disable vigia-saude.yml`).
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Ensaio: imprime o aviso no log em vez de mandar ao Slack'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: vigia-saude
+  cancel-in-progress: false
+
+jobs:
+  vigia:
+    name: GET na função saude do frila-prod
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (só scripts)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - name: Sondar a saúde e avisar o Slack
+        env:
+          URL_SAUDE: ${{ vars.FRILA_PROD_URL_SAUDE }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ github.token }}
+          ENSAIO: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          args=()
+          if [ "$ENSAIO" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          python3 scripts/vigia_saude.py "${args[@]}"
