@@ -44,6 +44,7 @@ function cenario() {
       if (url === env.URL_SAUDE) {
         assert.equal(opcoes.method, 'GET');
         assert.equal(opcoes.headers.Authorization, undefined);
+        assert.equal(opcoes.headers['x-region'], 'sa-east-1');
         const resposta = sondas.shift();
         assert.ok(resposta, 'Falta uma sonda de mentira');
         if (resposta instanceof Error) throw resposta;
@@ -52,6 +53,7 @@ function cenario() {
       assert.equal(url, 'https://slack.com/api/chat.postMessage');
       assert.equal(opcoes.method, 'POST');
       assert.equal(opcoes.headers.Authorization, `Bearer ${env.SLACK_BOT_TOKEN}`);
+      assert.equal(opcoes.headers['x-region'], undefined);
       assert.equal(opcoes.headers['Content-Type'], 'application/json');
       const mensagem = JSON.parse(opcoes.body);
       assert.equal(mensagem.channel, env.SLACK_CANAL);

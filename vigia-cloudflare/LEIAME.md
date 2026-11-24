@@ -12,6 +12,14 @@ por execução reúne tudo. Primeiro alerta, lembrete após uma hora, recuperaç
 duração e aviso quando a execução anterior tiver mais de 15 min. Somente `status`
 curto e validado da saúde entra no aviso. URLs, tokens e corpos crus não vão ao log.
 
+A sonda manda o cabeçalho `x-region: sa-east-1` (região do banco do Prod). Sem ele, a `saude`
+roda na região do Supabase mais próxima do colo da Cloudflare que executa o Worker
+(ex.: Singapura) e a conexão ao banco em São Paulo estoura o `connect_timeout` de 3 s: em
+23/11/2026 isso gerou um alerta falso. Com `x-region` explícito **não há reroteamento
+automático se `sa-east-1` cair**, e é o desejado: o vigia mede a região dos usuários.
+Ver [invocação regional](https://supabase.com/docs/guides/functions/regional-invocation).
+A região usada aparece no cabeçalho de resposta `x-sb-edge-region`.
+
 Slack usa `chat.postMessage`, canal em `SLACK_CANAL`, secret `SLACK_BOT_TOKEN` lido
 somente do ambiente. HTTP diferente de 200 ou JSON sem `ok: true` gera log genérico,
 com o campo `error` apenas se curto e validado. Falha de envio não derruba o cron;
