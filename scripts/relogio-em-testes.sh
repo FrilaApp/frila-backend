@@ -14,23 +14,48 @@
 # absoluta futura, ele DEVE congelar frila.agora antes de qualquer chamada que consuma
 # o relógio do produto (privado.agora).
 #
-# SEGUNDA REGRA (B-111/B-111b, 24/11/2026): início ABSOLUTO de vaga de seleção que vence.
+# SEGUNDA REGRA (B-111/B-111b/B-111c, 24/11/2026): início ABSOLUTO de vaga de seleção que vence.
 # `selecao_com_antecedencia` exige inicio_em > publicado_em + 24 h e `publicado_em` nasce com o
 # now() REAL, mesmo com frila.agora congelado. Teste que crava a data de início fica vermelho no dia
 # em que a data fica a menos de 24 h do relógio real (757 e 871 em 24/11/2026 18:00 UTC; a CI de
-# todos os PRs ficou vermelha). A regra é estática: para cada literal de timestamp/date absoluto >=
-# hoje, dentro de `insert into public.vaga` ou de uma chamada `publicar_vaga(` e a ±15 linhas de 'selecao',
+# todos os PRs ficou vermelha). A regra é estática e lê o SQL com um léxico mínimo (comentário `--` e
+# `/* */`, string, `$$..$$`/`$tag$..$tag$`): o literal de timestamp/date absoluto >= hoje dentro de um
+# `insert into public.vaga` ou de uma chamada `publicar_vaga(` que tem 'selecao' NO MESMO STATEMENT
+# (até o `;`; modo de outro statement não conta):
 #   vence = data - 24 h;  FALHA se vence <= hoje + 30 dias;  acima disso só imprime o vencimento.
-# Fica fora da regra: literal de frila.agora/set_config, criar_conta/nascimento/termos_versao,
-# a linha com o comentário `-- relogio: ok <motivo>`, o `insert into public.vaga (...)` que lista
-# `publicado_em` nas colunas (a constraint compara com o valor dado, não com o now() real) e o arquivo
-# que prende a publicação ao relógio de teste
-# (`alter table public.vaga alter column publicado_em set default privado.agora()`).
+# Fica fora da regra: literal de frila.agora/set_config, criar_conta/nascimento/termos_versao, a linha
+# com o comentário `-- relogio: ok <motivo>`, e as duas formas de prender a publicação ao relógio de teste:
+#   (1) `insert into public.vaga (...)` que lista `publicado_em` com valor que NÃO depende do relógio real
+#       (literal fixo isenta; now(), current_timestamp, clock_timestamp, transaction_timestamp, default,
+#       'now' etc. NÃO isentam; privado.agora() só isenta se frila.agora já estava congelado);
+#   (2) `alter table public.vaga alter column publicado_em set default privado.agora()` EXECUTÁVEL (fora de
+#       comentário), ANTES da primeira publicação de vaga e do rollback/finish, com frila.agora congelado antes
+#       da primeira publicação.
 # Data passada nunca falha. "Hoje" vem de `date -u`; injete com RELOGIO_HOJE=AAAA-MM-DD (autoteste).
 #
+# COBERTURA PARCIAL (assumida, B-111c): cobre literal direto em insert/publicar_vaga; NÃO cobre helper nem
+# expressão montada (format, concatenação, make_timestamptz) e nem data passada como parâmetro a função do
+# arquivo. Caso real que fica de fora e está fixado no autoteste: o 530 antigo (data na linha 143, passada
+# ao helper das linhas 96-103). O gate NÃO substitui a revisão de teste novo de seleção.
+#
 # Uso:  ./scripts/relogio-em-testes.sh [pasta_ou_arquivo]
+#       ./scripts/relogio-em-testes.sh --help
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+case "${1:-}" in
+  -h|--help)
+    cat << 'AJUDA'
+Uso: scripts/relogio-em-testes.sh [pasta_ou_arquivo]    (padrão: supabase/tests)
+Recusa teste pgTAP com bomba-relógio: (1) data absoluta de vaga/turno sem congelar frila.agora antes de
+chamar função que lê o relógio; (2) início absoluto de vaga de seleção que vence em até 30 dias
+(selecao_com_antecedencia usa publicado_em = now() real). RELOGIO_HOJE=AAAA-MM-DD injeta o "hoje" (UTC).
+Saída: 0 limpo, 1 achado, 2 não mediu (alvo vazio/inexistente ou RELOGIO_HOJE inválido).
+Cobertura parcial: cobre literal direto em insert/publicar_vaga; não cobre helper nem expressão montada.
+AJUDA
+    exit 0
+    ;;
+esac
 
 # Dia UTC de "hoje" (injetável) para a regra de vencimento; formato validado no Python.
 RELOGIO_HOJE="${RELOGIO_HOJE:-$(date -u +%F)}"
@@ -154,21 +179,33 @@ if not files:
     sys.exit(2)
 
 
-# ── Segunda regra: início absoluto de seleção que vence (B-111b) ──────────────────────────────
+# ── Segunda regra: início absoluto de seleção que vence (B-111b/B-111c) ───────────────────────
 import datetime as dt
+import bisect
 try:
     HOJE = dt.datetime.strptime(os.environ['RELOGIO_HOJE'], '%Y-%m-%d').date()
 except (KeyError, ValueError):
     print(f"RELOGIO_HOJE inválido ('{os.environ.get('RELOGIO_HOJE')}'): use AAAA-MM-DD.", file=sys.stderr)
     sys.exit(2)
 LIMITE_DIAS = 30
-JANELA = 15
-quoted_re = re.compile(r"'(\d{4}-\d{2}-\d{2}[^']*)'")
+COBERTURA = ("Cobertura parcial: cobre literal direto em insert/publicar_vaga; "
+             "não cobre helper nem expressão montada.")
+data_re = re.compile(r"\d{4}-\d{2}-\d{2}[^']*")
+aninhado_re = re.compile(r"''(\d{4}-\d{2}-\d{2}[^']*?)''")
 ts_re = re.compile(r'(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(Z|[+-]\d{2}(?::?\d{2})?)?)?$')
 pin_re = re.compile(r'alter\s+table\s+public\.vaga\s+alter\s+column\s+publicado_em\s+set\s+default\s+privado\.agora\s*\(\s*\)', re.I)
 excecao_re = re.compile(r'--\s*relogio:\s*ok\b', re.I)
 fora_re = re.compile(r'frila\.agora|set_config|criar_conta|nascimento|termos_versao', re.I)
-vaga_ctx_re = re.compile(r'insert\s+into\s+public\.vaga\b|publicar_vaga', re.I)
+vaga_ctx_re = re.compile(r'insert\s+into\s+public\.vaga\b|publicar_vaga\s*\(', re.I)
+insert_vaga_re = re.compile(r'insert\s+into\s+public\.vaga\s*\(', re.I)
+selecao_re = re.compile(r'\bselecao\b', re.I)
+fim_re = re.compile(r'(?<!\w)rollback\b(?!\s+to\b)|\bfinish\s*\(', re.I)
+tag_re = re.compile(r'\$(?:[^\W\d]\w*)?\$')
+# Valor de publicado_em que depende do relógio REAL (a constraint compararia com o now() de verdade).
+relogio_real_re = re.compile(r'\b(?:now|current_timestamp|current_date|localtimestamp|clock_timestamp|'
+                             r'transaction_timestamp|statement_timestamp|timeofday|default)\b', re.I)
+relogio_texto_re = re.compile(r"'\s*(?:now|today|tomorrow|yesterday)\s*'", re.I)
+agora_re = re.compile(r'\bagora\s*\(', re.I)
 
 def parse_instante(txt):
     m = ts_re.match(txt.strip())
@@ -186,57 +223,208 @@ def parse_instante(txt):
         off = sinal * dt.timedelta(hours=int(dig[:2]), minutes=int(dig[2:] or 0))
     return base - off  # UTC ingênuo
 
-ins_vaga_re = re.compile(r'insert\s+into\s+public\.vaga\s*\(([^)]*)\)', re.I)
+def tokenizar(txt):
+    """Léxico mínimo do Postgres. Devolve (code, masked, strings, pontos_e_virgula):
+    code   = o texto com comentários (-- e /* */ aninhado) e as marcas $tag$ trocados por espaços (mesmos
+             deslocamentos e quebras de linha); o conteúdo de string e o de $$...$$ continuam, porque o
+             teste monta SQL dentro deles;
+    masked = code com o conteúdo das strings trocado por 'x' (estrutura sem parêntese/vírgula de string);
+    strings = [(ini, fim)] do conteúdo de cada string de aspas simples;
+    pontos_e_virgula = deslocamentos dos ';' fora de string e de comentário (fim de statement)."""
+    n = len(txt)
+    code = list(txt)
+    strings, semis, pilha = [], [], []
+    estado, ini_str, prof = None, 0, 0
+    i = 0
+    while i < n:
+        if pilha and txt.startswith(pilha[-1], i):   # fecha o $tag$ aberto (vale em qualquer estado)
+            if estado == 'str':
+                strings.append((ini_str, i))
+            estado, prof = None, 0
+            for k in range(i, i + len(pilha[-1])):
+                code[k] = ' '
+            i += len(pilha.pop())
+            continue
+        c = txt[i]
+        if estado is None:
+            if c == "'":
+                estado, ini_str = 'str', i + 1
+            elif txt.startswith('--', i):
+                estado = 'lin'
+                code[i] = code[i + 1] = ' '
+                i += 1
+            elif txt.startswith('/*', i):
+                estado, prof = 'blo', 1
+                code[i] = code[i + 1] = ' '
+                i += 1
+            elif c == '$':
+                m = tag_re.match(txt, i)
+                if m:
+                    pilha.append(m.group())
+                    for k in range(m.start(), m.end()):
+                        code[k] = ' '
+                    i = m.end()
+                    continue
+            elif c == ';':
+                semis.append(i)
+        elif estado == 'str':
+            if c == "'":
+                if txt.startswith("''", i):
+                    i += 1
+                else:
+                    strings.append((ini_str, i))
+                    estado = None
+        elif estado == 'lin':
+            if c == '\n':
+                estado = None
+            else:
+                code[i] = ' '
+        else:  # 'blo'
+            if txt.startswith('/*', i):
+                prof += 1
+                code[i] = code[i + 1] = ' '
+                i += 1
+            elif txt.startswith('*/', i):
+                prof -= 1
+                code[i] = code[i + 1] = ' '
+                i += 1
+                if prof == 0:
+                    estado = None
+            elif c != '\n':
+                code[i] = ' '
+        i += 1
+    if estado == 'str':
+        strings.append((ini_str, n))
+    masked = list(code)
+    for (a, b) in strings:
+        for k in range(a, b):
+            if masked[k] != '\n':
+                masked[k] = 'x'
+    return ''.join(code), ''.join(masked), strings, semis
 
-def insert_com_publicado_em(limpas, i):
-    """A linha i está num `insert into public.vaga (..., publicado_em, ...)`? Então a constraint
-    compara com o valor explícito, e não com o now() real."""
-    for ini in range(i, max(-1, i - 40), -1):
-        if re.search(r'insert\s+into\s+public\.vaga\b', limpas[ini], re.I):
-            fim = ini
-            while fim < len(limpas) - 1 and ';' not in limpas[fim]:
-                fim += 1
-            if fim < i:
-                return False  # outro statement
-            m = ins_vaga_re.search('\n'.join(limpas[ini:fim + 1]))
-            return bool(m and re.search(r'\bpublicado_em\b', m.group(1), re.I))
-        if ';' in limpas[ini] and ini < i:
-            return False
-    return False
+def fecha_parenteses(masked, i):
+    """masked[i] == '('. Devolve o deslocamento do ')' que o fecha (ou None)."""
+    prof = 0
+    for k in range(i, len(masked)):
+        if masked[k] == '(':
+            prof += 1
+        elif masked[k] == ')':
+            prof -= 1
+            if prof == 0:
+                return k
+    return None
 
-def no_inicio_de_vaga(limpas, i):
-    """O literal da linha i está dentro de um `insert into public.vaga` ou de uma chamada
-    `publicar_vaga(` (até o ';' do statement)? Fixture de posição, turno ou chamada perto não conta."""
-    for ini in range(i, max(-1, i - 12), -1):
-        if vaga_ctx_re.search(limpas[ini]):
-            return True
-        if ini < i and ';' in limpas[ini]:
+def divide_virgulas(masked, ini, fim):
+    """Intervalos [(a, b)] dos itens separados por vírgula no nível de cima de masked[ini:fim]."""
+    itens, prof, a = [], 0, ini
+    for k in range(ini, fim):
+        c = masked[k]
+        if c == '(':
+            prof += 1
+        elif c == ')':
+            prof -= 1
+        elif c == ',' and prof == 0:
+            itens.append((a, k))
+            a = k + 1
+    itens.append((a, fim))
+    return itens
+
+def publicado_em_fixo(code, masked, ini_stmt, lit, freeze_off):
+    """O `insert into public.vaga (...)` do statement lista publicado_em E todo valor dado a ele independe
+    do relógio real? Só então a constraint compara com um instante fixo. now(), current_timestamp,
+    clock_timestamp, transaction_timestamp, default etc. NÃO isentam; privado.agora() só se frila.agora já
+    estava congelado antes do insert; insert ... select (sem VALUES) não dá para ler: não isenta."""
+    ms = list(insert_vaga_re.finditer(masked, ini_stmt, lit))
+    if not ms:
+        return False
+    m = ms[-1]
+    abre = m.end() - 1
+    fecha = fecha_parenteses(masked, abre)
+    if fecha is None:
+        return False
+    cols = [c.strip().lower() for c in masked[abre + 1:fecha].split(',')]
+    if 'publicado_em' not in cols:
+        return False
+    idx = cols.index('publicado_em')
+    v = re.compile(r'\s*values\b', re.I).match(masked, fecha + 1)
+    if not v:
+        return False
+    pos, tuplas = v.end(), 0
+    while True:
+        while pos < len(masked) and masked[pos].isspace():
+            pos += 1
+        if pos >= len(masked) or masked[pos] != '(':
             return False
-    return False
+        fim = fecha_parenteses(masked, pos)
+        if fim is None:
+            return False
+        itens = divide_virgulas(masked, pos + 1, fim)
+        if idx >= len(itens):
+            return False
+        a, b = itens[idx]
+        if relogio_real_re.search(masked[a:b]) or relogio_texto_re.search(code[a:b]):
+            return False
+        if agora_re.search(masked[a:b]) and not (freeze_off is not None and freeze_off < m.start()):
+            return False
+        tuplas += 1
+        pos = fim + 1
+        while pos < len(masked) and masked[pos].isspace():
+            pos += 1
+        if pos < len(masked) and masked[pos] == ',':
+            pos += 1
+            continue
+        return tuplas > 0
+
+def publicacao_presa(code, masked, freeze_off):
+    """O `alter table public.vaga alter column publicado_em set default privado.agora()` é EXECUTÁVEL (fora de
+    comentário), vem antes da primeira publicação de vaga e antes do rollback/finish, e frila.agora já estava
+    congelado antes da primeira publicação? Alter depois do rollback ou só em comentário NÃO isenta."""
+    pub = vaga_ctx_re.search(code)
+    pub_off = pub.start() if pub else len(code)
+    fim = fim_re.search(masked)
+    fim_off = fim.start() if fim else len(code)
+    if freeze_off is None or freeze_off >= pub_off:
+        return False
+    return any(p.start() < pub_off and p.start() < fim_off for p in pin_re.finditer(code))
 
 def scan_vencimentos(filepath):
     """Devolve (pinado, [(linha, texto_da_data, vence_data, dias)]) dos inícios absolutos de seleção."""
     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
-        brutas = f.read().split('\n')
-    limpas = [l.split('--')[0] for l in brutas]
-    if pin_re.search('\n'.join(limpas)):
+        txt = f.read()
+    code, masked, strings, semis = tokenizar(txt)
+    fz = freeze_re.search(code)
+    freeze_off = fz.start() if fz else None
+    if publicacao_presa(code, masked, freeze_off):
         return True, []
+    limpas = code.split('\n')
+    brutas = txt.split('\n')
+    candidatos = []   # (deslocamento, texto) de literal de data: string inteira ou 'aninhada' em SQL montado
+    for (a, b) in strings:
+        conteudo = txt[a:b]
+        if data_re.fullmatch(conteudo):
+            candidatos.append((a, conteudo))
+        else:
+            candidatos.extend((a + m.start(1), m.group(1)) for m in aninhado_re.finditer(conteudo))
     achados = []
-    for i, limpa in enumerate(limpas):
-        if fora_re.search(limpa) or excecao_re.search(brutas[i]):
+    for (off, texto) in sorted(candidatos):
+        linha = txt.count('\n', 0, off)
+        if fora_re.search(limpas[linha]) or excecao_re.search(brutas[linha]):
             continue
-        for m in quoted_re.finditer(limpa):
-            inst = parse_instante(m.group(1))
-            if inst is None or inst.date() < HOJE:
-                continue  # passada (ou ilegível): nunca falha
-            lo, hi = max(0, i - JANELA), min(len(limpas), i + JANELA + 1)
-            janela = '\n'.join(limpas[lo:hi])
-            if 'selecao' not in janela.lower() or not vaga_ctx_re.search(janela):
-                continue
-            if not no_inicio_de_vaga(limpas, i) or insert_com_publicado_em(limpas, i):
-                continue
-            vence = (inst - dt.timedelta(hours=24)).date()
-            achados.append((i + 1, m.group(1), vence, (vence - HOJE).days))
+        inst = parse_instante(texto)
+        if inst is None or inst.date() < HOJE:
+            continue  # passada (ou ilegível): nunca falha
+        k = bisect.bisect_left(semis, off)
+        ini_stmt = semis[k - 1] + 1 if k > 0 else 0
+        fim_stmt = semis[k] if k < len(semis) else len(code)
+        # Modo e início na MESMA chamada (statement, até o ';'): 'selecao' de outro statement não conta.
+        if not selecao_re.search(code[ini_stmt:fim_stmt]):
+            continue
+        if not vaga_ctx_re.search(code[ini_stmt:off]):
+            continue  # fora de insert into public.vaga / publicar_vaga( : fixture de posição, turno etc.
+        if publicado_em_fixo(code, masked, ini_stmt, off, freeze_off):
+            continue
+        vence = (inst - dt.timedelta(hours=24)).date()
+        achados.append((linha + 1, texto, vence, (vence - HOJE).days))
     return False, achados
 
 violations = []
@@ -290,5 +478,6 @@ if violations or vencem:
     sys.exit(1)
 
 print(f"Todos os {len(files)} testes pgTAP estão imunes a bombas-relógio de relógio.")
+print(COBERTURA)
 sys.exit(0)
 PY
