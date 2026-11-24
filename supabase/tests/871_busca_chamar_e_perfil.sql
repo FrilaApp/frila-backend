@@ -163,10 +163,12 @@ insert into public.equipe_confianca (estabelecimento_id, profissional_id) values
   (pg_temp.casa(1), pg_temp.p(19)), (pg_temp.casa(1), pg_temp.p(31)), (pg_temp.casa(1), pg_temp.p(39));
 select pg_temp.turno(pg_temp.casa(1), pg_temp.p(26), '2026-11-01 10:00-03');
 select pg_temp.como(pg_temp.u(1),
-  format($$select public.publicar_vaga(%L, %L, '2026-11-25 18:00:00+00'::timestamptz, '2026-11-26 02:00:00+00'::timestamptz,
+  -- Início relativo ao relógio real (3 dias; 8 h de turno): a vaga de seleção exige início > publicação + 24 h
+  -- (selecao_com_antecedencia) e a publicação usa now(); a data fixa de 25/11/2026 venceu em 24/11 18:00 UTC (B-111).
+  format($$select public.publicar_vaga(%L, %L, %L::timestamptz, %L::timestamptz,
     'CLN 871 vaga', '{"latitude": -15.79, "longitude": -47.88}'::jsonb, 20000, 1,
     true, false, false, 'Gerente 871', 'selecao', %L::uuid, 'preto', false, null, 180, 'Plano Piloto')$$,
-    pg_temp.casa(1), pg_temp.garcom(), gen_random_uuid()));
+    pg_temp.casa(1), pg_temp.garcom(), now() + interval '3 days', now() + interval '3 days 8 hours', gen_random_uuid()));
 select pg_temp.como(pg_temp.u(25), $$select public.candidatar((select id from public.vaga where local = 'CLN 871 vaga'))$$);
 
 -- 20: cinco chamadas abertas de outras casas. 21: recusou chamada da casa 1 há menos de 24 h.
