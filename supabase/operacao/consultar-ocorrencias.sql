@@ -1,7 +1,8 @@
 -- supabase/operacao/consultar-ocorrencias.sql
 --
 -- Consulta a fila de ocorrências da Equipe Frila ordenadas por prioridade:
--- denúncias (< 24h para moderação da Diretriz 1.2), suporte por e-mail (RF23/UC14)
+-- denúncias (24 h da Diretriz 1.2 para foto e motivo grave; 5 dias úteis só para motivo `outro` sem foto,
+-- pela mesma regra do alerta moderacao_vencida: privado.denuncia_prazo_ate), suporte por e-mail (RF23/UC14)
 -- e chamados pelo prazo legal (5 dias úteis).
 --
 -- Exibe protocolo curto (8 hexadecimais), origem ('app'/'operacao'), turno_id,
@@ -28,8 +29,12 @@ select o.id as ocorrencia_id,
        o.criada_em,
        privado.prazo_de_resposta(o.criada_em) as prazo_limite,
        case
-         when o.tipo = 'denuncia' and o.criada_em + interval '24 hours' < now() then 'URGENTE: prazo 24h vencido'
-         when o.tipo = 'denuncia' then 'Moderação 24h (Diretriz 1.2)'
+         when o.tipo = 'denuncia' and now() > privado.denuncia_prazo_ate(o.motivo, o.midia_id, o.criada_em)
+           then 'URGENTE: prazo da denúncia vencido'
+         when o.tipo = 'denuncia'
+           and privado.denuncia_prazo_ate(o.motivo, o.midia_id, o.criada_em) - o.criada_em <= interval '24 hours'
+           then 'Moderação 24h (Diretriz 1.2)'
+         when o.tipo = 'denuncia' then 'Denúncia até 5 dias úteis (RN13)'
          when o.tipo = 'suporte' then 'Suporte até 5 dias úteis (RF23/UC14)'
          else 'Atendimento 5 dias úteis (RF27/LGPD)'
        end as prioridade_sla,
