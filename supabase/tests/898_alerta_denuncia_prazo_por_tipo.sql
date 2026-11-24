@@ -11,7 +11,7 @@
 
 begin;
 
-select plan(22);
+select plan(24);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
   on conflict (id) do update set eh_teste = true;
@@ -116,6 +116,19 @@ set local frila.agora = '2026-11-27 15:00:00+00';
 
 select is(pg_temp.vence('outro', false, '2026-11-20 12:00:00-03'), 0::numeric,
           'outro sem foto de sexta 20/11 ainda não dispara na sexta 27/11 (último dia do prazo)');
+
+-- ── Virada do dia em Brasília (UTC-3): o prazo da denúncia de sexta 20/11 é sexta 27/11 ─────────────────────
+-- 02:59:59 UTC de 28/11 ainda é 27/11 em Brasília (último dia do prazo); 03:00:00 UTC já é 28/11 em Brasília.
+-- Em UTC a data já seria 28/11 nos dois instantes: um mutante que compare com "hoje em UTC" dispara no primeiro.
+set local frila.agora = '2026-11-28 02:59:59+00';
+
+select is(pg_temp.vence('outro', false, '2026-11-20 12:00:00-03'), 0::numeric,
+          'outro sem foto de sexta 20/11 NÃO dispara às 23:59:59 de 27/11 em Brasília (02:59:59 UTC de 28/11)');
+
+set local frila.agora = '2026-11-28 03:00:00+00';
+
+select is(pg_temp.vence('outro', false, '2026-11-20 12:00:00-03'), 1::numeric,
+          'outro sem foto de sexta 20/11 dispara à 00:00:00 de 28/11 em Brasília (03:00:00 UTC)');
 
 -- ── Segunda 30/11/2026 12:00: sábado e domingo não contam ─────────────────────
 set local frila.agora = '2026-11-30 15:00:00+00';
