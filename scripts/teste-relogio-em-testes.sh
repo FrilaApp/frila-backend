@@ -355,6 +355,52 @@ else
 fi
 casos=$((casos + 1))
 
+# ── 7. Rodada 2 do Lince Codex no #612 (B-111c, 24/11/2026) ────────────────────────────────────────
+# (a) O alter tem de ser um STATEMENT de verdade: texto do alter dentro de string ou de dollar-quote
+# (um SELECT que só devolve o texto) não prende nada. Controle do Lince: no 807 antigo, o texto entra
+# antes da primeira publicação, depois do freeze que o arquivo já tem.
+awk -v t="select '$PRESO';" '/^-- Casa 1 publica vaga no modo seleção/ && !d {print t; d=1} {print}' "$TMP/807_base.sql" > "$TMP/807_alter_em_string.sql"
+grep -qF "select '$PRESO';" "$TMP/807_alter_em_string.sql" || { echo "  ✗ (a) o caso do alter em string não montou o arquivo"; falhas=$((falhas + 1)); }
+RELOGIO_HOJE=2026-12-20 caso "(a/r2) reprova o 807 com o texto do alter num SELECT 'alter ...' (string) antes da publicação" 1 \
+  "$FRASE_807" "$TMP/807_alter_em_string.sql"
+awk -v t="select \$\$$PRESO\$\$;" '/^-- Casa 1 publica vaga no modo seleção/ && !d {print t; d=1} {print}' "$TMP/807_base.sql" > "$TMP/807_alter_em_dollar.sql"
+grep -qF "select \$\$$PRESO\$\$;" "$TMP/807_alter_em_dollar.sql" || { echo "  ✗ (a) o caso do alter em dollar-quote não montou o arquivo"; falhas=$((falhas + 1)); }
+RELOGIO_HOJE=2026-12-20 caso "(a/r2) reprova o 807 com o texto do alter dentro de \$\$ ... \$\$ antes da publicação" 1 \
+  "$FRASE_807" "$TMP/807_alter_em_dollar.sql"
+awk -v t="select pg_temp.como('c8070000-0000-4000-8000-000000000003', \$\$$PRESO\$\$);" '/^-- Casa 1 publica vaga no modo seleção/ && !d {print t; d=1} {print}' "$TMP/807_base.sql" > "$TMP/807_alter_em_argumento.sql"
+RELOGIO_HOJE=2026-12-20 caso "(a/r2) reprova o 807 com o alter como argumento dollar-quoted de função" 1 \
+  "$FRASE_807" "$TMP/807_alter_em_argumento.sql"
+# E o statement de verdade, no mesmo ponto (antes da publicação, depois do freeze), continua prendendo.
+awk -v t="$PRESO" '/^-- Casa 1 publica vaga no modo seleção/ && !d {print t; d=1} {print}' "$TMP/807_base.sql" > "$TMP/807_alter_real_no_mesmo_ponto.sql"
+RELOGIO_HOJE=2026-12-20 caso "(a/r2) aprova o 807 com o alter de verdade (statement) no mesmo ponto" 0 \
+  "arquivo(s) prendem publicado_em ao relógio de teste" "$TMP/807_alter_real_no_mesmo_ponto.sql"
+# A palavra rollback/finish() só dentro de texto (string ou dollar-quote) não encerra a transação do arquivo:
+# o alter de verdade que vem depois dela, antes da publicação, segue prendendo.
+{ echo 'begin;'; echo "$CONGELA"; echo "select 'rollback; select * from finish();';"; echo 'select $$ rollback $$;'
+  echo "$PRESO"; pub_selecao; echo 'select * from finish();'; echo 'rollback;'; } > "$TMP/rollback_so_em_texto.sql"
+RELOGIO_HOJE=2026-11-24 caso "(a/r2) 'rollback' só dentro de string/\$\$ não encerra a transação: o alter depois dele ainda prende" 0 \
+  "arquivo(s) prendem publicado_em ao relógio de teste" "$TMP/rollback_so_em_texto.sql"
+
+# (b/c) Timestamp dollar-quoted: $$2027-01-15 18:00:00+00$$::timestamptz e a forma com tag ($ts$ ... $ts$).
+# Controle do Lince: no 807 antigo, só as aspas dos dois timestamps (linhas 116 e 117) viram $$ ou $ts$.
+sed "116,117s/'\\(2027-[^']*\\)'/\$\$\\1\$\$/" "$TMP/807_base.sql" > "$TMP/807_ts_dollar.sql"
+sed "116,117s/'\\(2027-[^']*\\)'/\$ts\$\\1\$ts\$/" "$TMP/807_base.sql" > "$TMP/807_ts_tag.sql"
+# shellcheck disable=SC2016  # $$ e $ts$ são marcas do Postgres, não variáveis
+if ! { grep -qF '$$2027-01-15 18:00:00+00$$::timestamptz' "$TMP/807_ts_dollar.sql" \
+       && grep -qF '$ts$2027-01-16 02:00:00+00$ts$::timestamptz' "$TMP/807_ts_tag.sql"; }; then
+  echo "  ✗ (b/c) os casos de timestamp dollar-quoted não montaram os arquivos"
+  falhas=$((falhas + 1))
+fi
+RELOGIO_HOJE=2026-12-20 caso "(b/c/r2) reprova o 807 antigo com os timestamps em \$\$2027-01-15 ...\$\$::timestamptz" 1 \
+  "$FRASE_807" "$TMP/807_ts_dollar.sql"
+RELOGIO_HOJE=2026-12-20 caso "(b/c/r2) reprova o 807 antigo com os timestamps em \$ts\$2027-01-15 ...\$ts\$::timestamptz" 1 \
+  "início absoluto 2027-01-16, vence em 26 dias (2027-01-15)" "$TMP/807_ts_tag.sql"
+sed "s/'\\(2026-12-05 [^']*\\)'/\$\$\\1\$\$/" "$TMP/selecao_data_fixa.sql" > "$TMP/selecao_data_dollar.sql"
+RELOGIO_HOJE=2026-11-24 caso "(b/c/r2) reprova publicar_vaga de seleção com início \$\$2026-12-05 ...\$\$::timestamptz (SQL válido, nível de cima)" 1 \
+  "início absoluto 2026-12-05, vence em 10 dias" "$TMP/selecao_data_dollar.sql"
+RELOGIO_HOJE=2026-12-06 caso "(b/c/r2) timestamp dollar-quoted passado nunca falha" 0 \
+  "Todos os 1 testes pgTAP estão imunes a bombas-relógio de relógio." "$TMP/selecao_data_dollar.sql"
+
 RELOGIO_HOJE=ontem caso "RELOGIO_HOJE inválido sai 2, não mediu" 2 \
   "RELOGIO_HOJE inválido ('ontem')" \
   "$TMP/selecao_data_fixa.sql"
