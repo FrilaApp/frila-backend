@@ -38,6 +38,8 @@ import {
 } from "./provedor.ts";
 import {
   alertaParaEquipe,
+  ROTULO_DE_AMBIENTE_INVALIDO,
+  rotuloDoAmbiente,
   categoria,
   contestacaoParaAutor,
   contestacaoParaEquipe,
@@ -410,6 +412,58 @@ Deno.test("alerta: vai só para a equipe, com código e valor, sem texto livre",
   assertEquals(e.enviados[0].assunto, alertaParaEquipe("fila_despacho_parada", 42).assunto);
   assertStringIncludes(e.enviados[0].texto, "42");
   assertEquals(e.arquivados, [1]);
+});
+
+// ── O ambiente no alerta (B-113): o Prod não muda, o resto se identifica ──────
+
+Deno.test("ambiente: sem AMBIENTE_FRILA (Prod) o assunto e o texto são os de sempre", () => {
+  const m = alertaParaEquipe("moderacao_vencida", 2, rotuloDoAmbiente(""));
+  assertEquals(m.assunto, "[Frila] Alerta: moderacao_vencida");
+  assertEquals(m.assunto, alertaParaEquipe("moderacao_vencida", 2).assunto);
+  assertEquals(m.texto.includes("Ambiente:"), false);
+  assertEquals(rotuloDoAmbiente("   "), null);
+  assertEquals(rotuloDoAmbiente("prod"), null);
+  assertEquals(rotuloDoAmbiente("PROD"), null);
+});
+
+Deno.test("ambiente: DEV entra no assunto e no corpo, só o código e o valor seguem", () => {
+  const m = alertaParaEquipe("moderacao_vencida", 2, rotuloDoAmbiente("dev"));
+  assertEquals(m.assunto, "[Frila DEV] Alerta: moderacao_vencida");
+  assertStringIncludes(m.texto, "Ambiente: DEV");
+  assertStringIncludes(m.texto, "Valor: 2");
+});
+
+Deno.test("ambiente: valor com espaço, quebra de linha ou comprimento demais não vira cabeçalho", () => {
+  for (const ruim of ["dev\r\nBcc: x@y.z", "de v", "a".repeat(21), "dev;", "dév"]) {
+    const rotulo = rotuloDoAmbiente(ruim);
+    assertEquals(rotulo, ROTULO_DE_AMBIENTE_INVALIDO, `valor ${JSON.stringify(ruim)}`);
+    const m = alertaParaEquipe("erro_5xx", 1, rotulo);
+    assertEquals(m.assunto, `[Frila ${ROTULO_DE_AMBIENTE_INVALIDO}] Alerta: erro_5xx`);
+  }
+});
+
+Deno.test("alerta: a função lê AMBIENTE_FRILA do ambiente e rotula o e-mail que sai", async () => {
+  const antes = Deno.env.get("AMBIENTE_FRILA");
+  try {
+    Deno.env.set("AMBIENTE_FRILA", "DEV");
+    const comRotulo = espiao([
+      pedido({ mensagem: { tipo: "alerta", codigo: "moderacao_vencida", valor: 2 } }),
+    ]);
+    await chamar(comRotulo, sucesso);
+    assertEquals(comRotulo.enviados.length, 1);
+    assertEquals(comRotulo.enviados[0].assunto, "[Frila DEV] Alerta: moderacao_vencida");
+    assertStringIncludes(comRotulo.enviados[0].texto, "Ambiente: DEV");
+
+    Deno.env.delete("AMBIENTE_FRILA");
+    const semRotulo = espiao([
+      pedido({ mensagem: { tipo: "alerta", codigo: "moderacao_vencida", valor: 2 } }),
+    ]);
+    await chamar(semRotulo, sucesso);
+    assertEquals(semRotulo.enviados[0].assunto, "[Frila] Alerta: moderacao_vencida");
+  } finally {
+    if (antes === undefined) Deno.env.delete("AMBIENTE_FRILA");
+    else Deno.env.set("AMBIENTE_FRILA", antes);
+  }
 });
 
 Deno.test("alerta: código fora de snake_case é recusado sem enviar nada (RN15)", async () => {
