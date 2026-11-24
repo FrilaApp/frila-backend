@@ -29,7 +29,7 @@ select o.id as ocorrencia_id,
        o.criada_em,
        privado.prazo_de_resposta(o.criada_em) as prazo_limite,
        case
-         when o.tipo = 'denuncia' and now() > privado.denuncia_prazo_ate(o.motivo, o.midia_id, o.criada_em)
+         when o.tipo = 'denuncia' and privado.agora() > privado.denuncia_prazo_ate(o.motivo, o.midia_id, o.criada_em)
            then 'URGENTE: prazo da denúncia vencido'
          when o.tipo = 'denuncia'
            and privado.denuncia_prazo_ate(o.motivo, o.midia_id, o.criada_em) - o.criada_em <= interval '24 hours'
