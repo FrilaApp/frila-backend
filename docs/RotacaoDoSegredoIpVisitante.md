@@ -28,6 +28,7 @@ Cada cabeçalho que não valeu emite `frila_registro_acesso_falha` com só o mot
 `migração → segredo no Vault → secret e id no Worker → deploy da web`. Se a web assinar antes de o banco ter a chave, o alerta sobe à toa; por isso o Worker não manda cabeçalho nenhum quando o secret não existe (local, testes).
 
 1. Gere o segredo sem mostrá-lo: `openssl rand -hex 32` para um arquivo ignorado pelo git ou direto em uma variável do shell. Nunca em commit, PR, log ou conversa.
+   O valor vai SEM quebra de linha e não pode ser vazio: o banco aplica `btrim` e trata entrada vazia ou só de espaços como se a chave não existisse (`sem_segredo` ou `chave_desconhecida`; nunca aceita HMAC de chave vazia). Ele não impõe tamanho mínimo; o gerado tem 64 hex.
 2. Grave no Vault do ambiente (SQL como `postgres`, com o valor vindo de variável do psql, por heredoc ou `-f`; `psql -c` não interpola `:var`):
    ```sql
    select vault.create_secret(:'valor', 'ip_visitante_hmac_a1');

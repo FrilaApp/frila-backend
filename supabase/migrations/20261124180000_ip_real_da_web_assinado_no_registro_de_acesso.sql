@@ -70,12 +70,17 @@ begin
     return;
   end if;
 
-  select btrim(s.decrypted_secret, E' \t\r\n') into v_segredo
+  -- Entrada vazia ou só de espaços e quebras de linha NÃO é chave (o btrim devolve '', não NULL, e um HMAC com chave
+  -- vazia qualquer um calcula): vira NULL aqui e no exists abaixo, e cai em sem_segredo. O banco não impõe tamanho
+  -- mínimo à chave; a gerada (openssl rand -hex 32) tem 64 hex.
+  select nullif(btrim(s.decrypted_secret, E' \t\r\n'), '') into v_segredo
     from vault.decrypted_secrets s
    where s.name = 'ip_visitante_hmac_' || v_partes[1]
    limit 1;
   if v_segredo is null then
-    p_motivo := case when exists (select 1 from vault.decrypted_secrets s where starts_with(s.name, 'ip_visitante_hmac_'))
+    p_motivo := case when exists (select 1 from vault.decrypted_secrets s
+                                   where starts_with(s.name, 'ip_visitante_hmac_')
+                                     and nullif(btrim(s.decrypted_secret, E' \t\r\n'), '') is not null)
                      then 'chave_desconhecida' else 'sem_segredo' end;
     return;
   end if;

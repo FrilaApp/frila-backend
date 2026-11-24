@@ -7,7 +7,7 @@ begin;
 -- O slot de teste nasce antes de qualquer escrita (o Postgres exige) e é TEMPORÁRIO, com o nome real.
 select 1 from pg_create_logical_replication_slot('frila_registro_acesso', 'test_decoding', true);
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
-select plan(55);
+select plan(60);
 
 delete from privado.registro_acesso;
 delete from privado.registro_acesso_recente;
@@ -156,6 +156,20 @@ select is(pg_temp.res(pg_temp.cab('203.0.113.7', pg_temp.agora_s()::text,
     pg_temp.assin('n1', 'chave-sintetica-de-teste', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '203.0.113.7|-', 'segredo do Vault com quebra de linha no fim: o btrim da função o iguala ao do Worker');
 
+-- Chave vazia ou só de espaços/quebras no Vault NÃO é chave: um HMAC com chave vazia qualquer um calcula (Lince AG, B-116).
+select vault.create_secret('', 'ip_visitante_hmac_vz');
+select vault.create_secret('   ' || E'\n', 'ip_visitante_hmac_es');
+select is(pg_temp.res(pg_temp.cab('203.0.113.77', pg_temp.agora_s()::text,
+    pg_temp.assin('vz', '', '203.0.113.77', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+  '198.51.100.9|chave_desconhecida', 'chave VAZIA no Vault, HMAC calculado com chave vazia: recusa e grava o IP da conexão');
+select is(pg_temp.res(pg_temp.cab('203.0.113.77', pg_temp.agora_s()::text,
+    pg_temp.assin('es', '', '203.0.113.77', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+  '198.51.100.9|chave_desconhecida', 'chave só de espaços e quebra de linha, HMAC com chave vazia: recusa');
+select is(pg_temp.res(pg_temp.cab('203.0.113.77', pg_temp.agora_s()::text,
+    pg_temp.assin('es', E'   \n', '203.0.113.77', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+  '198.51.100.9|chave_desconhecida', 'chave só de espaços e quebra de linha, HMAC com o texto cru dela: recusa');
+delete from vault.secrets where name in ('ip_visitante_hmac_vz', 'ip_visitante_hmac_es');
+
 -- IP reservado: recusa mesmo com assinatura válida.
 select is((select count(*)::int from unnest(array['127.0.0.1', '10.1.2.3', '172.16.5.5', '172.31.255.255', '192.168.0.1',
     '169.254.1.1', '0.0.0.0', '240.0.0.1', '255.255.255.255', '::1', '::', 'fe80::1', 'fd00::1', '::ffff:10.0.0.1',
@@ -203,9 +217,10 @@ select is((select string_agg(conteudo, ';') from pg_temp.msgs where prefixo = 'f
 select pg_temp.requisicao('11111111-1111-4111-8111-111111111111',
   '{"cf-connecting-ip":"198.51.100.9","user-agent":"x-frila-ip-teste"}'::json);
 select pg_temp.drenar();
-select is((select count(*)::int from pg_temp.msgs where prefixo = 'frila_registro_acesso' and conteudo ~ ' 198\.51\.100\.9 ')
-          + (select count(*)::int from pg_temp.msgs where prefixo = 'frila_registro_acesso_falha'), 1,
-  'texto x-frila-ip- só dentro do valor de outro cabeçalho: usa o cf-connecting-ip e não emite falha');
+select is((select count(*)::int from pg_temp.msgs where prefixo = 'frila_registro_acesso' and conteudo ~ ' 198\.51\.100\.9 '), 1,
+  'texto x-frila-ip- só dentro do valor de outro cabeçalho: registra o cf-connecting-ip');
+select is((select count(*)::int from pg_temp.msgs where prefixo = 'frila_registro_acesso_falha'), 0,
+  'texto x-frila-ip- só dentro do valor de outro cabeçalho: não emite falha');
 
 -- Cabeçalho inválido: o IP gravado é SEMPRE o da conexão; a falha sai amostrada (1 de 20), só com o motivo.
 select pg_temp.drenar();
@@ -244,6 +259,11 @@ select ok((select count(*) from pg_temp.msgs where prefixo = 'frila_registro_ace
       and (select string_agg(distinct conteudo, ',') from pg_temp.msgs where prefixo = 'frila_registro_acesso_falha') = 'sem_segredo',
   'sem segredo: falha sem_segredo amostrada (1 a 100 de 400)');
 select is(pg_temp.res(pg_temp.valido('203.0.113.7')), '198.51.100.9|sem_segredo', 'sem segredo no Vault: cf-connecting-ip e motivo sem_segredo');
+-- Só existem entradas vazias: tampouco é chave (sem_segredo, não chave_desconhecida).
+select vault.create_secret('', 'ip_visitante_hmac_vz');
+select is(pg_temp.res(pg_temp.cab('203.0.113.77', pg_temp.agora_s()::text,
+    pg_temp.assin('vz', '', '203.0.113.77', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+  '198.51.100.9|sem_segredo', 'só há entrada vazia no Vault: conta como sem segredo, e o HMAC com chave vazia é recusado');
 
 -- privado.ip_do_acesso devolve o mesmo IP da avaliação pura.
 select is(privado.ip_do_acesso(pg_temp.valido('203.0.113.7'), '11111111-1111-4111-8111-111111111111'), '198.51.100.9',
