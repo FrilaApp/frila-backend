@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.105
+  version: 0.2.110
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -108,7 +108,7 @@ info:
     | 422 | `fora_do_raio` | Leitura do código de check-in com distância superior ao raio de validação (50 m provisório). Não conta como tentativa errada (0.2.76) |
     | 422 | `sem_localizacao` | Leitura do código de check-in sem posição do aparelho (`distancia_m` nulo). Não conta como tentativa errada; orienta confirmação manual (0.2.76) |
     | 422 | `codigo_invalido` | Código de check-in recusado (0.2.68): errado, vencido ou de outro turno lido dentro do raio de validação (0.2.76). Um código só, sem `details`. Conta como tentativa errada |
-    | 422 | `a_caminho_fora_da_janela` | Chamada de `avisar_a_caminho` fora da janela permitida (de 3 h antes até 15 min depois do início do turno) (US14, RF12) |
+    | 422 | `a_caminho_fora_da_janela` | Chamada de `avisar_a_caminho` fora da janela permitida (de 3 h antes do início até greatest(inicio_em, confirmado_em) + 15 min) (US14, RF12) |
     | 422 | `registro_no_futuro` | Instante de check-in ou check-out adiante do relógio do servidor. O relógio que vale é o do servidor, nunca o do aparelho |
     | 422 | `reabertura_antes_da_tolerancia` | Reabrir por atraso antes dos 15 minutos (D06) |
     | 422 | `sem_suspensao_ativa` | Contestação sem suspensão em vigor (RF24) |
@@ -116,6 +116,40 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.110, de 23/11/2026.** A URL de envio de `solicitar_upload_midia` passa a valer
+    **15 minutos** (antes, 2 h): continua de uso único e `expira_em` já informa o prazo. Os apps pedem
+    a URL e fazem o `PUT` em seguida (a conferência da foto no aparelho vem antes do pedido), então
+    nenhum fluxo muda. Motivo: o token da URL aparece nos logs de requisição da plataforma; prazo
+    curto reduz a janela. Recusa antes do consumo (formato, tamanho ou JPEG inválido) continua sem
+    gastar o token; para tentar de novo, o app pede outra URL. Só texto do contrato: sem campo novo e
+    sem mudança de formato. A URL de envio de documento da verificação de identidade não muda.
+
+    ---
+
+    **Versão 0.2.107, de 22/11/2026.** Regra 4 do aceite tardio aprovada (decisão do JP de 22/11/2026).
+    Aceite tardio é confirmação em `inicio_em − 15 min` ou depois (borda incluída); os parâmetros
+    únicos aprovados são antecedência de 15 min, carência de 10 min e tempo hábil de 45 min.
+    Desistência do profissional até `confirmado_em + 10 min`, inclusive, não conta falta.
+    Reabertura pela casa continua após `greatest(inicio_em, confirmado_em) + 15 min`, mas encerra
+    esse profissional sem falta. Sem check-in e sem reabertura, o fechamento só marca falta se
+    `fim_em >= confirmado_em + 45 min`; usa o fim previsto, nunca o atraso do agendador.
+    Se o turno termina antes, encerra sem falta. Confirmação anterior a `inicio_em − 15 min`
+    conserva integralmente a regra anterior. `confirmado_em` ausente/nulo não presume aceite tardio.
+    Não muda candidatura, duração, valor integral, janela de check-in ou prazo de check-out.
+    Texto e telas do app, inclusive o push que hoje afirma falta em toda reabertura, ainda precisam
+    de decisão antes de liberar esta proposta.
+
+    ---
+
+    **Versão 0.2.106, de 22/11/2026.** Correção simétrica do aviso a caminho para substitutos
+    confirmados após o início (decisão do JP de 22/11/2026). A janela de `avisar_a_caminho`
+    termina em `greatest(inicio_em, confirmado_em) + 15 min`, mantendo a abertura em
+    `inicio_em - 3 h`, autorização e idempotência. `Turno.confirmado_em` passa a informar o
+    instante da confirmação; é opcional para compatibilidade com servidores anteriores.
+    Não altera carência, falta, cancelamento ou política de aceite.
+
+    ---
 
     **Versão 0.2.105, de 17/11/2026.** Só descrição: o `403 sem_permissao` (`recurso_desligado`) de
     `solicitar_upload_midia`, `confirmar_upload_midia` e `pedir_nova_analise_midia` vale quando
@@ -190,6 +224,8 @@ info:
     "BlendOps — Challenge 18", nome da equipe na Academy (pedido do Cauê 16-26). Nenhum campo,
     operação ou código muda.
 
+    ---
+
     **Versão 0.2.96, de 16/11/2026.** Operação nova `POST /rpc/publicar_escala` (RF19, cartão
     `6mi66YDp`, pedido do Cauê de 16/11/2026): o estabelecimento publica de uma vez um **evento** e
     as vagas dele (uma por função e horário). Esquemas novos `NovaEscala`, `ItemEscala` e
@@ -206,6 +242,8 @@ info:
       o Cauê pode mudar). Acima disso, publicam-se escalas separadas.
     - **Fica para outra versão:** ler a escala (painel), cancelar a escala inteira (hoje, cada vaga com
       `cancelar_vaga`), editar, vaga da escala em outro endereço e o `evento_id` nas leituras de vaga.
+
+    ---
 
     **Versão 0.2.95, de 16/11/2026.** Uma casa não abre duas vagas diretas para o mesmo trabalho
     (frila-backend#520, achado da revisão do app na bateria da busca). Adição compatível: um código
@@ -730,7 +768,7 @@ info:
       `false`. É o interruptor do servidor: no Prod, os dois nascem desligados até o jurídico e o
       ROPA liberarem. Recurso desligado: as operações dele respondem `403 sem_permissao` com
       `details: recurso_desligado`, e o app esconde a entrada.
-    - **Mídia:** `solicitar_upload_midia` (URL de envio de uso único por 2 h, bucket privado; 0.2.63),
+    - **Mídia:** `solicitar_upload_midia` (URL de envio de uso único por 15 min, bucket privado; 0.2.63, prazo 0.2.110),
       `confirmar_upload_midia` (só enfileira a análise; nada é publicado antes da decisão),
       `remover_midia`, `minhas_midias` e `pedir_nova_analise_midia` (uma vez por foto, com modelo
       mais forte). Só `foto_perfil`; outro `tipo` é recusado com
@@ -2660,7 +2698,7 @@ paths:
       summary: Pedir a URL para enviar uma foto
       description: |
         0.2.54. Cria a mídia em `enviando` e devolve a `upload_url` para enviar o arquivo ao bucket
-        privado `midia-perfil`, válida por 2 h. O app envia JPEG já sem EXIF, lado maior até 1600 px,
+        privado `midia-perfil`, válida por 15 min (0.2.110; antes 2 h). O app envia JPEG já sem EXIF, lado maior até 1600 px,
         até 5 MB. A miniatura de 320 px é **gerada pelo servidor** a partir do original verificado; o
         app não a envia (0.2.57). O caminho do objeto não contém o id do usuário e é escolhido pelo
         servidor, nunca pelo app.
@@ -2709,7 +2747,7 @@ paths:
                   midia_id:
                     $ref: '#/components/schemas/Uuid'
                   upload_url:
-                    description: URL de envio de uso único, válida por 2 h, da Edge Function `enviar-midia` (0.2.63). `PUT` com o JPEG, sem o token da sessão.
+                    description: URL de envio de uso único, válida por 15 min (0.2.110; antes 2 h), da Edge Function `enviar-midia` (0.2.63). `PUT` com o JPEG, sem o token da sessão.
                     type: string
                     format: uri
                   upload_url_miniatura:
@@ -5280,7 +5318,8 @@ paths:
         do turno (`painel_estabelecimento`).
 
         Só o profissional confirmado no turno pode chamar (`403 sem_permissao`). A janela permitida
-        vai de 3 horas antes do início previsto até 15 minutos depois do início; fora dessa janela,
+        vai de 3 horas antes do início previsto até `greatest(inicio_em, confirmado_em) + 15 min`,
+        com ambas as bordas inclusivas; confirmação ausente usa o início. Fora dessa janela,
         a chamada é recusada com `422 a_caminho_fora_da_janela`.
 
         Idempotente: chamar uma segunda vez não altera o instante já gravado e devolve o mesmo
@@ -5658,7 +5697,9 @@ paths:
         o turno ficou descoberto, para a casa distinguir da posição que voltou para a fila.
 
         Cancelamento do profissional com menos de 24 horas do início conta como falta; com mais de 24
-        horas, sai da taxa de comparecimento. Nenhum cancelamento suspende ninguém (RN13).
+        horas, sai da taxa de comparecimento. **Regra 4 (0.2.107):** quando a confirmação ocorreu em
+        `inicio_em − 15 min` ou depois, desistência até `confirmado_em + 10 min` (inclusive)
+        encerra sem falta; depois da carência volta a valer a regra normal. A casa não ganha falta. Nenhum cancelamento suspende ninguém (RN13).
 
         Reenvio idempotente (0.2.35): repetir a chamada após queda de rede pelo mesmo autor do
         cancelamento (o próprio profissional, ou o mesmo membro da casa) devolve `200` com o
@@ -5715,9 +5756,9 @@ paths:
         reabre a posição **sem despacho e sem notificação**; a casa pode chamar outra pessoa ou
         converter com `publicar_a_partir_da_chamada` até `fim_em − 1 h` (RF13 alterada, RN35).
 
-        Aos 15 minutos do início sem check-in, o contratante recebe o alerta e decide esperar ou
-        reabrir (D06). Reabrir marca falta do profissional e abre uma nova posição, que é notificada de
-        novo. Antes dos 15 minutos: `422 reabertura_antes_da_tolerancia`. Com check-in já feito: `409`.
+        Após `greatest(inicio_em, confirmado_em) + 15 min`, sem check-in, o contratante decide esperar ou
+        reabrir (D06). Reabrir abre uma nova posição, que é notificada de novo. **Regra 4 (0.2.107):** confirmado em
+        `inicio_em − 15 min` ou depois encerra sem falta; confirmado antes mantém a falta normal. Antes dos 15 minutos: `422 reabertura_antes_da_tolerancia`. Com check-in já feito: `409`.
       x-requisitos: [RF13, RF14, RN12, UC05, UC08]
       requestBody:
         required: true
@@ -7279,7 +7320,7 @@ components:
         | `lembrete_30min_fim_turno` | Membros da casa | Chegada a confirmar | Ainda há chegada sem confirmar nesta vaga. O turno termina em 30 minutos. |
         | `lembrete_fim_turno` | Membros da casa | Turno encerrado | O turno terminou e ainda há chegada sem confirmar. Você tem até 24 horas. |
 
-        **Cancelamento por atraso (0.2.84, D-13).** Disparado exclusivamente ao profissional quando a casa declara a falta por atraso (`reabrir_por_atraso`, RN12). Explicita que a saída decorreu de cancelamento da participação pelo estabelecimento e que conta como falta.
+        **Cancelamento por atraso (0.2.84, D-13).** Texto atualmente publicado; na Regra 4 (0.2.107), precisa distinguir a isenção de falta do aceite tardio antes do rollout. O texto novo depende do JP e não está implementado neste rascunho.
 
         | Tipo | Quem recebe | Título | Corpo |
         |---|---|---|---|
@@ -8952,6 +8993,14 @@ components:
           oneOf:
             - $ref: '#/components/schemas/Instante'
             - type: 'null'
+        confirmado_em:
+          description: |
+            Instante da confirmação da posição deste turno. Usado no limite superior do aviso
+            a caminho: greatest(vaga.inicio_em, confirmado_em) + 15 min. Opcional para servidores
+            antigos; ausente ou nulo preserva o limite baseado no início. Não altera regra de falta.
+          oneOf:
+            - $ref: '#/components/schemas/Instante'
+            - type: 'null'
         a_caminho_em:
           oneOf:
             - $ref: '#/components/schemas/Instante'
@@ -9036,7 +9085,9 @@ components:
         - `profissional`: ele mesmo desistiu. `falta` diz se a desistência contou (menos de 24
           horas do início). O texto que ele escreveu não volta.
         - `estabelecimento`: a casa cancelou a posição ou a vaga inteira. Não conta falta.
-        - `reabertura_por_atraso` e `no_show_sem_checkin`: sempre com `falta: true`.
+        - `reabertura_por_atraso` e `no_show_sem_checkin`: a flag `falta` é a decisão vigente do servidor.
+          Regra 4 (0.2.107): aceite tardio reaberto pela casa não conta; no-show só conta com pelo menos
+          45 min entre confirmação e fim previsto. As causas não mudam quando há isenção.
         - `outro`: o turno saiu sem escolha de nenhuma das partes. Não conta falta.
       properties:
         causa:
@@ -9060,7 +9111,7 @@ components:
           $ref: '#/components/schemas/Uuid'
         falta:
           type: boolean
-          description: Verdadeiro quando conta como falta do profissional (menos de 24 h, ou reabertura por atraso).
+          description: Verdadeiro quando conta como falta do profissional; Regra 4 (0.2.107) aplica carência e isenção de reabertura do aceite tardio.
         reaberta:
           type: boolean
           description: Falso quando o início já passou e o turno ficou descoberto.
@@ -9227,7 +9278,7 @@ components:
           description: |
             Verdadeiro quando conta como falta do profissional na taxa de comparecimento (RN12):
             desistência a menos de 24 horas do início, reabertura por atraso ou turno terminado sem
-            check-in. É o mesmo valor que `ResultadoCancelamento.falta` devolveu a quem cancelou.
+            check-in, ressalvadas a carência, a reabertura sem falta e o tempo hábil da Regra 4 (0.2.107). É o mesmo valor que `ResultadoCancelamento.falta` devolveu a quem cancelou.
         motivo:
           type: [string, 'null']
           description: |
