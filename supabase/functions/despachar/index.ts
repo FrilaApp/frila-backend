@@ -1,6 +1,6 @@
 // Motor de despacho do Frila (cartão 7XS6MQGg).
 //
-// Edge Function protegida por segredo compartilhado (x-agendador-secret ou Bearer).
+// Edge Function protegida por segredo compartilhado (cabeçalho x-agendador-secret; o Bearer não vale desde o #587).
 // Executa o despacho de vagas para profissionais elegíveis:
 // 1. Disparo pontual pós-commit (recebe { vaga_id: "..." } no corpo):
 //    Chama privado.despachar_vaga(vaga_id).

@@ -28,7 +28,11 @@ create temp table ids as select
   '75700000-0000-4000-8000-000000000202'::uuid as pos_pendente_id,
   '75700000-0000-4000-8000-000000000301'::uuid as cand_aceita_id,
   '75700000-0000-4000-8000-000000000302'::uuid as cand_pendente_id,
-  '75700000-0000-4000-8000-000000000401'::uuid as turno_id;
+  '75700000-0000-4000-8000-000000000401'::uuid as turno_id,
+  -- Relativos ao relógio da transação: a vaga de seleção exige início > publicação + 24 h
+  -- (selecao_com_antecedencia); data fixa vencia (24/11/2026 18:00 UTC, B-111).
+  now() + interval '3 days' as inicio_em,
+  now() + interval '3 days 5 hours' as fim_em;
 
 insert into auth.users (instance_id, id, aud, role, email, email_confirmed_at,
                         raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
@@ -70,8 +74,8 @@ select
   vaga_id,
   estab_id,
   (select id from public.funcao limit 1),
-  '2026-11-25 18:00:00+00'::timestamptz,
-  '2026-11-25 23:00:00+00'::timestamptz,
+  inicio_em,
+  fim_em,
   'CLN 102 Bloco C',
   'POINT(-47.8822 -15.7942)'::extensions.geography,
   'Plano Piloto',
@@ -88,11 +92,11 @@ select
 from ids;
 
 insert into public.posicao (id, vaga_id, inicio_em, fim_em, estado, profissional_id, confirmado_em)
-select pos_aceita_id, vaga_id, '2026-11-25 18:00:00+00'::timestamptz, '2026-11-25 23:00:00+00'::timestamptz, 'confirmada', prof_id, now()
+select pos_aceita_id, vaga_id, inicio_em, fim_em, 'confirmada', prof_id, now()
 from ids;
 
 insert into public.posicao (id, vaga_id, inicio_em, fim_em, estado)
-select pos_pendente_id, vaga_id, '2026-11-25 18:00:00+00'::timestamptz, '2026-11-25 23:00:00+00'::timestamptz, 'aberta'
+select pos_pendente_id, vaga_id, inicio_em, fim_em, 'aberta'
 from ids;
 
 insert into public.turno (id, posicao_id, valor_acordado_centavos)
@@ -117,8 +121,8 @@ select is(
                    'funcao',                (select f.nome from public.funcao f join public.vaga v on v.funcao_id = f.id where v.id = (select vaga_id from ids)),
                    'local',                 'CLN 102 Bloco C',
                    'regiao_administrativa', 'Plano Piloto',
-                   'inicio_em',             '2026-11-25 18:00:00+00'::timestamptz,
-                   'fim_em',                '2026-11-25 23:00:00+00'::timestamptz,
+                   'inicio_em',             (select inicio_em from ids),
+                   'fim_em',                (select fim_em from ids),
                    'valor_centavos',        16000),
     'estado',    'aceita',
     'criada_em', '2026-11-20 10:00:00+00'::timestamptz,

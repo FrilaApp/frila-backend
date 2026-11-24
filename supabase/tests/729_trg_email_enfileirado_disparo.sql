@@ -101,8 +101,8 @@ select is(
 
 select is(
   (select headers->>'Authorization' from net.http_request_queue order by id desc limit 1),
-  'Bearer segredo-deterministico-729',
-  'cabeçalho Authorization contém Bearer com segredo configurado'
+  null::text,
+  'cabeçalho Authorization redundante não é enviado após NEW-01 (apenas x-agendador-secret)'
 );
 
 select is(

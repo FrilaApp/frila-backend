@@ -639,3 +639,92 @@ Deno.test("bB0tV5R8 fase 2: o SELECT da Edge Function lê exatamente as colunas 
   assertEquals(colunasLidas, colunasDaMigracao);
   assertEquals(colunasLidas.length, 10);
 });
+
+Deno.test("BE-01: criarSqlProbe reutiliza o mesmo cliente de módulo entre ping, jobs, operacional e requisições seguidas", async () => {
+  const { criarSqlProbe, encerrarClientes } = await import("./index.ts");
+  await encerrarClientes();
+
+  let criados = 0;
+  let encerrados = 0;
+  let falharProxima = false;
+
+  const fabrica = (_url: string) => {
+    criados++;
+    const fn = ((strings: TemplateStringsArray) => {
+      if (falharProxima) {
+        falharProxima = false;
+        return Promise.reject(new Error("conexao_perdida"));
+      }
+      const q = strings.join(" ");
+      if (q.includes("consultar_saude_cron")) {
+        return Promise.resolve([{
+          saudavel: true,
+          status: "saudavel",
+          despacho_idade_segundos: 10,
+          vigia_idade_segundos: 20,
+          despacho_ativo: true,
+          vigia_ativo: true,
+        }]);
+      }
+      if (q.includes("consultar_saude_operacional")) {
+        return Promise.resolve([{
+          saudavel: true,
+          status: "saudavel",
+          entrega_idade_segundos: 10,
+          entrega_ativo: true,
+          registro_idade_segundos: 10,
+          registro_ativo: true,
+          fila_idade_segundos: 0,
+          transporte_falhas: 0,
+          transporte_legivel: true,
+          entrega_falhas: 0,
+        }]);
+      }
+      return Promise.resolve([{ ping: 1 }]);
+    }) as unknown as ReturnType<NonNullable<Parameters<typeof criarSqlProbe>[1]>>;
+    (fn as unknown as { end: () => Promise<void> }).end = () => {
+      encerrados++;
+      return Promise.resolve();
+    };
+    return fn;
+  };
+
+  try {
+    const dbUrl = "postgres://teste:teste@127.0.0.1:54322/saude_pool_teste";
+    const probe1 = criarSqlProbe(dbUrl, fabrica);
+    const res1 = await processarSaude(
+      new Request("http://localhost/functions/v1/saude", { method: "GET" }),
+      { sqlProbe: probe1 },
+    );
+    assertEquals(res1.status, 200);
+    assertEquals(criados, 1);
+
+    // Segunda requisição reutiliza o mesmo cliente do módulo (não abre novas conexões)
+    const probe2 = criarSqlProbe(dbUrl, fabrica);
+    const res2 = await processarSaude(
+      new Request("http://localhost/functions/v1/saude", { method: "GET" }),
+      { sqlProbe: probe2 },
+    );
+    assertEquals(res2.status, 200);
+    assertEquals(criados, 1);
+    assertEquals(encerrados, 0);
+
+    // Em falha de consulta, descarta o cliente quebrado e recria na chamada seguinte
+    falharProxima = true;
+    const resErro = await processarSaude(
+      new Request("http://localhost/functions/v1/saude", { method: "GET" }),
+      { sqlProbe: criarSqlProbe(dbUrl, fabrica) },
+    );
+    assertEquals(resErro.status, 503);
+    assertEquals(encerrados, 1);
+
+    const resRecup = await processarSaude(
+      new Request("http://localhost/functions/v1/saude", { method: "GET" }),
+      { sqlProbe: criarSqlProbe(dbUrl, fabrica) },
+    );
+    assertEquals(resRecup.status, 200);
+    assertEquals(criados, 2);
+  } finally {
+    await encerrarClientes();
+  }
+});

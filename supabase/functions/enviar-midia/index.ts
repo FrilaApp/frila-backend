@@ -30,6 +30,8 @@ const TOKEN = /^[0-9a-f]{64}$/;
 export interface HandlerDeps {
   /** Consome o token e devolve o caminho reservado, ou null. Padrão: SQL em SUPABASE_DB_URL. */
   consumirToken?: (midiaId: string, token: string) => Promise<string | null>;
+  /** Fábrica opcional de cliente Postgres para testes de reutilização de pool. */
+  criarCliente?: (url: string) => Sql;
   fetchFn?: typeof fetch;
   supabaseUrl?: string;
   serviceRoleKey?: string;
@@ -87,14 +89,45 @@ function caminhoCodificado(caminho: string): string {
   return caminho.split("/").map(encodeURIComponent).join("/");
 }
 
+// Um cliente só por isolate (no máximo 2 conexões, idle_timeout 20s), criado na 1ª chamada e
+// reaproveitado entre PUTs, em vez de abrir e fechar uma conexão TCP por envio (padrão ler-midia).
+type Sql = ReturnType<typeof postgres>;
+const clientes = new Map<string, Sql>();
+
+function clienteDoModulo(
+  dbUrl: string,
+  criarCliente: (url: string) => Sql = (u) => postgres(u, { max: 2, idle_timeout: 20, connect_timeout: 5 }),
+): Sql {
+  let sql = clientes.get(dbUrl);
+  if (!sql) {
+    sql = criarCliente(dbUrl);
+    clientes.set(dbUrl, sql);
+  }
+  return sql;
+}
+
+function descartarCliente(dbUrl: string, sql: Sql): void {
+  if (clientes.get(dbUrl) === sql) clientes.delete(dbUrl);
+  sql.end({ timeout: 2 }).catch(() => {});
+}
+
+/** Encerra os clientes do módulo (para testes limpos sem conexão pendente). */
+export async function encerrarClientes(): Promise<void> {
+  const todos = [...clientes.values()];
+  clientes.clear();
+  await Promise.all(todos.map((sql) => sql.end({ timeout: 2 }).catch(() => {})));
+}
+
 function consumirPadrao(deps?: HandlerDeps) {
   return async (midiaId: string, token: string): Promise<string | null> => {
-    const sql = postgres(obterVariavel("SUPABASE_DB_URL", deps?.dbUrl), { max: 1, connect_timeout: 5 });
+    const dbUrl = obterVariavel("SUPABASE_DB_URL", deps?.dbUrl);
+    const sql = clienteDoModulo(dbUrl, deps?.criarCliente);
     try {
       const [linha] = await sql`select privado.consumir_token_upload(${midiaId}::uuid, ${token}) as caminho`;
       return linha?.caminho ? String(linha.caminho) : null;
-    } finally {
-      await sql.end({ timeout: 2 });
+    } catch (err) {
+      descartarCliente(dbUrl, sql);
+      throw err;
     }
   };
 }
