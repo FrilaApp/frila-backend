@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.107
+  version: 0.2.110
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -116,6 +116,16 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.110, de 23/11/2026.** A URL de envio de `solicitar_upload_midia` passa a valer
+    **15 minutos** (antes, 2 h): continua de uso único e `expira_em` já informa o prazo. Os apps pedem
+    a URL e fazem o `PUT` em seguida (a conferência da foto no aparelho vem antes do pedido), então
+    nenhum fluxo muda. Motivo: o token da URL aparece nos logs de requisição da plataforma; prazo
+    curto reduz a janela. Recusa antes do consumo (formato, tamanho ou JPEG inválido) continua sem
+    gastar o token; para tentar de novo, o app pede outra URL. Só texto do contrato: sem campo novo e
+    sem mudança de formato. A URL de envio de documento da verificação de identidade não muda.
+
+    ---
 
     **Versão 0.2.107, de 22/11/2026.** Regra 4 do aceite tardio aprovada (decisão do JP de 22/11/2026).
     Aceite tardio é confirmação em `inicio_em − 15 min` ou depois (borda incluída); os parâmetros
@@ -758,7 +768,7 @@ info:
       `false`. É o interruptor do servidor: no Prod, os dois nascem desligados até o jurídico e o
       ROPA liberarem. Recurso desligado: as operações dele respondem `403 sem_permissao` com
       `details: recurso_desligado`, e o app esconde a entrada.
-    - **Mídia:** `solicitar_upload_midia` (URL de envio de uso único por 2 h, bucket privado; 0.2.63),
+    - **Mídia:** `solicitar_upload_midia` (URL de envio de uso único por 15 min, bucket privado; 0.2.63, prazo 0.2.110),
       `confirmar_upload_midia` (só enfileira a análise; nada é publicado antes da decisão),
       `remover_midia`, `minhas_midias` e `pedir_nova_analise_midia` (uma vez por foto, com modelo
       mais forte). Só `foto_perfil`; outro `tipo` é recusado com
@@ -2688,7 +2698,7 @@ paths:
       summary: Pedir a URL para enviar uma foto
       description: |
         0.2.54. Cria a mídia em `enviando` e devolve a `upload_url` para enviar o arquivo ao bucket
-        privado `midia-perfil`, válida por 2 h. O app envia JPEG já sem EXIF, lado maior até 1600 px,
+        privado `midia-perfil`, válida por 15 min (0.2.110; antes 2 h). O app envia JPEG já sem EXIF, lado maior até 1600 px,
         até 5 MB. A miniatura de 320 px é **gerada pelo servidor** a partir do original verificado; o
         app não a envia (0.2.57). O caminho do objeto não contém o id do usuário e é escolhido pelo
         servidor, nunca pelo app.
@@ -2737,7 +2747,7 @@ paths:
                   midia_id:
                     $ref: '#/components/schemas/Uuid'
                   upload_url:
-                    description: URL de envio de uso único, válida por 2 h, da Edge Function `enviar-midia` (0.2.63). `PUT` com o JPEG, sem o token da sessão.
+                    description: URL de envio de uso único, válida por 15 min (0.2.110; antes 2 h), da Edge Function `enviar-midia` (0.2.63). `PUT` com o JPEG, sem o token da sessão.
                     type: string
                     format: uri
                   upload_url_miniatura:
