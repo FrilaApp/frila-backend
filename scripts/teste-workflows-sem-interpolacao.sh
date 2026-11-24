@@ -36,12 +36,16 @@ jobs:
           ./x.sh --branch "${{ github.event.workflow_run.head_branch }}"
       - name: ruim em linha
         run: echo "${{ github.head_ref }}" && echo "${{ inputs.mensagem }}"
+      - name: ruim com a expressão quebrada em duas linhas
+        run: |
+          ./x.sh --branch "${{
+            github.event.workflow_run.head_branch }}"
 YML
 saida="$(varrer "$TMP/bloco.yml")"; cod=$?
-if [ "$cod" -eq 1 ] && [ "$(printf '%s\n' "$saida" | wc -l | tr -d ' ')" -eq 3 ]; then
-  ok "3 ocorrências apontadas (bloco, head_ref e inputs na linha única)"
+if [ "$cod" -eq 1 ] && [ "$(printf '%s\n' "$saida" | wc -l | tr -d ' ')" -eq 4 ]; then
+  ok "4 ocorrências apontadas (bloco, head_ref e inputs na linha única, expressão quebrada em duas linhas)"
 else
-  falha "esperava saída 1 com 3 ocorrências; veio $cod: $saida"
+  falha "esperava saída 1 com 4 ocorrências; veio $cod: $saida"
 fi
 
 echo "▸ 3. O que fica permitido: env:, github.event_name e segredo"

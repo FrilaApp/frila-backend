@@ -4,8 +4,8 @@ Aponta expressões `${{ ... }}` com valor controlado por quem abre PR, issue ou 
 
 Endurecimento dos workflows: esses valores passam por `env:` e entram no comando como "$VAR".
 Contextos vetados no texto do `run:`: `github.event.*` (menos `github.event_name`), `github.head_ref`,
-`github.ref_name`, `github.actor` e `inputs.*`. Leitura linha a linha, sem dependência (o runner não
-tem PyYAML). Sai com 1 se achar algum, com `arquivo:linha: expressão` por ocorrência.
+`github.ref_name`, `github.actor` e `inputs.*`. Lê o bloco do `run:` inteiro (a expressão pode quebrar
+linha por dentro), sem dependência (o runner não tem PyYAML). Sai com 1 se achar algum, com `arquivo:linha: expressão` por ocorrência.
 
 Uso: verificar_interpolacao_workflows.py arquivo.yml [outro.yml ...]
 """
@@ -13,7 +13,7 @@ import re
 import sys
 
 VETADO = re.compile(r"github\.event\.|github\.head_ref|github\.ref_name|github\.actor|(?<![\w.])inputs\.")
-EXPRESSAO = re.compile(r"\$\{\{(.*?)\}\}")
+EXPRESSAO = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 RUN = re.compile(r"^(\s*)(?:-\s+)?run:\s*(.*)$")
 BLOCO = re.compile(r"^[|>][+-]?\d*\s*(#.*)?$")
 
@@ -36,10 +36,13 @@ def achados(caminho: str) -> list[tuple[int, str]]:
                 trechos.append((j + 1, linhas[j]))
                 j += 1
             i = j - 1
-        for numero, texto in trechos:
-            for expr in EXPRESSAO.findall(texto):
-                if VETADO.search(expr):
-                    saida.append((numero, expr.strip()))
+        # O bloco inteiro de uma vez: uma expressão pode quebrar linha por dentro de `${{ ... }}`.
+        primeira = trechos[0][0]
+        texto = "\n".join(t for _, t in trechos)
+        for achado in EXPRESSAO.finditer(texto):
+            expr = " ".join(achado.group(1).split())
+            if VETADO.search(expr):
+                saida.append((primeira + texto.count("\n", 0, achado.start()), expr))
         i += 1
     return saida
 
