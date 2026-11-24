@@ -6,7 +6,7 @@
 --   * denúncia resolvida nunca dispara.
 --
 -- Cada caso roda SOZINHO (pg_temp.vence insere a denúncia, roda verificar_saude, lê o `valor` do alerta na fila
--- e apaga a denúncia): um caso que passa por acaso, somado a outro, não esconde uma regra quebrada. O relógio é
+-- e desfaz tudo): um caso que passa por acaso, somado a outro, não esconde uma regra quebrada. O relógio é
 -- congelado em frila.agora, com datas de 2026-11 (quarta 25, sexta 27, segunda 30) para provar o fim de semana.
 
 begin;
@@ -39,31 +39,36 @@ values ('b1130000-0000-4000-8000-0000000000a1', 'b1130000-0000-4000-8000-0000000
         'image/jpeg', 1000, 'aprovada');
 
 -- Insere uma denúncia, roda o vigia e devolve quantas denúncias vencidas ele contou (0 = sem alerta).
+-- ocorrencia é imutável (nem delete), então tudo roda num sub-bloco que termina em exceção própria: o Postgres
+-- desfaz a denúncia, o alerta e a fila, e o caso seguinte começa com a tabela como estava.
 create function pg_temp.vence(p_motivo text, p_foto boolean, p_criada timestamptz, p_resolvida boolean default false)
 returns numeric
 language plpgsql as $$
 declare
   v_valor numeric;
 begin
-  delete from public.ocorrencia where tipo = 'denuncia';
-  delete from privado.alerta_emitido where codigo = 'moderacao_vencida';
-  delete from pgmq.q_email where message ->> 'codigo' = 'moderacao_vencida';
+  begin
+    delete from privado.alerta_emitido where codigo = 'moderacao_vencida';
+    delete from pgmq.q_email where message ->> 'codigo' = 'moderacao_vencida';
 
-  insert into public.ocorrencia (tipo, estabelecimento_id, autor_id, motivo, relato, midia_id, criada_em, resolvido_em)
-  values ('denuncia', 'b1130000-0000-4000-8000-0000000000e1', 'b1130000-0000-4000-8000-000000000001',
-          p_motivo, 'Relato sintético da denúncia 898',
-          case when p_foto then 'b1130000-0000-4000-8000-0000000000a1'::uuid end,
-          p_criada,
-          case when p_resolvida then privado.agora() end);
+    insert into public.ocorrencia (tipo, estabelecimento_id, autor_id, motivo, relato, midia_id, criada_em, resolvido_em)
+    values ('denuncia', 'b1130000-0000-4000-8000-0000000000e1', 'b1130000-0000-4000-8000-000000000001',
+            p_motivo, 'Relato sintético da denúncia 898',
+            case when p_foto then 'b1130000-0000-4000-8000-0000000000a1'::uuid end,
+            p_criada,
+            case when p_resolvida then privado.agora() end);
 
-  perform privado.verificar_saude();
+    perform privado.verificar_saude();
 
-  select (message ->> 'valor')::numeric into v_valor
-    from pgmq.q_email
-   where message ->> 'codigo' = 'moderacao_vencida'
-   order by msg_id desc limit 1;
+    select (message ->> 'valor')::numeric into v_valor
+      from pgmq.q_email
+     where message ->> 'codigo' = 'moderacao_vencida'
+     order by msg_id desc limit 1;
 
-  delete from public.ocorrencia where tipo = 'denuncia';
+    raise exception 'desfazer o caso' using errcode = 'P0898';
+  exception when sqlstate 'P0898' then
+    null;
+  end;
   return coalesce(v_valor, 0);
 end $$;
 
@@ -125,7 +130,6 @@ select is(pg_temp.vence('outro', false, '2026-11-20 12:00:00-03', true), 0::nume
 -- ── Contagem: o alerta traz só as vencidas ────────────────────────────────────
 set local frila.agora = '2026-11-30 15:00:00+00';
 
-delete from public.ocorrencia where tipo = 'denuncia';
 delete from privado.alerta_emitido where codigo = 'moderacao_vencida';
 delete from pgmq.q_email where message ->> 'codigo' = 'moderacao_vencida';
 

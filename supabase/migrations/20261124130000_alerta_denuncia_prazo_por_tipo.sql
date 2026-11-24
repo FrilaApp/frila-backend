@@ -284,7 +284,7 @@ begin
 end $$;
 
 comment on function privado.verificar_saude() is
-  'Varre filas pgmq, falhas de cron, notificações com erro (incluindo NOT_FOUND do FCM), despachos retidos, falhas de execução, denúncias sem moderação fora do prazo do tipo (24 h; 5 dias úteis para o motivo 'outro' sem foto) (Diretriz 1.2), contestações vencidas (RN13), falhas assíncronas do pg_net, tentativas recusadas de demonstração (Item 19) e o registro de acessos (autoproteção do slot lógico no começo; consumidor parado há mais de 15 min; atraso do slot acima da metade do teto). Emite alertas à equipe por e-mail com limite de 1/hora por tipo.';
+  'Varre filas pgmq, falhas de cron, notificações com erro (incluindo NOT_FOUND do FCM), despachos retidos, falhas de execução, denúncias sem moderação fora do prazo do tipo (24 h; 5 dias úteis para o motivo outro sem foto) (Diretriz 1.2), contestações vencidas (RN13), falhas assíncronas do pg_net, tentativas recusadas de demonstração (Item 19) e o registro de acessos (autoproteção do slot lógico no começo; consumidor parado há mais de 15 min; atraso do slot acima da metade do teto). Emite alertas à equipe por e-mail com limite de 1/hora por tipo.';
 
 revoke execute on function privado.verificar_saude() from public, anon, authenticated;
 grant  execute on function privado.verificar_saude() to service_role;
