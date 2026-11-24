@@ -157,7 +157,7 @@ values (
   (select turno_id from ids),
   (select casa_usr from ids),
   (select prof_usr from ids),
-  'outro',
+  'assedio',
   'Denuncia antiga teste mais de 24h',
   privado.agora() - interval '26 hours'
 );
@@ -230,7 +230,7 @@ values (
   (select turno2_id from ids),
   (select casa_usr from ids),
   (select prof_usr from ids),
-  'outro',
+  'assedio',
   'Denuncia da vaga 2 antiga e vencida',
   privado.agora() - interval '26 hours'
 );
@@ -242,7 +242,7 @@ values (
   'denuncia',
   (select estab_id from ids),
   (select prof_usr from ids),
-  'outro',
+  'assedio',
   'Denuncia do perfil do estabelecimento antiga e vencida',
   privado.agora() - interval '26 hours'
 );
