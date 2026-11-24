@@ -5,10 +5,28 @@
 --   x-frila-ip-carimbo     segundos Unix (UTC), inteiro
 --   x-frila-ip-assinatura  v1;k=<id>;<hex>  (v1 = versão do formato; <id> = chave [a-z0-9]{1,16}; hex = 64 minúsculos)
 -- Mensagem assinada (UTF-8): v1|<ip cru>|<carimbo>|<uid>, com uid = sub do token DAQUELA chamada. A chave é o texto do
--- segredo em UTF-8 (hex de 64 caracteres NÃO decodificado, sem quebra de linha: a função aplica btrim ao valor lido), guardado no Vault como ip_visitante_hmac_<id> (uma entrada por chave; apagar a entrada retira a chave).
+-- segredo em UTF-8 (64 hex minúsculos NÃO decodificados; só esse formato vale como chave), guardado no Vault como ip_visitante_hmac_<id> (uma entrada por chave; apagar a entrada retira a chave).
 -- Sem assinatura válida o IP gravado é o do cf-connecting-ip, como antes: um IP forjado nunca entra.
 -- Esta migração recria requisicao.conferir_limite() inteira (cópia da de 20261108110000_lgpd_registro_acessos_borda,
 -- a vigente) mudando só a obtenção de v_ip. O segredo no Vault é passo manual do roteiro, nunca da migração.
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 0. O que é uma chave: o ÚNICO predicado, para a leitura e para o exists não divergirem
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Só vale como chave o valor que, depois do btrim de espaço, tabulação e quebras de linha (colar com \n é comum), é o
+-- formato do roteiro: 64 hex minúsculos (openssl rand -hex 32). Qualquer outro valor (vazio, branco Unicode como VT, FF,
+-- NBSP e BOM, curto, maiúsculas, com espaço no meio) não é chave: o .trim() do Worker e o btrim do banco discordam
+-- nesses brancos, e uma chave previsível deixaria qualquer um calcular o HMAC (Lince AG e Lince Codex, B-116).
+create or replace function privado.chave_ip_visitante(p_valor text) returns text
+language sql immutable parallel safe
+set search_path = ''
+as $$
+  select case when btrim(p_valor, E' \t\r\n') ~ '^[0-9a-f]{64}$' then btrim(p_valor, E' \t\r\n') end
+$$;
+
+comment on function privado.chave_ip_visitante(text) is
+  'B-116: o valor do Vault (ip_visitante_hmac_<id>) como chave do HMAC, ou NULL se não for 64 hex minúsculos depois do btrim de espaço, tab, CR e LF. Predicado único da leitura da chave e do exists que decide chave_desconhecida x sem_segredo.';
+revoke all on function privado.chave_ip_visitante(text) from public, anon, authenticated;
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. Avaliação pura: devolve o IP a gravar e, se o cabeçalho não valeu, o motivo curto
@@ -70,17 +88,16 @@ begin
     return;
   end if;
 
-  -- Entrada vazia ou só de espaços e quebras de linha NÃO é chave (o btrim devolve '', não NULL, e um HMAC com chave
-  -- vazia qualquer um calcula): vira NULL aqui e no exists abaixo, e cai em sem_segredo. O banco não impõe tamanho
-  -- mínimo à chave; a gerada (openssl rand -hex 32) tem 64 hex.
-  select nullif(btrim(s.decrypted_secret, E' \t\r\n'), '') into v_segredo
+  -- Só vale como chave o que privado.chave_ip_visitante aceita (64 hex minúsculos); o mesmo predicado decide a leitura e
+  -- o exists. Outro valor é como chave ausente: sem_segredo se nenhuma entrada vale, chave_desconhecida se há outra.
+  select privado.chave_ip_visitante(s.decrypted_secret) into v_segredo
     from vault.decrypted_secrets s
    where s.name = 'ip_visitante_hmac_' || v_partes[1]
    limit 1;
   if v_segredo is null then
     p_motivo := case when exists (select 1 from vault.decrypted_secrets s
                                    where starts_with(s.name, 'ip_visitante_hmac_')
-                                     and nullif(btrim(s.decrypted_secret, E' \t\r\n'), '') is not null)
+                                     and privado.chave_ip_visitante(s.decrypted_secret) is not null)
                      then 'chave_desconhecida' else 'sem_segredo' end;
     return;
   end if;

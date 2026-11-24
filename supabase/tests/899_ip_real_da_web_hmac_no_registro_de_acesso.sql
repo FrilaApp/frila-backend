@@ -7,13 +7,13 @@ begin;
 -- O slot de teste nasce antes de qualquer escrita (o Postgres exige) e é TEMPORÁRIO, com o nome real.
 select 1 from pg_create_logical_replication_slot('frila_registro_acesso', 'test_decoding', true);
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
-select plan(60);
+select plan(64);
 
 delete from privado.registro_acesso;
 delete from privado.registro_acesso_recente;
 delete from vault.secrets where starts_with(name, 'ip_visitante_hmac_');
-select vault.create_secret('chave-sintetica-de-teste', 'ip_visitante_hmac_a1');
-select vault.create_secret('segredo-sintetico-chave-b2', 'ip_visitante_hmac_b2');
+select vault.create_secret('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'ip_visitante_hmac_a1');
+select vault.create_secret('fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210', 'ip_visitante_hmac_b2');
 
 -- ── Auxiliares ──────────────────────────────────────────────────────────────
 create function pg_temp.agora_s() returns bigint language sql as $$
@@ -36,7 +36,7 @@ $$;
 -- Cabeçalhos assinados com a chave a1 para (ip, carimbo) da conta do teste.
 create function pg_temp.valido(p_ip text, p_desvio int default 0) returns json language sql as $$
   select pg_temp.cab(p_ip, (pg_temp.agora_s() + p_desvio)::text,
-    pg_temp.assin('a1', 'chave-sintetica-de-teste', p_ip, pg_temp.agora_s() + p_desvio, '11111111-1111-4111-8111-111111111111'))
+    pg_temp.assin('a1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', p_ip, pg_temp.agora_s() + p_desvio, '11111111-1111-4111-8111-111111111111'))
 $$;
 -- Uma requisição do PostgREST, como o pre-request a vê.
 create function pg_temp.requisicao(p_conta text, p_cabecalhos json) returns void language plpgsql as $$
@@ -78,6 +78,12 @@ select is(pg_temp.res(pg_temp.valido('203.0.113.7', -61)), '198.51.100.9|carimbo
   'carimbo vencido (61 s no passado): recusa');
 select is(pg_temp.res(pg_temp.valido('203.0.113.7', -55)), '203.0.113.7|-',
   'carimbo de 55 s atrás: ainda vale');
+-- A janela usa o relógio REAL do banco (clock_timestamp), nunca o do produto: com frila.agora em 2060 (só vale no teste), o
+-- carimbo de agora ainda vale. Trocar clock_timestamp() por privado.agora() reprova este caso.
+select set_config('frila.agora', '2060-01-01 00:00:00+00', true);
+select is(pg_temp.res(pg_temp.valido('203.0.113.7')), '203.0.113.7|-',
+  'relógio do produto em 2060: a janela de 60 s segue no relógio real e o carimbo de agora vale');
+select set_config('frila.agora', '', true);
 select is(pg_temp.res(pg_temp.valido('203.0.113.7', 61)), '198.51.100.9|carimbo_vencido',
   'carimbo futuro (+61 s): recusa (a janela vale nos dois sentidos)');
 select is(pg_temp.res(pg_temp.valido('203.0.113.7', 55)), '203.0.113.7|-',
@@ -86,7 +92,7 @@ select is(pg_temp.res(pg_temp.cab('203.0.113.7', null, null)), '198.51.100.9|for
   'ausente parcial: só o IP');
 select is(pg_temp.res(pg_temp.cab('203.0.113.7', pg_temp.agora_s()::text, null)), '198.51.100.9|formato',
   'ausente parcial: IP e carimbo, sem assinatura');
-select is(pg_temp.res(pg_temp.cab(null, null, pg_temp.assin('a1', 'chave-sintetica-de-teste', '203.0.113.7', pg_temp.agora_s(),
+select is(pg_temp.res(pg_temp.cab(null, null, pg_temp.assin('a1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '203.0.113.7', pg_temp.agora_s(),
     '11111111-1111-4111-8111-111111111111'))), '198.51.100.9|formato',
   'ausente parcial: só a assinatura');
 select is(pg_temp.res(pg_temp.cab('203.0.113.7', 'ontem', 'v1;k=a1;' || repeat('0', 64))), '198.51.100.9|formato',
@@ -94,33 +100,33 @@ select is(pg_temp.res(pg_temp.cab('203.0.113.7', 'ontem', 'v1;k=a1;' || repeat('
 select is(pg_temp.res(pg_temp.cab('203.0.113.7', pg_temp.agora_s()::text, 'v2;k=a1;' || repeat('0', 64))),
   '198.51.100.9|formato', 'versão de formato desconhecida (v2): formato');
 select is(pg_temp.res(pg_temp.cab('não-é-ip', pg_temp.agora_s()::text,
-    pg_temp.assin('a1', 'chave-sintetica-de-teste', 'não-é-ip', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+    pg_temp.assin('a1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'não-é-ip', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '198.51.100.9|formato', 'IP malformado, mesmo assinado de verdade: formato');
 select is(pg_temp.res(pg_temp.cab('203.0.113.7/24', pg_temp.agora_s()::text,
-    pg_temp.assin('a1', 'chave-sintetica-de-teste', '203.0.113.7/24', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+    pg_temp.assin('a1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '203.0.113.7/24', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '198.51.100.9|formato', 'IP com máscara (rede, não endereço): formato');
 select is(pg_temp.res(pg_temp.valido('203.0.113.7'), '22222222-2222-4222-8222-222222222222'),
   '198.51.100.9|assinatura_invalida', 'uid trocado: a assinatura de uma conta não vale em outra');
 select is(pg_temp.res(pg_temp.cab('203.0.113.8', pg_temp.agora_s()::text,
-    pg_temp.assin('a1', 'chave-sintetica-de-teste', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+    pg_temp.assin('a1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '198.51.100.9|assinatura_invalida', 'IP trocado depois de assinar: recusa');
 select is(pg_temp.res(pg_temp.cab('203.0.113.7', (pg_temp.agora_s() + 1)::text,
-    pg_temp.assin('a1', 'chave-sintetica-de-teste', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+    pg_temp.assin('a1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '198.51.100.9|assinatura_invalida', 'carimbo trocado depois de assinar (dentro da janela): recusa');
 
 -- Duas chaves no Vault: cada uma vale pelo próprio id.
 select is(pg_temp.res(pg_temp.cab('203.0.113.7', pg_temp.agora_s()::text,
-    pg_temp.assin('b2', 'segredo-sintetico-chave-b2', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+    pg_temp.assin('b2', 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '203.0.113.7|-', 'segredo anterior/novo: a chave b2 vale pelo id b2');
 select is(pg_temp.res(pg_temp.cab('203.0.113.7', pg_temp.agora_s()::text,
-    pg_temp.assin('b2', 'chave-sintetica-de-teste', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+    pg_temp.assin('b2', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '198.51.100.9|assinatura_invalida', 'id b2 assinado com o segredo da a1: recusa (id e segredo andam juntos)');
 select is(pg_temp.res(pg_temp.cab('203.0.113.7', pg_temp.agora_s()::text,
-    pg_temp.assin('c3', 'chave-sintetica-de-teste', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+    pg_temp.assin('c3', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '198.51.100.9|chave_desconhecida', 'id que não existe no Vault: chave_desconhecida');
 delete from vault.secrets where name = 'ip_visitante_hmac_b2';
 select is(pg_temp.res(pg_temp.cab('203.0.113.7', pg_temp.agora_s()::text,
-    pg_temp.assin('b2', 'segredo-sintetico-chave-b2', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+    pg_temp.assin('b2', 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '198.51.100.9|chave_desconhecida', 'chave retirada do Vault (apagar a entrada): chave_desconhecida');
 select is(pg_temp.res(pg_temp.valido('203.0.113.7')), '203.0.113.7|-', 'a chave que ficou (a1) segue valendo');
 
@@ -128,11 +134,11 @@ select is(pg_temp.res(pg_temp.valido('203.0.113.7')), '203.0.113.7|-', 'a chave 
 select is(pg_temp.res(pg_temp.valido('2001:db8:0:0:0:0:0:1')), '2001:db8:0:0:0:0:0:1|-',
   'IPv6 sem compressão, assinado sobre o texto cru: vale');
 select is(pg_temp.res(pg_temp.cab('2001:db8:0:0:0:0:0:1', pg_temp.agora_s()::text,
-    pg_temp.assin('a1', 'chave-sintetica-de-teste', '2001:db8::1', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+    pg_temp.assin('a1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '2001:db8::1', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '198.51.100.9|assinatura_invalida', 'IPv6 assinado sobre a forma comprimida enquanto o cabeçalho vai sem compressão: não confere');
 select is(pg_temp.res(pg_temp.valido('2001:DB8::A')), '2001:DB8::A|-', 'IPv6 em maiúsculas, assinado sobre o texto cru: vale');
 select is(pg_temp.res(pg_temp.cab('2001:DB8::A', pg_temp.agora_s()::text,
-    pg_temp.assin('a1', 'chave-sintetica-de-teste', '2001:db8::a', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+    pg_temp.assin('a1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '2001:db8::a', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '198.51.100.9|assinatura_invalida', 'IPv6 assinado sobre a forma normalizada (minúsculas): não confere');
 select is(pg_temp.res(pg_temp.valido('::ffff:203.0.113.9')), '::ffff:203.0.113.9|-',
   'IPv4 mapeado em IPv6 (::ffff:) público, assinado sobre o texto cru: vale');
@@ -148,12 +154,12 @@ select is(encode(extensions.hmac('v1|2001:0db8:0000:0000:0000:0000:0000:0001|176
 -- O fluxo completo, com a MESMA chave (a1) e o relógio real: o HMAC é sobre o texto CRU.
 select is(pg_temp.res(pg_temp.valido('2001:db8::1')), '2001:db8::1|-', 'IPv6 curto, assinado sobre o texto curto: vale');
 select is(pg_temp.res(pg_temp.cab('2001:db8::1', pg_temp.agora_s()::text,
-    pg_temp.assin('a1', 'chave-sintetica-de-teste', '2001:0db8:0000:0000:0000:0000:0000:0001', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+    pg_temp.assin('a1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '2001:0db8:0000:0000:0000:0000:0000:0001', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '198.51.100.9|assinatura_invalida', 'cabeçalho curto com assinatura sobre a forma longa (mesmo endereço): não vale');
 -- Valor do Vault com quebra de linha no fim (colado à mão): a função aplica btrim, como o Worker.
-select vault.create_secret('chave-sintetica-de-teste' || E'\n', 'ip_visitante_hmac_n1');
+select vault.create_secret('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' || E'\n', 'ip_visitante_hmac_n1');
 select is(pg_temp.res(pg_temp.cab('203.0.113.7', pg_temp.agora_s()::text,
-    pg_temp.assin('n1', 'chave-sintetica-de-teste', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
+    pg_temp.assin('n1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'))),
   '203.0.113.7|-', 'segredo do Vault com quebra de linha no fim: o btrim da função o iguala ao do Worker');
 
 -- Chave vazia ou só de espaços/quebras no Vault NÃO é chave: um HMAC com chave vazia qualquer um calcula (Lince AG, B-116).
@@ -170,6 +176,36 @@ select is(pg_temp.res(pg_temp.cab('203.0.113.77', pg_temp.agora_s()::text,
   '198.51.100.9|chave_desconhecida', 'chave só de espaços e quebra de linha, HMAC com o texto cru dela: recusa');
 delete from vault.secrets where name in ('ip_visitante_hmac_vz', 'ip_visitante_hmac_es');
 
+-- Só 64 hex minúsculos (depois do btrim) é chave. Todo outro valor é como chave ausente, mesmo com o HMAC calculado de
+-- verdade com ele (um valor previsível deixaria qualquer um assinar): o .trim() do Worker e o btrim do banco discordam em
+-- VT, FF, NBSP e BOM (Lince Codex).
+create function pg_temp.valores_ruins() returns text[] language sql as $$
+  select array['', ' ', chr(11), chr(12), chr(160), chr(65279),
+    repeat('ab', 16),                                               -- 32 hex
+    upper('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'),                                                -- maiúsculas
+    '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' || 'a',                                                -- 65 caracteres
+    substr('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 1, 63),                                        -- 63 caracteres
+    substr('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 1, 32) || ' ' || substr('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 34),         -- espaço no meio
+    repeat('g', 64),                                                -- 64 caracteres fora do hex
+    chr(11) || '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef']                                            -- hex com VT na frente (o btrim não o tira)
+$$;
+-- Cria a entrada zz com o valor, avalia uma assinatura calculada com ele e apaga a entrada.
+create function pg_temp.res_chave(p_valor text) returns text language plpgsql as $$
+declare v_res text;
+begin
+  perform vault.create_secret(p_valor, 'ip_visitante_hmac_zz');
+  v_res := pg_temp.res(pg_temp.cab('203.0.113.77', pg_temp.agora_s()::text,
+    pg_temp.assin('zz', p_valor, '203.0.113.77', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111')));
+  delete from vault.secrets where name = 'ip_visitante_hmac_zz';
+  return v_res;
+end $$;
+select is((select count(*)::int from unnest(pg_temp.valores_ruins()) v where pg_temp.res_chave(v) = '198.51.100.9|chave_desconhecida'),
+  13, 'valor que não é 64 hex minúsculos (vazio, VT, FF, NBSP, BOM, curto, maiúsculas, espaço no meio...) ao lado de uma chave válida: não é chave');
+delete from vault.secrets where starts_with(name, 'ip_visitante_hmac_');
+select is((select count(*)::int from unnest(pg_temp.valores_ruins()) v where pg_temp.res_chave(v) = '198.51.100.9|sem_segredo'),
+  13, 'os mesmos valores como ÚNICA entrada do Vault: sem_segredo, e o IP gravado é o da conexão');
+select vault.create_secret('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 'ip_visitante_hmac_a1');
+
 -- IP reservado: recusa mesmo com assinatura válida.
 select is((select count(*)::int from unnest(array['127.0.0.1', '10.1.2.3', '172.16.5.5', '172.31.255.255', '192.168.0.1',
     '169.254.1.1', '0.0.0.0', '240.0.0.1', '255.255.255.255', '::1', '::', 'fe80::1', 'fd00::1', '::ffff:10.0.0.1',
@@ -183,7 +219,7 @@ select is((select count(*)::int from unnest(array['172.32.0.1', '11.0.0.1', '223
 select is(pg_temp.res('{"cf-connecting-ip":"198.51.100.9"}'::json), '198.51.100.9|-', 'sem x-frila-ip-*: cf-connecting-ip, sem motivo');
 select is(pg_temp.res('{}'::json), 'nulo|-', 'sem cf-connecting-ip nem x-frila-ip-*: nada (como hoje)');
 select is(pg_temp.res(pg_temp.cab('203.0.113.7', pg_temp.agora_s()::text,
-    pg_temp.assin('a1', 'chave-sintetica-de-teste', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'), null)),
+    pg_temp.assin('a1', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', '203.0.113.7', pg_temp.agora_s(), '11111111-1111-4111-8111-111111111111'), null)),
   '203.0.113.7|-', 'assinatura válida sem cf-connecting-ip: grava o IP do cabeçalho');
 
 -- ── O pre-request, de ponta a ponta (coleta ligada) ─────────────────────────
@@ -248,6 +284,15 @@ select pg_temp.drenar();
 select ok((select count(*) from pg_temp.msgs where prefixo = 'frila_registro_acesso_falha') between 1 and 100
       and (select string_agg(distinct conteudo, ',') from pg_temp.msgs where prefixo = 'frila_registro_acesso_falha') = 'formato',
   'cabeçalho incompleto, 400 requisições: motivo formato, amostrado (1 a 100)');
+
+-- A taxa é 1 de 20, não 1 de 10 nem 1 de 50: com a semente fixa (setseed), 2000 chamadas diretas com assinatura inválida
+-- emitem ~100 falhas (1/10 daria ~200 e 1/50 ~40); os limites 70 e 130 separam as três.
+select setseed(0.42);
+select privado.ip_do_acesso(pg_temp.cab('203.0.113.7', pg_temp.agora_s()::text, 'v1;k=a1;' || repeat('0', 64)),
+  '11111111-1111-4111-8111-111111111111') from generate_series(1, 2000);
+select pg_temp.drenar();
+select ok((select count(*) from pg_temp.msgs where prefixo = 'frila_registro_acesso_falha') between 70 and 130,
+  'taxa da amostragem: 2000 falhas com semente fixa emitem entre 70 e 130 mensagens (1/20 = ~100)');
 
 -- Sem segredo no Vault: usa o cf-connecting-ip e a falha sem_segredo, também amostrada.
 delete from vault.secrets where starts_with(name, 'ip_visitante_hmac_');

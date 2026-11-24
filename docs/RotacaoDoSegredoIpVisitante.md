@@ -14,7 +14,7 @@ Três cabeçalhos, sempre juntos, na subrequest do Worker ao Supabase (nunca na 
 
 - `v1` é a versão do formato. `<id>` é o identificador da chave (`[a-z0-9]{1,16}`, por exemplo `a1`). `<hex>` é o HMAC-SHA256 em hex minúsculo (64 caracteres).
 - Mensagem assinada (bytes UTF-8): `v1|<ip cru>|<carimbo>|<uid>`, com `uid` = `sub` (UUID, minúsculas) do token que vai NAQUELA chamada.
-- Chave do HMAC: os bytes UTF-8 do TEXTO do segredo, exatamente como guardado no Vault (o hex gerado, sem decodificar).
+- Chave do HMAC: os bytes UTF-8 do TEXTO do segredo, exatamente como guardado no Vault (os 64 hex gerados, sem decodificar; só esse formato vale como chave).
 - O banco confere sobre o texto cru, antes de converter para `inet` (o `inet::text` reescreve IPv6). Aceita o carimbo até 60 s para trás ou para frente do relógio real do banco.
 - Recusa (e grava o `cf-connecting-ip`): formato ruim, IP com máscara, carimbo fora da janela, IP reservado (loopback, privado, link-local, não especificado, `240.0.0.0/4`, IPv6 `::1`, `fc00::/7`, `fe80::/10`; para `::ffff:a.b.c.d` vale o IPv4 embutido), chave desconhecida, assinatura que não confere.
 - A zona `frilabr.com` precisa estar com Pseudo IPv4 "Off" ou "Add header", nunca "Overwrite Headers" (ele reescreve o IPv6 do visitante para `240.0.0.0/4`).
@@ -28,7 +28,7 @@ Cada cabeçalho que não valeu emite `frila_registro_acesso_falha` com só o mot
 `migração → segredo no Vault → secret e id no Worker → deploy da web`. Se a web assinar antes de o banco ter a chave, o alerta sobe à toa; por isso o Worker não manda cabeçalho nenhum quando o secret não existe (local, testes).
 
 1. Gere o segredo sem mostrá-lo: `openssl rand -hex 32` para um arquivo ignorado pelo git ou direto em uma variável do shell. Nunca em commit, PR, log ou conversa.
-   O valor vai SEM quebra de linha e não pode ser vazio: o banco aplica `btrim` e trata entrada vazia ou só de espaços como se a chave não existisse (`sem_segredo` ou `chave_desconhecida`; nunca aceita HMAC de chave vazia). Ele não impõe tamanho mínimo; o gerado tem 64 hex.
+   O segredo TEM de ser 64 hex minúsculos (`^[0-9a-f]{64}$`): o formato do `openssl rand -hex 32`. Uma quebra de linha ou espaço nas pontas é tirado (`btrim`), mas qualquer outro valor (vazio, branco Unicode como NBSP ou BOM, curto, maiúsculas, espaço no meio) é IGNORADO pelo banco, como se a chave não existisse: o IP gravado é o da conexão e o motivo é `sem_segredo` (`chave_desconhecida` se há outra chave válida). Isso evita uma chave previsível que qualquer um assinaria.
 2. Grave no Vault do ambiente (SQL como `postgres`, com o valor vindo de variável do psql, por heredoc ou `-f`; `psql -c` não interpola `:var`):
    ```sql
    select vault.create_secret(:'valor', 'ip_visitante_hmac_a1');
@@ -43,7 +43,7 @@ Cada cabeçalho que não valeu emite `frila_registro_acesso_falha` com só o mot
 3. Espere 24 h (cobre Worker em cache e requisições em voo; o carimbo vale 60 s, então o risco real é bem menor).
 4. Retire a chave velha: `delete from vault.secrets where name = 'ip_visitante_hmac_a1';`. Uma assinatura com `k=a1` passa a cair em `chave_desconhecida`.
 
-Vazou o segredo: pule a espera. Faça os passos 1 e 2 e apague a chave velha na hora (as requisições com `k=a1` caem no IP do Worker, sem perder acesso); depois avise os sócios. Sem nenhuma chave no Vault o motivo é `sem_segredo`; com outras chaves e id fora delas, `chave_desconhecida`.
+Vazou o segredo: pule a espera. Faça os passos 1 e 2 e apague a chave velha na hora (as requisições com `k=a1` caem no IP do Worker, sem perder acesso); depois avise os sócios. Sem nenhuma chave VÁLIDA no Vault o motivo é `sem_segredo`; com outras chaves e id fora delas, `chave_desconhecida`.
 
 ## Prova no banco
 
