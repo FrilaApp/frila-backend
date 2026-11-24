@@ -409,6 +409,9 @@ jobs:
       - name: Testar vigia da saúde no Cloudflare
         run: node --test vigia-cloudflare/teste/vigia.test.js
 
+      - name: Testar lembrete de vencimento de segredos no Cloudflare
+        run: node --test lembrete-segredos-cloudflare/teste/lembrete.test.js
+
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: v2.9.7

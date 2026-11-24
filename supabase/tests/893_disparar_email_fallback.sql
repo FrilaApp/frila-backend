@@ -18,6 +18,10 @@
 
 begin;
 
+-- B-115: o job de pg_cron (processar_fila_email e afins) comita linhas em net.http_request_queue de OUTRA sessão
+-- quando há mensagem comitada na fila. Este teste conta/lê essa tabela: a escrita concorrente espera o rollback.
+lock table net.http_request_queue in exclusive mode;
+
 select plan(30);
 
 -- ── 1. Privilégios e catálogo ────────────────────────────────────────────────
