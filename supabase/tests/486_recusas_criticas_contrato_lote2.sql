@@ -35,6 +35,9 @@ insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
 
 select set_config('frila.agora', '2027-04-01 12:00:00+00', true);
+-- B-111b: publicado_em nasce com o now() REAL e este teste congela frila.agora em 2027; sem isto a data fixa vence com o calendário.
+-- Prende a publicação ao relógio de teste só nesta transação (o rollback desfaz).
+alter table public.vaga alter column publicado_em set default privado.agora();
 
 create function pg_temp.autenticar(conta uuid, email text) returns void
 language plpgsql as $$

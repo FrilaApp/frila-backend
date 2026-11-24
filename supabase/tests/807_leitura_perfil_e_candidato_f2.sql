@@ -9,6 +9,9 @@
 begin;
 insert into privado.ambiente values (true, true) on conflict (id) do update set eh_teste = true;
 set local frila.agora = '2027-01-11 09:00:00+00';
+-- B-111b: publicado_em nasce com o now() REAL e este teste congela frila.agora em 2027; sem isto a data fixa vence com o calendário.
+-- Prende a publicação ao relógio de teste só nesta transação (o rollback desfaz).
+alter table public.vaga alter column publicado_em set default privado.agora();
 set local frila.agendador_secret = 'segredo-de-teste-807';
 select no_plan();
 -- A F2 obedece à chave perfil_rico (RN46, contrato 0.2.60; 20261108086000), que nasce desligada.
