@@ -1,6 +1,10 @@
 -- Invoca as duas funções e confere os cabeçalhos enfileirados pelo pg_net.
 -- Todos os valores de segredo deste teste são sintéticos; o rollback isola o Vault.
 begin;
+
+-- B-115: o job de pg_cron (processar_fila_email e afins) comita linhas em net.http_request_queue de OUTRA sessão
+-- quando há mensagem comitada na fila. Este teste conta/lê essa tabela: a escrita concorrente espera o rollback.
+lock table net.http_request_queue in exclusive mode;
 select plan(22);
 
 set local frila.edge_function_url = 'http://127.0.0.1:54321/functions/v1/despachar';

@@ -19,10 +19,25 @@
 --      requisição em `net.http_request_queue` com método POST, URL, cabeçalhos, corpo e timeout corretos.
 --   5. Comportamento defensivo com segredo ausente/vazio (não enfileira requisição mas preserva a mensagem).
 --   6. Prova de mutação em transação: esvaziamento do corpo da função impede o enfileiramento da requisição HTTP.
+--
+-- ISOLAMENTO (B-115): o job de pg_cron `processar_fila_email` (e os outros que fazem net.http_post)
+-- roda em OUTRA sessão e COMITA linhas em `net.http_request_queue` se houver mensagem comitada em
+-- `pgmq.q_email`. O teste garante a condição que mede DENTRO da transação:
+--   a) `lock table net.http_request_queue in exclusive mode` logo depois do begin: a escrita do cron espera o rollback;
+--   b) o Vault (agendador_secret, email_function_url, edge_function_url) é visto como ausente (delete desfeito no
+--      rollback), porque `disparar_email()` dá ao Vault precedência sobre o GUC;
+--   c) a contagem NÃO é global: filtra pela URL única do teste (`?teste=729`), que o cron (URL padrão) nunca usa.
 
 begin;
 
-select plan(21);
+-- A escrita concorrente do cron em net.http_request_queue espera o fim desta transação.
+lock table net.http_request_queue in exclusive mode;
+
+-- O Vault tem precedência sobre o GUC em privado.disparar_email(): sem isto, um segredo ou uma URL gravados
+-- no Vault trocariam os valores medidos aqui. O delete vale só nesta transação (o rollback devolve tudo).
+delete from vault.secrets where name in ('agendador_secret', 'email_function_url', 'edge_function_url');
+
+select plan(23);
 
 -- ── 1. Estrutura, catálogo e controle de acesso ─────────────────────────────
 
@@ -65,10 +80,9 @@ select is(
 
 -- Isola as filas dentro do escopo da transação
 delete from pgmq.q_email;
-delete from net.http_request_queue;
 
 set local frila.agendador_secret = 'segredo-deterministico-729';
-set local frila.email_function_url = 'http://127.0.0.1:54321/functions/v1/enviar-email';
+set local frila.email_function_url = 'http://127.0.0.1:54321/functions/v1/enviar-email?teste=729';
 
 select lives_ok(
   $$ select pgmq.send('email', '{"ocorrencia_id": "72900000-0000-4000-8000-000000000001", "tipo": "alerta"}'::jsonb) $$,
@@ -76,50 +90,65 @@ select lives_ok(
 );
 
 select is(
-  (select count(*)::int from net.http_request_queue),
+  (select count(*)::int from net.http_request_queue where url = current_setting('frila.email_function_url')),
   1,
   'gatilho trg_email_enfileirado gera exatamente 1 requisição em net.http_request_queue'
 );
 
+-- O filtro por URL distingue a linha do teste da linha do cron: uma chamada com a URL padrão (a que o job
+-- usa) entra na fila, mas não na contagem do teste.
+select lives_ok(
+  $$ select net.http_post(url => 'http://127.0.0.1:54321/functions/v1/enviar-email',
+                          body => '{"origem": "fila"}'::jsonb) $$,
+  'uma linha igual à do cron (URL padrão) entra na fila HTTP'
+);
+
 select is(
-  (select method from net.http_request_queue order by id desc limit 1),
+  (select count(*)::int from net.http_request_queue where url = current_setting('frila.email_function_url')),
+  1,
+  'o filtro pela URL do teste ignora a linha do cron (URL padrão): a contagem segue em 1'
+);
+
+
+select is(
+  (select method from net.http_request_queue where headers->>'x-agendador-secret' = 'segredo-deterministico-729' order by id desc limit 1),
   'POST',
   'requisição disparada utiliza método POST'
 );
 
 select is(
-  (select url from net.http_request_queue order by id desc limit 1),
-  'http://127.0.0.1:54321/functions/v1/enviar-email',
+  (select url from net.http_request_queue where headers->>'x-agendador-secret' = 'segredo-deterministico-729' order by id desc limit 1),
+  'http://127.0.0.1:54321/functions/v1/enviar-email?teste=729',
   'requisição disparada aponta para URL de enviar-email configurada'
 );
 
 select is(
-  (select headers->>'x-agendador-secret' from net.http_request_queue order by id desc limit 1),
+  (select headers->>'x-agendador-secret' from net.http_request_queue where headers->>'x-agendador-secret' = 'segredo-deterministico-729' order by id desc limit 1),
   'segredo-deterministico-729',
   'cabeçalho x-agendador-secret contém segredo configurado'
 );
 
 select is(
-  (select headers->>'Authorization' from net.http_request_queue order by id desc limit 1),
+  (select headers->>'Authorization' from net.http_request_queue where headers->>'x-agendador-secret' = 'segredo-deterministico-729' order by id desc limit 1),
   null::text,
   'cabeçalho Authorization redundante não é enviado após NEW-01 (apenas x-agendador-secret)'
 );
 
 select is(
-  convert_from((select body from net.http_request_queue order by id desc limit 1), 'utf-8')::jsonb,
+  convert_from((select body from net.http_request_queue where headers->>'x-agendador-secret' = 'segredo-deterministico-729' order by id desc limit 1), 'utf-8')::jsonb,
   '{"origem": "fila"}'::jsonb,
   'corpo da requisição contém {"origem": "fila"}'
 );
 
 select is(
-  (select timeout_milliseconds from net.http_request_queue order by id desc limit 1),
+  (select timeout_milliseconds from net.http_request_queue where headers->>'x-agendador-secret' = 'segredo-deterministico-729' order by id desc limit 1),
   5000,
   'timeout_milliseconds configurado para 5000 ms'
 );
 
 -- ── 3. Comportamento defensivo com segredo ausente ───────────────────────────
 
-delete from net.http_request_queue;
+delete from net.http_request_queue where url = current_setting('frila.email_function_url');
 set local frila.agendador_secret = '';
 
 select lives_ok(
@@ -128,7 +157,7 @@ select lives_ok(
 );
 
 select is(
-  (select count(*)::int from net.http_request_queue),
+  (select count(*)::int from net.http_request_queue where url = current_setting('frila.email_function_url')),
   0,
   'com segredo ausente, nenhuma requisição HTTP é enfileirada em net.http_request_queue'
 );
@@ -152,13 +181,13 @@ begin
 end;
 $$;
 
-delete from net.http_request_queue;
+delete from net.http_request_queue where url = current_setting('frila.email_function_url');
 set local frila.agendador_secret = 'segredo-deterministico-729';
 
 select pgmq.send('email', '{"ocorrencia_id": "72900000-0000-4000-8000-000000000003", "tipo": "mutante"}'::jsonb);
 
 select is(
-  (select count(*)::int from net.http_request_queue),
+  (select count(*)::int from net.http_request_queue where url = current_setting('frila.email_function_url')),
   0,
   'sob mutacao do corpo (RETURN NEW sem perform disparar_email), nenhuma requisicao entra em net.http_request_queue'
 );
@@ -174,12 +203,12 @@ begin
 end;
 $$;
 
-delete from net.http_request_queue;
+delete from net.http_request_queue where url = current_setting('frila.email_function_url');
 
 select pgmq.send('email', '{"ocorrencia_id": "72900000-0000-4000-8000-000000000004", "tipo": "restaurado"}'::jsonb);
 
 select is(
-  (select count(*)::int from net.http_request_queue),
+  (select count(*)::int from net.http_request_queue where url = current_setting('frila.email_function_url')),
   1,
   'apos restaurar funcao original, enfileiramento volta a gerar requisicao HTTP'
 );
