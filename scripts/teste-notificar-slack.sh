@@ -489,6 +489,139 @@ else
   ok "payload estritamente operacional e isento de PII (RN15)"
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 9. Aviso manual (workflow_dispatch acao=aviso)
+# ─────────────────────────────────────────────────────────────────────────────
+WORKFLOW_YML=".github/workflows/notifica-slack.yml"
+# Linha do passo "Publicar o aviso": é ela que o GitHub executa, com MENSAGEM no ambiente.
+COMANDO_AVISO="$(grep -F -e '--tipo aviso_manual' "$WORKFLOW_YML" | sed 's/^ *//')"
+
+texto_enviado() {
+  python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).read().splitlines()[-1])["payload"]["blocks"][1]["text"]["text"], end="")' "$MOCK_LOG"
+}
+
+echo "▸ 24. Aviso manual: o passo do workflow recebe o texto só por variável de ambiente"
+# shellcheck disable=SC2016
+if [ -n "$COMANDO_AVISO" ] && ! printf '%s' "$COMANDO_AVISO" | grep -q '\${{'; then
+  ok "comando do workflow não interpola expressão do GitHub: $COMANDO_AVISO"
+else
+  falha "comando do passo ausente ou com \${{ }} no run: '$COMANDO_AVISO'"
+fi
+
+echo "▸ 25. Aviso manual: aspas, crase, \$(...) e quebra de linha chegam como texto e nada executa"
+limpar_mock_log
+rm -f "$TMP"/pwn*
+# shellcheck disable=SC2016
+MENSAGEM_PERIGOSA='PRs "530" e '"'532'"' `touch '"$TMP"'/pwn1` $(touch '"$TMP"'/pwn2) ${HOME}; touch '"$TMP"'/pwn3
+segunda linha \ "fim"'
+env SLACK_WEBHOOK_URL="$MOCK_URL" MENSAGEM="$MENSAGEM_PERIGOSA" bash -c "$COMANDO_AVISO" >/dev/null 2>&1
+cod=$?
+if [ "$cod" -eq 0 ]; then ok "código 0"; else falha "esperava 0, veio $cod"; fi
+if ls "$TMP"/pwn* >/dev/null 2>&1; then
+  falha "comando embutido na mensagem foi executado: $(ls "$TMP"/pwn*)"
+else
+  ok "nenhum comando embutido na mensagem foi executado"
+fi
+if [ "$(texto_enviado)" = "$MENSAGEM_PERIGOSA" ]; then
+  ok "texto chegou ao Slack idêntico ao digitado (JSON escapado)"
+else
+  falha "texto divergente: $(texto_enviado)"
+fi
+
+echo "▸ 26. Aviso manual: mensagem que começa com -- é texto, não opção do script"
+limpar_mock_log
+env SLACK_WEBHOOK_URL="$MOCK_URL" MENSAGEM="--dry-run" bash -c "$COMANDO_AVISO" >/dev/null 2>&1
+cod=$?
+if [ "$cod" -eq 0 ] && [ "$(texto_enviado)" = "--dry-run" ]; then
+  ok "texto com -- foi enviado como mensagem"
+else
+  falha "código $cod, texto: $(texto_enviado)"
+fi
+
+echo "▸ 27. Aviso manual: limite de 1000 caracteres"
+limpar_mock_log
+MENSAGEM_LONGA="$(python3 -c 'print("a" * 2500, end="")')"
+env SLACK_WEBHOOK_URL="$MOCK_URL" MENSAGEM="$MENSAGEM_LONGA" bash -c "$COMANDO_AVISO" >/dev/null 2>&1
+tamanho="$(texto_enviado | python3 -c 'import sys; print(len(sys.stdin.read()))')"
+if [ "$tamanho" -eq 1000 ]; then
+  ok "texto truncado em 1000 caracteres"
+else
+  falha "esperava 1000, veio $tamanho"
+fi
+
+echo "▸ 28. Aviso manual: mensagem vazia falha e não envia nada"
+limpar_mock_log
+env SLACK_WEBHOOK_URL="$MOCK_URL" MENSAGEM="   " bash -c "$COMANDO_AVISO" >/dev/null 2>&1
+cod=$?
+if [ "$cod" -ne 0 ] && [ ! -s "$MOCK_LOG" ]; then
+  ok "código $cod e nenhuma requisição enviada"
+else
+  falha "código $cod, log: $(cat "$MOCK_LOG")"
+fi
+
+echo "▸ 29. Aviso manual: segredo ausente mantém o comportamento atual (warning, código 0)"
+env -u SLACK_WEBHOOK_URL -u SLACK_ALERTAS_WEBHOOK MENSAGEM="teste" bash -c "$COMANDO_AVISO" >"$TMP/out29" 2>"$TMP/err29"
+cod=$?
+if [ "$cod" -eq 0 ] && grep -q "::warning::SLACK_WEBHOOK_URL não configurado" "$TMP/err29"; then
+  ok "warning no stderr e código 0"
+else
+  falha "código $cod, stderr: $(cat "$TMP/err29")"
+fi
+
+texto_de_aviso_no_topo() {
+  python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).read().splitlines()[-1])["payload"]["text"], end="")' "$MOCK_LOG"
+}
+
+echo "▸ 30. Aviso manual: <!channel>, <!here>, <!everyone>, <!subteam^S123> e <@U123> chegam sem a forma interpretável"
+limpar_mock_log
+# shellcheck disable=SC2016
+env SLACK_WEBHOOK_URL="$MOCK_URL" MENSAGEM='a <!channel> b <!here> c <!everyone> d <!subteam^S123> e <@U123> f <#C123> g' bash -c "$COMANDO_AVISO" >/dev/null 2>&1
+cod=$?
+esperado='a &lt;!channel&gt; b &lt;!here&gt; c &lt;!everyone&gt; d &lt;!subteam^S123&gt; e &lt;@U123&gt; f &lt;#C123&gt; g'
+if [ "$cod" -eq 0 ]; then ok "código 0"; else falha "esperava 0, veio $cod"; fi
+if [ "$(texto_enviado)" = "$esperado" ]; then
+  ok "bloco mrkdwn com < e > escapados"
+else
+  falha "bloco: $(texto_enviado)"
+fi
+if [ "$(texto_de_aviso_no_topo)" = "⚠️ Aviso da equipe: $esperado" ]; then
+  ok "campo text de topo (usado na notificação) também escapado"
+else
+  falha "text de topo: $(texto_de_aviso_no_topo)"
+fi
+if grep -q -e '<!' -e '<@' -e '<#' "$MOCK_LOG"; then
+  falha "forma interpretável (<! <@ <#) presente no que o mock recebeu"
+else
+  ok "nenhum <! <@ <# no que o mock recebeu"
+fi
+
+echo "▸ 31. Aviso manual: link <url|rótulo> e & também ficam inertes; texto comum não muda"
+limpar_mock_log
+# shellcheck disable=SC2016
+env SLACK_WEBHOOK_URL="$MOCK_URL" MENSAGEM='<https://exemplo.com/x|PRs> e PRs #530 & #532 esperam leitura de sócio.' bash -c "$COMANDO_AVISO" >/dev/null 2>&1
+if [ "$(texto_enviado)" = '&lt;https://exemplo.com/x|PRs&gt; e PRs #530 &amp; #532 esperam leitura de sócio.' ]; then
+  ok "link e & escapados, resto idêntico"
+else
+  falha "bloco: $(texto_enviado)"
+fi
+
+echo "▸ 32. Aviso manual: limite de 1000 conta o texto escapado e não parte uma entidade"
+limpar_mock_log
+MENSAGEM_ESCAPAVEL="$(python3 -c 'print("<" * 2000, end="")')"
+env SLACK_WEBHOOK_URL="$MOCK_URL" MENSAGEM="$MENSAGEM_ESCAPAVEL" bash -c "$COMANDO_AVISO" >/dev/null 2>&1
+if texto_enviado | python3 -c '
+import re, sys
+t = sys.stdin.read()
+corpo = t[:-1]
+assert len(t) <= 1000, len(t)
+assert t.endswith("…")
+assert re.fullmatch(r"(&lt;)+", corpo), corpo[-8:]
+'; then
+  ok "até 1000 caracteres, só entidades inteiras, terminado em …"
+else
+  falha "bloco truncado fora do esperado"
+fi
+
 echo "=========================================================="
 if [ "$falhas" -eq 0 ]; then
   echo "✓ Todos os testes do Notificador do Slack passaram com sucesso!"
