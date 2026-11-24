@@ -94,7 +94,7 @@ O script executa 7 blocos estruturados de checagem:
 - **Tempo de leitura:** 1 minuto.
 - **Critério de Alerta:**
   - 🟡 Denúncias pendentes com menos de 12h.
-  - 🔴 Denúncias pendentes com **mais de 12h** (risco iminente de estourar SLA de 24h) ou já vencidas (> 24h).
+  - 🔴 Denúncias pendentes com **mais de 12h** (risco iminente de estourar SLA de 24h) ou já vencidas pelo prazo do tipo (24 h; 5 dias úteis só para `outro` sem foto).
   - Atenção: o prazo de 24 h vale para denúncia com foto ou de motivo `risco_seguranca`, `assedio` ou `discriminacao`; para motivo `outro` sem foto o prazo é de 5 dias úteis (regra do Cauê, 24/11/2026). O alerta `moderacao_vencida` e a contagem desta checagem (`privado.moderacao_pendente`) seguem a mesma regra, pela função `privado.denuncia_prazo_ate`.
 
 ### Bloco 5 · E-mails Transacionais (pgmq / Resend)

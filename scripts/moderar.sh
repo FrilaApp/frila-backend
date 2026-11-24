@@ -55,7 +55,7 @@ case "${1:?uso: moderar.sh <comando> …}" in
     horas="${2:-24}"
     psql -v horas="$horas" <<'SQL'
 \pset border 2
-\pset title 'Denúncias abertas e o prazo da Diretriz 1.2'
+\pset title 'Denúncias abertas e o prazo do tipo (24 h; 5 dias úteis só para outro sem foto)'
 select ocorrencia_id            as protocolo,
        to_char(criada_em  at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as aberta,
        to_char(tratar_ate at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as tratar_ate,

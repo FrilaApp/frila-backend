@@ -196,18 +196,18 @@ echo ""
 # ── 4. MODERAÇÃO, CONTESTAÇÕES E SUPORTE (Diretriz 1.2 da App Store) ──────────
 echo "▸ 4. Moderação de Conteúdo e Suporte (Diretriz 1.2 App Store / RN13)"
 echo "--------------------------------------------------------------------------------"
-# Denúncias pendentes per privado.moderacao_pendente (prazo de 24h)
+# Denúncias pendentes per privado.moderacao_pendente (prazo do tipo: 24 h; 5 dias úteis só para outro sem foto)
 denuncias_vencidas=$(exec_sql_quiet "SELECT count(*) FROM privado.moderacao_pendente(interval '24 hours') WHERE vencida = true;" || echo "0")
 denuncias_abertas=$(exec_sql_quiet "SELECT count(*) FROM privado.moderacao_pendente(interval '24 hours');" || echo "0")
 denuncias_vencidas="${denuncias_vencidas:-0}"
 denuncias_abertas="${denuncias_abertas:-0}"
 
 if [ "$denuncias_vencidas" -gt 0 ]; then
-  echo "  [!] CRÍTICO: $denuncias_vencidas denúncia(s) VENCIDAS sem moderação da Equipe Frila (>24h)!"
+  echo "  [!] CRÍTICO: $denuncias_vencidas denúncia(s) VENCIDAS pelo prazo do tipo (24 h; 5 dias úteis só para outro sem foto) sem moderação da Equipe Frila!"
   exec_sql "SELECT ocorrencia_id as protocolo, to_char(criada_em at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as aberta, to_char(tratar_ate at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as limite, motivo FROM privado.moderacao_pendente(interval '24 hours') WHERE vencida = true;"
   ALERTA_CRITICO=$((ALERTA_CRITICO + 1))
 elif [ "$denuncias_abertas" -gt 0 ]; then
-  echo "  [i] Denúncias em análise no prazo de 24h: $denuncias_abertas pendente(s)."
+  echo "  [i] Denúncias em análise dentro do prazo do tipo (24 h; 5 dias úteis só para outro sem foto): $denuncias_abertas pendente(s)."
   exec_sql "SELECT ocorrencia_id as protocolo, to_char(criada_em at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as aberta, to_char(tratar_ate at time zone 'America/Sao_Paulo', 'DD/MM HH24:MI') as limite, motivo FROM privado.moderacao_pendente(interval '24 hours');"
   ALERTA_MODERADO=$((ALERTA_MODERADO + 1))
 else
@@ -302,7 +302,7 @@ if [ "$ALERTA_CRITICO" -gt 0 ]; then
   echo "  🔴 STATUS: VERMELHO — AÇÃO IMEDIATA NECESSÁRIA ($ALERTA_CRITICO alerta(s) crítico(s))"
   echo "  Recomendações do Plantão:"
   echo "    - Se jobs do cron falharam: consulte cron.job_run_details e docs/RUNBOOK-INCIDENTES.md."
-  echo "    - Se denúncias venceram (>24h): acione imediatamente './scripts/moderar.sh pendentes 24'."
+  echo "    - Se denúncias venceram pelo prazo do tipo (24 h; 5 dias úteis só para outro sem foto): acione imediatamente './scripts/moderar.sh pendentes 24'."
   echo "    - Se filas pgmq retidas: verifique os workers de Edge Functions e secrets no Supabase."
   exit 1
 elif [ "$ALERTA_MODERADO" -gt 0 ]; then
