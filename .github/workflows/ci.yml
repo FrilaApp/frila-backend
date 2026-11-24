@@ -193,8 +193,13 @@ jobs:
         run: ./scripts/teste-mutacao-matadores.sh
 
       - name: Os testes cobrem as regras
+        # Valores do evento passam por env e entram no shell como "$VAR", nunca interpolados no run:
+        # (scripts/teste-workflows-sem-interpolacao.sh confere todos os workflows).
+        env:
+          EVENTO: ${{ github.event_name }}
+          REF: ${{ github.ref }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ] || ([ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]); then
+          if [ "$EVENTO" = "schedule" ] || [ "$EVENTO" = "workflow_dispatch" ] || ([ "$EVENTO" = "push" ] && [ "$REF" = "refs/heads/main" ]); then
             ./scripts/mutacao.sh --completo
           else
             ./scripts/mutacao.sh
@@ -244,9 +249,26 @@ jobs:
       - name: A resposta de cada RPC e de cada Edge Function casa com o contrato, e toda recusa prometida é alcançável
         run: ./scripts/contrato-responde.sh
 
+      # Cada comando roda mesmo se o anterior falhar. Com o `supabase start` caído por
+      # `address already in use` (24/11/2026), o antigo `supabase status && docker ps -a` parava
+      # no primeiro e ninguém via quem segurava a porta: o `ss` lista os soquetes em 543xx.
       - name: Diagnóstico ao falhar
         if: failure()
-        run: supabase status && docker ps -a
+        run: |
+          supabase status || true
+          sudo ss -tanp | grep ':543' || true
+          docker ps -a || true
+
+  # Os workflows não interpolam valor do evento (branch, nome, SHA, URL, input) dentro do `run:`:
+  # passam por `env:` e entram como "$VAR". Roda sem Postgres nem Docker, em segundos.
+  workflows-sem-interpolacao:
+    name: Workflows sem interpolação de valor do evento no run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Valores do evento passam por env, nunca interpolados no run
+        run: ./scripts/teste-workflows-sem-interpolacao.sh
 
   # Job próprio, e não um passo do job do banco, por dois motivos.
   #
