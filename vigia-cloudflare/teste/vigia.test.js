@@ -14,6 +14,7 @@ function cenario() {
   const sondas = [];
   const mensagens = [];
   const erros = [];
+  const infos = [];
   const esperas = [];
   let slack = () => json({ ok: true });
   const env = {
@@ -38,6 +39,7 @@ function cenario() {
     agora: () => relogio,
     esperar: async ms => { esperas.push(ms); },
     registrarErro: erro => erros.push(erro),
+    registrarInfo: info => infos.push(info),
     buscar: async (url, opcoes) => {
       assert.equal(opcoes.redirect, 'manual');
       assert.ok(opcoes.signal instanceof AbortSignal);
@@ -63,7 +65,7 @@ function cenario() {
     },
   };
   return {
-    env, mensagens, erros, esperas,
+    env, mensagens, erros, esperas, infos,
     get escritas() { return escritas; },
     get estado() { return salvo; },
     slack: resposta => { slack = resposta; },
@@ -250,4 +252,38 @@ test('nenhum arquivo da pasta contém endereço de webhook ou prefixo de token r
     }
   }
   await verificar(new URL('../', import.meta.url));
+});
+
+test('cada sonda registra resultado, região validada e tempo, sem vazar nada', async () => {
+  const c = cenario();
+  const saude = (dados, status, regiao) =>
+    new Response(JSON.stringify(dados), { status, headers: regiao ? { 'x-sb-edge-region': regiao } : {} });
+  await c.rodar(0, saude({ ok: true }, 200, 'sa-east-1'));
+  assert.deepEqual(c.infos, ['Vigia: sonda ok regiao=sa-east-1 ms=0']);
+
+  // Região fora do formato (ou ausente) vira "desconhecida"; falha leva só o motivo curto.
+  c.infos.length = 0;
+  await c.rodar(5, saude({ ok: false, status: 'indisponivel' }, 503, '<b>ap-southeast-1</b>'),
+    new Error('https://segredo.invalid token-sintetico'));
+  assert.deepEqual(c.infos, [
+    'Vigia: sonda falhou regiao=desconhecida ms=0 motivo=HTTP 503 (status: indisponivel)',
+    'Vigia: sonda falhou regiao=desconhecida ms=0 motivo=erro de rede ou sem resposta em 20 s',
+  ]);
+  assert.doesNotMatch(c.infos.join('\n'), /saude\.invalid|segredo|token-sintetico|https?:/);
+  assert.deepEqual(c.erros, []);
+});
+
+test('o tempo da sonda é o do pedido (relógio injetado)', async () => {
+  let agora = 0;
+  const infos = [];
+  const env = { URL_SAUDE: 'https://saude.invalid/sonda', AVISO_TESTE: '',
+    ESTADO_VIGIA: { async get() { return null; }, async put() {} } };
+  await executar(env, {
+    agora: () => (agora += 500),
+    esperar: async () => {},
+    registrarErro: () => {},
+    registrarInfo: info => infos.push(info),
+    buscar: async () => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'x-sb-edge-region': 'sa-east-1' } }),
+  });
+  assert.deepEqual(infos, ['Vigia: sonda ok regiao=sa-east-1 ms=500']);
 });

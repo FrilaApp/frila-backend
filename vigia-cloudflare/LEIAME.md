@@ -18,7 +18,10 @@ roda na região do Supabase mais próxima do colo da Cloudflare que executa o Wo
 23/11/2026 isso gerou um alerta falso. Com `x-region` explícito **não há reroteamento
 automático se `sa-east-1` cair**, e é o desejado: o vigia mede a região dos usuários.
 Ver [invocação regional](https://supabase.com/docs/guides/functions/regional-invocation).
-A região usada aparece no cabeçalho de resposta `x-sb-edge-region`.
+A região usada aparece no cabeçalho de resposta `x-sb-edge-region`. Cada sonda registra uma linha
+no log do Worker (`wrangler-frila tail`): `Vigia: sonda ok regiao=sa-east-1 ms=450`. A região só entra
+se tiver o formato `aa-nome-N` (senão, `desconhecida`); em falha a linha leva também o `motivo` curto
+já validado. URL, token e corpo continuam fora do log.
 
 Slack usa `chat.postMessage`, canal em `SLACK_CANAL`, secret `SLACK_BOT_TOKEN` lido
 somente do ambiente. HTTP diferente de 200 ou JSON sem `ok: true` gera log genérico,

@@ -5,6 +5,8 @@ const TIMEOUT_MS = 20_000;
 // Região do banco do Prod. Sem isto a saude roda na região mais perto do colo da Cloudflare
 // que executa o Worker (ex.: Singapura) e a conexão cross-region estoura o timeout (alerta falso de 23/11/2026).
 const REGIAO_SAUDE = 'sa-east-1';
+// Região que respondeu (cabeçalho x-sb-edge-region): só o formato `aa-nome-N` entra no log.
+const REGIAO_VALIDA = /^[a-z]{2}-[a-z]+-\d{1,2}$/;
 const MAX_CORPO = 65_536;
 
 async function lerCorpo(resposta) {
@@ -35,17 +37,27 @@ async function lerCorpo(resposta) {
   return new TextDecoder().decode(bytes);
 }
 
-async function sondar(url, buscar) {
+async function sondar(url, buscar, agora) {
+  const inicio = agora();
+  const tempo = () => Math.max(0, Math.round(agora() - inicio));
   try {
     const resposta = await buscar(url, {
       method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS),
       headers: { 'User-Agent': 'frila-vigia-saude', 'x-region': REGIAO_SAUDE },
     });
-    return interpretarResposta(resposta.status, await lerCorpo(resposta));
+    const interpretada = interpretarResposta(resposta.status, await lerCorpo(resposta));
+    const regiao = resposta.headers?.get?.('x-sb-edge-region') ?? '';
+    return { ...interpretada, regiao: REGIAO_VALIDA.test(regiao) ? regiao : '', ms: tempo() };
   } catch {
     // A exceção pode conter URL, token ou corpo: nunca a registra.
-    return { ok: false, motivo: 'erro de rede ou sem resposta em 20 s' };
+    return { ok: false, motivo: 'erro de rede ou sem resposta em 20 s', regiao: '', ms: tempo() };
   }
+}
+
+// Uma linha por sonda, só com dados já validados: resultado, região, tempo e (em falha) o motivo curto.
+function linhaDaSonda({ ok, motivo, regiao, ms }) {
+  return `Vigia: sonda ${ok ? 'ok' : 'falhou'} regiao=${regiao || 'desconhecida'} ms=${ms}`
+    + (ok ? '' : ` motivo=${motivo}`);
 }
 
 async function enviarAviso(texto, env, buscar, registrarErro) {
@@ -76,13 +88,16 @@ export async function executar(env, {
   agora = Date.now,
   esperar = ms => new Promise(resolve => setTimeout(resolve, ms)),
   registrarErro = mensagem => console.error(mensagem),
+  registrarInfo = mensagem => console.log(mensagem),
 } = {}) {
   const inicio = agora();
   const anterior = await env.ESTADO_VIGIA.get(CHAVE_ESTADO, 'json');
-  let resultado = await sondar(env.URL_SAUDE, buscar);
+  let resultado = await sondar(env.URL_SAUDE, buscar, agora);
+  registrarInfo(linhaDaSonda(resultado));
   if (!resultado.ok) {
     await esperar(CONFIRMACAO_MS);
-    resultado = await sondar(env.URL_SAUDE, buscar);
+    resultado = await sondar(env.URL_SAUDE, buscar, agora);
+    registrarInfo(linhaDaSonda(resultado));
   }
   const { estado, avisos } = decidir(resultado, anterior, inicio, env.AVISO_TESTE);
   for (const aviso of avisos) {
