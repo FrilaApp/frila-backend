@@ -2,6 +2,9 @@ import { CONFIRMACAO_MS, decidir, interpretarResposta, montarAviso } from './log
 
 const CHAVE_ESTADO = 'estado';
 const TIMEOUT_MS = 20_000;
+// Região do banco do Prod. Sem isto a saude roda na região mais perto do colo da Cloudflare
+// que executa o Worker (ex.: Singapura) e a conexão cross-region estoura o timeout (alerta falso de 23/11/2026).
+const REGIAO_SAUDE = 'sa-east-1';
 const MAX_CORPO = 65_536;
 
 async function lerCorpo(resposta) {
@@ -36,7 +39,7 @@ async function sondar(url, buscar) {
   try {
     const resposta = await buscar(url, {
       method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(TIMEOUT_MS),
-      headers: { 'User-Agent': 'frila-vigia-saude' },
+      headers: { 'User-Agent': 'frila-vigia-saude', 'x-region': REGIAO_SAUDE },
     });
     return interpretarResposta(resposta.status, await lerCorpo(resposta));
   } catch {
