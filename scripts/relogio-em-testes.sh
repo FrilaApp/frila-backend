@@ -19,7 +19,8 @@
 # now() REAL, mesmo com frila.agora congelado. Teste que crava a data de início fica vermelho no dia
 # em que a data fica a menos de 24 h do relógio real (757 e 871 em 24/11/2026 18:00 UTC; a CI de
 # todos os PRs ficou vermelha). A regra é estática e lê o SQL com um léxico mínimo (comentário `--` e
-# `/* */`, string, `$$..$$`/`$tag$..$tag$`): o literal de timestamp/date absoluto >= hoje dentro de um
+# `/* */`, string, `$$..$$`/`$tag$..$tag$`): o literal de timestamp/date absoluto >= hoje ('...', ou $$...$$ e $tag$...$tag$
+# com a data colada nas marcas) dentro de um
 # `insert into public.vaga` ou de uma chamada `publicar_vaga(` que tem 'selecao' NO MESMO STATEMENT
 # (até o `;`; modo de outro statement não conta):
 #   vence = data - 24 h;  FALHA se vence <= hoje + 30 dias;  acima disso só imprime o vencimento.
@@ -28,9 +29,10 @@
 #   (1) `insert into public.vaga (...)` que lista `publicado_em` com valor que NÃO depende do relógio real
 #       (literal fixo isenta; now(), current_timestamp, clock_timestamp, transaction_timestamp, default,
 #       'now' etc. NÃO isentam; privado.agora() só isenta se frila.agora já estava congelado);
-#   (2) `alter table public.vaga alter column publicado_em set default privado.agora()` EXECUTÁVEL (fora de
-#       comentário), ANTES da primeira publicação de vaga e do rollback/finish, com frila.agora congelado antes
-#       da primeira publicação.
+#   (2) `alter table public.vaga alter column publicado_em set default privado.agora()` como STATEMENT de verdade
+#       (fora de comentário, de string e de corpo $$..$$: o texto do alter dentro de um `select '...'` não conta),
+#       ANTES da primeira publicação de vaga e do rollback/finish, com frila.agora congelado antes da primeira
+#       publicação.
 # Data passada nunca falha. "Hoje" vem de `date -u`; injete com RELOGIO_HOJE=AAAA-MM-DD (autoteste).
 #
 # COBERTURA PARCIAL (assumida, B-111c): cobre literal direto em insert/publicar_vaga; NÃO cobre helper nem
@@ -192,6 +194,9 @@ COBERTURA = ("Cobertura parcial: cobre literal direto em insert/publicar_vaga; "
              "não cobre helper nem expressão montada.")
 data_re = re.compile(r"\d{4}-\d{2}-\d{2}[^']*")
 aninhado_re = re.compile(r"''(\d{4}-\d{2}-\d{2}[^']*?)''")
+# Literal de data entre marcas dollar iguais ($$2027-01-15 18:00:00+00$$ ou $ts$...$ts$), achado no texto cru:
+# não depende de como as marcas se emparelham (o controle do Lince põe $$ dentro de outro $$).
+dollar_data_re = re.compile(r"(\$(?:[^\W\d]\w*)?\$)(\d{4}-\d{2}-\d{2}[^$']*?)\1")
 ts_re = re.compile(r'(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(Z|[+-]\d{2}(?::?\d{2})?)?)?$')
 pin_re = re.compile(r'alter\s+table\s+public\.vaga\s+alter\s+column\s+publicado_em\s+set\s+default\s+privado\.agora\s*\(\s*\)', re.I)
 excecao_re = re.compile(r'--\s*relogio:\s*ok\b', re.I)
@@ -224,17 +229,20 @@ def parse_instante(txt):
     return base - off  # UTC ingênuo
 
 def tokenizar(txt):
-    """Léxico mínimo do Postgres. Devolve (code, masked, strings, pontos_e_virgula):
+    """Léxico mínimo do Postgres. Devolve (code, masked, strings, pontos_e_virgula, crua, corpos):
     code   = o texto com comentários (-- e /* */ aninhado) e as marcas $tag$ trocados por espaços (mesmos
              deslocamentos e quebras de linha); o conteúdo de string e o de $$...$$ continuam, porque o
              teste monta SQL dentro deles;
     masked = code com o conteúdo das strings trocado por 'x' (estrutura sem parêntese/vírgula de string);
     strings = [(ini, fim)] do conteúdo de cada string de aspas simples;
-    pontos_e_virgula = deslocamentos dos ';' fora de string e de comentário (fim de statement)."""
+    pontos_e_virgula = deslocamentos dos ';' fora de string e de comentário (fim de statement);
+    crua   = só os comentários trocados por espaços (as marcas $tag$ ficam);
+    corpos = [(ini, fim)] do corpo de cada $tag$...$tag$ de nível de cima (texto que o Postgres NÃO executa
+             como SQL do arquivo: é argumento de função)."""
     n = len(txt)
     code = list(txt)
-    strings, semis, pilha = [], [], []
-    estado, ini_str, prof = None, 0, 0
+    strings, semis, pilha, corpos, marcas = [], [], [], [], []
+    estado, ini_str, prof, ini_corpo = None, 0, 0, 0
     i = 0
     while i < n:
         if pilha and txt.startswith(pilha[-1], i):   # fecha o $tag$ aberto (vale em qualquer estado)
@@ -243,6 +251,9 @@ def tokenizar(txt):
             estado, prof = None, 0
             for k in range(i, i + len(pilha[-1])):
                 code[k] = ' '
+            marcas.append((i, i + len(pilha[-1])))
+            if len(pilha) == 1:
+                corpos.append((ini_corpo, i))
             i += len(pilha.pop())
             continue
         c = txt[i]
@@ -260,9 +271,12 @@ def tokenizar(txt):
             elif c == '$':
                 m = tag_re.match(txt, i)
                 if m:
+                    if not pilha:
+                        ini_corpo = m.end()
                     pilha.append(m.group())
                     for k in range(m.start(), m.end()):
                         code[k] = ' '
+                    marcas.append((m.start(), m.end()))
                     i = m.end()
                     continue
             elif c == ';':
@@ -295,12 +309,17 @@ def tokenizar(txt):
         i += 1
     if estado == 'str':
         strings.append((ini_str, n))
+    if pilha:
+        corpos.append((ini_corpo, n))
+    crua = list(code)
+    for (a, b) in marcas:
+        crua[a:b] = txt[a:b]
     masked = list(code)
     for (a, b) in strings:
         for k in range(a, b):
             if masked[k] != '\n':
                 masked[k] = 'x'
-    return ''.join(code), ''.join(masked), strings, semis
+    return ''.join(code), ''.join(masked), strings, semis, ''.join(crua), corpos
 
 def fecha_parenteses(masked, i):
     """masked[i] == '('. Devolve o deslocamento do ')' que o fecha (ou None)."""
@@ -375,36 +394,44 @@ def publicado_em_fixo(code, masked, ini_stmt, lit, freeze_off):
             continue
         return tuplas > 0
 
-def publicacao_presa(code, masked, freeze_off):
-    """O `alter table public.vaga alter column publicado_em set default privado.agora()` é EXECUTÁVEL (fora de
-    comentário), vem antes da primeira publicação de vaga e antes do rollback/finish, e frila.agora já estava
-    congelado antes da primeira publicação? Alter depois do rollback ou só em comentário NÃO isenta."""
+def publicacao_presa(code, fora, freeze_off):
+    """O `alter table public.vaga alter column publicado_em set default privado.agora()` é um STATEMENT de
+    verdade (`fora` = sem comentário, sem string e sem corpo $tag$...$tag$: texto que só aparece como dado não
+    executa o alter), vem antes da primeira publicação de vaga e antes do rollback/finish, e frila.agora já
+    estava congelado antes da primeira publicação? Alter depois do rollback, em comentário, em string ou em
+    dollar-quote NÃO isenta."""
     pub = vaga_ctx_re.search(code)
     pub_off = pub.start() if pub else len(code)
-    fim = fim_re.search(masked)
+    fim = fim_re.search(fora)
     fim_off = fim.start() if fim else len(code)
     if freeze_off is None or freeze_off >= pub_off:
         return False
-    return any(p.start() < pub_off and p.start() < fim_off for p in pin_re.finditer(code))
+    return any(p.start() < pub_off and p.start() < fim_off for p in pin_re.finditer(fora))
 
 def scan_vencimentos(filepath):
     """Devolve (pinado, [(linha, texto_da_data, vence_data, dias)]) dos inícios absolutos de seleção."""
     with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
         txt = f.read()
-    code, masked, strings, semis = tokenizar(txt)
+    code, masked, strings, semis, crua, corpos = tokenizar(txt)
     fz = freeze_re.search(code)
     freeze_off = fz.start() if fz else None
-    if publicacao_presa(code, masked, freeze_off):
+    fora = list(masked)
+    for (a, b) in corpos:
+        for k in range(a, b):
+            if fora[k] != '\n':
+                fora[k] = 'x'
+    if publicacao_presa(code, ''.join(fora), freeze_off):
         return True, []
     limpas = code.split('\n')
     brutas = txt.split('\n')
-    candidatos = []   # (deslocamento, texto) de literal de data: string inteira ou 'aninhada' em SQL montado
+    candidatos = set()   # (deslocamento, texto) de literal de data: string, 'aninhada' em SQL montado ou $tag$..$tag$
     for (a, b) in strings:
         conteudo = txt[a:b]
         if data_re.fullmatch(conteudo):
-            candidatos.append((a, conteudo))
+            candidatos.add((a, conteudo))
         else:
-            candidatos.extend((a + m.start(1), m.group(1)) for m in aninhado_re.finditer(conteudo))
+            candidatos.update((a + m.start(1), m.group(1)) for m in aninhado_re.finditer(conteudo))
+    candidatos.update((m.start(2), m.group(2)) for m in dollar_data_re.finditer(crua))
     achados = []
     for (off, texto) in sorted(candidatos):
         linha = txt.count('\n', 0, off)
