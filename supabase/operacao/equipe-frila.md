@@ -13,7 +13,8 @@ A caixa oficial (`suporte@frilabr.com`) e a fila de ocorrências do banco de dad
 | Tipo de Demanda | Prazo Máximo de Tratamento | SLA / Fundamento |
 |---|---|---|
 | **Denúncia de conteúdo (vagas)** | **Até 24 horas** | Diretriz 1.2 da App Store |
-| **Denúncia entre partes (assédio, fraude, violência)** | **Até 5 dias úteis** | RN13 / RF26 / UC17 |
+| **Denúncia entre partes com foto (`midia_id`) ou de motivo `risco_seguranca`, `assedio` ou `discriminacao`** | **Até 24 horas** | Regra do Cauê, 24/11/2026 (alerta `moderacao_vencida`) |
+| **Denúncia entre partes de motivo `outro` sem foto** | **Até 5 dias úteis** | RN13 / RF26 / UC17 |
 | **Contestação de suspensão** | **Até 5 dias úteis** | RN13 / UC15 |
 | **Revisão de despacho ("Por que recebo vagas")** | **Até 5 dias úteis** | RF27 / LGPD art. 20 |
 | **Solicitação de dados do titular (LGPD)** | **Até 5 dias úteis** | LGPD art. 18 / RF25 |
