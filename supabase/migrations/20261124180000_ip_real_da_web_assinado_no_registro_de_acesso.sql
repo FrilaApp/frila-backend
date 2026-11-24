@@ -5,7 +5,7 @@
 --   x-frila-ip-carimbo     segundos Unix (UTC), inteiro
 --   x-frila-ip-assinatura  v1;k=<id>;<hex>  (v1 = versão do formato; <id> = chave [a-z0-9]{1,16}; hex = 64 minúsculos)
 -- Mensagem assinada (UTF-8): v1|<ip cru>|<carimbo>|<uid>, com uid = sub do token DAQUELA chamada. A chave é o texto do
--- segredo em UTF-8, guardado no Vault como ip_visitante_hmac_<id> (uma entrada por chave; apagar a entrada retira a chave).
+-- segredo em UTF-8 (hex de 64 caracteres NÃO decodificado, sem quebra de linha: a função aplica btrim ao valor lido), guardado no Vault como ip_visitante_hmac_<id> (uma entrada por chave; apagar a entrada retira a chave).
 -- Sem assinatura válida o IP gravado é o do cf-connecting-ip, como antes: um IP forjado nunca entra.
 -- Esta migração recria requisicao.conferir_limite() inteira (cópia da de 20261108110000_lgpd_registro_acessos_borda,
 -- a vigente) mudando só a obtenção de v_ip. O segredo no Vault é passo manual do roteiro, nunca da migração.
@@ -70,7 +70,7 @@ begin
     return;
   end if;
 
-  select s.decrypted_secret into v_segredo
+  select btrim(s.decrypted_secret, E' \t\r\n') into v_segredo
     from vault.decrypted_secrets s
    where s.name = 'ip_visitante_hmac_' || v_partes[1]
    limit 1;
@@ -161,10 +161,8 @@ begin
       -- web (B-116) tem outro caminho: o IP que o Worker recebeu, assinado por HMAC (privado.ip_do_acesso). Sem cabeçalho
       -- x-frila-ip-*, nada muda: a chamada à função só acontece quando o texto dos cabeçalhos o menciona.
       v_cab := nullif(current_setting('request.headers', true), '');
-      v_ip := v_cab::json ->> 'cf-connecting-ip';
-      if strpos(v_cab, 'x-frila-ip-') > 0 then
-        v_ip := privado.ip_do_acesso(v_cab::json, v_uid);
-      end if;
+      v_ip := case when strpos(v_cab, 'x-frila-ip-') > 0 then privado.ip_do_acesso(v_cab::json, v_uid)
+                   else v_cab::json ->> 'cf-connecting-ip' end;
       if v_ip is not null and pg_input_is_valid(v_ip, 'inet') then
         v_em := privado.agora();
         if not exists (select 1 from privado.registro_acesso_recente r
