@@ -1,0 +1,21 @@
+{
+  "name": "frila-lembrete-segredos",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-23",
+  "account_id": "f3716d2e326f77f3cdcefe987365070b",
+  // Um aviso por dia, 12:00 UTC (09:00 em Brasília). Só o cron faz o trabalho: sem endereço
+  // público *.workers.dev nem prévias.
+  "triggers": { "crons": ["0 12 * * *"] },
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "SLACK_CANAL": "C0CHB051JJJ",
+    // Vazio no dia a dia. Com valor (etiqueta de teste), o próximo cron posta UM aviso marcado
+    // como TESTE, sem depender da data. Depois da prova, esvazie e publique de novo.
+    "AVISO_TESTE": "",
+    // SÓ datas e identificadores públicos: nenhuma chave, nenhum .p8, nenhum JWT. Um item por
+    // segredo e ambiente. Renovou? Troque `vence_em` e publique (wrangler-frila deploy).
+    // Team ID, Key ID e Services ID da Apple aparecem no JWT e na URL do login: não são segredo.
+    "SEGREDOS": "[{\"ambiente\":\"DEV\",\"segredo\":\"Apple client secret (JWT do .p8)\",\"vence_em\":\"2027-05-23\",\"renovar\":\"python3 -I ~/.config/frila/bin/apple-client-secret.py ~/.config/frila/apple-sign-in-AuthKey.p8 8B7F7G3Y2U 8G79ZNBJKR com.frila.org.app.web <saida> 180\",\"onde_colar\":\"Supabase DEV > Auth > Providers > Apple, pelo portal\"}]"
+  }
+}
