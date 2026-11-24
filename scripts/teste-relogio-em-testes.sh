@@ -226,6 +226,135 @@ RELOGIO_HOJE=2026-11-24 caso "insert com publicado_em explícito na lista de col
   "Todos os 1 testes pgTAP estão imunes a bombas-relógio de relógio." \
   "$TMP/selecao_publicado_em_explicito.sql"
 
+# ── 6. Ajustes do parecer do Lince Codex no #612 (B-111c, 24/11/2026) ──────────────────────────────
+PRESO='alter table public.vaga alter column publicado_em set default privado.agora();'
+git show 94f6478:supabase/tests/807_leitura_perfil_e_candidato_f2.sql > "$TMP/807_base.sql"
+FRASE_807='início absoluto 2027-01-15, vence em 25 dias (2027-01-14)'
+
+# (a) O alter só isenta se for EXECUTÁVEL e vier ANTES da primeira publicação.
+{ cat "$TMP/807_base.sql"; echo "$PRESO"; } > "$TMP/807_alter_depois_do_rollback.sql"
+RELOGIO_HOJE=2026-12-20 caso "(a) reprova o 807 com o alter no FIM, depois do rollback" 1 \
+  "$FRASE_807" "$TMP/807_alter_depois_do_rollback.sql"
+awk -v alter="/* $PRESO */" '{print} /^begin;$/ && !d {print alter; d=1}' "$TMP/807_base.sql" > "$TMP/807_alter_em_bloco.sql"
+grep -qF "/* $PRESO */" "$TMP/807_alter_em_bloco.sql" || { echo "  ✗ (a) o caso do alter em /* */ não montou o arquivo"; falhas=$((falhas + 1)); }
+RELOGIO_HOJE=2026-12-20 caso "(a) reprova o 807 com o alter só dentro de /* ... */" 1 \
+  "$FRASE_807" "$TMP/807_alter_em_bloco.sql"
+awk -v alter="-- $PRESO" '{print} /^begin;$/ && !d {print alter; d=1}' "$TMP/807_base.sql" > "$TMP/807_alter_em_linha.sql"
+RELOGIO_HOJE=2026-12-20 caso "(a) reprova o 807 com o alter só em comentário de linha (--)" 1 \
+  "$FRASE_807" "$TMP/807_alter_em_linha.sql"
+
+# Alter depois da primeira publicação, sem frila.agora congelado, ou depois do rollback: não prende nada.
+pub_selecao() {  # imprime um publicar_vaga de seleção com início fixo em 2026-12-05
+  cat << 'SQL'
+select public.publicar_vaga('b6000000-0000-4000-8000-000000000011', 'b6000000-0000-4000-8000-000000000012',
+  '2026-12-05 18:00:00+00'::timestamptz, '2026-12-05 23:00:00+00'::timestamptz,
+  'Local', '{}'::jsonb, 10000, 1, true, false, false, 'Resp', 'selecao', gen_random_uuid());
+SQL
+}
+CONGELA="select set_config('frila.agora', '2026-11-24 12:00:00+00', true);"
+{ echo 'begin;'; echo "$CONGELA"; pub_selecao; echo "$PRESO"; echo 'select * from finish();'; echo 'rollback;'; } > "$TMP/alter_depois_da_publicacao.sql"
+RELOGIO_HOJE=2026-11-24 caso "(a) reprova alter DEPOIS da primeira publicação (antes do rollback)" 1 \
+  "início absoluto 2026-12-05, vence em 10 dias" "$TMP/alter_depois_da_publicacao.sql"
+{ echo 'begin;'; echo "$PRESO"; pub_selecao; echo 'select * from finish();'; echo 'rollback;'; } > "$TMP/alter_sem_congelar.sql"
+RELOGIO_HOJE=2026-11-24 caso "(a) reprova alter sem frila.agora congelado antes da publicação" 1 \
+  "início absoluto 2026-12-05, vence em 10 dias" "$TMP/alter_sem_congelar.sql"
+{ echo 'begin;'; echo "$CONGELA"; echo "$PRESO"; pub_selecao; echo 'select * from finish();'; echo 'rollback;'; } > "$TMP/alter_na_ordem_certa.sql"
+RELOGIO_HOJE=2026-11-24 caso "(a) aprova a ordem certa: begin, congela, alter, publicação, finish, rollback" 0 \
+  "arquivo(s) prendem publicado_em ao relógio de teste" "$TMP/alter_na_ordem_certa.sql"
+
+# (e) publicado_em na lista de colunas só isenta se o VALOR não depender do relógio real.
+insert_com_publicado_em() {  # $1 = valor(es) de publicado_em (um por linha de VALUES), $2 = arquivo
+  {
+    echo 'begin;'
+    echo 'select plan(1);'
+    echo 'insert into public.vaga (id, estabelecimento_id, funcao_id, inicio_em, fim_em, modo, publicado_em)'
+    echo "values $1;"
+    echo 'select finish();'
+    echo 'rollback;'
+  } > "$2"
+}
+linha_vaga() { echo "(gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), '2026-12-05 18:00:00+00', '2026-12-05 23:00:00+00', 'selecao', $1)"; }
+for valor in "now()" "default" "current_timestamp" "clock_timestamp()" "transaction_timestamp()" "now() - interval '2 days'" "'now'::timestamptz" "statement_timestamp()"; do
+  insert_com_publicado_em "$(linha_vaga "$valor")" "$TMP/pub_relogio.sql"
+  RELOGIO_HOJE=2026-11-24 caso "(e) reprova insert com publicado_em = $valor (depende do relógio real)" 1 \
+    "início absoluto 2026-12-05, vence em 10 dias" "$TMP/pub_relogio.sql"
+done
+insert_com_publicado_em "$(linha_vaga "'2026-11-01 12:00:00+00'"), $(linha_vaga "now()")" "$TMP/pub_segunda_tupla.sql"
+RELOGIO_HOJE=2026-11-24 caso "(e) reprova multi-linha se UMA tupla usa now() em publicado_em" 1 \
+  "início absoluto 2026-12-05, vence em 10 dias" "$TMP/pub_segunda_tupla.sql"
+insert_com_publicado_em "$(linha_vaga "'2026-11-01 12:00:00+00'"), $(linha_vaga "'2026-11-02 12:00:00+00'")" "$TMP/pub_literais.sql"
+RELOGIO_HOJE=2026-11-24 caso "(e) aprova multi-linha com publicado_em literal fixo em todas as tuplas" 0 \
+  "Todos os 1 testes pgTAP estão imunes a bombas-relógio de relógio." "$TMP/pub_literais.sql"
+{ echo 'begin;'; echo "$CONGELA"; echo 'insert into public.vaga (id, inicio_em, fim_em, modo, publicado_em)'
+  echo "values (gen_random_uuid(), '2026-12-05 18:00:00+00', '2026-12-05 23:00:00+00', 'selecao', privado.agora());"
+  echo 'rollback;'; } > "$TMP/pub_agora_congelado.sql"
+RELOGIO_HOJE=2026-11-24 caso "(e) aprova publicado_em = privado.agora() com frila.agora congelado antes" 0 \
+  "Todos os 1 testes pgTAP estão imunes a bombas-relógio de relógio." "$TMP/pub_agora_congelado.sql"
+sed '2d' "$TMP/pub_agora_congelado.sql" > "$TMP/pub_agora_solto.sql"
+RELOGIO_HOJE=2026-11-24 caso "(e) reprova publicado_em = privado.agora() SEM congelar frila.agora" 1 \
+  "início absoluto 2026-12-05, vence em 10 dias" "$TMP/pub_agora_solto.sql"
+
+# (d) Modo e início têm de estar no MESMO statement: a seleção de outro statement não contamina.
+RELOGIO_HOJE=2030-02-10 caso "(d) o 876 (modo urgencia na linha 279, seleção de outro statement na 269) sai 0" 0 \
+  "Todos os 1 testes pgTAP estão imunes a bombas-relógio de relógio." \
+  "supabase/tests/876_publicar_escala.sql"
+cat << 'SQL' > "$TMP/selecao_em_outro_statement.sql"
+begin;
+select plan(1);
+select is((select modo from public.vaga where id = 'b6000000-0000-4000-8000-000000000011'), 'selecao', 'a seleção é desta vaga');
+select public.publicar_vaga('b6000000-0000-4000-8000-000000000011', 'b6000000-0000-4000-8000-000000000012',
+  '2026-12-05 18:00:00+00'::timestamptz, '2026-12-05 23:00:00+00'::timestamptz,
+  'Local', '{}'::jsonb, 10000, 1, true, false, false, 'Resp', 'urgencia', gen_random_uuid());
+select finish();
+rollback;
+SQL
+RELOGIO_HOJE=2026-11-24 caso "(d) modo urgencia no statement do início, 'selecao' no statement de cima: aprova" 0 \
+  "Todos os 1 testes pgTAP estão imunes a bombas-relógio de relógio." "$TMP/selecao_em_outro_statement.sql"
+
+# (b/c) Literal dentro de $$ ... $$ ou $tag$ ... $tag$ também entra na análise.
+dollar() {  # $1 = tag ($$ ou $t$), $2 = arquivo
+  {
+    echo 'begin;'
+    echo "$CONGELA"
+    echo "select lives_ok($1"
+    pub_selecao | sed 's/^select //;1s/^/select /'
+    echo "$1, 'publica a seleção');"
+    echo 'rollback;'
+  } > "$2"
+}
+dollar '$$' "$TMP/dollar_simples.sql"
+RELOGIO_HOJE=2026-11-24 caso "(b/c) reprova início fixo dentro de \$\$ ... \$\$ (controle com aspas simples também sai 1)" 1 \
+  "início absoluto 2026-12-05, vence em 10 dias" "$TMP/dollar_simples.sql"
+# shellcheck disable=SC2016  # $teste$ é a marca do Postgres, não uma variável
+dollar '$teste$' "$TMP/dollar_tag.sql"
+RELOGIO_HOJE=2026-11-24 caso "(b/c) reprova início fixo dentro de \$tag\$ ... \$tag\$" 1 \
+  "início absoluto 2026-12-05, vence em 10 dias" "$TMP/dollar_tag.sql"
+{ echo 'begin;'; echo 'select plan(1);'; echo "select lives_ok(format(\$\$ $(pub_selecao | tr '\n' ' ' | sed 's/%/%%/g') \$\$), 'monta com format');"; echo 'rollback;'; } > "$TMP/dollar_format.sql"
+RELOGIO_HOJE=2026-11-24 caso "(b/c) reprova início fixo dentro de format(\$\$ ... \$\$, ...)" 1 \
+  "início absoluto 2026-12-05, vence em 10 dias" "$TMP/dollar_format.sql"
+# O 'select' do comentário e do $$ não pode desligar o léxico: comentário com aspas/$$ no meio não quebra a leitura.
+{ echo 'begin;'; echo "-- não é string: it's \$\$ e /* sem fechar"; echo "/* outro ' comentário \$\$ */"; pub_selecao; echo 'rollback;'; } > "$TMP/comentario_com_aspas.sql"
+RELOGIO_HOJE=2026-11-24 caso "comentário com aspa, \$\$ e /* não confunde o léxico: a publicação depois dele ainda reprova" 1 \
+  "início absoluto 2026-12-05, vence em 10 dias" "$TMP/comentario_com_aspas.sql"
+
+# (b/c) LIMITE CONHECIDO, fixado de propósito: helper e expressão montada ficam fora. O 530 ANTIGO
+# (94f6478) passa a data na linha 143 a um helper (linhas 96-103), e a seleção vence em 03/05/2027:
+# o gate NÃO pega, nem a 12 dias do vencimento. Este caso documenta o limite em vez de fingir cobertura;
+# se um dia o gate passar a pegar, este caso falha e o limite some do topo do script junto.
+git show 94f6478:supabase/tests/530_modo_selecao_recusas.sql > "$TMP/530_antigo.sql"
+RELOGIO_HOJE=2027-04-20 caso "LIMITE CONHECIDO: o 530 antigo (data passada a helper) NÃO é pego, e o gate diz que a cobertura é parcial" 0 \
+  "Cobertura parcial: cobre literal direto em insert/publicar_vaga; não cobre helper nem expressão montada." \
+  "$TMP/530_antigo.sql"
+RELOGIO_HOJE=2027-05-02 caso "LIMITE CONHECIDO: o 530 antigo também passa na véspera do vencimento (02/05/2027)" 0 \
+  "Todos os 1 testes pgTAP estão imunes a bombas-relógio de relógio." "$TMP/530_antigo.sql"
+if "$PORTAO" --help | grep -qF "Cobertura parcial: cobre literal direto em insert/publicar_vaga; não cobre helper nem expressão montada."; then
+  echo "  ✓ --help declara a cobertura parcial"
+else
+  echo "  ✗ --help não declara a cobertura parcial"
+  falhas=$((falhas + 1))
+fi
+casos=$((casos + 1))
+
 RELOGIO_HOJE=ontem caso "RELOGIO_HOJE inválido sai 2, não mediu" 2 \
   "RELOGIO_HOJE inválido ('ontem')" \
   "$TMP/selecao_data_fixa.sql"
