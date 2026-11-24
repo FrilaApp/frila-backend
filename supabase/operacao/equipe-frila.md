@@ -31,7 +31,7 @@ Os operadores devem executar o script `consultar-ocorrencias.sql` via console ou
 psql -f supabase/operacao/consultar-ocorrencias.sql
 ```
 
-A consulta classifica por prioridade, destacando chamados com prazo crítico de 24h (Diretriz 1.2) antes dos demais prazos regulamentares de 5 dias úteis (suporte e LGPD).
+A consulta classifica por prioridade, destacando chamados com prazo crítico de 24h (Diretriz 1.2 e denúncia com foto ou de motivo `risco_seguranca`, `assedio` ou `discriminacao`) antes dos demais prazos regulamentares de 5 dias úteis (suporte, LGPD e denúncia de motivo `outro` sem foto). O `prioridade_sla` de denúncia usa a mesma regra do alerta `moderacao_vencida` e de `privado.moderacao_pendente` (`privado.denuncia_prazo_ate`).
 
 Campos retornados na consulta:
 - `ocorrencia_id`: identificador UUID único da ocorrência no banco.
