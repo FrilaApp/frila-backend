@@ -5,7 +5,7 @@
 --
 -- O que este arquivo prova:
 --   1. solicitar_upload_midia devolve a URL da enviar-midia com token opaco de 64 hex; o banco
---      guarda só o SHA-256, nunca o token, e o prazo de 2 h.
+--      guarda só o SHA-256, nunca o token, e o prazo de 15 min.
 --   2. privado.consumir_token_upload entrega o caminho uma vez só; depois, NULL.
 --   3. Não entrega com token errado, token de outra mídia, vencido, mídia fora de `enviando`,
 --      conta suspensa, quem pediu fora da casa ou recurso desligado; formato inválido é NULL.
@@ -15,7 +15,7 @@
 -- A disputa de duas conexões pelo mesmo token está em scripts/corrida-token-upload.sh.
 
 begin;
-select plan(25);
+select plan(29);
 
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 set local "frila.agora" = '2026-11-20 12:00:00+00';
@@ -59,7 +59,7 @@ select is((select count(*)::int from privado.midia m
             where position(pg_temp.token((select r->>'upload_url' from s1)) in row_to_json(m)::text) > 0),
   0, 'o token em si não aparece em nenhuma coluna');
 select is((select upload_expira_em from privado.midia where id = (select (r->>'midia_id')::uuid from s1)),
-  '2026-11-20 14:00:00+00'::timestamptz, 'o token vale 2 h');
+  '2026-11-20 12:15:00+00'::timestamptz, 'o token vale 15 min');
 select ok(pg_temp.token((select r->>'upload_url' from s1)) <> pg_temp.token((select r->>'upload_url' from s2)),
   'cada pedido ganha um token novo');
 
@@ -79,9 +79,26 @@ select is(privado.consumir_token_upload((select (r->>'midia_id')::uuid from s1),
   null, 'token de outra mídia: NULL');
 select is(privado.consumir_token_upload((select (r->>'midia_id')::uuid from s2), 'nao-e-hex'), null, 'formato inválido: NULL, sem erro');
 
-set local "frila.agora" = '2026-11-20 14:00:01+00';
+set local "frila.agora" = '2026-11-20 12:15:01+00';
 select is(privado.consumir_token_upload((select (r->>'midia_id')::uuid from s2), pg_temp.token((select r->>'upload_url' from s2))),
-  null, 'vencido (2 h e 1 s): NULL');
+  null, 'vencido (15 min e 1 s): NULL');
+set local "frila.agora" = '2026-11-20 12:00:00+00';
+
+-- O prazo é de 15 min (B-102): ainda vale aos 14 min e 59 s, uma vez só; aos 15 min e 1 s, não.
+select pg_temp.sessao('81600000-0000-4000-8000-000000000001');
+create temp table s5 as select public.solicitar_upload_midia('foto_perfil', 'image/jpeg', 1024) r;
+create temp table s6 as select public.solicitar_upload_midia('foto_perfil', 'image/jpeg', 1024) r;
+select pg_temp.sessao(null);
+set local "frila.agora" = '2026-11-20 12:14:59+00';
+select is(privado.consumir_token_upload((select (r->>'midia_id')::uuid from s5), pg_temp.token((select r->>'upload_url' from s5))),
+  'perfil/' || (select r->>'midia_id' from s5) || '.jpg', 'aos 14 min e 59 s o token ainda vale e entrega o caminho');
+select is(privado.consumir_token_upload((select (r->>'midia_id')::uuid from s5), pg_temp.token((select r->>'upload_url' from s5))),
+  null, 'dentro do prazo, o token consome uma vez só');
+set local "frila.agora" = '2026-11-20 12:15:01+00';
+select is(privado.consumir_token_upload((select (r->>'midia_id')::uuid from s6), pg_temp.token((select r->>'upload_url' from s6))),
+  null, 'aos 15 min e 1 s o token não consome: NULL');
+select ok((select upload_usado_em is null from privado.midia where id = (select (r->>'midia_id')::uuid from s6)),
+  'o token vencido não fica registrado como usado');
 set local "frila.agora" = '2026-11-20 12:00:00+00';
 
 update privado.midia set estado = 'removida' where id = (select (r->>'midia_id')::uuid from s2);
