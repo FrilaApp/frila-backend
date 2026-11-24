@@ -31,9 +31,9 @@ O `package.json` só declara ESM; não há instalação de pacotes.
 Use sempre o wrapper `orquestracao/scripts/wrangler-frila` da raiz do Frila,
 executando os comandos abaixo em `vigia-cloudflare/`. Não usar login global.
 
-1. Confirmar Workers Free na conta Frila. Criar o namespace com
-   `wrangler-frila kv namespace create ESTADO_VIGIA` e substituir o ID marcador
-   em `wrangler.jsonc` pelo ID retornado. O marcador não é namespace existente.
+1. Confirmar Workers Free na conta Frila. O namespace `ESTADO_VIGIA` foi criado em
+   23/11/2026 e o ID real já está em `wrangler.jsonc` (ID de KV não é segredo). Só
+   para recriar do zero: `wrangler-frila kv namespace create ESTADO_VIGIA` e trocar o ID.
 2. Cadastrar `SLACK_BOT_TOKEN` com `wrangler-frila secret put SLACK_BOT_TOKEN`,
    usando entrada segura, sem imprimir/gravar o valor em arquivos. O bot deve
    estar no canal configurado, com permissão `chat:write`.

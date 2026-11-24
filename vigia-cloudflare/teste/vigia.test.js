@@ -39,7 +39,7 @@ function cenario() {
     esperar: async ms => { esperas.push(ms); },
     registrarErro: erro => erros.push(erro),
     buscar: async (url, opcoes) => {
-      assert.equal(opcoes.redirect, 'error');
+      assert.equal(opcoes.redirect, 'manual');
       assert.ok(opcoes.signal instanceof AbortSignal);
       if (url === env.URL_SAUDE) {
         assert.equal(opcoes.method, 'GET');
