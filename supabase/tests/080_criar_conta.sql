@@ -171,12 +171,12 @@ select throws_ok(
 
 -- ── O que a resposta não pode trazer ───────────────────────────────────────────
 --
--- O schema `Usuario` do contrato tem oito campos (`termos_versao` veio na 0.2.90). Devolver a linha inteira
--- vazaria o instante do aceite, a data de criação e o carimbo de anonimização para a tela.
+-- O schema `Usuario` do contrato tem nove campos (`termos_versao` veio na 0.2.90, `precisa_definir_senha` na 0.2.112).
+-- Devolver a linha inteira vazaria o instante do aceite, a data de criação e o carimbo de anonimização para a tela.
 select is(
   (select count(*)::int from jsonb_object_keys(
      pg_temp.como('f0000000-0000-4000-8000-000000000002','select public.minha_conta()')) k
-    where k not in ('id','perfil','nome','telefone','email','nascimento','estado','termos_versao')),
+    where k not in ('id','perfil','nome','telefone','email','nascimento','estado','termos_versao','precisa_definir_senha')),
   0,
   'a resposta traz exatamente os campos do schema Usuario do contrato');
 
