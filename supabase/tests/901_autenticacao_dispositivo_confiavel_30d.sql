@@ -4,7 +4,7 @@
 -- preservação de sessões legadas pré-corte, expiração pelo relógio do banco,
 -- isolamento entre contas, replay/concorrência de desafios e revogação no reset/logout global.
 begin;
-select plan(30);
+select plan(37);
 
 -- ── 1. Privilégios: tabelas e funções privadas inacessíveis a anon/authenticated ─
 select ok(
@@ -355,6 +355,62 @@ select is(
   ),
   true,
   'sessão pré-corte continua isenta no guard online verificar_sessao_dispositivo_online()'
+);
+
+-- ── 16. Cobertura de mutação das 7 restrições CHECK/UNIQUE em privado ──────────
+select throws_ok(
+  $$ insert into privado.config_auth (unica) values (false) $$,
+  '23514',
+  null,
+  'config_auth_unica_check impede linha com unica = false'
+);
+
+select throws_ok(
+  $$ insert into privado.contas_senha_pendente (usuario_id, motivo)
+     values ('a1111111-1111-4111-8111-111111111111', 'motivo_invalido') $$,
+  '23514',
+  null,
+  'contas_senha_pendente_motivo_check recusa motivo fora de cadastro|recuperacao'
+);
+
+select throws_ok(
+  $$ insert into privado.desafios_dispositivo (usuario_id, email_normalizado, email_hash, plataforma, expira_em)
+     values ('a1111111-1111-4111-8111-111111111111', 'a@t.test', 'h', 'desktop', now() + interval '10 min') $$,
+  '23514',
+  null,
+  'desafios_dispositivo_plataforma_check recusa plataforma fora de ios|android|web'
+);
+
+select throws_ok(
+  $$ insert into privado.desafios_dispositivo (usuario_id, email_normalizado, email_hash, plataforma, reenvios, expira_em)
+     values ('a1111111-1111-4111-8111-111111111111', 'a@t.test', 'h', 'web', 4, now() + interval '10 min') $$,
+  '23514',
+  null,
+  'desafios_dispositivo_reenvios_check recusa reenvios acima de 3'
+);
+
+select throws_ok(
+  $$ insert into privado.desafios_dispositivo (usuario_id, email_normalizado, email_hash, plataforma, tentativas, expira_em)
+     values ('a1111111-1111-4111-8111-111111111111', 'a@t.test', 'h', 'web', 6, now() + interval '10 min') $$,
+  '23514',
+  null,
+  'desafios_dispositivo_tentativas_check recusa tentativas acima de 5'
+);
+
+select throws_ok(
+  $$ insert into privado.dispositivos_confiaveis (usuario_id, token_hash, plataforma, expira_em)
+     values ('a1111111-1111-4111-8111-111111111111', 'hash-plat-invalida', 'desktop', now() + interval '30 days') $$,
+  '23514',
+  null,
+  'dispositivos_confiaveis_plataforma_check recusa plataforma fora de ios|android|web'
+);
+
+select throws_ok(
+  $$ insert into privado.dispositivos_confiaveis (usuario_id, token_hash, plataforma, expira_em)
+     values ('a1111111-1111-4111-8111-111111111111', 'hash-disp-b-2', 'ios', now() + interval '30 days') $$,
+  '23505',
+  null,
+  'dispositivos_confiaveis_token_hash_key impede reutilização do mesmo token_hash'
 );
 
 select * from finish();
