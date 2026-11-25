@@ -192,13 +192,22 @@ jobs:
       - name: Os matadores da mutação fecham nos casos conhecidos
         run: ./scripts/teste-mutacao-matadores.sh
 
+      # A divisão da rodada completa em fatias só é segura se não perde nem repete alvo e se
+      # o veredito de cada fatia continua o de hoje. Autoteste antes de julgar o PR.
+      - name: As fatias da mutação cobrem cada alvo uma vez
+        run: ./scripts/teste-mutacao-fatias.sh
+
+      # Aqui só o modo rápido (mapa de matadores), o de todo PR e de todo push na develop.
+      # A rodada COMPLETA (schedule, dispatch e push na main) saiu deste job: ela roda a
+      # suíte inteira por alvo, ~5 min cada em 263 alvos (~21 h em série). Dentro deste passo
+      # ela estourava as 6 h do job (24/11/2026: 68 alvos em 5h26, cancelada) e, pior, o corte
+      # deixava "skipped" todos os passos de baixo — lint, now() direto, janela da
+      # demonstração e os três portões de contrato — em todo push na main. Ela vive agora no
+      # job `mutacao-completa`, em fatias. Nos eventos completos este passo não roda: o
+      # veredito é o das fatias, que é mais forte.
       - name: Os testes cobrem as regras
-        run: |
-          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ] || ([ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]); then
-            ./scripts/mutacao.sh --completo
-          else
-            ./scripts/mutacao.sh
-          fi
+        if: ${{ github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' && !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+        run: ./scripts/mutacao.sh
 
       # O lint tem um achado conhecido e falso positivo. Fixado por nome: achado novo
       # reprova, e o conhecido que sumir também avisa.
@@ -247,6 +256,88 @@ jobs:
       - name: Diagnóstico ao falhar
         if: failure()
         run: supabase status && docker ps -a
+
+  # A mutação COMPLETA, em fatias (B-117). Derruba cada restrição, trigger e política e roda
+  # a suíte inteira contra cada queda, exigindo vermelho: 263 alvos × ~5 min. Em série são
+  # ~21 h, e o job tem 6, então nenhuma rodada completa terminou jamais (schedule de 22/11,
+  # main de 23/11 e de 24/11). Cada fatia é um job com banco próprio e mede 1/N dos alvos
+  # (`mutacao.sh --fatia K/N`, revezamento), com ~17 alvos ≈ 85 min + subida e folga até os
+  # 150 min do `timeout-minutes`. O veredito de cada fatia é o de sempre: mutante vivo, alvo
+  # não medido ou lista `estruturais` velha reprova. `fail-fast: false` deixa todas as
+  # fatias dizerem o seu, em vez de a primeira vermelha cancelar as outras.
+  #
+  # MUTACAO_FATIAS e a lista da matrix andam juntas: `teste-mutacao-fatias.sh` reprova a CI
+  # se divergirem (uma fatia a menos na lista deixaria 1/N dos alvos sem medir, em silêncio).
+  mutacao-completa:
+    name: Mutação completa, fatia ${{ matrix.fatia }}
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        fatia: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    env:
+      MUTACAO_FATIAS: 16
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: supabase/setup-cli@1dedf2c611547ede7232d26866dd3c56ab903bbb # v1.7.3
+        with:
+          version: 2.121.0
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Autenticar no ghcr.io, para o pull não cair na cota anônima
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Subir o ambiente
+        run: supabase start --exclude studio,realtime,storage-api,imgproxy,logflare,vector
+
+      # Mesmo segredo efêmero do job `banco`: o trigger de despacho o exige.
+      - name: Configurar segredo efêmero do agendador
+        run: |
+          AGENDADOR_SECRET="$(openssl rand -hex 32)"
+          echo "::add-mask::$AGENDADOR_SECRET"
+          printf "\\set agendador_secret '%s'\nalter database postgres set frila.agendador_secret = :'agendador_secret';\nalter role authenticator set frila.agendador_secret = :'agendador_secret';\nselect pg_terminate_backend(pid) from pg_stat_activity where usename = 'authenticator' and pid <> pg_backend_pid();\n" \
+            "$AGENDADOR_SECRET" |
+            docker exec -e PGPASSWORD=postgres -i supabase_db_frila-backend \
+              psql -U supabase_admin -d postgres -v ON_ERROR_STOP=1
+          printf 'AGENDADOR_SECRET=%s\n' "$AGENDADOR_SECRET" >> "$GITHUB_ENV"
+
+      - name: Aplicar as migrações do zero
+        run: supabase db reset
+
+      - name: Os testes cobrem as regras, fatia ${{ matrix.fatia }}
+        env:
+          FATIA: ${{ matrix.fatia }}
+        run: ./scripts/mutacao.sh --completo --fatia "$FATIA/$MUTACAO_FATIAS"
+
+      - name: Diagnóstico ao falhar
+        if: failure()
+        run: |
+          supabase status || true
+          sudo ss -tanp | grep ':543' || true
+          docker ps -a || true
+
+  # Um nome só para o veredito das fatias: verde se todas passaram, vermelho se alguma não
+  # passou, foi cancelada ou nem rodou. `needs` com `if: always()` dá esse resumo, e os
+  # eventos que não rodam a mutação completa (PR, develop) o pulam.
+  mutacao-completa-veredito:
+    name: Mutação completa, veredito
+    needs: mutacao-completa
+    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Todas as fatias passaram
+        env:
+          RESULTADO: ${{ needs.mutacao-completa.result }}
+        run: |
+          echo "Resultado das fatias: $RESULTADO"
+          [ "$RESULTADO" = "success" ]
 
   # Job próprio, e não um passo do job do banco, por dois motivos.
   #
