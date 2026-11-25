@@ -6,7 +6,7 @@
 -- 2.  fila_despacho_antiga
 -- 3.  fila_email_antiga
 -- 4.  job_cron_falhou
--- 5.  notificacao_push_falhou
+-- 5.  notificacao_push_falhou (e o que não conta: sem_dispositivo e versao_nao_suportada, B-119)
 -- 6.  fcm_configuracao_suspeita
 -- 7.  despacho_esperando_alem_do_teto
 -- 8.  falha_execucao_edge_function
@@ -17,7 +17,7 @@
 -- 13. demonstracao_sob_ataque
 
 begin;
-select plan(13);
+select plan(20);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -128,8 +128,79 @@ select is(
   1,
   'Bloco 5 presente: notificacao_push_falhou emite alerta para push com falha na última hora'
 );
+
+-- B-119: 'sem_dispositivo' e 'versao_nao_suportada' = não havia aparelho capaz de receber, não é falha de entrega.
+-- Só eles: nenhum alerta. Cada um ao lado de uma falha real (FAILED_PRECONDITION): 1 alerta, com contagem 1 (só a real).
+-- Motivo nulo (e motivo novo) continua contando.
 delete from public.notificacao where usuario_id = '74600000-0000-4000-8000-000000000001';
 delete from privado.alerta_emitido;
+delete from pgmq.q_email;
+insert into public.notificacao (usuario_id, tipo, referencia_id, estado_entrega, motivo_falha, enviada_em)
+values ('74600000-0000-4000-8000-000000000001', 'confirmacao', gen_random_uuid(), 'falhou', 'sem_dispositivo', privado.agora() - interval '30 minutes'),
+       ('74600000-0000-4000-8000-000000000001', 'confirmacao', gen_random_uuid(), 'falhou', 'versao_nao_suportada', privado.agora() - interval '30 minutes');
+select privado.verificar_saude();
+select is(
+  (select count(*)::int from privado.alerta_emitido where codigo = 'notificacao_push_falhou'),
+  0,
+  'Bloco 5: só sem_dispositivo e versao_nao_suportada não emitem notificacao_push_falhou'
+);
+select is(
+  (select count(*)::int from pgmq.q_email where message->>'codigo' = 'notificacao_push_falhou'),
+  0,
+  'Bloco 5: só sem_dispositivo e versao_nao_suportada não enfileiram e-mail de alerta'
+);
+
+delete from public.notificacao where usuario_id = '74600000-0000-4000-8000-000000000001';
+delete from privado.alerta_emitido;
+delete from pgmq.q_email;
+insert into public.notificacao (usuario_id, tipo, referencia_id, estado_entrega, motivo_falha, enviada_em)
+values ('74600000-0000-4000-8000-000000000001', 'confirmacao', gen_random_uuid(), 'falhou', 'sem_dispositivo', privado.agora() - interval '30 minutes'),
+       ('74600000-0000-4000-8000-000000000001', 'confirmacao', gen_random_uuid(), 'falhou', 'FAILED_PRECONDITION', privado.agora() - interval '30 minutes');
+select privado.verificar_saude();
+select is(
+  (select (message->>'valor')::numeric from pgmq.q_email where message->>'codigo' = 'notificacao_push_falhou'),
+  1::numeric,
+  'Bloco 5: sem_dispositivo + FAILED_PRECONDITION emite 1 alerta com contagem 1'
+);
+select is(
+  (select count(*)::int from pgmq.q_email where message->>'codigo' = 'notificacao_push_falhou'),
+  1,
+  'Bloco 5: sem_dispositivo + FAILED_PRECONDITION enfileira um único e-mail de alerta'
+);
+
+delete from public.notificacao where usuario_id = '74600000-0000-4000-8000-000000000001';
+delete from privado.alerta_emitido;
+delete from pgmq.q_email;
+insert into public.notificacao (usuario_id, tipo, referencia_id, estado_entrega, motivo_falha, enviada_em)
+values ('74600000-0000-4000-8000-000000000001', 'confirmacao', gen_random_uuid(), 'falhou', 'versao_nao_suportada', privado.agora() - interval '30 minutes'),
+       ('74600000-0000-4000-8000-000000000001', 'confirmacao', gen_random_uuid(), 'falhou', 'FAILED_PRECONDITION', privado.agora() - interval '30 minutes');
+select privado.verificar_saude();
+select is(
+  (select (message->>'valor')::numeric from pgmq.q_email where message->>'codigo' = 'notificacao_push_falhou'),
+  1::numeric,
+  'Bloco 5: versao_nao_suportada + FAILED_PRECONDITION emite 1 alerta com contagem 1'
+);
+select is(
+  (select count(*)::int from pgmq.q_email where message->>'codigo' = 'notificacao_push_falhou'),
+  1,
+  'Bloco 5: versao_nao_suportada + FAILED_PRECONDITION enfileira um único e-mail de alerta'
+);
+
+delete from public.notificacao where usuario_id = '74600000-0000-4000-8000-000000000001';
+delete from privado.alerta_emitido;
+delete from pgmq.q_email;
+insert into public.notificacao (usuario_id, tipo, referencia_id, estado_entrega, motivo_falha, enviada_em)
+values ('74600000-0000-4000-8000-000000000001', 'confirmacao', gen_random_uuid(), 'falhou', null, privado.agora() - interval '30 minutes');
+select privado.verificar_saude();
+select is(
+  (select count(*)::int from privado.alerta_emitido where codigo = 'notificacao_push_falhou'),
+  1,
+  'Bloco 5: falhou com motivo_falha nulo continua emitindo notificacao_push_falhou'
+);
+
+delete from public.notificacao where usuario_id = '74600000-0000-4000-8000-000000000001';
+delete from privado.alerta_emitido;
+delete from pgmq.q_email;
 
 -- ── 6. Bloco 6: fcm_configuracao_suspeita ──────────────────────────────────────
 delete from public.entrada_demonstracao;
