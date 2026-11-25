@@ -342,6 +342,7 @@ VIGIADAS = {
     ("convidarMembro", "403"): "sem_permissao",
     ("convidarMembro", "422"): "campo_invalido",
     ("aceitarConviteMembro", "401"): "nao_autenticado",
+    ("aceitarConviteMembro", "403"): "convite_de_outro_email",
     ("aceitarConviteMembro", "422"): "convite_invalido",
     ("removerMembro", "401"): "nao_autenticado",
     ("removerMembro", "403"): "sem_permissao",
