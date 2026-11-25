@@ -233,7 +233,7 @@ Saída `0`: mediu, com amostras completas e volume conferido. Saída `2`: não m
 
 ### Resultado (MEDIDO, 25/11/2026, banco local, Postgres 17.6, papel `supabase_admin`)
 
-Contexto de cada execução: commit `bbc569a` (as execuções 2 e 3) ou o mesmo código antes do último ajuste do script (execução 1); banco recém-criado por `supabase db reset` nas execuções 2 e 3; 246 migrações aplicadas; 18 usuários antes e depois; resíduo 0. A execução 1 é a fixture `scripts/fixtures/medir-painel-volume-real.txt`.
+Contexto de cada execução: o código do script já com o autoteste (commit "autoteste de medir-painel-volume.sh com saída real como fixture", execuções 2 e 3) ou o mesmo código antes do último ajuste do script (execução 1); banco recém-criado por `supabase db reset` nas execuções 2 e 3; 246 migrações aplicadas; 18 usuários antes e depois; resíduo 0. A execução 1 é a fixture `scripts/fixtures/medir-painel-volume-real.txt`.
 
 | Execução | Janela | Vagas / posições / candidaturas na janela (por casa) | Amostras | p50 (ms) | p95 (ms) | máx (ms) |
 |---|---|---|---|---|---|---|

@@ -1,4 +1,4 @@
-# Saída real de scripts/medir-painel-volume.sh (arquivo amostras.txt), 2026-11-25, commit daec16b + ffd2d89,
+# Saída real de scripts/medir-painel-volume.sh (arquivo amostras.txt), 2026-11-25, commit daec16b da develop + o script medir-painel-volume.sh da primeira versão,
 # Postgres 17.6 local, 5 casas x 200 vagas x 10 posições x 6 candidaturas, janelas de 7 e 31 dias, 20 amostras
 # por casa e janela. Dados sintéticos do gerador. Serve de fixture para scripts/teste-medir-painel-volume.sh.
 PARAMETROS casas=5 vagas=200 posicoes=10 candidatos=6 janelas=7,31 amostras=20 aquecimento=3 dias_historico=67
