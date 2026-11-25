@@ -31,7 +31,6 @@ import {
 } from "./provedor.ts";
 import {
   alertaParaEquipe,
-  rotuloDoAmbiente,
   DadosDaOcorrencia,
   Destino,
   modeloDe,
@@ -265,7 +264,7 @@ async function processarAlerta(
   const valor = typeof pedido.mensagem.valor === "number"
     ? pedido.mensagem.valor
     : undefined;
-  const modelo = alertaParaEquipe(codigo, valor, rotuloDoAmbiente());
+  const modelo = alertaParaEquipe(codigo, valor);
   if (!validarDestinatario(equipe) || !validarTextoCabecalhoSmtp(modelo.assunto)) {
     await registrarRastroDaFalha(sql, "destinatario_invalido");
     await sql.concluir(pedido.msg_id);

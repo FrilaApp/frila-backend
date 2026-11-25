@@ -211,38 +211,16 @@ export function revisaoDespachoParaAutor(d: DadosDaOcorrencia): Mensagem {
 // houver, um número. Nada de texto livre — um alerta que aceitasse texto viraria o
 // caminho mais curto para dado pessoal chegar ao provedor sem ninguém notar.
 
-// O alerta de um ambiente que não é o Prod leva o nome do ambiente no assunto e no corpo
-// (B-113, 24/11/2026): o DEV e o Prod mandam do mesmo remetente e, sem o rótulo, o alerta
-// do DEV parece o do Prod (o `moderacao_vencida` do DEV foi lido como incidente do Prod).
-// O rótulo vem do secret `AMBIENTE_FRILA`. Ausente, vazio ou `PROD`: sem rótulo, e o texto
-// é exatamente o de antes. Valor fora de `[A-Za-z0-9_-]{1,20}` (quebra de linha, espaço)
-// NÃO vira cabeçalho: cai num rótulo visível de erro, nunca no texto de Prod.
-export const ROTULO_DE_AMBIENTE_INVALIDO = "AMBIENTE-INVALIDO";
-
-export function rotuloDoAmbiente(injetado?: string): string | null {
-  const bruto = injetado ?? Deno.env.get("AMBIENTE_FRILA") ?? "";
-  const valor = bruto.trim();
-  if (valor === "") return null;
-  if (!/^[A-Za-z0-9_-]{1,20}$/.test(valor)) return ROTULO_DE_AMBIENTE_INVALIDO;
-  const rotulo = valor.toUpperCase();
-  return rotulo === "PROD" ? null : rotulo;
-}
-
-export function alertaParaEquipe(
-  codigo: string,
-  valor?: number,
-  ambiente: string | null = null,
-): Mensagem {
+export function alertaParaEquipe(codigo: string, valor?: number): Mensagem {
   const linhaValor = typeof valor === "number" && Number.isFinite(valor)
     ? `Valor: ${valor}`
     : null;
 
   return {
-    assunto: ambiente ? `[Frila ${ambiente}] Alerta: ${codigo}` : `[Frila] Alerta: ${codigo}`,
+    assunto: `[Frila] Alerta: ${codigo}`,
     texto: [
       "O monitoramento do backend disparou um alerta.",
       "",
-      ...(ambiente ? [`Ambiente: ${ambiente}`] : []),
       `Código: ${codigo}`,
       ...(linhaValor ? [linhaValor] : []),
       "",
