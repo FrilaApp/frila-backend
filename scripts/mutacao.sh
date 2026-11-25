@@ -40,6 +40,15 @@
 #       ./scripts/mutacao.sh --regravar-mapa      grava scripts/mutacao-matadores.tsv
 #       ./scripts/mutacao.sh --forcar             roda mesmo se o decisor mandar pular
 #       ./scripts/mutacao.sh checkin_no_raio      só o alvo cujo nome casa com o filtro
+#       ./scripts/mutacao.sh --completo --fatia 3/16   só a fatia 3 de 16 (a CI roda as 16)
+#
+# FATIA. A rodada completa roda a suíte inteira por alvo (~5 min cada na CI, 263 alvos): em
+# série leva ~21 h e nunca coube nas 6 h do job (24/11/2026: 68 alvos em 5h26, cancelado).
+# `--fatia K/N` mede só os alvos de posição K, K+N, K+2N… da lista (revezamento, para que
+# nenhuma fatia pegue só a categoria lenta). Cada fatia é um job da CI, com banco próprio.
+# O que o portão afirma não muda: alvo vivo, não medido ou mapa envelhecido reprova a
+# fatia onde está, e a lista `estruturais` é conferida contra a lista INTEIRA de alvos em
+# toda fatia. `--fatia` não regrava o mapa: uma fatia só enxerga 1/N dele.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
@@ -50,9 +59,21 @@ modo_completo=0
 regravar_mapa=0
 forcar_mutacao=0
 filtro=""
+fatia_k=0
+fatia_n=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
+    --fatia)
+      if [ $# -lt 2 ] || ! [[ "$2" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] ||
+         [ "${BASH_REMATCH[1]}" -gt "${BASH_REMATCH[2]}" ]; then
+        echo "--fatia pede K/N com 1 <= K <= N (por exemplo 3/16); veio '${2:-}'." >&2
+        exit 1
+      fi
+      fatia_k="${BASH_REMATCH[1]}"
+      fatia_n="${BASH_REMATCH[2]}"
+      shift 2
+      ;;
     --completo)
       modo_completo=1
       shift
@@ -81,6 +102,12 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
+
+if [ "$fatia_n" -gt 0 ] && [ "$regravar_mapa" -eq 1 ]; then
+  echo "--fatia não combina com --regravar-mapa: a fatia enxerga 1/$fatia_n dos alvos e" >&2
+  echo "regravaria o mapa só com eles, apagando o resto." >&2
+  exit 1
+fi
 
 # ── Mudança 1: pular a mutação se o PR não tocar no que ela mede ──────────────
 if [ "$modo_completo" -eq 0 ] && [ "$forcar_mutacao" -eq 0 ] && [ "$regravar_mapa" -eq 0 ] && [ -z "$filtro" ]; then
@@ -394,6 +421,17 @@ if [ -n "$filtro" ]; then
   echo
   echo "Filtro '$filtro': só os alvos cujo nome o contém são mutados."
 fi
+alvos_a_mutar=()
+if [ "$fatia_n" -gt 0 ]; then
+  i=0
+  for alvo in ${alvos[@]+"${alvos[@]}"}; do
+    [ $((i % fatia_n)) -eq $((fatia_k - 1)) ] && alvos_a_mutar+=("$alvo")
+    i=$((i + 1))
+  done
+  echo "Fatia $fatia_k/$fatia_n: ${#alvos_a_mutar[@]} de ${#alvos[@]} alvos são mutados nesta rodada."
+else
+  for alvo in ${alvos[@]+"${alvos[@]}"}; do alvos_a_mutar+=("$alvo"); done
+fi
 if [ "$modo_completo" -eq 1 ]; then
   echo "Modo completo ativo: executando suíte inteira por alvo."
 else
@@ -489,7 +527,7 @@ trap devolver EXIT
 trap 'devolver; exit 130' INT
 trap 'devolver; exit 143' TERM
 
-for alvo in ${alvos[@]+"${alvos[@]}"}; do
+for alvo in ${alvos_a_mutar[@]+"${alvos_a_mutar[@]}"}; do
   IFS='|' read -r tipo nome derrubar restaurar <<< "$alvo"
 
   [ -n "$filtro" ] && [[ "$nome" != *"$filtro"* ]] && continue
@@ -606,7 +644,8 @@ done
 echo
 echo "comportamento: $mortos · estrutura: ${#estrutura[@]}" \
      "· sem cobertura: ${#sobreviventes[@]} · não medidas: ${#pulados[@]}" \
-     "· de ${#alvos[@]} alvos"
+     "· de ${#alvos_a_mutar[@]} alvos" \
+     "$([ "$fatia_n" -gt 0 ] && echo "(fatia $fatia_k/$fatia_n de ${#alvos[@]})")"
 
 if [ "$regravar_mapa" -eq 1 ] && [ "${#novos_matadores[@]}" -gt 0 ]; then
   echo
