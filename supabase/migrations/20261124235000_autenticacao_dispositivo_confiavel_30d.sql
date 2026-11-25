@@ -672,10 +672,13 @@ end $$;
 
 revoke execute on function privado.sessao_autorizada_para_produto() from public, anon, authenticated;
 
+-- Sem `stable`: chama `public.erro`, que é volátil por levantar exceção (o lint plpgsql_check
+-- acusa divergência se marcada STABLE). Como só executa leituras, continua acessível tanto por
+-- `GET /rpc/estado_autenticacao` (transação read-only no PostgREST) quanto por `POST {}`,
+-- seguindo o mesmo padrão de `public.minha_conta()` e `public.vaga_publica()`.
 create or replace function public.estado_autenticacao()
 returns jsonb
 language plpgsql
-stable
 security definer set search_path = ''
 as $$
 declare
