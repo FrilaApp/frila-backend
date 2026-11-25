@@ -38,11 +38,12 @@ end $$;
 
 -- ── 1. Fixtures ───────────────────────────────────────────────────────────────
 
-insert into auth.users (id, email) values
-  ('84300000-0000-4000-8000-000000000001', 'admin1@843.test'),
-  ('84300000-0000-4000-8000-000000000002', 'contratante2@843.test'),
-  ('84300000-0000-4000-8000-000000000003', 'prof@843.test'),
-  ('84300000-0000-4000-8000-000000000004', 'alheio@843.test');
+-- B-123: o aceite confere o e-mail do convidado, então as contas que aceitam têm e-mail confirmado.
+insert into auth.users (id, email, email_confirmed_at) values
+  ('84300000-0000-4000-8000-000000000001', 'admin1@843.test', now()),
+  ('84300000-0000-4000-8000-000000000002', 'contratante2@843.test', now()),
+  ('84300000-0000-4000-8000-000000000003', 'prof@843.test', now()),
+  ('84300000-0000-4000-8000-000000000004', 'alheio@843.test', now());
 
 insert into public.usuario (id, perfil, nome, email, telefone, nascimento, termos_versao, termos_aceite_em, estado) values
   ('84300000-0000-4000-8000-000000000001', 'contratante', 'Admin Um', 'admin1@843.test', '+5561955508431', '1985-01-01', '1.0', now(), 'ativa'),
@@ -88,7 +89,7 @@ select is(has_function_privilege('authenticated', 'public.transferir_administrac
 
 create temp table conv1 as
   select pg_temp.como('84300000-0000-4000-8000-000000000001',
-    $$ select public.convidar_membro('84300000-0000-4000-8000-0000000000e1'::uuid, 'novo@843.test', 'operador') $$
+    $$ select public.convidar_membro('84300000-0000-4000-8000-0000000000e1'::uuid, 'contratante2@843.test', 'operador') $$
   ) as r;
 
 select is(
@@ -101,7 +102,7 @@ select is(
   (select count(*) from privado.convite_membro
     where id = ((select r from conv1)->>'convite_id')::uuid
       and estabelecimento_id = '84300000-0000-4000-8000-0000000000e1'
-      and email = 'novo@843.test'
+      and email = 'contratante2@843.test'
       and papel = 'operador'
       and usado_em is null),
   1::bigint,
