@@ -16,6 +16,12 @@
 #   6. `--fatia` com `--regravar-mapa` sai 1 (regravaria o mapa com 1/N dele).
 #   7. A matrix da CI lista exatamente as fatias 1..N de MUTACAO_FATIAS=N, o passo da
 #      mutação usa as duas, e o job tem `timeout-minutes` e `fail-fast: false`.
+#   8. O passo do veredito (job mutacao-completa-veredito) executa de verdade: sai 0 só
+#      com o resultado `success` das fatias e diferente de zero com `failure`,
+#      `cancelled`, `skipped` e vazio. O passo é extraído do ci.yml e executado; a
+#      checagem se prova numa cópia da CI em que a comparação virou `true`, que ela tem
+#      de reprovar. O job também precisa de `needs: mutacao-completa` e `always()`, senão
+#      uma fatia vermelha o faria ser pulado.
 #
 #   ./scripts/teste-mutacao-fatias.sh
 set -uo pipefail
@@ -105,6 +111,7 @@ medidos() { printf '%s\n' "$1" | sed -n 's/^  restrição  *\([a-z_]*\) .*/\1/p'
 
 echo "▸ Fatias da mutação: partição sem furo, veredito por fatia"
 
+# shellcheck disable=SC2086 # a lista é separada por espaço de propósito
 esperado=$(printf '%s\n' $TODOS | sort)
 
 # 1 e 2. Partição exata e tamanhos equilibrados, para vários N.
@@ -125,6 +132,7 @@ for n in 1 3 4 12; do
   if [ "$saidas_ok" -eq 1 ] && [ "$obtido" = "$esperado" ]; then
     registrar "N=$n: as fatias juntas medem cada alvo exatamente uma vez" 1
   else
+    # shellcheck disable=SC2086,SC2116 # o echo sem aspas junta as linhas numa só para a mensagem
     registrar "N=$n: as fatias juntas medem cada alvo exatamente uma vez" 0 \
       "saídas ok=$saidas_ok; esperado: $(echo $esperado); obtido: $(echo $obtido)"
   fi
@@ -212,6 +220,7 @@ if [ -n "$n_decl" ] && [ "$(printf '%s\n' "$n_decl" | grep -c .)" -eq 1 ] && [ "
 else
   registrar "a matrix da CI é exatamente 1..N de MUTACAO_FATIAS" 0 "MUTACAO_FATIAS='$n_decl' matrix='$lista'"
 fi
+# shellcheck disable=SC2016 # o texto literal `$FATIA` é o que a CI contém
 if grep -qF -- '--completo --fatia "$FATIA/$MUTACAO_FATIAS"' "$CI"; then
   registrar "o passo da CI chama mutacao.sh --completo --fatia K/N com as duas variáveis" 1
 else
@@ -222,6 +231,65 @@ if printf '%s\n' "$bloco" | grep -q 'timeout-minutes: *[0-9]' && printf '%s\n' "
   registrar "o job das fatias tem timeout-minutes e fail-fast: false" 1
 else
   registrar "o job das fatias tem timeout-minutes e fail-fast: false" 0
+fi
+
+# 8. O veredito das fatias. Ler o texto do passo não basta: trocar a comparação por `true`
+#    deixaria o veredito verde com fatia vermelha. Extrai o `run:` do passo "Todas as fatias
+#    passaram" e executa com cada resultado possível de `needs.mutacao-completa.result`.
+extrair_passo_veredito() {
+  awk '
+    /^  [A-Za-z0-9_-]+:/ { job = ($1 == "mutacao-completa-veredito:") }
+    job && /^      - name: / { passo = ($0 ~ /Todas as fatias passaram/) }
+    job && passo && emrun {
+      match($0, /^ */)
+      if ($0 ~ /^ *$/ || RLENGTH > indent) { print substr($0, indent + 3); next }
+      emrun = 0
+    }
+    job && passo && /^ +run: *\|/ { match($0, /^ */); indent = RLENGTH; emrun = 1 }
+  ' "$1"
+}
+
+# Devolve 0 se o passo no arquivo $1 se comporta como o veredito exige.
+veredito_correto() {
+  local ci="$1" passo_sh="$TMP/passo-veredito.sh" resultado codigo_passo
+  extrair_passo_veredito "$ci" > "$passo_sh"
+  [ -s "$passo_sh" ] || return 1
+  # Sem `shell:` o GitHub roda o passo como `bash -e {0}`.
+  RESULTADO=success bash -e "$passo_sh" > /dev/null 2>&1 || return 1
+  for resultado in failure cancelled skipped ""; do
+    RESULTADO="$resultado" bash -e "$passo_sh" > /dev/null 2>&1
+    codigo_passo=$?
+    [ "$codigo_passo" -ne 0 ] || return 1
+  done
+  return 0
+}
+
+if veredito_correto "$CI"; then
+  registrar "o passo do veredito sai 0 com success e não-zero com failure, cancelled, skipped e vazio" 1
+else
+  registrar "o passo do veredito sai 0 com success e não-zero com failure, cancelled, skipped e vazio" 0
+fi
+
+# Prova da checagem: a mesma CI com a comparação trocada por `true` (a mutação que um
+# verde parcial exigiria) tem de ser reprovada, e a extração tem de achar o passo.
+# shellcheck disable=SC2016 # `$RESULTADO` literal: é texto do YAML, não expansão
+sed 's/^\( *\)\[ "\$RESULTADO" = "success" \]$/\1true/' "$CI" > "$TMP/ci-mutada.yml"
+if ! cmp -s "$CI" "$TMP/ci-mutada.yml" && [ -n "$(extrair_passo_veredito "$TMP/ci-mutada.yml")" ] \
+  && ! veredito_correto "$TMP/ci-mutada.yml"; then
+  registrar "o passo do veredito com a comparação trocada por true é reprovado" 1
+else
+  registrar "o passo do veredito com a comparação trocada por true é reprovado" 0
+fi
+
+veredito=$(sed -n '/^  mutacao-completa-veredito:/,/^  workflows-sem-interpolacao:/p' "$CI")
+# shellcheck disable=SC2016 # `${{ }}` é expressão do GitHub, não do shell
+env_resultado='RESULTADO: ${{ needs.mutacao-completa.result }}'
+if printf '%s\n' "$veredito" | grep -q '^    needs: mutacao-completa *$' \
+  && printf '%s\n' "$veredito" | grep -q '^    if: .*always()' \
+  && printf '%s\n' "$veredito" | grep -qF "$env_resultado"; then
+  registrar "o veredito depende de mutacao-completa, roda com always() e lê needs.mutacao-completa.result" 1
+else
+  registrar "o veredito depende de mutacao-completa, roda com always() e lê needs.mutacao-completa.result" 0
 fi
 
 echo
