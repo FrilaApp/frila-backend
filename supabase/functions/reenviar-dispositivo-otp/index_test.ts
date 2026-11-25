@@ -2,11 +2,11 @@ import { assertEquals } from "jsr:@std/assert@1.0.19";
 import { tratarReenviarDispositivoOtp } from "./index.ts";
 
 Deno.test("reenviar-dispositivo-otp: mantém desafio_id, dispara OTP create_user=false usando e-mail server-side", async () => {
-  let payloadOtp: Record<string, unknown> | null = null;
+  const payloadsOtp: Record<string, unknown>[] = [];
   const fetchFn: typeof fetch = async (input, init) => {
     const url = String(input);
     if (url.includes("/auth/v1/otp")) {
-      payloadOtp = JSON.parse(String(init?.body ?? "{}"));
+      payloadsOtp.push(JSON.parse(String(init?.body ?? "{}")));
       return Response.json({});
     }
     throw new Error(`URL inesperada: ${url}`);
@@ -41,8 +41,8 @@ Deno.test("reenviar-dispositivo-otp: mantém desafio_id, dispara OTP create_user
   assertEquals(body.ok, true);
   assertEquals(body.desafio_id, id);
   assertEquals(body.reenviar_em_segundos, 60);
-  assertEquals(payloadOtp?.email, "ana@frila.test");
-  assertEquals(payloadOtp?.create_user, false);
+  assertEquals(payloadsOtp[0]?.email, "ana@frila.test");
+  assertEquals(payloadsOtp[0]?.create_user, false);
 });
 
 Deno.test("reenviar-dispositivo-otp: cooldown/teto devolve 429, expirado 410, já usado 409", async () => {
