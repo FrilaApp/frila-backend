@@ -1,6 +1,25 @@
 import { assertEquals, assertExists } from "jsr:@std/assert@1.0.19";
-import { hashTokenDispositivo } from "../_compartilhado/dispositivo_auth.ts";
+import { hashSha256Hex, hashTokenDispositivo } from "../_compartilhado/dispositivo_auth.ts";
 import { type AutenticarSenhaDb, tratarAutenticarSenha } from "./index.ts";
+
+const SEGREDO_B116_TESTE = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const CARIMBO_B116_TESTE = 1764030000;
+
+async function cabecalhosWebB116(ipVisitante = "203.0.113.42"): Promise<Record<string, string>> {
+  const hmac = await hashTokenDispositivo(`v1|${ipVisitante}|${CARIMBO_B116_TESTE}|anon`, SEGREDO_B116_TESTE);
+  return {
+    "Content-Type": "application/json",
+    "cf-connecting-ip": "198.51.100.1",
+    "x-frila-ip-visitante": ipVisitante,
+    "x-frila-ip-carimbo": String(CARIMBO_B116_TESTE),
+    "x-frila-ip-assinatura": `v1;k=a1;${hmac}`,
+  };
+}
+
+const OPCOES_IP_TESTE = {
+  chavesBrutas: `a1:${SEGREDO_B116_TESTE}`,
+  agoraSegundos: CARIMBO_B116_TESTE + 10,
+};
 
 function fakeJwt(sessionId: string): string {
   const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" })).replace(/=/g, "");
@@ -49,7 +68,7 @@ Deno.test("autenticar-senha: dispositivo válido renova JWT via refresh_token e 
   let hashRecebido = "";
   const req = new Request("https://local/functions/v1/autenticar-senha", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await cabecalhosWebB116(),
     body: JSON.stringify({
       email: "Ana@Frila.test",
       senha: "SenhaForte123!",
@@ -63,6 +82,7 @@ Deno.test("autenticar-senha: dispositivo válido renova JWT via refresh_token e 
     supabaseUrl: "https://proj.supabase.co",
     anonKey: "anon-test",
     pepper: "pepper-teste-32-bytes",
+    opcoesIp: OPCOES_IP_TESTE,
     db: dbStub({
       validarEMarcarDispositivo: (_uid, _sid, hash) => {
         hashRecebido = hash;
@@ -169,43 +189,40 @@ Deno.test("autenticar-senha: rate limit devolve 429 limite_excedido antes de cha
   };
   const req = new Request("https://local/functions/v1/autenticar-senha", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await cabecalhosWebB116(),
     body: JSON.stringify({ email: "ana@frila.test", senha: "abc", plataforma: "web" }),
   });
   const res = await tratarAutenticarSenha(req, {
     fetchFn,
     supabaseUrl: "https://proj.supabase.co",
     anonKey: "anon-test",
+    opcoesIp: OPCOES_IP_TESTE,
     db: dbStub({ consumirRateLimit: () => Promise.resolve(false) }),
   });
   assertEquals(res.status, 429);
   assertEquals(chamouGoTrue, false);
 });
 
-Deno.test("autenticar-senha: Web com cabeçalho B-116 assinado usa IP do visitante; sem assinatura NÃO agrupa por egress nem confia em x-forwarded-for", async () => {
-  const segredo = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-  const carimbo = 1764030000;
+Deno.test("autenticar-senha: Web com B-116 válido usa IP do visitante; sem assinatura ou adulterada falha fechado (403/503) sem bypass de rate limit", async () => {
   const ipVisitante = "203.0.113.42";
-  const hmac = await hashTokenDispositivo(`v1|${ipVisitante}|${carimbo}|anon`, segredo);
+  const ipVisitanteHash = await hashSha256Hex(ipVisitante);
 
+  // 1. Web com B-116 válido: cria balde auth:senha:ip:<hash do visitante> (não egress nem x-forwarded-for).
   const chavesAssinado: string[] = [];
   const reqAssinado = new Request("https://local/functions/v1/autenticar-senha", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
-      "cf-connecting-ip": "198.51.100.1",
-      "x-frila-ip-visitante": ipVisitante,
-      "x-frila-ip-carimbo": String(carimbo),
-      "x-frila-ip-assinatura": `v1;k=a1;${hmac}`,
+      ...(await cabecalhosWebB116(ipVisitante)),
+      "x-forwarded-for": "192.0.2.99",
     },
     body: JSON.stringify({ email: "ana@frila.test", senha: "err", plataforma: "web" }),
   });
 
-  await tratarAutenticarSenha(reqAssinado, {
+  const resAssinado = await tratarAutenticarSenha(reqAssinado, {
     fetchFn: () => Promise.resolve(Response.json({}, { status: 400 })),
     supabaseUrl: "https://proj.supabase.co",
     anonKey: "anon-test",
-    opcoesIp: { chavesBrutas: `a1:${segredo}`, agoraSegundos: carimbo + 10 },
+    opcoesIp: OPCOES_IP_TESTE,
     db: dbStub({
       consumirRateLimit: (chave) => {
         chavesAssinado.push(chave);
@@ -213,11 +230,12 @@ Deno.test("autenticar-senha: Web com cabeçalho B-116 assinado usa IP do visitan
       },
     }),
   });
-  assertEquals(chavesAssinado.some((c) => c.startsWith("auth:senha:ip:")), true);
+  assertEquals(resAssinado.status, 401);
+  assertEquals(chavesAssinado.includes(`auth:senha:ip:${ipVisitanteHash}`), true);
 
-  // Web sem assinatura B-116 válida (com cf-connecting-ip de egress + x-forwarded-for forjado):
-  // NÃO pode criar balde auth:senha:ip:* (usa apenas email_hash, evitando 429 global por PoP).
-  const chavesSemAssinatura: string[] = [];
+  // 2. Web sem cabeçalhos B-116 (tentativa de bypass direto com cf-connecting-ip + x-forwarded-for):
+  // falha fechado com 403 assinatura_ip_invalida antes de chamar GoTrue ou pular rate limit por IP.
+  let chamouGoTrueSemAssinatura = false;
   const reqSemAssinatura = new Request("https://local/functions/v1/autenticar-senha", {
     method: "POST",
     headers: {
@@ -228,20 +246,78 @@ Deno.test("autenticar-senha: Web com cabeçalho B-116 assinado usa IP do visitan
     body: JSON.stringify({ email: "ana@frila.test", senha: "err", plataforma: "web" }),
   });
 
-  await tratarAutenticarSenha(reqSemAssinatura, {
+  const resSemAssinatura = await tratarAutenticarSenha(reqSemAssinatura.clone(), {
+    fetchFn: () => {
+      chamouGoTrueSemAssinatura = true;
+      return Promise.resolve(Response.json({}, { status: 400 }));
+    },
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    opcoesIp: OPCOES_IP_TESTE,
+    db: dbStub(),
+  });
+  assertEquals(resSemAssinatura.status, 403);
+  assertEquals((await resSemAssinatura.json()).code, "assinatura_ip_invalida");
+  assertEquals(chamouGoTrueSemAssinatura, false);
+
+  // 3. Web sem chaves B-116 configuradas na Edge Function: fail-closed 503 indisponivel.
+  const resSemChaves = await tratarAutenticarSenha(reqSemAssinatura, {
     fetchFn: () => Promise.resolve(Response.json({}, { status: 400 })),
     supabaseUrl: "https://proj.supabase.co",
     anonKey: "anon-test",
-    opcoesIp: { chavesBrutas: `a1:${segredo}`, agoraSegundos: carimbo + 10 },
+    opcoesIp: { chavesBrutas: "" },
+    db: dbStub(),
+  });
+  assertEquals(resSemChaves.status, 503);
+  assertEquals((await resSemChaves.json()).code, "indisponivel");
+
+  // 4. Mobile com cabeçalho B-116 forjado: fail-closed 403 (não permite pular rate limit por IP).
+  const reqMobileForjado = new Request("https://local/functions/v1/autenticar-senha", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "cf-connecting-ip": "198.51.100.50",
+      "x-frila-ip-visitante": "203.0.113.9",
+      "x-frila-ip-carimbo": String(CARIMBO_B116_TESTE),
+      "x-frila-ip-assinatura": "v1;k=a1;" + "0".repeat(64),
+    },
+    body: JSON.stringify({ email: "ana@frila.test", senha: "err", plataforma: "ios" }),
+  });
+  const resMobileForjado = await tratarAutenticarSenha(reqMobileForjado, {
+    fetchFn: () => Promise.resolve(Response.json({}, { status: 400 })),
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    opcoesIp: OPCOES_IP_TESTE,
+    db: dbStub(),
+  });
+  assertEquals(resMobileForjado.status, 403);
+  assertEquals((await resMobileForjado.json()).code, "assinatura_ip_invalida");
+
+  // 5. Mobile direto sem B-116: usa cf-connecting-ip e ignora x-forwarded-for.
+  const chavesMobile: string[] = [];
+  const cfMobileHash = await hashSha256Hex("198.51.100.77");
+  const reqMobile = new Request("https://local/functions/v1/autenticar-senha", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "cf-connecting-ip": "198.51.100.77",
+      "x-forwarded-for": "192.0.2.99",
+    },
+    body: JSON.stringify({ email: "ana@frila.test", senha: "err", plataforma: "ios" }),
+  });
+  await tratarAutenticarSenha(reqMobile, {
+    fetchFn: () => Promise.resolve(Response.json({}, { status: 400 })),
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    opcoesIp: OPCOES_IP_TESTE,
     db: dbStub({
       consumirRateLimit: (chave) => {
-        chavesSemAssinatura.push(chave);
+        chavesMobile.push(chave);
         return Promise.resolve(true);
       },
     }),
   });
-  assertEquals(chavesSemAssinatura.some((c) => c.startsWith("auth:senha:ip:")), false);
-  assertEquals(chavesSemAssinatura.some((c) => c.startsWith("auth:senha:email:")), true);
+  assertEquals(chavesMobile.includes(`auth:senha:ip:${cfMobileHash}`), true);
 });
 
 Deno.test("autenticar-senha: fail-closed devolve 503 se device_token presente sem DISPOSITIVO_TOKEN_PEPPER", async () => {

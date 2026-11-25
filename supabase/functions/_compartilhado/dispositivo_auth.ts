@@ -179,34 +179,53 @@ export async function verificarIpVisitanteAssinado(
   return igualEmTempoConstante(esperada, match[2]) ? ip : null;
 }
 
+export type ResultadoIpRateLimit =
+  | { ok: true; ip: string | null }
+  | { ok: false; status: 403 | 503; code: "assinatura_ip_invalida" | "indisponivel" };
+
 /**
  * Resolve o IP seguro para balde de rate limit, sem nunca confiar em `x-forwarded-for` bruto
  * e sem nunca agrupar tráfego Web pelo IP de egress compartilhado do Cloudflare Worker:
- * - Se houver cabeçalho B-116 assinado e válido -> usa o IP real do visitante.
- * - Se for chamada Web (`plataforma === "web"`) sem assinatura B-116 válida -> retorna `null`
- *   (fallback exclusivo para rate limit por `email_hash`/`desafio_id` + borda, evitando 429 global por PoP).
- * - Se for chamada direta mobile (`ios`/`android`) sem cabeçalho B-116 -> usa apenas `cf-connecting-ip`
- *   (se ausente, retorna `null` em vez de agrupar em uma chave fixa global).
+ * - Chamada Web (`plataforma === "web"`): fail-closed — exige chaves B-116 configuradas (503 se ausentes)
+ *   e cabeçalhos B-116 assinados e válidos (403 se ausentes, adulterados ou fora da janela ±60s).
+ *   Nunca degrada pulando o rate limit por IP nem cai em `cf-connecting-ip` de egress compartilhado.
+ * - Qualquer chamada (inclusive mobile ou `plataforma === null`) que traga cabeçalhos B-116:
+ *   fail-closed (503 sem chaves, 403 se assinatura inválida/expirada), impedindo bypass por cabeçalho forjado.
+ * - Chamada com `plataforma === null` (ex.: `reenviar-dispositivo-otp`) sem cabeçalhos B-116:
+ *   se vier com `Origin` (navegador direto sem Worker assinado), fail-closed 403;
+ *   caso contrário (chamada direta mobile), usa apenas `cf-connecting-ip`.
+ * - Chamada direta mobile (`ios`/`android`) sem cabeçalho B-116: usa apenas `cf-connecting-ip`.
  */
 export async function resolverIpParaRateLimit(
   req: Request,
   plataforma: PlataformaAuth | null,
   opcoes: OpcoesIpVisitante = {},
-): Promise<string | null> {
+): Promise<ResultadoIpRateLimit> {
   const temCabecalhosB116 = req.headers.has("x-frila-ip-visitante") ||
     req.headers.has("x-frila-ip-carimbo") ||
     req.headers.has("x-frila-ip-assinatura");
 
-  if (temCabecalhosB116) {
-    return await verificarIpVisitanteAssinado(req, opcoes);
+  if (plataforma === "web" || temCabecalhosB116) {
+    const chaves = lerChavesIpVisitante(opcoes.chavesBrutas ?? Deno.env.get("IP_VISITANTE_HMAC_CHAVES"));
+    if (chaves.size === 0) {
+      return { ok: false, status: 503, code: "indisponivel" };
+    }
+    if (!temCabecalhosB116) {
+      return { ok: false, status: 403, code: "assinatura_ip_invalida" };
+    }
+    const ipAssinado = await verificarIpVisitanteAssinado(req, opcoes);
+    if (!ipAssinado) {
+      return { ok: false, status: 403, code: "assinatura_ip_invalida" };
+    }
+    return { ok: true, ip: ipAssinado };
   }
 
-  if (plataforma === "web") {
-    return null;
+  if (plataforma === null && req.headers.has("origin")) {
+    return { ok: false, status: 403, code: "assinatura_ip_invalida" };
   }
 
   const cf = req.headers.get("cf-connecting-ip")?.trim();
-  return cf && cf.length > 0 ? cf : null;
+  return { ok: true, ip: cf && cf.length > 0 ? cf : null };
 }
 
 export function validarSessaoGoTrue(dados: unknown): SessaoGoTrue | null {

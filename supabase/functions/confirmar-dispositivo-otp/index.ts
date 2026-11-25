@@ -160,6 +160,9 @@ export async function tratarConfirmarDispositivoOtp(
   const db: ConfirmarDispositivoDb = deps.db ?? sqlDb!;
 
   try {
+    const resultadoIp = await resolverIpParaRateLimit(req, plataforma, deps.opcoesIp);
+    if (!resultadoIp.ok) return recusa(resultadoIp.status, resultadoIp.code);
+
     // Sempre aplica rate limit por email_hash em cadastro/recuperação (independente de IP).
     if (emailInformado) {
       const emailHash = await hashSha256Hex(emailInformado);
@@ -167,9 +170,8 @@ export async function tratarConfirmarDispositivoOtp(
       if (!okEmail) return recusa(429, "limite_excedido");
     }
 
-    const ipSeguro = await resolverIpParaRateLimit(req, plataforma, deps.opcoesIp);
-    if (ipSeguro) {
-      const ipHash = await hashSha256Hex(ipSeguro);
+    if (resultadoIp.ip) {
+      const ipHash = await hashSha256Hex(resultadoIp.ip);
       const okIp = await db.consumirRateLimit(`auth:verify:ip:${ipHash}`, 25, 600);
       if (!okIp) return recusa(429, "limite_excedido");
     }

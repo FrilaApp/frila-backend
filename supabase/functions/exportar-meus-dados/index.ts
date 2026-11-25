@@ -26,8 +26,9 @@
 // mesmo caso. A lacuna está registrada no PR: é o contrato que precisa declarar o 404.
 
 import postgres from "npm:postgres@3.4.4";
-import { validarFormatoBearer } from "../_compartilhado/auth.ts";
+import { extrairBearerToken, validarFormatoBearer } from "../_compartilhado/auth.ts";
 import { comCors } from "../_compartilhado/cors.ts";
+import { extrairSessionIdDoJwt } from "../_compartilhado/dispositivo_auth.ts";
 
 export interface Erro {
   code: string;
@@ -36,6 +37,7 @@ export interface Erro {
 }
 
 export interface SqlClient {
+  verificarSessaoOnline: (userId: string, sessionId: string | null) => Promise<boolean>;
   meusDados: (userId: string) => Promise<Record<string, unknown> | null>;
 }
 
@@ -76,6 +78,17 @@ export function criarSqlClient(deps?: HandlerDeps): SqlClient {
   if (deps?.sqlClient) return deps.sqlClient;
   const dbUrl = obterVariavel("SUPABASE_DB_URL", deps?.dbUrl);
   return {
+    async verificarSessaoOnline(userId: string, sessionId: string | null) {
+      const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
+      try {
+        const res = await sql`
+          select privado.verificar_sessao_dispositivo_online(${userId}::uuid, ${sessionId}::uuid) as permitido
+        `;
+        return Boolean(res[0]?.permitido);
+      } finally {
+        await sql.end({ timeout: 2 });
+      }
+    },
     async meusDados(userId: string) {
       const sql = postgres(dbUrl, { max: 1, connect_timeout: 5 });
       try {
@@ -127,6 +140,20 @@ async function tratar(req: Request, deps?: HandlerDeps): Promise<Response> {
   }
 
   const sqlClient = criarSqlClient(deps);
+  const accessToken = extrairBearerToken(autorizacao);
+  const sessionId = accessToken ? extrairSessionIdDoJwt(accessToken) : null;
+
+  let sessaoOk: boolean;
+  try {
+    sessaoOk = await sqlClient.verificarSessaoOnline(usuario.id, sessionId);
+  } catch {
+    // Sem o erro no log: a mensagem do Postgres pode trazer conteúdo de linha (RN15).
+    console.error("exportar-meus-dados: falha ao verificar sessao");
+    return erro(500, "erro_interno");
+  }
+  if (!sessaoOk) {
+    return erro(401, "dispositivo_nao_verificado");
+  }
 
   let dados: Record<string, unknown> | null;
   try {
