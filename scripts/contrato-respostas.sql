@@ -145,6 +145,10 @@ select pg_temp.guarda('minhaConta', pg_temp.como('cc000000-0000-4000-8000-000000
   $$ select public.minha_conta() $$));
 select pg_temp.guarda('situacaoDaConta', pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.situacao_da_conta() $$));
+select pg_temp.guarda('estadoAutenticacao', pg_temp.como('cc000000-0000-4000-8000-000000000002',
+  $$ select public.estado_autenticacao() $$));
+select pg_temp.guarda('promete:estadoAutenticacao:401',
+  pg_temp.observado(null, $$ select public.estado_autenticacao() $$));
 
 select pg_temp.guarda('registrarDispositivo', pg_temp.como('cc000000-0000-4000-8000-000000000002',
   $$ select public.registrar_dispositivo('fcm_token_teste_harness_contrato_1234567890', 'ios') $$));
