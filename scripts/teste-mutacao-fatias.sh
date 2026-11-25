@@ -105,6 +105,7 @@ medidos() { printf '%s\n' "$1" | sed -n 's/^  restrição  *\([a-z_]*\) .*/\1/p'
 
 echo "▸ Fatias da mutação: partição sem furo, veredito por fatia"
 
+# shellcheck disable=SC2086 # a lista é separada por espaço de propósito
 esperado=$(printf '%s\n' $TODOS | sort)
 
 # 1 e 2. Partição exata e tamanhos equilibrados, para vários N.
@@ -125,6 +126,7 @@ for n in 1 3 4 12; do
   if [ "$saidas_ok" -eq 1 ] && [ "$obtido" = "$esperado" ]; then
     registrar "N=$n: as fatias juntas medem cada alvo exatamente uma vez" 1
   else
+    # shellcheck disable=SC2086,SC2116 # o echo sem aspas junta as linhas numa só para a mensagem
     registrar "N=$n: as fatias juntas medem cada alvo exatamente uma vez" 0 \
       "saídas ok=$saidas_ok; esperado: $(echo $esperado); obtido: $(echo $obtido)"
   fi
@@ -212,6 +214,7 @@ if [ -n "$n_decl" ] && [ "$(printf '%s\n' "$n_decl" | grep -c .)" -eq 1 ] && [ "
 else
   registrar "a matrix da CI é exatamente 1..N de MUTACAO_FATIAS" 0 "MUTACAO_FATIAS='$n_decl' matrix='$lista'"
 fi
+# shellcheck disable=SC2016 # o texto literal `$FATIA` é o que a CI contém
 if grep -qF -- '--completo --fatia "$FATIA/$MUTACAO_FATIAS"' "$CI"; then
   registrar "o passo da CI chama mutacao.sh --completo --fatia K/N com as duas variáveis" 1
 else
