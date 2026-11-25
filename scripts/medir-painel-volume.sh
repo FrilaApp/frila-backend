@@ -199,6 +199,10 @@ resumir_arquivo() {
   # shellcheck disable=SC2064 # expande $tmp agora, de propósito
   trap "rm -rf '$tmp'" RETURN
 
+  # Nada vai para a saída até a última janela passar nas conferências: um RESULTADO de 7 dias
+  # seguido de "NÃO MEDI" na janela de 31 é número sem medição completa.
+  exec 3>&1 1>"$tmp/saida"
+
   printf 'volume: %s casas x %s vagas x %s posições x %s candidaturas por posição, histórico de %s dias (HIPÓTESE do cartão, não dado de produto)\n' \
     "$casas" "$vagas" "$posicoes" "$candidatos" "$dias"
   linha=$(grep -m1 -E '^CONFIG ' "$arq")
@@ -246,6 +250,8 @@ resumir_arquivo() {
     [ -n "$linha" ] || printf '  plano das consultas internas: NAO MEDIDO (linha PLANO ausente)\n'
     printf '\n'
   done
+  exec 1>&3 3>&-
+  cat "$tmp/saida"
   return 0
 }
 
