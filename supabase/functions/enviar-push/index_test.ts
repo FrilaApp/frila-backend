@@ -927,27 +927,50 @@ Deno.test("Planilha: início sem check-in (caso 13) e atraso de 15 min (caso 16)
   });
 });
 
-Deno.test("Planilha: cancelamento por reabertura por atraso (caso 17), e só ele", () => {
-  assertEquals(titulosECorposPorTipo("cancelamento", {}, { reaberturaPorAtraso: true }), {
-    title: "Participação cancelada por atraso",
-    body: "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.",
-  });
+Deno.test("Planilha: cancelamento por reabertura por atraso (caso 17 / Regra 4) distingue falta por posicao.falta", () => {
+  assertEquals(
+    titulosECorposPorTipo("cancelamento", {}, { reaberturaPorAtraso: true, falta: true }),
+    {
+      title: "Participação cancelada por atraso",
+      body: "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.",
+    },
+  );
+  assertEquals(
+    titulosECorposPorTipo("cancelamento", {}, { reaberturaPorAtraso: true, falta: false }),
+    {
+      title: "Participação cancelada por atraso",
+      body: "O estabelecimento cancelou a sua participação neste turno por atraso. Isso não conta como falta.",
+    },
+  );
+  assertEquals(
+    titulosECorposPorTipo("cancelamento", {}, { reaberturaPorAtraso: true }),
+    {
+      title: "Aviso de cancelamento",
+      body: "Houve um cancelamento relacionado ao seu turno ou vaga.",
+    },
+  );
   const generico = titulosECorposPorTipo("cancelamento", {});
-  assert(generico.title !== "Participação cancelada por atraso",
-    "cancelamento comum não pode dizer que foi atraso");
+  assert(
+    generico.title !== "Participação cancelada por atraso",
+    "cancelamento comum não pode dizer que foi atraso",
+  );
 });
 
-Deno.test("Envio: cancelamento com ocorrência reabertura_por_atraso sai com o texto do caso 17", async () => {
+async function executarPushCancelamento(opcoes: {
+  ocorrenciaResposta?: { status: number; body: unknown };
+  posicaoResposta?: { status: number; body: unknown } | Error;
+}) {
   const sa = await gerarContaDeServicoTeste();
   const posicao = "e8a00000-0000-4000-8000-00000000aaaa";
   let enviado: { title?: string; body?: string } = {};
-  let consultouOcorrencia = false;
+  let urlOcorrencia = "";
+  let urlPosicao = "";
 
   const mockFetch: typeof fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
-    const json = (corpo: unknown) =>
+    const json = (corpo: unknown, status = 200) =>
       Promise.resolve(new Response(JSON.stringify(corpo), {
-        status: 200,
+        status,
         headers: { "Content-Type": "application/json" },
       }));
 
@@ -967,10 +990,18 @@ Deno.test("Envio: cancelamento com ocorrência reabertura_por_atraso sai com o t
     }
     if (url.includes("/rest/v1/rpc/notificacao_expirada")) return json(false);
     if (url.includes("/rest/v1/ocorrencia?")) {
-      consultouOcorrencia = true;
-      assert(url.includes(`posicao_id=eq.${posicao}`));
-      assert(url.includes("motivo=eq.reabertura_por_atraso"));
-      return json([{ id: "e8a00000-0000-4000-8000-00000000cccc" }]);
+      urlOcorrencia = url;
+      const resp = opcoes.ocorrenciaResposta ??
+        { status: 200, body: [{ id: "e8a00000-0000-4000-8000-00000000cccc" }] };
+      return json(resp.body, resp.status);
+    }
+    if (url.includes("/rest/v1/posicao?")) {
+      urlPosicao = url;
+      if (opcoes.posicaoResposta instanceof Error) {
+        return Promise.reject(opcoes.posicaoResposta);
+      }
+      const resp = opcoes.posicaoResposta ?? { status: 200, body: [{ falta: true }] };
+      return json(resp.body, resp.status);
     }
     if (url.includes("/rest/v1/dispositivo?")) {
       return json([{ id: "d1", token_fcm: "token-e1", plataforma: "ios" }]);
@@ -1001,10 +1032,93 @@ Deno.test("Envio: cancelamento com ocorrência reabertura_por_atraso sai com o t
     sqlClient: criarMockSqlClient({ notificacaoExpirada: false }),
   });
 
+  return { res, enviado, urlOcorrencia, urlPosicao, posicao };
+}
+
+Deno.test("Envio: cancelamento por reabertura com posicao.falta=true consulta select=falta e envia 'conta como falta'", async () => {
+  const { res, enviado, urlOcorrencia, urlPosicao, posicao } = await executarPushCancelamento({
+    posicaoResposta: { status: 200, body: [{ falta: true }] },
+  });
+
   assertEquals(res.status, 200);
-  assert(consultouOcorrencia, "o motivo do cancelamento é lido do banco no envio");
+  assert(urlOcorrencia.includes(`posicao_id=eq.${posicao}`));
+  assert(urlOcorrencia.includes("motivo=eq.reabertura_por_atraso"));
+  assert(urlPosicao.includes(`posicao?id=eq.${posicao}`), "deve consultar posicao?id=eq.<id>");
+  assert(urlPosicao.includes("select=falta"), "consulta à posição deve pedir select=falta");
   assertEquals(enviado.title, "Participação cancelada por atraso");
-  assertEquals(enviado.body, "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.");
+  assertEquals(
+    enviado.body,
+    "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.",
+  );
+});
+
+Deno.test("Envio: cancelamento por reabertura com posicao.falta=false (aceite tardio) envia 'não conta como falta'", async () => {
+  const { res, enviado, urlPosicao, posicao } = await executarPushCancelamento({
+    posicaoResposta: { status: 200, body: [{ falta: false }] },
+  });
+
+  assertEquals(res.status, 200);
+  assert(urlPosicao.includes(`posicao?id=eq.${posicao}`));
+  assert(urlPosicao.includes("select=falta"));
+  assertEquals(enviado.title, "Participação cancelada por atraso");
+  assertEquals(
+    enviado.body,
+    "O estabelecimento cancelou a sua participação neste turno por atraso. Isso não conta como falta.",
+  );
+});
+
+Deno.test("Envio: cancelamento com ocorrência lida mas falha ao ler posição cai no texto genérico", async () => {
+  const { res, enviado, urlOcorrencia, urlPosicao } = await executarPushCancelamento({
+    posicaoResposta: { status: 500, body: { erro: "falha_interna" } },
+  });
+
+  assertEquals(res.status, 200);
+  assert(urlOcorrencia.length > 0);
+  assert(urlPosicao.length > 0);
+  assertEquals(enviado.title, "Aviso de cancelamento");
+  assertEquals(enviado.body, "Houve um cancelamento relacionado ao seu turno ou vaga.");
+});
+
+Deno.test("Envio: cancelamento sem ocorrência reabertura_por_atraso cai no texto genérico", async () => {
+  const { res, enviado, urlOcorrencia, urlPosicao } = await executarPushCancelamento({
+    ocorrenciaResposta: { status: 200, body: [] },
+  });
+
+  assertEquals(res.status, 200);
+  assert(urlOcorrencia.length > 0);
+  assertEquals(urlPosicao, "", "sem ocorrência de reabertura não precisa consultar posicao.falta");
+  assertEquals(enviado.title, "Aviso de cancelamento");
+  assertEquals(enviado.body, "Houve um cancelamento relacionado ao seu turno ou vaga.");
+});
+
+Deno.test("Envio: leitura de cancelamento/posição não vaza dado pessoal no log mesmo em erro", async () => {
+  const logs: string[] = [];
+  const origLog = console.log;
+  const origWarn = console.warn;
+  const origError = console.error;
+  const capturar = (...args: unknown[]) => {
+    logs.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
+  };
+  console.log = capturar;
+  console.warn = capturar;
+  console.error = capturar;
+
+  try {
+    const { res, enviado } = await executarPushCancelamento({
+      posicaoResposta: new Error("CPF 012.345.678-90 Maria Teste +5561999998888"),
+    });
+    assertEquals(res.status, 200);
+    assertEquals(enviado.title, "Aviso de cancelamento");
+  } finally {
+    console.log = origLog;
+    console.warn = origWarn;
+    console.error = origError;
+  }
+
+  const tudoLogado = logs.join("\n");
+  assert(!tudoLogado.includes("012.345.678-90"), "log não pode conter CPF");
+  assert(!tudoLogado.includes("Maria Teste"), "log não pode conter nome");
+  assert(!tudoLogado.includes("999998888"), "log não pode conter telefone");
 });
 
 Deno.test("Lembretes 24h e 3h: interpolação Opção A homologada (k5R4tzjC)", async () => {
@@ -2556,6 +2670,7 @@ Deno.test("RN15 / LGPD: nenhum título ou corpo vaza dados pessoais mesmo com va
     urgente: true,
     reaberta: true,
     reaberturaPorAtraso: true,
+    falta: true,
     quantidade: 4,
   };
 
