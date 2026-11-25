@@ -124,14 +124,16 @@ export async function tratarAutenticarSenha(req: Request, deps: AutenticarSenhaD
   const db: AutenticarSenhaDb = deps.db ?? sqlDb!;
 
   try {
-    const ipSeguro = await resolverIpParaRateLimit(req, plataforma, deps.opcoesIp);
+    const resultadoIp = await resolverIpParaRateLimit(req, plataforma, deps.opcoesIp);
+    if (!resultadoIp.ok) return recusa(resultadoIp.status, resultadoIp.code);
+
     const emailHash = await hashSha256Hex(email);
 
     const okEmail = await db.consumirRateLimit(`auth:senha:email:${emailHash}`, 10, 600);
     if (!okEmail) return recusa(429, "limite_excedido");
 
-    if (ipSeguro) {
-      const ipHash = await hashSha256Hex(ipSeguro);
+    if (resultadoIp.ip) {
+      const ipHash = await hashSha256Hex(resultadoIp.ip);
       const okIp = await db.consumirRateLimit(`auth:senha:ip:${ipHash}`, 20, 600);
       if (!okIp) return recusa(429, "limite_excedido");
     }

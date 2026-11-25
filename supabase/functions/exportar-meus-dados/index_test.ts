@@ -28,6 +28,7 @@ const DADOS = {
 interface Espiao {
   sql: SqlClient;
   pedidos: string[];
+  verificacoesSessao: Array<{ userId: string; sessionId: string | null }>;
   fetchFn: typeof fetch;
   chamadasAuth: string[];
 }
@@ -36,8 +37,10 @@ function espiao(
   dados: Record<string, unknown> | null = DADOS,
   authOk = true,
   idDoAuth: unknown = CONTA,
+  sessaoOk = true,
 ): Espiao {
   const pedidos: string[] = [];
+  const verificacoesSessao: Array<{ userId: string; sessionId: string | null }> = [];
   const chamadasAuth: string[] = [];
 
   const fetchFn = ((url: string | URL | Request, init?: RequestInit) => {
@@ -55,9 +58,14 @@ function espiao(
 
   return {
     pedidos,
+    verificacoesSessao,
     chamadasAuth,
     fetchFn,
     sql: {
+      verificarSessaoOnline: (userId: string, sessionId: string | null) => {
+        verificacoesSessao.push({ userId, sessionId });
+        return Promise.resolve(sessaoOk);
+      },
       meusDados: (userId: string) => {
         pedidos.push(userId);
         return Promise.resolve(dados);
@@ -180,6 +188,7 @@ Deno.test("falha no banco responde 500 sem devolver a mensagem do Postgres (RN15
     supabaseUrl: URL_BASE,
     anonKey: ANON,
     sqlClient: {
+      verificarSessaoOnline: () => Promise.resolve(true),
       meusDados: () =>
         Promise.reject(new Error('relation "usuario" ... ana@frila.test')),
     },
@@ -229,6 +238,7 @@ Deno.test("RN15 / LGPD: log sob falha do banco escreve apenas constante e nao va
       supabaseUrl: URL_BASE,
       anonKey: ANON,
       sqlClient: {
+        verificarSessaoOnline: () => Promise.resolve(true),
         meusDados: () => Promise.reject(erroComPii),
       },
     });
@@ -269,6 +279,7 @@ Deno.test("timeout no banco (57014 ou TimeoutError) responde 500 erro_interno e 
       supabaseUrl: URL_BASE,
       anonKey: ANON,
       sqlClient: {
+        verificarSessaoOnline: () => Promise.resolve(true),
         meusDados: () => Promise.reject(erroTimeout),
       },
     });
@@ -313,6 +324,7 @@ Deno.test("exportacao de conta com grande volume de registros nas colecoes LGPD 
     supabaseUrl: URL_BASE,
     anonKey: ANON,
     sqlClient: {
+      verificarSessaoOnline: () => Promise.resolve(true),
       meusDados: () => Promise.resolve(dadosVolumosos),
     },
   });
@@ -493,6 +505,75 @@ Deno.test("exportar-meus-dados: metodos GET, PUT, DELETE, OPTIONS retornam 405 m
     const res = await chamar(e, req);
     assertEquals(res.status, 405);
     assertEquals((await res.json()).code, "metodo_nao_permitido");
+  }
+});
+
+// ── Regressão pós-merge #620: guarda online de sessão/dispositivo ─────────────
+
+function fakeJwtComSessionId(sessionId: string): string {
+  const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" })).replace(/=/g, "");
+  const payload = btoa(JSON.stringify({ sub: CONTA, session_id: sessionId })).replace(/=/g, "");
+  return `${header}.${payload}.sig`;
+}
+
+Deno.test("exportar-meus-dados: bloqueia sessão sem dispositivo verificado com 401 dispositivo_nao_verificado sem chamar meusDados", async () => {
+  const e = espiao(DADOS, true, CONTA, false);
+  const jwt = fakeJwtComSessionId("11111111-1111-4111-8111-111111111111");
+  const res = await chamar(e, requisicao(jwt));
+
+  assertEquals(res.status, 401);
+  assertEquals(res.headers.get("Cache-Control"), "no-store");
+  const corpo = await res.json();
+  assertEquals(corpo.code, "dispositivo_nao_verificado");
+  assertEquals(e.verificacoesSessao, [
+    { userId: CONTA, sessionId: "11111111-1111-4111-8111-111111111111" },
+  ]);
+  assertEquals(e.pedidos, [], "não deve exportar dados quando a guarda online recusa a sessão");
+});
+
+Deno.test("exportar-meus-dados: permite exportação quando guarda online autoriza (demo, pré-corte, verificado ou modo sombra)", async () => {
+  const e = espiao(DADOS, true, CONTA, true);
+  const jwt = fakeJwtComSessionId("22222222-2222-4222-8222-222222222222");
+  const res = await chamar(e, requisicao(jwt));
+
+  assertEquals(res.status, 200);
+  assertEquals(await res.json(), DADOS);
+  assertEquals(e.verificacoesSessao, [
+    { userId: CONTA, sessionId: "22222222-2222-4222-8222-222222222222" },
+  ]);
+  assertEquals(e.pedidos, [CONTA]);
+});
+
+Deno.test("exportar-meus-dados: falha de banco em verificarSessaoOnline devolve 500 erro_interno sem vazar PII (RN15)", async () => {
+  const e = espiao();
+  let chamouMeusDados = false;
+  const chamadasConsoleError: string[] = [];
+  const consoleErrorOriginal = console.error;
+  console.error = (...args: unknown[]) => {
+    chamadasConsoleError.push(args.map((a) => String(a)).join(" "));
+  };
+
+  try {
+    const res = await handler(requisicao(fakeJwtComSessionId("33333333-3333-4333-8333-333333333333")), {
+      fetchFn: e.fetchFn,
+      supabaseUrl: URL_BASE,
+      anonKey: ANON,
+      sqlClient: {
+        verificarSessaoOnline: () => Promise.reject(new Error("db error ana@frila.test")),
+        meusDados: () => {
+          chamouMeusDados = true;
+          return Promise.resolve(DADOS);
+        },
+      },
+    });
+
+    assertEquals(res.status, 500);
+    const corpo = await res.json();
+    assertEquals(corpo.code, "erro_interno");
+    assertEquals(chamouMeusDados, false);
+    assertEquals(chamadasConsoleError, ["exportar-meus-dados: falha ao verificar sessao"]);
+  } finally {
+    console.error = consoleErrorOriginal;
   }
 });
 

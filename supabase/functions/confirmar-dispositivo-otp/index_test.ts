@@ -1,5 +1,25 @@
 import { assertEquals, assertExists } from "jsr:@std/assert@1.0.19";
+import { hashTokenDispositivo } from "../_compartilhado/dispositivo_auth.ts";
 import { type ConfirmarDispositivoDb, tratarConfirmarDispositivoOtp } from "./index.ts";
+
+const SEGREDO_B116_TESTE = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const CARIMBO_B116_TESTE = 1764030000;
+
+async function cabecalhosWebB116(ipVisitante = "203.0.113.42"): Promise<Record<string, string>> {
+  const hmac = await hashTokenDispositivo(`v1|${ipVisitante}|${CARIMBO_B116_TESTE}|anon`, SEGREDO_B116_TESTE);
+  return {
+    "Content-Type": "application/json",
+    "cf-connecting-ip": "198.51.100.1",
+    "x-frila-ip-visitante": ipVisitante,
+    "x-frila-ip-carimbo": String(CARIMBO_B116_TESTE),
+    "x-frila-ip-assinatura": `v1;k=a1;${hmac}`,
+  };
+}
+
+const OPCOES_IP_TESTE = {
+  chavesBrutas: `a1:${SEGREDO_B116_TESTE}`,
+  agoraSegundos: CARIMBO_B116_TESTE + 10,
+};
 
 function fakeJwt(sessionId: string): string {
   const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" })).replace(/=/g, "");
@@ -52,7 +72,7 @@ Deno.test("confirmar-dispositivo-otp: login_dispositivo com lembrar_dispositivo=
   let tokenHashSalvo: string | null = null;
   const req = new Request("https://local/functions/v1/confirmar-dispositivo-otp", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await cabecalhosWebB116(),
     body: JSON.stringify({
       tipo: "login_dispositivo",
       desafio_id: "11111111-1111-4111-8111-111111111111",
@@ -68,6 +88,7 @@ Deno.test("confirmar-dispositivo-otp: login_dispositivo com lembrar_dispositivo=
     anonKey: "anon-test",
     pepper: "pepper-segredo",
     gerarToken: () => "token-opaco-32bytes-sintetico",
+    opcoesIp: OPCOES_IP_TESTE,
     db: dbStub({
       concluirDesafioERegistrarSessao: (p) => {
         tokenHashSalvo = p.tokenHash;
@@ -184,7 +205,7 @@ Deno.test("confirmar-dispositivo-otp: desafio expirado devolve 410 e excesso de 
   ] as const) {
     const req = new Request("https://local/functions/v1/confirmar-dispositivo-otp", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await cabecalhosWebB116(),
       body: JSON.stringify({
         tipo: "login_dispositivo",
         desafio_id: "11111111-1111-4111-8111-111111111111",
@@ -197,6 +218,7 @@ Deno.test("confirmar-dispositivo-otp: desafio expirado devolve 410 e excesso de 
       fetchFn: () => Promise.resolve(Response.json({})),
       supabaseUrl: "https://proj.supabase.co",
       anonKey: "anon-test",
+      opcoesIp: OPCOES_IP_TESTE,
       db: dbStub({
         reservarTentativaDesafio: () => Promise.resolve({ status: statusDb }),
       }),
@@ -204,4 +226,47 @@ Deno.test("confirmar-dispositivo-otp: desafio expirado devolve 410 e excesso de 
     assertEquals(res.status, httpEsperado);
     assertEquals((await res.json()).code, codeEsperado);
   }
+});
+
+Deno.test("confirmar-dispositivo-otp: Web sem assinatura B-116 falha fechado (403/503) sem chamar GoTrue", async () => {
+  let chamouGoTrue = false;
+  const req = new Request("https://local/functions/v1/confirmar-dispositivo-otp", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "cf-connecting-ip": "198.51.100.1",
+      "x-forwarded-for": "192.0.2.99",
+    },
+    body: JSON.stringify({
+      tipo: "login_dispositivo",
+      desafio_id: "11111111-1111-4111-8111-111111111111",
+      codigo: "123456",
+      plataforma: "web",
+      lembrar_dispositivo: false,
+    }),
+  });
+
+  const res403 = await tratarConfirmarDispositivoOtp(req.clone(), {
+    fetchFn: () => {
+      chamouGoTrue = true;
+      return Promise.resolve(Response.json({}));
+    },
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    opcoesIp: OPCOES_IP_TESTE,
+    db: dbStub(),
+  });
+  assertEquals(res403.status, 403);
+  assertEquals((await res403.json()).code, "assinatura_ip_invalida");
+  assertEquals(chamouGoTrue, false);
+
+  const res503 = await tratarConfirmarDispositivoOtp(req, {
+    fetchFn: () => Promise.resolve(Response.json({})),
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    opcoesIp: { chavesBrutas: "" },
+    db: dbStub(),
+  });
+  assertEquals(res503.status, 503);
+  assertEquals((await res503.json()).code, "indisponivel");
 });
