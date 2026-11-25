@@ -9,6 +9,8 @@ Roteiro de quem executa a medição no banco local. A primeira execução (2026-
 | `supabase/tests/carga/gerar_casa_pesada.sql` | Gera **uma** casa com histórico: vagas, posições, turnos, candidaturas e ocorrências de cancelamento. Só roda dentro de uma transação. |
 | `scripts/medir-painel.sql` | Mede um cenário: tempo de parede, `explain (analyze, buffers)` da chamada inteira e consultas internas via `auto_explain`. |
 | `scripts/medir-painel.sh` | Orquestra: carrega cada casa numa transação, mede os cenários e termina em `rollback`. |
+| `scripts/medir-painel-volume.sh` e `.sql` | Mede p50 e p95 com 5 casas de 200 vagas x 10 posições nas janelas de 7 e 31 dias. Seção **p50 e p95 com 5 casas** no fim deste documento. |
+| `scripts/teste-medir-painel-volume.sh` | Autoteste do script acima, sem Docker nem Postgres. |
 
 Os volumes dos cenários são **hipótese de volume, não dado de produto**. O Cauê ou o Jota confirmam o que é plausível para uma casa do DF.
 
@@ -202,3 +204,65 @@ Limites de leitura, sem interpretação do desempenho:
 - Volume é **HIPÓTESE**: S1 e S2 agora têm 3 e 21 vagas, mas 3 por dia é o limite do gerador. Uma casa com mais de 3 vagas por dia não é representável sem mudar o gerador.
 
 Não medido nesta execução: p95; autovacuum e versões mortas depois do `rollback`; consultas internas com menos de 1 ms na casa B; qualquer volume ou janela de produto (Cauê ou Jota); o tamanho real de `posicao`, `ocorrencia` e `vaga` no Prod. A decisão entre índice, janela limitada e paginação não está neste documento.
+
+## p50 e p95 com 5 casas (`medir-painel-volume.sh`)
+
+Pergunta do cartão: com 5 casas de 200 vagas x 10 posições, qual o p50 e o p95 do painel para períodos de 7 e 31 dias, contra a meta proposta de p95 <= 1000 ms? A meta é **proposta**, não SLA do repositório; o script a imprime ao lado do resultado e não reprova por ela.
+
+### Como executar
+
+```bash
+supabase start && supabase db reset                       # banco local limpo
+./scripts/medir-painel-volume.sh --saida ~/medicao-volume  # carrega, mede, relata
+./scripts/teste-medir-painel-volume.sh                     # autoteste do script (sem banco)
+```
+
+Parâmetros por variável de ambiente (padrões = cenário do cartão): `CASAS=5 VAGAS=200 POSICOES=10 CANDIDATOS=6 DIAS_HISTORICO=67 JANELAS=7,31 AMOSTRAS=20 AQUECIMENTO=3 META_P95_MS=1000`. O cabeçalho do script lista todos. O banco local é compartilhado entre sessões: use `DB_CONTAINER` para apontar para um contêiner seu, se houver. Os mesmos cuidados de segurança de `medir-painel.sh` valem (transação com `rollback`, resíduo contado, só banco local).
+
+Saída `0`: mediu, com amostras completas e volume conferido. Saída `2`: não mediu (nunca `0` por omissão); o relatório diz o motivo e nenhuma linha `RESULTADO` sai. Estourar a meta não muda a saída: aparece como `meta=NAO_ATENDE`.
+
+### O que é medido
+
+- 5 casas, cada uma com 200 vagas x 10 posições x 6 candidaturas por posição (HIPÓTESE do cartão; as 6 candidaturas são escolha de quem implementou), histórico de 67 dias. Cada casa é lida pelo seu próprio dono, membro só dela, como `authenticated`.
+- Janelas de 7 e 31 dias a partir do primeiro dia do histórico.
+- 20 chamadas por casa e janela depois de 3 rodadas de aquecimento descartadas: **100 amostras por janela**. As rodadas intercalam janelas e casas.
+- p50 e p95 sobre as 100 amostras da janela (as 5 casas têm o mesmo formato; juntá-las é uma suposição, e o relatório traz a mediana e o máximo de cada casa). Método: interpolação linear, igual a `percentile_cont`; o script confere o seu cálculo contra o `percentile_cont` do Postgres e não mede se divergirem.
+- O planejador roda **livre** (`enable_seqscan=on`, registrado na linha `CONFIG`). O portão `supabase/tests/310_consultas_quentes_df.sql` usa `enable_seqscan=off` e a carga nunca roda na CI, então este é o único lugar onde esse plano é observado.
+
+**Limite do gerador (DEDUZIDO do código):** no máximo 3 vagas por dia. Com 200 vagas por casa o histórico tem 67 dias, e a janela de 7 dias contém 21 vagas, a de 31 dias, 93 (confirmado pelas linhas `VOLUME_JANELA`). **Não há como pôr as 200 vagas dentro de 7 ou 31 dias com este gerador.** Se o cartão queria 200 vagas dentro da janela, essa medição **não foi feita**.
+
+### Resultado (MEDIDO, 25/11/2026, banco local, Postgres 17.6, papel `supabase_admin`)
+
+Contexto de cada execução: commit `bbc569a` (as execuções 2 e 3) ou o mesmo código antes do último ajuste do script (execução 1); banco recém-criado por `supabase db reset` nas execuções 2 e 3; 246 migrações aplicadas; 18 usuários antes e depois; resíduo 0. A execução 1 é a fixture `scripts/fixtures/medir-painel-volume-real.txt`.
+
+| Execução | Janela | Vagas / posições / candidaturas na janela (por casa) | Amostras | p50 (ms) | p95 (ms) | máx (ms) |
+|---|---|---|---|---|---|---|
+| 1 | 7 dias | 21 / 210 / 1.260 | 100 | 154,47 | 161,67 | 177,18 |
+| 1 | 31 dias | 93 / 930 / 5.580 | 100 | 681,50 | 707,03 | 721,29 |
+| 2 | 7 dias | 21 / 210 / 1.260 | 100 | 152,86 | 165,31 | 174,85 |
+| 2 | 31 dias | 93 / 930 / 5.580 | 100 | 677,58 | 724,08 | 774,42 |
+| 3 | 7 dias | 21 / 210 / 1.260 | 100 | 166,61 | 179,78 | 193,91 |
+| 3 | 31 dias | 93 / 930 / 5.580 | 100 | 741,87 | 783,15 | 813,09 |
+
+Leitura (sem decisão):
+
+- Nas três execuções o p95 ficou abaixo de 1.000 ms (MEDIDO): de 161,67 a 179,78 ms em 7 dias e de 707,03 a 783,15 ms em 31 dias. Na janela de 31 dias a margem para a meta é de cerca de 20 a 30% (conta a partir dos números acima).
+- A variação entre execuções existe: o p50 de 31 dias foi de 677,58 a 741,87 ms. Use o intervalo, não uma execução só.
+- O tempo cresce com a janela de forma próxima de linear com o número de vagas: 21 vagas custam cerca de 155 ms e 93 vagas cerca de 680 ms (MEDIDO); a razão dos tempos (4,4) é próxima da das vagas (4,4). Que o custo seja linear em vagas é DEDUZIDO desses dois pontos.
+- Plano das consultas internas (casa 1, `auto_explain`, MEDIDO na execução 1): 2.625 planos registrados em 7 dias e 11.601 em 31 dias; Seq Scan **executado** em `posicao` 191 e 839 vezes, e nenhum em `vaga`, `ocorrencia`, `candidatura` nem `turno`. Um dos planos de `posicao` (filtro `falta AND profissional_id = p.id`) removeu 10.019 linhas por chamada, ou seja, varre a tabela inteira, que neste banco tem as 10.000 posições das 5 casas. Isso indica um custo que cresce com o tamanho de `posicao`, e não só com a janela (DEDUZIDO; não foi medido com outro tamanho de tabela).
+
+### Recomendação (não implementada; fora do escopo do cartão)
+
+1. Com o volume e a hipótese acima, a meta de p95 <= 1.000 ms é atendida localmente em 7 e em 31 dias. **Não é evidência para o Prod**: o tempo local não transfere (plano gratuito, CPU e disco compartilhados).
+2. Antes de decidir paginação ou RPC agregada, vale medir o efeito do Seq Scan em `posicao` com a tabela maior (por exemplo, 50 casas), porque o custo desse nó depende do tamanho da tabela e não da janela. Um índice não muda o contrato; paginação ou limite de janela mudam e são decisão do Cauê, com o ok do Fabrício (UI).
+3. A decisão sobre meta, índice, janela limitada ou paginação é do Cauê ou do Jota.
+
+### Não medido
+
+- Qualquer janela com 200 vagas dentro dela (limite do gerador, acima).
+- Tabelas maiores que as 5 casas (o banco só tem esta carga e o seed de 18 usuários).
+- Concorrência: as chamadas são sequenciais, de uma conexão.
+- Prod ou frila-dev: nenhum banco remoto foi tocado.
+- O efeito de autovacuum e de versões mortas depois do `rollback`.
+- O número de candidaturas por posição (6) é escolha de quem implementou e não foi confirmado com o Cauê ou o Jota.
+- A causa da variação entre execuções.
