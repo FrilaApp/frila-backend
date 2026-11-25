@@ -172,6 +172,8 @@ export interface VariaveisDoTexto {
   reaberta?: boolean;
   // Cancelamento feito por `reabrir_por_atraso` (caso 17 da planilha, cartão e8XpOZJN).
   reaberturaPorAtraso?: boolean;
+  // Regra 4: falta da posição decide se o cancelamento por atraso conta ou não como falta.
+  falta?: boolean;
   // RN23: quantidade de vagas agrupadas
   quantidade?: number;
 }
@@ -252,14 +254,24 @@ export async function buscarVariaveisDoTexto(
       const posicaoId = payload?.posicao_id;
       if (typeof posicaoId !== "string" || !UUID_REGEX.test(posicaoId)) return {};
       // O motivo é estável (`reabertura_por_atraso`) e fica no banco; o texto muda, o
-      // payload não. Falha de leitura cai no texto genérico em vez de segurar o push.
+      // payload não. Falha de leitura (da ocorrência ou da posição) cai no texto
+      // genérico em vez de segurar o push ou afirmar falta/não-falta sem ler.
       const ocoRes = await consultar(
         `ocorrencia?posicao_id=eq.${posicaoId}&tipo=eq.cancelamento&motivo=eq.reabertura_por_atraso&select=id&limit=1`,
       );
       if (!ocoRes.ok) return {};
       const linhas = await ocoRes.json();
+      if (!Array.isArray(linhas) || linhas.length === 0) {
+        return { reaberturaPorAtraso: false };
+      }
+      const posRes = await consultar(`posicao?id=eq.${posicaoId}&select=falta`);
+      if (!posRes.ok) return {};
+      const posLinhas = await posRes.json();
+      const falta = Array.isArray(posLinhas) ? posLinhas[0]?.falta : undefined;
+      if (typeof falta !== "boolean") return {};
       return {
-        reaberturaPorAtraso: Array.isArray(linhas) && linhas.length > 0,
+        reaberturaPorAtraso: true,
+        falta,
       };
     }
   } catch {
@@ -419,11 +431,14 @@ export function titulosECorposPorTipo(
         body: "Check-in manual registrado, aguardando confirmação do contratante.",
       };
     case "cancelamento":
-      // Caso 17 da planilha (alinhado ao D-13, decisão JP 15/11/2026): falta por atraso declarada pela casa.
-      if (variaveis.reaberturaPorAtraso) {
+      // Caso 17 da planilha: D-13 (decisão JP 15/11/2026) vale para o aceite legado;
+      // no aceite tardio a decisão do Cauê (25/11/2026, Regra 4) tira a falta; texto por posicao.falta.
+      if (variaveis.reaberturaPorAtraso && typeof variaveis.falta === "boolean") {
         return {
           title: "Participação cancelada por atraso",
-          body: "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta.",
+          body: variaveis.falta
+            ? "O estabelecimento cancelou a sua participação neste turno por atraso. Isso conta como falta."
+            : "O estabelecimento cancelou a sua participação neste turno por atraso. Isso não conta como falta.",
         };
       }
       return {
