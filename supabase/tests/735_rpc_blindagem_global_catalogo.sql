@@ -38,18 +38,18 @@ $$;
 -- PARTE 1: Censo de Rotinas e Blindagem de Catálogo do Schema public
 -- ============================================================================
 
--- Total de rotinas existentes em public (67 RPCs + 1 event trigger + 3 helpers)
+-- Total de rotinas existentes em public (79 RPCs + 1 event trigger + 3 helpers)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace),
-  82::bigint,
-  'censo de catalogo: schema public contem exatamente 82 rotinas catalogadas (com buscar_profissionais, 0.2.88, aceitar_termos, 0.2.90, publicar_escala, 0.2.96, vaga_publica, 0.2.100, e membros_do_estabelecimento, 0.2.103)'
+  83::bigint,
+  'censo de catalogo: schema public contem exatamente 83 rotinas catalogadas (com buscar_profissionais, 0.2.88, aceitar_termos, 0.2.90, publicar_escala, 0.2.96, vaga_publica, 0.2.100, membros_do_estabelecimento, 0.2.103, e estado_autenticacao, 0.2.112)'
 );
 
--- Total de rotinas declaradas como SECURITY DEFINER (67 RPCs + 1 event trigger rls_auto_enable)
+-- Total de rotinas declaradas como SECURITY DEFINER (79 RPCs + 1 event trigger rls_auto_enable)
 select is(
   (select count(*) from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prosecdef = true),
-  79::bigint,
-  'seguranca de privilegios: exatamente 79 rotinas sao SECURITY DEFINER (78 RPCs + rls_auto_enable)'
+  80::bigint,
+  'seguranca de privilegios: exatamente 80 rotinas sao SECURITY DEFINER (79 RPCs + rls_auto_enable)'
 );
 
 -- 100% das rotinas de public possuem search_path="" estrito configurado em proconfig
@@ -57,8 +57,8 @@ select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and p.proconfig @> array['search_path=""']),
-  82::bigint,
-  'mitigacao de sequestro de schema: 100% das rotinas (82 de 82) possuem search_path="" estrito'
+  83::bigint,
+  'mitigacao de sequestro de schema: 100% das rotinas (83 de 83) possuem search_path="" estrito'
 );
 
 -- Apenas 2 funções possuem privilégio de execução concedido ao papel anon
@@ -80,22 +80,22 @@ select is(
   'rotinas anonimas autorizadas: estritamente configuracao_do_app e vaga_publica'
 );
 
--- 70 rotinas possuem EXECUTE estritamente FALSO para o papel anon
+-- 81 rotinas possuem EXECUTE estritamente FALSO para o papel anon
 select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and not has_function_privilege('anon', p.oid, 'execute')),
-  80::bigint,
-  'superficie anonima blindada: 80 de 82 rotinas negam execucao para o papel anon'
+  81::bigint,
+  'superficie anonima blindada: 81 de 83 rotinas negam execucao para o papel anon'
 );
 
--- Papel authenticated possui EXECUTE concedido em exatamente 67 RPCs
+-- Papel authenticated possui EXECUTE concedido em exatamente 79 RPCs
 select is(
   (select count(*) from pg_proc p
    where p.pronamespace = 'public'::regnamespace
      and has_function_privilege('authenticated', p.oid, 'execute')),
-  78::bigint,
-  'superficie autenticada: exatamente 78 RPCs publicas concedem execucao a authenticated'
+  79::bigint,
+  'superficie autenticada: exatamente 79 RPCs publicas concedem execucao a authenticated'
 );
 
 -- Papel authenticated NÃO possui privilégio em rotinas internas (erro, conta_em_json, perfil_profissional_em_json, rls_auto_enable)

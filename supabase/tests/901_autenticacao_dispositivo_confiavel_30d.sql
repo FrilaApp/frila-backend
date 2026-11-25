@@ -103,12 +103,13 @@ select set_config('request.method', 'GET', true);
 
 select throws_ok(
   $$ select requisicao.conferir_limite() $$,
-  'dispositivo_nao_verificado',
+  'PGRST',
+  '{"code" : "dispositivo_nao_verificado", "message" : "dispositivo_nao_verificado", "details" : null, "hint" : null}',
   'pre-request bloqueia acesso ao produto quando dispositivo_verificado = false e cutover ativo'
 );
 
 select is(
-  public.sessao_autorizada_para_produto(),
+  privado.sessao_autorizada_para_produto(),
   false,
   'sessao_autorizada_para_produto() retorna false para bypass GoTrue'
 );
@@ -226,7 +227,8 @@ select set_config('request.jwt.claims', json_build_object(
 select set_config('request.path', '/rpc/publicar_vaga', true);
 select throws_ok(
   $$ select requisicao.conferir_limite() $$,
-  'senha_pendente',
+  'PGRST',
+  '{"code" : "senha_pendente", "message" : "senha_pendente", "details" : null, "hint" : null}',
   'pre-request bloqueia RPC de produto com 403 senha_pendente enquanto precisa_definir_senha = true'
 );
 
@@ -340,7 +342,8 @@ select is(
 -- Mesmo com JWT ainda carregando app_metadata.dispositivo_verificado=true, o guard online bloqueia imediatamente!
 select throws_ok(
   $$ select requisicao.conferir_limite() $$,
-  'dispositivo_nao_verificado',
+  'PGRST',
+  '{"code" : "dispositivo_nao_verificado", "message" : "dispositivo_nao_verificado", "details" : null, "hint" : null}',
   'revogação imediata: JWT já emitido é bloqueado instantaneamente após revogar_todos_dispositivos'
 );
 

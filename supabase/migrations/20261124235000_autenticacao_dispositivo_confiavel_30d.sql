@@ -85,6 +85,14 @@ revoke all on table privado.desafios_dispositivo from public, anon, authenticate
 revoke all on table privado.contas_senha_pendente from public, anon, authenticated;
 revoke all on table privado.rate_limit_auth from public, anon, authenticated;
 
+-- Invariante de segurança (738/785): toda tabela em privado tem RLS ativado sem políticas para clientes.
+alter table privado.config_auth enable row level security;
+alter table privado.dispositivos_confiaveis enable row level security;
+alter table privado.sessoes_verificadas enable row level security;
+alter table privado.desafios_dispositivo enable row level security;
+alter table privado.contas_senha_pendente enable row level security;
+alter table privado.rate_limit_auth enable row level security;
+
 -- ── 2. Funções auxiliares de avaliação (relógio do banco + preservação de corte) ─
 
 create or replace function privado.exigir_dispositivo_verificado_ativo()
@@ -630,9 +638,8 @@ $$;
 
 revoke execute on function privado.verificar_sessao_dispositivo_online(uuid, uuid) from public, anon, authenticated;
 
--- ── 5. Superfície Pública (RPCs + Guarda de Produto + Pre-Request) ──────────
-
-create or replace function public.sessao_autorizada_para_produto()
+-- Guarda interna de produto (usada em funções/políticas internas; não exposta como RPC em public).
+create or replace function privado.sessao_autorizada_para_produto()
 returns boolean
 language plpgsql
 stable
@@ -663,8 +670,7 @@ begin
   return true;
 end $$;
 
-revoke execute on function public.sessao_autorizada_para_produto() from public, anon;
-grant  execute on function public.sessao_autorizada_para_produto() to authenticated;
+revoke execute on function privado.sessao_autorizada_para_produto() from public, anon, authenticated;
 
 create or replace function public.estado_autenticacao()
 returns jsonb
