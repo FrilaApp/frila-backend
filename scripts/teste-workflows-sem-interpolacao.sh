@@ -80,13 +80,22 @@ for chave in WORKFLOW_NOME CONCLUSAO RAMO SHA_COMMIT URL_EXECUCAO; do
   fi
 done
 
-echo "▸ 5. ci.yml: o passo da mutação recebe event_name e ref por env, e o job deste teste existe"
+echo "▸ 5. ci.yml: a mutação decide por 'if:' (expressão, não shell), a fatia entra por env, e o job deste teste existe"
 CI=.github/workflows/ci.yml
+# Desde o B-117 o evento e a ref só aparecem em expressões `if:` (que o Actions avalia, e
+# não o shell) e a fatia chega por env: nenhum passo da mutação interpola valor no run:.
 # shellcheck disable=SC2016
-if grep -q '^          EVENTO: \${{ github.event_name }}' "$CI" && grep -q '^          REF: \${{ github.ref }}' "$CI"; then
-  ok "EVENTO e REF passam por env no passo 'Os testes cobrem as regras'"
+passo=$(sed -n '/- name: Os testes cobrem as regras$/,/run: .\/scripts\/mutacao.sh$/p' "$CI")
+if printf '%s\n' "$passo" | grep -q "^        if: .*github.event_name" && ! printf '%s\n' "$passo" | grep -q 'EVENTO'; then
+  ok "o passo 'Os testes cobrem as regras' do job banco decide por if:, sem EVENTO/REF no shell"
 else
-  falha "EVENTO/REF não passam por env em $CI"
+  falha "o passo da mutação do job banco não decide por if: em $CI"
+fi
+# shellcheck disable=SC2016
+if grep -q '^          FATIA: \${{ matrix.fatia }}' "$CI" && grep -q -- '--fatia "\$FATIA/\$MUTACAO_FATIAS"' "$CI"; then
+  ok "a fatia da matrix passa por env e entra no run como \"\$FATIA\""
+else
+  falha "a fatia da matrix não passa por env em $CI"
 fi
 if grep -q 'run: ./scripts/teste-workflows-sem-interpolacao.sh' "$CI"; then
   ok "o ci.yml roda este teste (um job próprio)"
