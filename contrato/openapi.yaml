@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.110
+  version: 0.2.112
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -116,6 +116,16 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.112, de 24/11/2026.** Fundação server-side de autenticação por senha com confiança
+    de dispositivo por 30 dias e trava server-authoritative `precisa_definir_senha`. Acrescenta a
+    RPC `STABLE` `estado_autenticacao` (acessível por `GET` e `POST {}`, inclusive antes de
+    `criar_conta`), o campo opcional `Usuario.precisa_definir_senha` em `minha_conta`, e cinco Edge
+    Functions sob `/functions/v1`: `autenticar-senha`, `confirmar-dispositivo-otp`,
+    `reenviar-dispositivo-otp`, `definir-senha` e `revogar-dispositivos`, todas referenciando o
+    schema canônico `Sessao`. Rollout do enforcement (`exigir_dispositivo_verificado`) e do hook
+    remoto permanece bloqueado em modo sombra até todos os clientes (iOS, Android já mesclado e Web)
+    migrarem do GoTrue direto (`/auth/v1/token?grant_type=password`).
 
     **Versão 0.2.110, de 23/11/2026.** A URL de envio de `solicitar_upload_midia` passa a valer
     **15 minutos** (antes, 2 h): continua de uso único e `expira_em` já informa o prazo. Os apps pedem
@@ -2324,6 +2334,27 @@ paths:
           $ref: '#/components/responses/Conflito'
         '422':
           $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/estado_autenticacao:
+    get:
+      tags: [Cadastro e perfil]
+      operationId: estadoAutenticacao
+      summary: Ler estado server-authoritative da sessão e pendência de senha
+      description: |
+        0.2.112. Função `STABLE` (aceita `GET` e `POST {}` no PostgREST) para consultar no servidor
+        se a sessão atual está com dispositivo verificado e se ainda precisa concluir a definição
+        obrigatória de senha (`precisa_definir_senha`). Funciona inclusive antes de `criar_conta`
+        (quando `minha_conta` devolve `404 nao_encontrado`).
+      x-requisitos: [RF01]
+      responses:
+        '200':
+          description: Estado da autenticação da sessão atual.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EstadoAutenticacao'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
 
   /rpc/minha_conta:
     get:
@@ -6758,6 +6789,334 @@ paths:
         '503':
           description: O banco não respondeu. O app mostra o marcador de foto.
 
+  /autenticar-senha:
+    servers:
+      - url: https://{projeto}.supabase.co/functions/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Exportação e conta]
+      operationId: autenticarSenha
+      summary: Login habitual por senha com verificação de dispositivo confiável (30 dias)
+      description: |
+        0.2.112. Valida e-mail e senha no GoTrue (anti-enumeração: qualquer 4xx de credencial vira
+        `401 credenciais_invalidas`). Se `device_token` for válido no relógio do Postgres
+        (`expira_em > now()` e `revogado_em IS NULL` para o mesmo titular), registra `session_id` em
+        `privado.sessoes_verificadas`, executa `grant_type=refresh_token` para o hook emitir JWT com
+        `dispositivo_verificado = true` e devolve `status: autenticado` com `Sessao`. Caso contrário,
+        revoga apenas a sessão provisória (`scope=local`), dispara OTP com `create_user: false` e
+        devolve `status: desafio_otp` sem tokens.
+      security:
+        - chaveDoProjeto: []
+      x-requisitos: [RF01]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, senha, plataforma]
+              properties:
+                email:
+                  type: string
+                  format: email
+                senha:
+                  type: string
+                plataforma:
+                  type: string
+                  enum: [ios, android, web]
+                device_token:
+                  type: [string, 'null']
+      responses:
+        '200':
+          description: Sessão autenticada ou desafio OTP exigido.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [status, sessao, precisa_definir_senha]
+                    properties:
+                      status:
+                        type: string
+                        const: autenticado
+                      sessao:
+                        $ref: '#/components/schemas/Sessao'
+                      precisa_definir_senha:
+                        type: boolean
+                      dispositivo_expira_em:
+                        type: [string, 'null']
+                        format: date-time
+                  - type: object
+                    required: [status, desafio_id, expira_em, descartar_device_token]
+                    properties:
+                      status:
+                        type: string
+                        const: desafio_otp
+                      desafio_id:
+                        $ref: '#/components/schemas/Uuid'
+                      expira_em:
+                        type: string
+                        format: date-time
+                      descartar_device_token:
+                        type: boolean
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '422':
+          description: Parâmetro obrigatório ausente ou inválido (`campo_obrigatorio`, `campo_invalido`, `senha_fraca`, `senha_igual`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '429':
+          $ref: '#/components/responses/LimiteExcedido'
+
+  /confirmar-dispositivo-otp:
+    servers:
+      - url: https://{projeto}.supabase.co/functions/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Exportação e conta]
+      operationId: confirmarDispositivoOtp
+      summary: Confirmar OTP (desafio de login, cadastro ou recuperação) com opt-in de 30 dias
+      description: |
+        0.2.112. Confirma o código de 6 dígitos (em `login_dispositivo`, usando o e-mail resolvido
+        server-side no desafio; em `cadastro`/`recuperacao`, usando o e-mail informado após envio
+        inicial em `/auth/v1/otp` com `create_user` true/false). Protege contra replay/concorrência
+        (teto de 5 tentativas), grava `privado.sessoes_verificadas` (com `dispositivo_id` opcional),
+        renova o JWT via `refresh_token` e devolve `Sessao` + `device_token` opcional (30 dias).
+      security:
+        - chaveDoProjeto: []
+      x-requisitos: [RF01]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tipo, codigo, plataforma, lembrar_dispositivo]
+              properties:
+                tipo:
+                  type: string
+                  enum: [login_dispositivo, cadastro, recuperacao]
+                desafio_id:
+                  $ref: '#/components/schemas/Uuid'
+                email:
+                  type: string
+                  format: email
+                codigo:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+                plataforma:
+                  type: string
+                  enum: [ios, android, web]
+                lembrar_dispositivo:
+                  type: boolean
+      responses:
+        '200':
+          description: Sessão verificada emitida.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessao, precisa_definir_senha, device_token, dispositivo_expira_em]
+                properties:
+                  sessao:
+                    $ref: '#/components/schemas/Sessao'
+                  precisa_definir_senha:
+                    type: boolean
+                  device_token:
+                    type: [string, 'null']
+                  dispositivo_expira_em:
+                    type: [string, 'null']
+                    format: date-time
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '410':
+          description: Desafio expirado ou inexistente (`desafio_expirado`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '422':
+          description: Parâmetro obrigatório ausente ou inválido (`campo_obrigatorio`, `campo_invalido`, `senha_fraca`, `senha_igual`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '429':
+          $ref: '#/components/responses/LimiteExcedido'
+
+  /reenviar-dispositivo-otp:
+    servers:
+      - url: https://{projeto}.supabase.co/functions/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Exportação e conta]
+      operationId: reenviarDispositivoOtp
+      summary: Reenviar código OTP de um desafio login_dispositivo ativo
+      description: |
+        0.2.112. Mantém o mesmo `desafio_id`, não incrementa tentativas de verificação do código,
+        exige cooldown mínimo de 60 segundos e teto de 3 reenvios por desafio, disparando OTP com
+        `create_user: false` para o e-mail resolvido no servidor.
+      security:
+        - chaveDoProjeto: []
+      x-requisitos: [RF01]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [desafio_id]
+              properties:
+                desafio_id:
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Reenvio disparado mantendo o mesmo desafio_id.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, desafio_id, expira_em, reenviar_em_segundos]
+                properties:
+                  ok:
+                    type: boolean
+                  desafio_id:
+                    $ref: '#/components/schemas/Uuid'
+                  expira_em:
+                    type: string
+                    format: date-time
+                  reenviar_em_segundos:
+                    type: integer
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '410':
+          description: Desafio expirado ou inexistente (`desafio_expirado`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '422':
+          description: Parâmetro obrigatório ausente ou inválido (`campo_obrigatorio`, `campo_invalido`, `senha_fraca`, `senha_igual`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '429':
+          $ref: '#/components/responses/LimiteExcedido'
+
+  /definir-senha:
+    servers:
+      - url: https://{projeto}.supabase.co/functions/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Exportação e conta]
+      operationId: definirSenha
+      summary: Definir ou alterar senha na sessão ativa e revogar dispositivos
+      description: |
+        0.2.112. Atualiza a senha da conta no GoTrue (`PUT /auth/v1/user`), limpa a pendência
+        `precisa_definir_senha` no servidor e revoga os dispositivos confiáveis (todos por padrão, ou
+        preservando apenas o dispositivo atual recém-validado quando `manter_dispositivo_atual: true`)
+        e demais sessões ativas. Quando `refresh_token` é enviado no request, devolve `sessao`
+        completa já renovada; caso contrário devolve `sessao: null`.
+      security:
+        - tokenDoUsuario: []
+          chaveDoProjeto: []
+      x-requisitos: [RF01]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nova_senha]
+              properties:
+                nova_senha:
+                  type: string
+                  minLength: 8
+                manter_dispositivo_atual:
+                  type: boolean
+                device_token_atual:
+                  type: [string, 'null']
+                refresh_token:
+                  type: [string, 'null']
+      responses:
+        '200':
+          description: Senha atualizada e dispositivos revogados.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, precisa_definir_senha, dispositivos_revogados, sessao]
+                properties:
+                  ok:
+                    type: boolean
+                  precisa_definir_senha:
+                    type: boolean
+                  dispositivos_revogados:
+                    type: integer
+                  sessao:
+                    oneOf:
+                      - $ref: '#/components/schemas/Sessao'
+                      - type: 'null'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '422':
+          description: Parâmetro obrigatório ausente ou inválido (`campo_obrigatorio`, `campo_invalido`, `senha_fraca`, `senha_igual`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '429':
+          $ref: '#/components/responses/LimiteExcedido'
+
+  /revogar-dispositivos:
+    servers:
+      - url: https://{projeto}.supabase.co/functions/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Exportação e conta]
+      operationId: revogarDispositivos
+      summary: Sair de todos os dispositivos e revogar confiança de 30 dias
+      description: |
+        0.2.112. Revoga todos os registros em `privado.dispositivos_confiaveis`, remove todas as
+        entradas de `privado.sessoes_verificadas` e encerra todas as sessões ativas no GoTrue
+        (`scope=global`).
+      security:
+        - tokenDoUsuario: []
+          chaveDoProjeto: []
+      x-requisitos: [RF01]
+      responses:
+        '200':
+          description: Todos os dispositivos e sessões revogados.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, dispositivos_revogados]
+                properties:
+                  ok:
+                    type: boolean
+                  dispositivos_revogados:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '429':
+          $ref: '#/components/responses/LimiteExcedido'
+
   /entrar-demonstracao:
     servers:
       - url: https://{projeto}.supabase.co/functions/v1
@@ -7445,6 +7804,24 @@ components:
             `aceitar_termos`). Opcional nesta versão; ausente, o app trata como não aceita e, se
             precisar, pede o aceite.
           type: string
+        precisa_definir_senha:
+          description: |
+            0.2.112. Sinal server-authoritative indicando se a conta ainda precisa concluir a
+            definição obrigatória de senha antes de acessar o produto. Opcional para compatibilidade
+            com versões anteriores.
+          type: boolean
+    EstadoAutenticacao:
+      type: object
+      required: [autenticado, dispositivo_verificado, precisa_definir_senha, tem_conta]
+      properties:
+        autenticado:
+          type: boolean
+        dispositivo_verificado:
+          type: boolean
+        precisa_definir_senha:
+          type: boolean
+        tem_conta:
+          type: boolean
     JanelaDeDisponibilidade:
       type: object
       required: [dia_semana, hora_inicio, hora_fim]

@@ -489,6 +489,31 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
+# Autenticação por senha com verificação de dispositivo confiável (30 dias).
+[functions.autenticar-senha]
+enabled = true
+verify_jwt = false
+
+# Confirmação de OTP (desafio de login, cadastro ou recuperação) com opt-in de 30 dias.
+[functions.confirmar-dispositivo-otp]
+enabled = true
+verify_jwt = false
+
+# Reenvio de OTP do desafio login_dispositivo mantendo desafio_id, com cooldown 60s e teto de 3 reenvios.
+[functions.reenviar-dispositivo-otp]
+enabled = true
+verify_jwt = false
+
+# Definição/troca de senha na sessão ativa com limpeza de precisa_definir_senha e revogação de dispositivos.
+[functions.definir-senha]
+enabled = true
+verify_jwt = true
+
+# Ação "Sair de todos os dispositivos" (revoga confiança de 30 dias e encerra todas as sessões).
+[functions.revogar-dispositivos]
+enabled = true
+verify_jwt = true
+
 
 
 
