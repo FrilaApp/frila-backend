@@ -25,7 +25,9 @@
 --   candidatos             candidaturas por posição                         (padrão 6)
 --   dias                   tamanho do histórico, em dias, terminando hoje   (padrão 365)
 --   casas_extras           outras casas SEM o dono como membro              (padrão 0)
---   vagas_extras           vagas de cada casa extra (2 posições, 3 cand.)   (padrão 20)
+--   vagas_extras           vagas de cada casa extra                         (padrão 20)
+--   posicoes_extras        posições por vaga de cada casa extra             (padrão 2)
+--   candidatos_extras      candidaturas por posição de cada casa extra      (padrão 3)
 --   permitir_base_povoada  'sim' aceita banco com mais de 200 usuários      (padrão 'nao')
 --
 -- Uso de referência (dentro de `begin; ... rollback;`):
@@ -65,6 +67,14 @@ release savepoint casa_pesada_exige_transacao;
 \else
   \set vagas_extras 20
 \endif
+\if :{?posicoes_extras}
+\else
+  \set posicoes_extras 2
+\endif
+\if :{?candidatos_extras}
+\else
+  \set candidatos_extras 3
+\endif
 \if :{?permitir_base_povoada}
 \else
   \set permitir_base_povoada nao
@@ -76,6 +86,8 @@ select set_config('frila.casa_pesada.vagas',        :'vagas',                tru
        set_config('frila.casa_pesada.dias',         :'dias',                 true) as c_dias,
        set_config('frila.casa_pesada.casas_extras', :'casas_extras',         true) as c_extras,
        set_config('frila.casa_pesada.vagas_extras', :'vagas_extras',         true) as c_vagas_extras,
+       set_config('frila.casa_pesada.posicoes_extras',   :'posicoes_extras',   true) as c_posicoes_extras,
+       set_config('frila.casa_pesada.candidatos_extras', :'candidatos_extras', true) as c_candidatos_extras,
        set_config('frila.casa_pesada.base_povoada', :'permitir_base_povoada', true) as c_base
 \gset
 
@@ -235,9 +247,11 @@ declare
   v_dias       int := current_setting('frila.casa_pesada.dias')::int;
   v_extras     int := current_setting('frila.casa_pesada.casas_extras')::int;
   v_vagas_ext  int := current_setting('frila.casa_pesada.vagas_extras')::int;
+  v_pos_ext    int := current_setting('frila.casa_pesada.posicoes_extras')::int;
+  v_cand_ext   int := current_setting('frila.casa_pesada.candidatos_extras')::int;
   v_povoada    text := current_setting('frila.casa_pesada.base_povoada');
   v_pool       int;
-  v_pool_ext   constant int := 20;
+  v_pool_ext   int;
   v_total      int;
   v_dono       uuid := pg_temp.cp_uuid('a', 1, 1);
   v_funcoes    uuid[];
@@ -269,14 +283,15 @@ begin
   end if;
 
   if v_vagas < 1 or v_posicoes < 1 or v_posicoes > 200 or v_candidatos < 1 or v_dias < 30
-     or v_extras < 0 or v_vagas_ext < 1 then
-    raise exception 'Parâmetros fora do intervalo: vagas>=1, 1<=posicoes<=200, candidatos>=1, dias>=30, casas_extras>=0, vagas_extras>=1.';
+     or v_extras < 0 or v_vagas_ext < 1 or v_pos_ext < 1 or v_pos_ext > 200 or v_cand_ext < 1 then
+    raise exception 'Parâmetros fora do intervalo: vagas>=1, 1<=posicoes<=200, candidatos>=1, dias>=30, casas_extras>=0, vagas_extras>=1, 1<=posicoes_extras<=200, candidatos_extras>=1.';
   end if;
   if ceil(v_vagas::numeric / v_dias) > 3 or ceil(v_vagas_ext::numeric / v_dias) > 3 then
     raise exception 'No máximo 3 vagas por dia (faixas de 6 h sem cruzar). Aumente -v dias ou reduza -v vagas.';
   end if;
 
-  v_pool  := greatest(300, v_candidatos, v_posicoes);
+  v_pool     := greatest(300, v_candidatos, v_posicoes);
+  v_pool_ext := greatest(20, v_cand_ext, v_pos_ext);
   v_total := v_pool + v_extras * v_pool_ext;
 
   -- A recomputação de comparecimento por gatilho não faz parte do que se mede; o idioma de
@@ -346,7 +361,7 @@ begin
 
   for v_h in 2 .. 1 + v_extras loop
     perform pg_temp.cp_gerar_casa(v_h, pg_temp.cp_uuid('e', v_h, 1), v_dono,
-                                  v_vagas_ext, 2, 3, v_dias, v_pool_ext,
+                                  v_vagas_ext, v_pos_ext, v_cand_ext, v_dias, v_pool_ext,
                                   v_pool + (v_h - 2) * v_pool_ext);
   end loop;
   if v_extras > 0 then
