@@ -3,8 +3,8 @@
 -- 422 campo_invalido com details valor_centavos. Sem este teste, tirar a linha não deixava nenhum teste vermelho:
 -- o CHECK de public.vaga ainda barraria o valor, mas com 23514 cru no lugar do envelope do contrato.
 -- Valor zero e negativo: recusa com sqlstate, status, code e details, sem gravar vaga, posição nem chamada.
--- Um centavo: aceito (controle). O controle reusa a chave da primeira recusa: se ela tivesse gravado a chamada,
--- a idempotência devolveria a chamada antiga, e não uma vaga nova de 1 centavo.
+-- Piso da diária (BE-02, 5000 centavos = R$ 50,00): aceito (controle). O controle reusa a chave da primeira
+-- recusa: se ela tivesse gravado a chamada, a idempotência devolveria a chamada antiga, e não a vaga nova.
 -- Casa CNPJ (sem a confirmação de recorrência da J7) e profissional da equipe de confiança (RN28).
 begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
@@ -92,16 +92,16 @@ select results_eq($$
   $$ values (0, 0, 0) $$,
   'RN29: a recusa não grava vaga, posição nem chamada');
 
--- ── Controle: 1 centavo passa, com a mesma chave da primeira recusa ──────────
+-- ── Controle: piso vigente (5000 centavos) passa, com a mesma chave da primeira recusa ──
 select is(pg_temp.resultado('c8200000-0000-4000-8000-000000000001',
-            pg_temp.chamar(1, 'c8200000-0000-4000-8000-0000000000c1')),
+            pg_temp.chamar(5000, 'c8200000-0000-4000-8000-0000000000c1')),
   '{"ok": true}'::jsonb,
-  'controle: valor_centavos = 1 é aceito');
+  'controle: valor_centavos = 5000 (piso BE-02) é aceito');
 select results_eq($$
   select c.estado, g.valor_centavos, g.origem from public.chamada c join public.vaga g on g.id = c.vaga_id
    where c.estabelecimento_id = 'c8200000-0000-4000-8000-0000000000e1' $$,
-  $$ values ('aberta'::text, 1::bigint, 'chamada_direta'::text) $$,
-  'controle: uma chamada aberta, numa vaga direta de 1 centavo');
+  $$ values ('aberta'::text, 5000::bigint, 'chamada_direta'::text) $$,
+  'controle: uma chamada aberta, numa vaga direta de 5000 centavos');
 select is((select count(*)::int from public.chamada c where c.chave = 'c8200000-0000-4000-8000-0000000000c1'), 1,
   'controle: a chave da recusa não ficou gasta');
 
