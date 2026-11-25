@@ -28,12 +28,13 @@ e a remoção do pgTAP 890 e da corrida do #571. `supabase/migrations` e `supaba
 23/11/2026: **7** commits só no `main` (os 3 merges de release antigos e os 4 do pacote 23) e **20** só na `develop`.
 O último release anterior foi o PR #308 (`release/backend-v1.0.0`) em 19/10/2026 (`8d19626`); as tags `backend-v*` existentes
 são `backend-v1.1.0` e `backend-v1.1.1`. Nenhuma tag `backend-v*` foi criada para o pacote 23 (entrou por roteiro).
-**TRAVA (O2, 24/11/2026): nenhuma tag `backend-v*` até as migrações `20261122150000` (#513, aviso a caminho), `20261122190000`
-(#516, Regra 4 do aceite tardio) e `20261123100000` (BE-02, piso e teto do valor da diária) estarem decididas ou desfeitas.**
-O Prod fica sem elas no pacote 24 (decisão B: o pacote leva só #587, #586, #591 e #604, mais o par `20261118100000`/`20261123150000`),
-e a tag aplica por **conjunto** de versões ausentes: ela as aplicaria, três buracos abaixo do topo `20261124020000`. Regra 4 tem
-texto e telas sem decisão; o BE-02 tem a decisão dos sócios pendente e o contrato 0.2.108 só em rascunho (docs#305, #593).
-Brief: `orquestracao/briefs/B-108-pacote-24.md`.
+**TRAVA (O2, 24/11/2026 22h46, pacote 25): nenhuma tag `backend-v*` enquanto o `entrega.yml` publicar as 13 Edge Functions sem nome**
+(`supabase functions deploy --project-ref "$REF"`): a tag publicaria `excluir-conta`, `exportar-meus-dados` e `exportar-turnos`
+(#530/CORS, nunca foram ao Prod) e o `enviar-email` do #613 (fora do Prod por decisão do O2). O Prod anda por pacote (roteiro com árvore
+fixa), não pela tag. A trava anterior (as migrações `20261122150000`, `20261122190000` e `20261123100000`) caiu com o OK do Cauê
+(O1, 24/11 22h38, B-118): o pacote 25 leva as três. Se o O1 mandar segurar a Regra 4 (`20261122190000`, V5, o padrão sem resposta até o
+VAI), o Prod fica com ela como buraco abaixo do topo `20261124190000` e a tag a aplicaria junto: um motivo a mais para não haver tag.
+Brief: `orquestracao/briefs/B-118-pacote-25.md`; roteiro do pacote 25 em `orquestracao/lancamento-1-1/pacote-25/`.
 A `develop` (ref `af6c9fd` em 23/11/2026, tudo conferido de novo nesse commit) possui **241 migrações** (o `main`, 236, as do Prod),
 **306 arquivos pgTAP** em `supabase/tests` (304 de regras + 2 de carga em `carga/`: `gerar_df.sql` e `gerar_casa_pesada.sql`),
 **13 Edge Functions** (14 diretórios com `_compartilhado`) e **94 scripts `.sh`** em `scripts/` (113 arquivos no total, `find scripts -type f`).
