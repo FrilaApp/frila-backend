@@ -102,12 +102,111 @@ export function extrairSessionIdDoJwt(jwt: string): string | null {
   }
 }
 
-export function extrairIpCliente(req: Request): string {
+import { igualEmTempoConstante } from "./auth.ts";
+
+export interface OpcoesIpVisitante {
+  /** Chaves B-116 no formato `id1:64hex,id2:64hex` (env `IP_VISITANTE_HMAC_CHAVES`) ou par `IP_VISITANTE_HMAC_ID` + `IP_VISITANTE_HMAC`. */
+  chavesBrutas?: string;
+  /** Escopo da mensagem HMAC: `"anon"` em rotas anônimas, ou `<uid>` em rotas autenticadas. */
+  escopo?: string;
+  /** Relógio em segundos Unix (injetável em testes). */
+  agoraSegundos?: number;
+}
+
+const REGEX_ASSINATURA_B116 = /^v1;k=([a-z0-9]{1,16});([0-9a-f]{64})$/;
+const REGEX_CARIMBO_B116 = /^[0-9]{1,12}$/;
+const REGEX_CHAVE_HEX_64 = /^[0-9a-f]{64}$/;
+const JANELA_CARIMBO_B116_SEGUNDOS = 60;
+
+export function lerChavesIpVisitante(bruto: string | undefined): Map<string, string> {
+  const mapa = new Map<string, string>();
+  for (const entrada of (bruto ?? "").split(",")) {
+    const limpa = entrada.trim();
+    if (!limpa) continue;
+    const sep = limpa.indexOf(":");
+    if (sep <= 0) continue;
+    const id = limpa.slice(0, sep).trim();
+    const segredo = limpa.slice(sep + 1).trim();
+    if (/^[a-z0-9]{1,16}$/.test(id) && REGEX_CHAVE_HEX_64.test(segredo)) {
+      mapa.set(id, segredo);
+    }
+  }
+  if (mapa.size === 0 && bruto === undefined) {
+    const idUnico = Deno.env.get("IP_VISITANTE_HMAC_ID")?.trim() ?? "";
+    const segUnico = Deno.env.get("IP_VISITANTE_HMAC")?.trim() ?? "";
+    if (/^[a-z0-9]{1,16}$/.test(idUnico) && REGEX_CHAVE_HEX_64.test(segUnico)) {
+      mapa.set(idUnico, segUnico);
+    }
+  }
+  return mapa;
+}
+
+/**
+ * Valida os cabeçalhos assinados do padrão B-116 enviados pelo Cloudflare Worker:
+ *   x-frila-ip-visitante: texto cru do CF-Connecting-IP (sem máscara `/`)
+ *   x-frila-ip-carimbo:   segundos Unix (UTC), janela ±60s
+ *   x-frila-ip-assinatura: v1;k=<id>;<hex> (HMAC-SHA256 UTF-8 de `v1|<ip>|<carimbo>|<escopo>`)
+ *
+ * Em chamadas anônimas, `<escopo>` é literalmente `"anon"`; em autenticadas, `<uid>` do Bearer.
+ * Retorna o IP real do visitante somente se a assinatura for válida; caso contrário, `null`.
+ */
+export async function verificarIpVisitanteAssinado(
+  req: Request,
+  opcoes: OpcoesIpVisitante = {},
+): Promise<string | null> {
+  const ip = req.headers.get("x-frila-ip-visitante");
+  const carimbo = req.headers.get("x-frila-ip-carimbo");
+  const assinatura = req.headers.get("x-frila-ip-assinatura");
+  if (!ip || !carimbo || !assinatura) return null;
+
+  const match = assinatura.match(REGEX_ASSINATURA_B116);
+  if (!match || !REGEX_CARIMBO_B116.test(carimbo) || ip.includes("/") || ip.trim() !== ip || ip.length > 64) {
+    return null;
+  }
+
+  const agora = opcoes.agoraSegundos ?? Math.floor(Date.now() / 1000);
+  const carimboNum = Number(carimbo);
+  if (!Number.isFinite(carimboNum) || Math.abs(agora - carimboNum) > JANELA_CARIMBO_B116_SEGUNDOS) {
+    return null;
+  }
+
+  const chaves = lerChavesIpVisitante(opcoes.chavesBrutas ?? Deno.env.get("IP_VISITANTE_HMAC_CHAVES"));
+  const segredo = chaves.get(match[1]);
+  if (!segredo) return null;
+
+  const escopo = opcoes.escopo ?? "anon";
+  const esperada = await hashTokenDispositivo(`v1|${ip}|${carimbo}|${escopo}`, segredo);
+  return igualEmTempoConstante(esperada, match[2]) ? ip : null;
+}
+
+/**
+ * Resolve o IP seguro para balde de rate limit, sem nunca confiar em `x-forwarded-for` bruto
+ * e sem nunca agrupar tráfego Web pelo IP de egress compartilhado do Cloudflare Worker:
+ * - Se houver cabeçalho B-116 assinado e válido -> usa o IP real do visitante.
+ * - Se for chamada Web (`plataforma === "web"`) sem assinatura B-116 válida -> retorna `null`
+ *   (fallback exclusivo para rate limit por `email_hash`/`desafio_id` + borda, evitando 429 global por PoP).
+ * - Se for chamada direta mobile (`ios`/`android`) sem cabeçalho B-116 -> usa apenas `cf-connecting-ip`
+ *   (se ausente, retorna `null` em vez de agrupar em uma chave fixa global).
+ */
+export async function resolverIpParaRateLimit(
+  req: Request,
+  plataforma: PlataformaAuth | null,
+  opcoes: OpcoesIpVisitante = {},
+): Promise<string | null> {
+  const temCabecalhosB116 = req.headers.has("x-frila-ip-visitante") ||
+    req.headers.has("x-frila-ip-carimbo") ||
+    req.headers.has("x-frila-ip-assinatura");
+
+  if (temCabecalhosB116) {
+    return await verificarIpVisitanteAssinado(req, opcoes);
+  }
+
+  if (plataforma === "web") {
+    return null;
+  }
+
   const cf = req.headers.get("cf-connecting-ip")?.trim();
-  if (cf) return cf;
-  const xff = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  if (xff) return xff;
-  return "desconhecido";
+  return cf && cf.length > 0 ? cf : null;
 }
 
 export function validarSessaoGoTrue(dados: unknown): SessaoGoTrue | null {

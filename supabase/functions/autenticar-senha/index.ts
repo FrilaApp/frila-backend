@@ -13,14 +13,15 @@ import postgres from "npm:postgres@3.4.4";
 import { comCors } from "../_compartilhado/cors.ts";
 import {
   ehPlataformaValida,
-  extrairIpCliente,
   extrairSessionIdDoJwt,
   hashSha256Hex,
   hashTokenDispositivo,
   normalizarEmail,
+  type OpcoesIpVisitante,
   type PlataformaAuth,
   recusa,
   renovarSessaoGoTrue,
+  resolverIpParaRateLimit,
   responderJson,
   revogarSessaoLocalGoTrue,
   validarSessaoGoTrue,
@@ -47,6 +48,7 @@ export interface AutenticarSenhaDeps {
   dbUrl?: string;
   pepper?: string;
   origensCors?: string;
+  opcoesIp?: OpcoesIpVisitante;
   db?: AutenticarSenhaDb;
 }
 
@@ -113,20 +115,25 @@ export async function tratarAutenticarSenha(req: Request, deps: AutenticarSenhaD
   if (!supabaseUrl || !anonKey || (!deps.db && !dbUrl)) {
     return recusa(503, "indisponivel");
   }
+  // Fail-closed: nunca degradar silenciosamente validação de device_token sem pepper configurado.
+  if (deviceToken && !pepper) {
+    return recusa(503, "indisponivel");
+  }
 
   const sqlDb = deps.db ? null : criarDbSql(dbUrl);
   const db: AutenticarSenhaDb = deps.db ?? sqlDb!;
 
   try {
-    const ipHash = await hashSha256Hex(extrairIpCliente(req));
+    const ipSeguro = await resolverIpParaRateLimit(req, plataforma, deps.opcoesIp);
     const emailHash = await hashSha256Hex(email);
 
-    const [okIp, okEmail] = await Promise.all([
-      db.consumirRateLimit(`auth:senha:ip:${ipHash}`, 20, 600),
-      db.consumirRateLimit(`auth:senha:email:${emailHash}`, 10, 600),
-    ]);
-    if (!okIp || !okEmail) {
-      return recusa(429, "limite_excedido");
+    const okEmail = await db.consumirRateLimit(`auth:senha:email:${emailHash}`, 10, 600);
+    if (!okEmail) return recusa(429, "limite_excedido");
+
+    if (ipSeguro) {
+      const ipHash = await hashSha256Hex(ipSeguro);
+      const okIp = await db.consumirRateLimit(`auth:senha:ip:${ipHash}`, 20, 600);
+      if (!okIp) return recusa(429, "limite_excedido");
     }
 
     const resAuth = await fetchFn(`${supabaseUrl}/auth/v1/token?grant_type=password`, {

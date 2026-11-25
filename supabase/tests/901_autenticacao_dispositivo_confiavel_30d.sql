@@ -4,7 +4,7 @@
 -- preservação de sessões legadas pré-corte, expiração pelo relógio do banco,
 -- isolamento entre contas, replay/concorrência de desafios e revogação no reset/logout global.
 begin;
-select plan(27);
+select plan(30);
 
 -- ── 1. Privilégios: tabelas e funções privadas inacessíveis a anon/authenticated ─
 select ok(
@@ -319,6 +319,39 @@ select is(
   (privado.reservar_reenvio_desafio(((select res ->> 'desafio_id' from t_reenvio)::uuid)) ->> 'status'),
   'ok',
   'reenvio após 60s mantém o mesmo desafio_id sem incrementar tentativas de verificação'
+);
+
+-- ── 15. Revogação imediata online (JWT já emitido com dispositivo_verificado=true é bloqueado) ─
+select set_config('request.jwt.claims', json_build_object(
+  'sub', 'b2222222-2222-4222-8222-222222222222',
+  'role', 'authenticated',
+  'session_id', 'c3333333-3333-4333-8333-333333333333',
+  'app_metadata', json_build_object('dispositivo_verificado', true, 'precisa_definir_senha', false)
+)::text, true);
+select set_config('request.path', '/rpc/meus_turnos', true);
+
+-- Revoga todos os dispositivos/sessões da Conta B
+select is(
+  privado.revogar_todos_dispositivos('b2222222-2222-4222-8222-222222222222'::uuid) >= 0,
+  true,
+  'revogar_todos_dispositivos executa limpeza imediata de sessoes_verificadas'
+);
+
+-- Mesmo com JWT ainda carregando app_metadata.dispositivo_verificado=true, o guard online bloqueia imediatamente!
+select throws_ok(
+  $$ select requisicao.conferir_limite() $$,
+  'dispositivo_nao_verificado',
+  'revogação imediata: JWT já emitido é bloqueado instantaneamente após revogar_todos_dispositivos'
+);
+
+-- Sessão pré-corte (Conta A) continua isenta no guard online mesmo sem linha em sessoes_verificadas
+select is(
+  privado.verificar_sessao_dispositivo_online(
+    'a1111111-1111-4111-8111-111111111111'::uuid,
+    'c1111111-1111-4111-8111-111111111111'::uuid
+  ),
+  true,
+  'sessão pré-corte continua isenta no guard online verificar_sessao_dispositivo_online()'
 );
 
 select * from finish();

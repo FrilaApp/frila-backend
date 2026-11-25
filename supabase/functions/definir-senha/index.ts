@@ -15,6 +15,7 @@ import {
 } from "../_compartilhado/dispositivo_auth.ts";
 
 export interface DefinirSenhaDb {
+  verificarSessaoOnline(usuarioId: string, sessionId: string | null): Promise<boolean>;
   concluirDefinicaoSenha(
     usuarioId: string,
     sessionId: string | null,
@@ -34,6 +35,12 @@ export interface DefinirSenhaDeps {
 function criarDbSql(dbUrl: string): DefinirSenhaDb & { fechar(): Promise<void> } {
   const sql = postgres(dbUrl, { max: 1, connect_timeout: 5, idle_timeout: 10 });
   return {
+    async verificarSessaoOnline(usuarioId, sessionId) {
+      const [row] = await sql`
+        select privado.verificar_sessao_dispositivo_online(${usuarioId}::uuid, ${sessionId}::uuid) as permitido
+      `;
+      return Boolean(row?.permitido);
+    },
     async concluirDefinicaoSenha(usuarioId, sessionId, manterTokenHash) {
       const [row] = await sql`
         select privado.concluir_definicao_senha(
@@ -89,43 +96,64 @@ export async function tratarDefinirSenha(req: Request, deps: DefinirSenhaDeps = 
   if (!supabaseUrl || !anonKey || (!deps.db && !dbUrl)) {
     return recusa(503, "indisponivel");
   }
+  // Fail-closed: manter_dispositivo_atual sem DISPOSITIVO_TOKEN_PEPPER nunca degrada para revogar o token atual.
+  if (manterDispositivoAtual && !pepper) {
+    return recusa(503, "indisponivel");
+  }
 
-  const resPut = await fetchFn(`${supabaseUrl}/auth/v1/user`, {
-    method: "PUT",
+  // Confirma identidade e guarda online de dispositivo_verificado ANTES de alterar senha no GoTrue.
+  const resUser = await fetchFn(`${supabaseUrl}/auth/v1/user`, {
+    method: "GET",
     headers: {
-      "Content-Type": "application/json",
       "Authorization": `Bearer ${accessToken}`,
       "apikey": anonKey,
     },
-    body: JSON.stringify({ password: novaSenha }),
   });
+  if (resUser.status === 429) return recusa(429, "limite_excedido");
+  if (resUser.status >= 500) return recusa(503, "indisponivel");
+  if (!resUser.ok) return recusa(401, "nao_autenticado");
 
-  if (resPut.status === 429) return recusa(429, "limite_excedido");
-  if (resPut.status >= 500) return recusa(503, "indisponivel");
-
-  const bodyPut = await resPut.json().catch(() => ({})) as Record<string, unknown>;
-  if (!resPut.ok) {
-    const code = String(bodyPut.error_code ?? bodyPut.code ?? "").toLowerCase();
-    if (code === "reauthentication_needed") return recusa(401, "reautenticacao_necessaria");
-    if (resPut.status === 401 || resPut.status === 403) return recusa(401, "nao_autenticado");
-    if (code === "same_password") return recusa(422, "senha_igual", "nova_senha");
-    if (code === "weak_password") return recusa(422, "senha_fraca", "nova_senha");
-    return recusa(422, "campo_invalido", "nova_senha");
-  }
-
-  const usuarioId = typeof bodyPut.id === "string" ? bodyPut.id : null;
-  if (!usuarioId) return recusa(503, "indisponivel");
+  const user = await resUser.json().catch(() => null) as { id?: string } | null;
+  if (!user?.id) return recusa(401, "nao_autenticado");
 
   const sessionId = extrairSessionIdDoJwt(accessToken);
-  const manterTokenHash = manterDispositivoAtual && deviceTokenAtual && pepper
-    ? await hashTokenDispositivo(deviceTokenAtual, pepper)
-    : null;
-
   const sqlDb = deps.db ? null : criarDbSql(dbUrl);
   const db: DefinirSenhaDb = deps.db ?? sqlDb!;
 
   try {
-    const resDb = await db.concluirDefinicaoSenha(usuarioId, sessionId, manterTokenHash);
+    const sessaoOk = await db.verificarSessaoOnline(user.id, sessionId);
+    if (!sessaoOk) {
+      return recusa(401, "dispositivo_nao_verificado");
+    }
+
+    const resPut = await fetchFn(`${supabaseUrl}/auth/v1/user`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${accessToken}`,
+        "apikey": anonKey,
+      },
+      body: JSON.stringify({ password: novaSenha }),
+    });
+
+    if (resPut.status === 429) return recusa(429, "limite_excedido");
+    if (resPut.status >= 500) return recusa(503, "indisponivel");
+
+    const bodyPut = await resPut.json().catch(() => ({})) as Record<string, unknown>;
+    if (!resPut.ok) {
+      const code = String(bodyPut.error_code ?? bodyPut.code ?? "").toLowerCase();
+      if (code === "reauthentication_needed") return recusa(401, "reautenticacao_necessaria");
+      if (resPut.status === 401 || resPut.status === 403) return recusa(401, "nao_autenticado");
+      if (code === "same_password") return recusa(422, "senha_igual", "nova_senha");
+      if (code === "weak_password") return recusa(422, "senha_fraca", "nova_senha");
+      return recusa(422, "campo_invalido", "nova_senha");
+    }
+
+    const manterTokenHash = manterDispositivoAtual && deviceTokenAtual && pepper
+      ? await hashTokenDispositivo(deviceTokenAtual, pepper)
+      : null;
+
+    const resDb = await db.concluirDefinicaoSenha(user.id, sessionId, manterTokenHash);
 
     // Opcionalmente renova a sessão para já entregar o JWT com precisa_definir_senha = false.
     const sessaoRenovada = refreshToken

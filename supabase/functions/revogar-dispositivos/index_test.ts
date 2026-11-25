@@ -6,10 +6,36 @@ Deno.test("revogar-dispositivos: sem Authorization devolve 401 nao_autenticado",
   const res = await tratarRevogarDispositivos(req, {
     supabaseUrl: "https://proj.supabase.co",
     anonKey: "anon-test",
-    db: { revogarTodosDispositivos: () => Promise.resolve(0) },
+    db: {
+      verificarSessaoOnline: () => Promise.resolve(true),
+      revogarTodosDispositivos: () => Promise.resolve(0),
+    },
   });
   assertEquals(res.status, 401);
   assertEquals((await res.json()).code, "nao_autenticado");
+});
+
+Deno.test("revogar-dispositivos: bloqueia sessão não verificada com 401 dispositivo_nao_verificado sem revogar", async () => {
+  let chamouRevogar = false;
+  const req = new Request("https://local/functions/v1/revogar-dispositivos", {
+    method: "POST",
+    headers: { "Authorization": "Bearer jwt-bypass" },
+  });
+  const res = await tratarRevogarDispositivos(req, {
+    fetchFn: () => Promise.resolve(Response.json({ id: "user-99" })),
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    db: {
+      verificarSessaoOnline: () => Promise.resolve(false),
+      revogarTodosDispositivos: () => {
+        chamouRevogar = true;
+        return Promise.resolve(0);
+      },
+    },
+  });
+  assertEquals(res.status, 401);
+  assertEquals((await res.json()).code, "dispositivo_nao_verificado");
+  assertEquals(chamouRevogar, false);
 });
 
 Deno.test("revogar-dispositivos: revoga todos dispositivos no banco e chama logout scope=global no GoTrue", async () => {
@@ -33,6 +59,7 @@ Deno.test("revogar-dispositivos: revoga todos dispositivos no banco e chama logo
     supabaseUrl: "https://proj.supabase.co",
     anonKey: "anon-test",
     db: {
+      verificarSessaoOnline: () => Promise.resolve(true),
       revogarTodosDispositivos: (uid) => {
         uidRevogado = uid;
         return Promise.resolve(3);

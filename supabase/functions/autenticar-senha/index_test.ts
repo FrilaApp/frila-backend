@@ -1,4 +1,5 @@
 import { assertEquals, assertExists } from "jsr:@std/assert@1.0.19";
+import { hashTokenDispositivo } from "../_compartilhado/dispositivo_auth.ts";
 import { type AutenticarSenhaDb, tratarAutenticarSenha } from "./index.ts";
 
 function fakeJwt(sessionId: string): string {
@@ -179,4 +180,88 @@ Deno.test("autenticar-senha: rate limit devolve 429 limite_excedido antes de cha
   });
   assertEquals(res.status, 429);
   assertEquals(chamouGoTrue, false);
+});
+
+Deno.test("autenticar-senha: Web com cabeçalho B-116 assinado usa IP do visitante; sem assinatura NÃO agrupa por egress nem confia em x-forwarded-for", async () => {
+  const segredo = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const carimbo = 1764030000;
+  const ipVisitante = "203.0.113.42";
+  const hmac = await hashTokenDispositivo(`v1|${ipVisitante}|${carimbo}|anon`, segredo);
+
+  const chavesAssinado: string[] = [];
+  const reqAssinado = new Request("https://local/functions/v1/autenticar-senha", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "cf-connecting-ip": "198.51.100.1",
+      "x-frila-ip-visitante": ipVisitante,
+      "x-frila-ip-carimbo": String(carimbo),
+      "x-frila-ip-assinatura": `v1;k=a1;${hmac}`,
+    },
+    body: JSON.stringify({ email: "ana@frila.test", senha: "err", plataforma: "web" }),
+  });
+
+  await tratarAutenticarSenha(reqAssinado, {
+    fetchFn: () => Promise.resolve(Response.json({}, { status: 400 })),
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    opcoesIp: { chavesBrutas: `a1:${segredo}`, agoraSegundos: carimbo + 10 },
+    db: dbStub({
+      consumirRateLimit: (chave) => {
+        chavesAssinado.push(chave);
+        return Promise.resolve(true);
+      },
+    }),
+  });
+  assertEquals(chavesAssinado.some((c) => c.startsWith("auth:senha:ip:")), true);
+
+  // Web sem assinatura B-116 válida (com cf-connecting-ip de egress + x-forwarded-for forjado):
+  // NÃO pode criar balde auth:senha:ip:* (usa apenas email_hash, evitando 429 global por PoP).
+  const chavesSemAssinatura: string[] = [];
+  const reqSemAssinatura = new Request("https://local/functions/v1/autenticar-senha", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "cf-connecting-ip": "198.51.100.1",
+      "x-forwarded-for": "192.0.2.99",
+    },
+    body: JSON.stringify({ email: "ana@frila.test", senha: "err", plataforma: "web" }),
+  });
+
+  await tratarAutenticarSenha(reqSemAssinatura, {
+    fetchFn: () => Promise.resolve(Response.json({}, { status: 400 })),
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    opcoesIp: { chavesBrutas: `a1:${segredo}`, agoraSegundos: carimbo + 10 },
+    db: dbStub({
+      consumirRateLimit: (chave) => {
+        chavesSemAssinatura.push(chave);
+        return Promise.resolve(true);
+      },
+    }),
+  });
+  assertEquals(chavesSemAssinatura.some((c) => c.startsWith("auth:senha:ip:")), false);
+  assertEquals(chavesSemAssinatura.some((c) => c.startsWith("auth:senha:email:")), true);
+});
+
+Deno.test("autenticar-senha: fail-closed devolve 503 se device_token presente sem DISPOSITIVO_TOKEN_PEPPER", async () => {
+  const req = new Request("https://local/functions/v1/autenticar-senha", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: "ana@frila.test",
+      senha: "SenhaForte123!",
+      plataforma: "web",
+      device_token: "tok-opaco",
+    }),
+  });
+  const res = await tratarAutenticarSenha(req, {
+    fetchFn: () => Promise.resolve(Response.json({})),
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    pepper: "",
+    db: dbStub(),
+  });
+  assertEquals(res.status, 503);
+  assertEquals((await res.json()).code, "indisponivel");
 });

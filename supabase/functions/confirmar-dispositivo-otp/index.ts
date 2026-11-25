@@ -8,15 +8,16 @@ import postgres from "npm:postgres@3.4.4";
 import { comCors } from "../_compartilhado/cors.ts";
 import {
   ehPlataformaValida,
-  extrairIpCliente,
   extrairSessionIdDoJwt,
   gerarTokenOpaco,
   hashSha256Hex,
   hashTokenDispositivo,
   normalizarEmail,
+  type OpcoesIpVisitante,
   type PlataformaAuth,
   recusa,
   renovarSessaoGoTrue,
+  resolverIpParaRateLimit,
   responderJson,
   revogarSessaoLocalGoTrue,
   validarSessaoGoTrue,
@@ -55,6 +56,7 @@ export interface ConfirmarDispositivoDeps {
   dbUrl?: string;
   pepper?: string;
   gerarToken?: () => string;
+  opcoesIp?: OpcoesIpVisitante;
   db?: ConfirmarDispositivoDb;
 }
 
@@ -158,9 +160,19 @@ export async function tratarConfirmarDispositivoOtp(
   const db: ConfirmarDispositivoDb = deps.db ?? sqlDb!;
 
   try {
-    const ipHash = await hashSha256Hex(extrairIpCliente(req));
-    const okIp = await db.consumirRateLimit(`auth:verify:ip:${ipHash}`, 25, 600);
-    if (!okIp) return recusa(429, "limite_excedido");
+    // Sempre aplica rate limit por email_hash em cadastro/recuperação (independente de IP).
+    if (emailInformado) {
+      const emailHash = await hashSha256Hex(emailInformado);
+      const okEmail = await db.consumirRateLimit(`auth:verify:email:${emailHash}`, 10, 600);
+      if (!okEmail) return recusa(429, "limite_excedido");
+    }
+
+    const ipSeguro = await resolverIpParaRateLimit(req, plataforma, deps.opcoesIp);
+    if (ipSeguro) {
+      const ipHash = await hashSha256Hex(ipSeguro);
+      const okIp = await db.consumirRateLimit(`auth:verify:ip:${ipHash}`, 25, 600);
+      if (!okIp) return recusa(429, "limite_excedido");
+    }
 
     let emailParaVerify: string;
     let usuarioEsperadoId: string | null = null;

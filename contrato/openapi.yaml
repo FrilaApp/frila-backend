@@ -6801,7 +6801,11 @@ paths:
       summary: Login habitual por senha com verificação de dispositivo confiável (30 dias)
       description: |
         0.2.112. Valida e-mail e senha no GoTrue (anti-enumeração: qualquer 4xx de credencial vira
-        `401 credenciais_invalidas`). Se `device_token` for válido no relógio do Postgres
+        `401 credenciais_invalidas`). Na chamada Web → Edge, aceita os cabeçalhos assinados do padrão
+        B-116 (`x-frila-ip-visitante`, `x-frila-ip-carimbo`, `x-frila-ip-assinatura` com HMAC-SHA256
+        de `v1|<ip>|<carimbo>|anon`, janela ±60 s); sem assinatura válida na Web, não agrupa rate
+        limit pelo IP de egress compartilhado do Worker e aplica apenas limites por `email_hash` e
+        borda. Se `device_token` for válido no relógio do Postgres
         (`expira_em > now()` e `revogado_em IS NULL` para o mesmo titular), registra `session_id` em
         `privado.sessoes_verificadas`, executa `grant_type=refresh_token` para o hook emitir JWT com
         `dispositivo_verificado = true` e devolve `status: autenticado` com `Sessao`. Caso contrário,

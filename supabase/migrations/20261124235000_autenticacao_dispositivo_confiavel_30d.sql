@@ -611,6 +611,25 @@ end $$;
 
 revoke execute on function privado.revogar_sessao_pontual(uuid, uuid) from public, anon, authenticated;
 
+-- Guarda online para Edge Functions sensíveis (definir-senha, revogar-dispositivos, etc.):
+-- quando exigir_dispositivo_verificado = true, exige sessão verificada ativa no banco
+-- (com isenções explícitas para conta de demonstração e sessão pré-corte).
+create or replace function privado.verificar_sessao_dispositivo_online(
+  p_usuario_id uuid,
+  p_session_id uuid
+)
+returns boolean
+language sql
+stable
+security definer set search_path = ''
+as $$
+  select
+    not privado.exigir_dispositivo_verificado_ativo()
+    or privado.sessao_tem_dispositivo_verificado(p_session_id, p_usuario_id)
+$$;
+
+revoke execute on function privado.verificar_sessao_dispositivo_online(uuid, uuid) from public, anon, authenticated;
+
 -- ── 5. Superfície Pública (RPCs + Guarda de Produto + Pre-Request) ──────────
 
 create or replace function public.sessao_autorizada_para_produto()
@@ -622,6 +641,7 @@ as $$
 declare
   v_uid      uuid := (select auth.uid());
   v_claims   jsonb := coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb);
+  v_sid      uuid := nullif(v_claims ->> 'session_id', '')::uuid;
   v_app_meta jsonb := coalesce(v_claims -> 'app_metadata', '{}'::jsonb);
 begin
   if v_uid is null then
@@ -629,7 +649,10 @@ begin
   end if;
 
   if privado.exigir_dispositivo_verificado_ativo()
-     and coalesce((v_app_meta ->> 'dispositivo_verificado')::boolean, false) is not true then
+     and (
+       coalesce((v_app_meta ->> 'dispositivo_verificado')::boolean, false) is not true
+       or not privado.sessao_tem_dispositivo_verificado(v_sid, v_uid)
+     ) then
     return false;
   end if;
 
@@ -720,6 +743,7 @@ as $$
 declare
   v_uid      uuid := (select auth.uid());
   v_claims   jsonb := coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb);
+  v_sid      uuid := nullif(v_claims ->> 'session_id', '')::uuid;
   v_papel    text := v_claims ->> 'role';
   v_app_meta jsonb := coalesce(v_claims -> 'app_metadata', '{}'::jsonb);
   v_path     text := coalesce(current_setting('request.path', true), '');
@@ -734,10 +758,14 @@ begin
     return;
   end if;
 
-  -- Guarda central contra bypass direto ao GoTrue (ativa após cutover coordenado dos clientes).
+  -- Guarda central contra bypass direto ao GoTrue + revogação imediata (1 PK lookup em sessoes_verificadas).
+  -- Isenta automaticamente sessões pré-corte e contas de demonstração via sessao_tem_dispositivo_verificado().
   if privado.exigir_dispositivo_verificado_ativo()
      and v_path <> '/rpc/estado_autenticacao'
-     and coalesce((v_app_meta ->> 'dispositivo_verificado')::boolean, false) is not true then
+     and (
+       coalesce((v_app_meta ->> 'dispositivo_verificado')::boolean, false) is not true
+       or not privado.sessao_tem_dispositivo_verificado(v_sid, v_uid)
+     ) then
     perform public.erro(401, 'dispositivo_nao_verificado');
   end if;
 

@@ -6,9 +6,10 @@
 import postgres from "npm:postgres@3.4.4";
 import { extrairBearerToken } from "../_compartilhado/auth.ts";
 import { comCors } from "../_compartilhado/cors.ts";
-import { recusa, responderJson } from "../_compartilhado/dispositivo_auth.ts";
+import { extrairSessionIdDoJwt, recusa, responderJson } from "../_compartilhado/dispositivo_auth.ts";
 
 export interface RevogarDispositivosDb {
+  verificarSessaoOnline(usuarioId: string, sessionId: string | null): Promise<boolean>;
   revogarTodosDispositivos(usuarioId: string): Promise<number>;
 }
 
@@ -23,6 +24,12 @@ export interface RevogarDispositivosDeps {
 function criarDbSql(dbUrl: string): RevogarDispositivosDb & { fechar(): Promise<void> } {
   const sql = postgres(dbUrl, { max: 1, connect_timeout: 5, idle_timeout: 10 });
   return {
+    async verificarSessaoOnline(usuarioId, sessionId) {
+      const [row] = await sql`
+        select privado.verificar_sessao_dispositivo_online(${usuarioId}::uuid, ${sessionId}::uuid) as permitido
+      `;
+      return Boolean(row?.permitido);
+    },
     async revogarTodosDispositivos(usuarioId) {
       const [row] = await sql`select privado.revogar_todos_dispositivos(${usuarioId}::uuid) as revogados`;
       return Number(row?.revogados ?? 0);
@@ -67,10 +74,16 @@ export async function tratarRevogarDispositivos(
   const user = await resUser.json().catch(() => null) as { id?: string } | null;
   if (!user?.id) return recusa(401, "nao_autenticado");
 
+  const sessionId = extrairSessionIdDoJwt(accessToken);
   const sqlDb = deps.db ? null : criarDbSql(dbUrl);
   const db: RevogarDispositivosDb = deps.db ?? sqlDb!;
 
   try {
+    const sessaoOk = await db.verificarSessaoOnline(user.id, sessionId);
+    if (!sessaoOk) {
+      return recusa(401, "dispositivo_nao_verificado");
+    }
+
     const revogados = await db.revogarTodosDispositivos(user.id);
 
     // Revogação global no GoTrue (melhor esforço: auth.sessions já foi limpo no Postgres).

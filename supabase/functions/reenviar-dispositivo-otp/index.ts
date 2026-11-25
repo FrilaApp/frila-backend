@@ -7,9 +7,10 @@
 import postgres from "npm:postgres@3.4.4";
 import { comCors } from "../_compartilhado/cors.ts";
 import {
-  extrairIpCliente,
   hashSha256Hex,
+  type OpcoesIpVisitante,
   recusa,
+  resolverIpParaRateLimit,
   responderJson,
 } from "../_compartilhado/dispositivo_auth.ts";
 
@@ -29,6 +30,7 @@ export interface ReenviarDesafioDeps {
   supabaseUrl?: string;
   anonKey?: string;
   dbUrl?: string;
+  opcoesIp?: OpcoesIpVisitante;
   db?: ReenviarDesafioDb;
 }
 
@@ -86,9 +88,15 @@ export async function tratarReenviarDispositivoOtp(
   const db: ReenviarDesafioDb = deps.db ?? sqlDb!;
 
   try {
-    const ipHash = await hashSha256Hex(extrairIpCliente(req));
-    const okIp = await db.consumirRateLimit(`auth:reenvio:ip:${ipHash}`, 15, 600);
-    if (!okIp) return recusa(429, "limite_excedido");
+    // Em reenviar-dispositivo-otp o payload tem apenas desafio_id (sem plataforma):
+    // só aplica balde de IP se houver assinatura B-116 válida; sem ela, confia nos tetos
+    // atômicos do desafio (cooldown 60s + máx 3 reenvios) e de email_hash (5/10min), evitando 429 global de egress Web.
+    const ipSeguro = await resolverIpParaRateLimit(req, "web", deps.opcoesIp);
+    if (ipSeguro) {
+      const ipHash = await hashSha256Hex(ipSeguro);
+      const okIp = await db.consumirRateLimit(`auth:reenvio:ip:${ipHash}`, 15, 600);
+      if (!okIp) return recusa(429, "limite_excedido");
+    }
 
     const reserva = await db.reservarReenvioDesafio(desafioId);
     if (reserva.status === "desafio_expirado") return recusa(410, "desafio_expirado");
