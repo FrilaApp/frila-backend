@@ -58,6 +58,7 @@ FORA_DO_ALCANCE = {
     "reenviarDispositivoOtp": "Edge Function em Deno que reenvia OTP de desafio via Supabase Auth (GoTrue); cobertura em supabase/functions/reenviar-dispositivo-otp/index_test.ts",
     "definirSenha": "Edge Function em Deno que atualiza senha via Supabase Auth Admin API; cobertura em supabase/functions/definir-senha/index_test.ts",
     "revogarDispositivos": "Edge Function em Deno que revoga sessões/dispositivos via GoTrue e privado.revogar_dispositivos_usuario; cobertura em supabase/functions/revogar-dispositivos/index_test.ts",
+    "autenticarSocial": "Edge Function em Deno que conclui login social Apple/Google via GoTrue e privado.concluir_login_social; cobertura em supabase/functions/autenticar-social/index_test.ts",
 }
 
 
@@ -452,6 +453,14 @@ ISENTAS = {
     ("definirSenha", "429"): "rate limit de definição de senha é aplicado pela Edge Function definir-senha (Deno)",
     ("revogarDispositivos", "401"): "validação de Bearer JWT e dispositivo verificado é feita pela Edge Function revogar-dispositivos (Deno)",
     ("revogarDispositivos", "429"): "rate limit de revogação de dispositivos é aplicado pela Edge Function revogar-dispositivos (Deno)",
+    # Login social Apple e Google (0.2.117): Edge Function em Deno, testada no job de Edge Functions da CI (pgTAP 902 cobre o banco).
+    ("autenticarSocial", "401"): "código PKCE ou ID token inválido/reutilizado ou identidade social ausente é tratado pela Edge Function autenticar-social (Deno + pgTAP 902)",
+    ("autenticarSocial", "403"): "assinatura B-116 ausente ou inválida na Web é recusada fail-closed pela Edge Function autenticar-social (Deno)",
+    ("autenticarSocial", "409"): "conflito explícito de identidade devolvido pelo GoTrue é tratado pela Edge Function autenticar-social (Deno)",
+    ("autenticarSocial", "422"): "validação de provedor, fluxo, plataforma e credenciais é feita pela Edge Function autenticar-social (Deno)",
+    ("autenticarSocial", "429"): "rate limit por IP de login social é aplicado pela Edge Function autenticar-social (Deno)",
+    # Contrato 0.2.115 (B-123) já presente na main do frila-docs; implementação em PR #634.
+    ("aceitarConviteMembro", "403"): "contrato 0.2.115 antecipado no espelho; implementação no PR #634 (B-123)",
 }
 
 
