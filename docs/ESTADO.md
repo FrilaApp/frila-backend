@@ -29,8 +29,9 @@ e a remoção do pgTAP 890 e da corrida do #571. `supabase/migrations` e `supaba
 O último release anterior foi o PR #308 (`release/backend-v1.0.0`) em 19/10/2026 (`8d19626`); as tags `backend-v*` existentes
 são `backend-v1.1.0` e `backend-v1.1.1`. Nenhuma tag `backend-v*` foi criada para o pacote 23 (entrou por roteiro).
 **TRAVA (O2, 24/11/2026 22h46, pacote 25): nenhuma tag `backend-v*` enquanto o `entrega.yml` publicar as 13 Edge Functions sem nome**
-(`supabase functions deploy --project-ref "$REF"`): a tag publicaria `excluir-conta`, `exportar-meus-dados` e `exportar-turnos`
-(#530/CORS, nunca foram ao Prod) e o `enviar-email` do #613 (fora do Prod por decisão do O2). O Prod anda por pacote (roteiro com árvore
+(`supabase functions deploy --project-ref "$REF"`): a tag republicaria todas, inclusive `excluir-conta`, `exportar-meus-dados` e
+`exportar-turnos` (já existem no Prod, mas o código atual delas na `main` nunca foi aprovado para o Prod: #530/CORS) e o
+`enviar-email` do #613 (fora do Prod por decisão do O2). O Prod anda por pacote (roteiro com árvore
 fixa), não pela tag. A trava anterior (as migrações `20261122150000`, `20261122190000` e `20261123100000`) caiu com o OK do Cauê
 (O1, 24/11 22h38, B-118): o pacote 25 leva as três. Se o O1 mandar segurar a Regra 4 (`20261122190000`, V5, o padrão sem resposta até o
 VAI), o Prod fica com ela como buraco abaixo do topo `20261124190000` e a tag a aplicaria junto: um motivo a mais para não haver tag.
