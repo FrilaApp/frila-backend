@@ -13,8 +13,6 @@
 --   - Vagas antigas fora da faixa continuam legíveis e passam a poder ser republicadas.
 --   - Sem coluna, sem tabela, sem Edge Function, sem mudança de assinatura.
 
--- contrato: corpo-sem-mudanca-de-superficie public.chamar_profissional 0.2.114
-
 select set_config('lock_timeout', '2s', true);
 
 -- ── 1. Referência de aviso (não bloqueia) ────────────────────────────────────
