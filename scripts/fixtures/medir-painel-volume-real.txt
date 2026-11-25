@@ -1,0 +1,234 @@
+# Saída real de scripts/medir-painel-volume.sh (arquivo amostras.txt), 2026-11-25, commit daec16b da develop + o script medir-painel-volume.sh da primeira versão,
+# Postgres 17.6 local, 5 casas x 200 vagas x 10 posições x 6 candidaturas, janelas de 7 e 31 dias, 20 amostras
+# por casa e janela. Dados sintéticos do gerador. Serve de fixture para scripts/teste-medir-painel-volume.sh.
+PARAMETROS casas=5 vagas=200 posicoes=10 candidatos=6 janelas=7,31 amostras=20 aquecimento=3 dias_historico=67
+CONFIG enable_seqscan=on enable_indexscan=on enable_bitmapscan=on enable_nestloop=on random_page_cost=4 work_mem=4MB shared_buffers=128MB jit=on
+VOLUME_CASA casa=1 vagas=200 posicoes=2000 candidaturas=12000
+VOLUME_JANELA janela_dias=7 casa=1 vagas=21 posicoes=210 candidaturas=1260 turnos=168
+VOLUME_JANELA janela_dias=31 casa=1 vagas=93 posicoes=930 candidaturas=5580 turnos=744
+VOLUME_CASA casa=2 vagas=200 posicoes=2000 candidaturas=12000
+VOLUME_JANELA janela_dias=7 casa=2 vagas=21 posicoes=210 candidaturas=1260 turnos=168
+VOLUME_JANELA janela_dias=31 casa=2 vagas=93 posicoes=930 candidaturas=5580 turnos=744
+VOLUME_CASA casa=3 vagas=200 posicoes=2000 candidaturas=12000
+VOLUME_JANELA janela_dias=7 casa=3 vagas=21 posicoes=210 candidaturas=1260 turnos=168
+VOLUME_JANELA janela_dias=31 casa=3 vagas=93 posicoes=930 candidaturas=5580 turnos=744
+VOLUME_CASA casa=4 vagas=200 posicoes=2000 candidaturas=12000
+VOLUME_JANELA janela_dias=7 casa=4 vagas=21 posicoes=210 candidaturas=1260 turnos=168
+VOLUME_JANELA janela_dias=31 casa=4 vagas=93 posicoes=930 candidaturas=5580 turnos=744
+VOLUME_CASA casa=5 vagas=200 posicoes=2000 candidaturas=12000
+VOLUME_JANELA janela_dias=7 casa=5 vagas=21 posicoes=210 candidaturas=1260 turnos=168
+VOLUME_JANELA janela_dias=31 casa=5 vagas=93 posicoes=930 candidaturas=5580 turnos=744
+AMOSTRA janela_dias=7 casa=1 i=1 ms=150.803
+BLOCO janela_dias=7 casa=1 vagas_resposta=21 posicoes_resposta=210 bytes=132038
+AMOSTRA janela_dias=7 casa=2 i=1 ms=153.776
+BLOCO janela_dias=7 casa=2 vagas_resposta=21 posicoes_resposta=210 bytes=132283
+AMOSTRA janela_dias=7 casa=3 i=1 ms=154.018
+BLOCO janela_dias=7 casa=3 vagas_resposta=21 posicoes_resposta=210 bytes=132002
+AMOSTRA janela_dias=7 casa=4 i=1 ms=160.079
+BLOCO janela_dias=7 casa=4 vagas_resposta=21 posicoes_resposta=210 bytes=132336
+AMOSTRA janela_dias=7 casa=5 i=1 ms=167.998
+BLOCO janela_dias=7 casa=5 vagas_resposta=21 posicoes_resposta=210 bytes=132034
+AMOSTRA janela_dias=31 casa=1 i=1 ms=721.286
+BLOCO janela_dias=31 casa=1 vagas_resposta=93 posicoes_resposta=930 bytes=584669
+AMOSTRA janela_dias=31 casa=2 i=1 ms=689.686
+BLOCO janela_dias=31 casa=2 vagas_resposta=93 posicoes_resposta=930 bytes=585509
+AMOSTRA janela_dias=31 casa=3 i=1 ms=691.226
+BLOCO janela_dias=31 casa=3 vagas_resposta=93 posicoes_resposta=930 bytes=584328
+AMOSTRA janela_dias=31 casa=4 i=1 ms=680.570
+BLOCO janela_dias=31 casa=4 vagas_resposta=93 posicoes_resposta=930 bytes=585742
+AMOSTRA janela_dias=31 casa=5 i=1 ms=681.579
+BLOCO janela_dias=31 casa=5 vagas_resposta=93 posicoes_resposta=930 bytes=584432
+AMOSTRA janela_dias=7 casa=1 i=2 ms=154.438
+AMOSTRA janela_dias=7 casa=2 i=2 ms=154.438
+AMOSTRA janela_dias=7 casa=3 i=2 ms=154.326
+AMOSTRA janela_dias=7 casa=4 i=2 ms=157.158
+AMOSTRA janela_dias=7 casa=5 i=2 ms=156.617
+AMOSTRA janela_dias=31 casa=1 i=2 ms=675.696
+AMOSTRA janela_dias=31 casa=2 i=2 ms=680.124
+AMOSTRA janela_dias=31 casa=3 i=2 ms=700.783
+AMOSTRA janela_dias=31 casa=4 i=2 ms=671.740
+AMOSTRA janela_dias=31 casa=5 i=2 ms=684.297
+AMOSTRA janela_dias=7 casa=1 i=3 ms=153.449
+AMOSTRA janela_dias=7 casa=2 i=3 ms=153.318
+AMOSTRA janela_dias=7 casa=3 i=3 ms=157.290
+AMOSTRA janela_dias=7 casa=4 i=3 ms=162.851
+AMOSTRA janela_dias=7 casa=5 i=3 ms=152.191
+AMOSTRA janela_dias=31 casa=1 i=3 ms=676.879
+AMOSTRA janela_dias=31 casa=2 i=3 ms=688.390
+AMOSTRA janela_dias=31 casa=3 i=3 ms=694.144
+AMOSTRA janela_dias=31 casa=4 i=3 ms=689.874
+AMOSTRA janela_dias=31 casa=5 i=3 ms=706.946
+AMOSTRA janela_dias=7 casa=1 i=4 ms=155.682
+AMOSTRA janela_dias=7 casa=2 i=4 ms=153.673
+AMOSTRA janela_dias=7 casa=3 i=4 ms=155.411
+AMOSTRA janela_dias=7 casa=4 i=4 ms=155.676
+AMOSTRA janela_dias=7 casa=5 i=4 ms=154.367
+AMOSTRA janela_dias=31 casa=1 i=4 ms=675.537
+AMOSTRA janela_dias=31 casa=2 i=4 ms=680.821
+AMOSTRA janela_dias=31 casa=3 i=4 ms=680.079
+AMOSTRA janela_dias=31 casa=4 i=4 ms=686.459
+AMOSTRA janela_dias=31 casa=5 i=4 ms=678.073
+AMOSTRA janela_dias=7 casa=1 i=5 ms=154.169
+AMOSTRA janela_dias=7 casa=2 i=5 ms=155.207
+AMOSTRA janela_dias=7 casa=3 i=5 ms=155.750
+AMOSTRA janela_dias=7 casa=4 i=5 ms=154.387
+AMOSTRA janela_dias=7 casa=5 i=5 ms=156.964
+AMOSTRA janela_dias=31 casa=1 i=5 ms=683.671
+AMOSTRA janela_dias=31 casa=2 i=5 ms=685.935
+AMOSTRA janela_dias=31 casa=3 i=5 ms=678.012
+AMOSTRA janela_dias=31 casa=4 i=5 ms=676.615
+AMOSTRA janela_dias=31 casa=5 i=5 ms=697.732
+AMOSTRA janela_dias=7 casa=1 i=6 ms=152.580
+AMOSTRA janela_dias=7 casa=2 i=6 ms=154.811
+AMOSTRA janela_dias=7 casa=3 i=6 ms=159.299
+AMOSTRA janela_dias=7 casa=4 i=6 ms=158.106
+AMOSTRA janela_dias=7 casa=5 i=6 ms=155.449
+AMOSTRA janela_dias=31 casa=1 i=6 ms=672.379
+AMOSTRA janela_dias=31 casa=2 i=6 ms=706.598
+AMOSTRA janela_dias=31 casa=3 i=6 ms=688.129
+AMOSTRA janela_dias=31 casa=4 i=6 ms=708.586
+AMOSTRA janela_dias=31 casa=5 i=6 ms=679.890
+AMOSTRA janela_dias=7 casa=1 i=7 ms=152.148
+AMOSTRA janela_dias=7 casa=2 i=7 ms=151.867
+AMOSTRA janela_dias=7 casa=3 i=7 ms=152.276
+AMOSTRA janela_dias=7 casa=4 i=7 ms=162.956
+AMOSTRA janela_dias=7 casa=5 i=7 ms=159.656
+AMOSTRA janela_dias=31 casa=1 i=7 ms=676.178
+AMOSTRA janela_dias=31 casa=2 i=7 ms=681.004
+AMOSTRA janela_dias=31 casa=3 i=7 ms=677.283
+AMOSTRA janela_dias=31 casa=4 i=7 ms=675.087
+AMOSTRA janela_dias=31 casa=5 i=7 ms=675.222
+AMOSTRA janela_dias=7 casa=1 i=8 ms=154.848
+AMOSTRA janela_dias=7 casa=2 i=8 ms=158.760
+AMOSTRA janela_dias=7 casa=3 i=8 ms=158.170
+AMOSTRA janela_dias=7 casa=4 i=8 ms=157.496
+AMOSTRA janela_dias=7 casa=5 i=8 ms=155.450
+AMOSTRA janela_dias=31 casa=1 i=8 ms=701.987
+AMOSTRA janela_dias=31 casa=2 i=8 ms=690.336
+AMOSTRA janela_dias=31 casa=3 i=8 ms=677.658
+AMOSTRA janela_dias=31 casa=4 i=8 ms=691.581
+AMOSTRA janela_dias=31 casa=5 i=8 ms=678.244
+AMOSTRA janela_dias=7 casa=1 i=9 ms=156.262
+AMOSTRA janela_dias=7 casa=2 i=9 ms=155.067
+AMOSTRA janela_dias=7 casa=3 i=9 ms=155.075
+AMOSTRA janela_dias=7 casa=4 i=9 ms=154.774
+AMOSTRA janela_dias=7 casa=5 i=9 ms=154.497
+AMOSTRA janela_dias=31 casa=1 i=9 ms=675.224
+AMOSTRA janela_dias=31 casa=2 i=9 ms=705.127
+AMOSTRA janela_dias=31 casa=3 i=9 ms=678.664
+AMOSTRA janela_dias=31 casa=4 i=9 ms=683.838
+AMOSTRA janela_dias=31 casa=5 i=9 ms=675.637
+AMOSTRA janela_dias=7 casa=1 i=10 ms=151.601
+AMOSTRA janela_dias=7 casa=2 i=10 ms=154.074
+AMOSTRA janela_dias=7 casa=3 i=10 ms=153.887
+AMOSTRA janela_dias=7 casa=4 i=10 ms=153.820
+AMOSTRA janela_dias=7 casa=5 i=10 ms=153.392
+AMOSTRA janela_dias=31 casa=1 i=10 ms=671.913
+AMOSTRA janela_dias=31 casa=2 i=10 ms=676.394
+AMOSTRA janela_dias=31 casa=3 i=10 ms=678.057
+AMOSTRA janela_dias=31 casa=4 i=10 ms=720.530
+AMOSTRA janela_dias=31 casa=5 i=10 ms=705.004
+AMOSTRA janela_dias=7 casa=1 i=11 ms=154.601
+AMOSTRA janela_dias=7 casa=2 i=11 ms=155.310
+AMOSTRA janela_dias=7 casa=3 i=11 ms=151.343
+AMOSTRA janela_dias=7 casa=4 i=11 ms=167.288
+AMOSTRA janela_dias=7 casa=5 i=11 ms=153.693
+AMOSTRA janela_dias=31 casa=1 i=11 ms=677.808
+AMOSTRA janela_dias=31 casa=2 i=11 ms=686.251
+AMOSTRA janela_dias=31 casa=3 i=11 ms=683.831
+AMOSTRA janela_dias=31 casa=4 i=11 ms=679.505
+AMOSTRA janela_dias=31 casa=5 i=11 ms=681.952
+AMOSTRA janela_dias=7 casa=1 i=12 ms=152.649
+AMOSTRA janela_dias=7 casa=2 i=12 ms=154.150
+AMOSTRA janela_dias=7 casa=3 i=12 ms=157.255
+AMOSTRA janela_dias=7 casa=4 i=12 ms=159.437
+AMOSTRA janela_dias=7 casa=5 i=12 ms=156.464
+AMOSTRA janela_dias=31 casa=1 i=12 ms=676.733
+AMOSTRA janela_dias=31 casa=2 i=12 ms=675.002
+AMOSTRA janela_dias=31 casa=3 i=12 ms=685.715
+AMOSTRA janela_dias=31 casa=4 i=12 ms=679.958
+AMOSTRA janela_dias=31 casa=5 i=12 ms=672.630
+AMOSTRA janela_dias=7 casa=1 i=13 ms=158.495
+AMOSTRA janela_dias=7 casa=2 i=13 ms=161.603
+AMOSTRA janela_dias=7 casa=3 i=13 ms=177.177
+AMOSTRA janela_dias=7 casa=4 i=13 ms=156.169
+AMOSTRA janela_dias=7 casa=5 i=13 ms=155.744
+AMOSTRA janela_dias=31 casa=1 i=13 ms=689.244
+AMOSTRA janela_dias=31 casa=2 i=13 ms=709.619
+AMOSTRA janela_dias=31 casa=3 i=13 ms=693.753
+AMOSTRA janela_dias=31 casa=4 i=13 ms=679.490
+AMOSTRA janela_dias=31 casa=5 i=13 ms=681.077
+AMOSTRA janela_dias=7 casa=1 i=14 ms=152.014
+AMOSTRA janela_dias=7 casa=2 i=14 ms=152.017
+AMOSTRA janela_dias=7 casa=3 i=14 ms=153.250
+AMOSTRA janela_dias=7 casa=4 i=14 ms=154.926
+AMOSTRA janela_dias=7 casa=5 i=14 ms=153.243
+AMOSTRA janela_dias=31 casa=1 i=14 ms=670.073
+AMOSTRA janela_dias=31 casa=2 i=14 ms=682.105
+AMOSTRA janela_dias=31 casa=3 i=14 ms=682.759
+AMOSTRA janela_dias=31 casa=4 i=14 ms=680.965
+AMOSTRA janela_dias=31 casa=5 i=14 ms=691.943
+AMOSTRA janela_dias=7 casa=1 i=15 ms=155.386
+AMOSTRA janela_dias=7 casa=2 i=15 ms=154.673
+AMOSTRA janela_dias=7 casa=3 i=15 ms=153.318
+AMOSTRA janela_dias=7 casa=4 i=15 ms=153.403
+AMOSTRA janela_dias=7 casa=5 i=15 ms=151.645
+AMOSTRA janela_dias=31 casa=1 i=15 ms=677.411
+AMOSTRA janela_dias=31 casa=2 i=15 ms=702.908
+AMOSTRA janela_dias=31 casa=3 i=15 ms=689.664
+AMOSTRA janela_dias=31 casa=4 i=15 ms=681.341
+AMOSTRA janela_dias=31 casa=5 i=15 ms=685.017
+AMOSTRA janela_dias=7 casa=1 i=16 ms=153.257
+AMOSTRA janela_dias=7 casa=2 i=16 ms=154.359
+AMOSTRA janela_dias=7 casa=3 i=16 ms=153.659
+AMOSTRA janela_dias=7 casa=4 i=16 ms=154.284
+AMOSTRA janela_dias=7 casa=5 i=16 ms=153.847
+AMOSTRA janela_dias=31 casa=1 i=16 ms=691.838
+AMOSTRA janela_dias=31 casa=2 i=16 ms=679.527
+AMOSTRA janela_dias=31 casa=3 i=16 ms=681.421
+AMOSTRA janela_dias=31 casa=4 i=16 ms=672.873
+AMOSTRA janela_dias=31 casa=5 i=16 ms=679.061
+AMOSTRA janela_dias=7 casa=1 i=17 ms=153.959
+AMOSTRA janela_dias=7 casa=2 i=17 ms=152.684
+AMOSTRA janela_dias=7 casa=3 i=17 ms=152.784
+AMOSTRA janela_dias=7 casa=4 i=17 ms=152.743
+AMOSTRA janela_dias=7 casa=5 i=17 ms=152.888
+AMOSTRA janela_dias=31 casa=1 i=17 ms=666.378
+AMOSTRA janela_dias=31 casa=2 i=17 ms=693.759
+AMOSTRA janela_dias=31 casa=3 i=17 ms=700.543
+AMOSTRA janela_dias=31 casa=4 i=17 ms=680.462
+AMOSTRA janela_dias=31 casa=5 i=17 ms=693.766
+AMOSTRA janela_dias=7 casa=1 i=18 ms=156.342
+AMOSTRA janela_dias=7 casa=2 i=18 ms=160.920
+AMOSTRA janela_dias=7 casa=3 i=18 ms=155.218
+AMOSTRA janela_dias=7 casa=4 i=18 ms=153.910
+AMOSTRA janela_dias=7 casa=5 i=18 ms=153.791
+AMOSTRA janela_dias=31 casa=1 i=18 ms=693.504
+AMOSTRA janela_dias=31 casa=2 i=18 ms=685.861
+AMOSTRA janela_dias=31 casa=3 i=18 ms=687.843
+AMOSTRA janela_dias=31 casa=4 i=18 ms=673.561
+AMOSTRA janela_dias=31 casa=5 i=18 ms=687.461
+AMOSTRA janela_dias=7 casa=1 i=19 ms=157.819
+AMOSTRA janela_dias=7 casa=2 i=19 ms=160.337
+AMOSTRA janela_dias=7 casa=3 i=19 ms=153.374
+AMOSTRA janela_dias=7 casa=4 i=19 ms=154.123
+AMOSTRA janela_dias=7 casa=5 i=19 ms=153.492
+AMOSTRA janela_dias=31 casa=1 i=19 ms=669.065
+AMOSTRA janela_dias=31 casa=2 i=19 ms=685.689
+AMOSTRA janela_dias=31 casa=3 i=19 ms=673.200
+AMOSTRA janela_dias=31 casa=4 i=19 ms=678.294
+AMOSTRA janela_dias=31 casa=5 i=19 ms=677.989
+AMOSTRA janela_dias=7 casa=1 i=20 ms=152.595
+AMOSTRA janela_dias=7 casa=2 i=20 ms=153.074
+AMOSTRA janela_dias=7 casa=3 i=20 ms=155.839
+AMOSTRA janela_dias=7 casa=4 i=20 ms=155.470
+AMOSTRA janela_dias=7 casa=5 i=20 ms=158.604
+AMOSTRA janela_dias=31 casa=1 i=20 ms=710.417
+AMOSTRA janela_dias=31 casa=2 i=20 ms=702.358
+AMOSTRA janela_dias=31 casa=3 i=20 ms=705.923
+AMOSTRA janela_dias=31 casa=4 i=20 ms=682.720
+AMOSTRA janela_dias=31 casa=5 i=20 ms=677.108
+PG_PERCENTIL janela_dias=7 amostras=100 p50_ms=154.47 p95_ms=161.67
+PG_PERCENTIL janela_dias=31 amostras=100 p50_ms=681.50 p95_ms=707.03
+PLANO janela_dias=7 planos=2625 seq_scan_posicao=191 seq_scan_ocorrencia=0 seq_scan_vaga=0 seq_scan_candidatura=0 seq_scan_turno=0 maior_loops=210
+PLANO janela_dias=31 planos=11601 seq_scan_posicao=839 seq_scan_ocorrencia=0 seq_scan_vaga=0 seq_scan_candidatura=0 seq_scan_turno=0 maior_loops=930
