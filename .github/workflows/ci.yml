@@ -75,6 +75,10 @@ jobs:
       - name: pgTAP
         run: supabase test db
 
+      # Prova reproduzível na imagem real do GoTrue em execução (sem acessar remoto).
+      - name: Compatibilidade real de auth.flow_state com GoTrue
+        run: ./scripts/teste-auth-flow-state-gotrue.sh
+
       # Uma migração já aplicada é imutável (RNF12, migração em duas fases).
       # Editar arquivo antigo quebra o próximo ambiente em silêncio.
       - name: Nenhuma migração antiga foi editada
