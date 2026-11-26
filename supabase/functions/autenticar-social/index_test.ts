@@ -3,6 +3,7 @@ import { hashSha256Hex, hashTokenDispositivo } from "../_compartilhado/dispositi
 import {
   type AutenticarSocialDb,
   calcularHashCanonicoIdToken,
+  ehRedirectPermitido,
   tratarAutenticarSocial,
 } from "./index.ts";
 
@@ -616,4 +617,76 @@ Deno.test("autenticar-social: mobile sem cf-connecting-ip falha fechado (503) se
   assertEquals((await res.json()).code, "indisponivel");
   assertEquals(chamouGoTrue, false);
   assertEquals(chamouRateLimit, false);
+});
+
+Deno.test("autenticar-social: allowlist aceita App Link HTTPS exato (com e sem ?tx) e rejeita variações de host/path/scheme/prefixo", async () => {
+  // Positivos: callback HTTPS exato Android Release App Link
+  assertEquals(ehRedirectPermitido("https://frilabr.com/app/auth/callback"), true);
+  assertEquals(ehRedirectPermitido(`https://frilabr.com/app/auth/callback?tx=${TX_ID}`), true);
+
+  // Negativos: host, path, prefixo indevido, scheme, porta, fragmento, userinfo, traversal
+  const negativos = [
+    "http://frilabr.com/app/auth/callback",
+    "http://frilabr.com/app/auth/callback?tx=123",
+    "https://evil.frilabr.com/app/auth/callback",
+    "https://frilabr.com.evil.com/app/auth/callback",
+    "https://frila-web-dev.frilabr.workers.dev/app/auth/callback",
+    "https://frilabr.com/app/auth/callback/",
+    "https://frilabr.com/app/auth/callback2",
+    "https://frilabr.com/app/auth/callback/extra",
+    "https://frilabr.com/app/auth/outro",
+    "https://frilabr.com/app/foo/../auth/callback",
+    "https://frilabr.com:443/app/auth/callback",
+    "https://frilabr.com:8443/app/auth/callback",
+    "https://frilabr.com/app/auth/callback#frag",
+    "https://user@frilabr.com/app/auth/callback",
+    "javascript://frilabr.com/app/auth/callback",
+  ];
+  for (const url of negativos) {
+    assertEquals(ehRedirectPermitido(url), false, `deveria rejeitar: ${url}`);
+  }
+
+  // Integração iniciar_pkce (android) com App Link HTTPS exato + ?tx devolve 200
+  const redirectComTx = `https://frilabr.com/app/auth/callback?tx=${TX_ID}`;
+  const reqOk = new Request("https://local/functions/v1/autenticar-social", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "cf-connecting-ip": "198.51.100.55" },
+    body: JSON.stringify({
+      provedor: "google",
+      fluxo: "iniciar_pkce",
+      plataforma: "android",
+      code_challenge: "c".repeat(43),
+      redirect_to: redirectComTx,
+    }),
+  });
+  const resOk = await tratarAutenticarSocial(reqOk, {
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    db: dbStub(),
+    loginSocialAtivo: true,
+  });
+  assertEquals(resOk.status, 200);
+  const bodyOk = await resOk.json();
+  const urlAuth = new URL(bodyOk.url_autorizacao);
+  assertEquals(urlAuth.searchParams.get("redirect_to"), redirectComTx);
+
+  // Integração iniciar_pkce com path fora da allowlist devolve 422
+  const reqBad = new Request("https://local/functions/v1/autenticar-social", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "cf-connecting-ip": "198.51.100.55" },
+    body: JSON.stringify({
+      provedor: "google",
+      fluxo: "iniciar_pkce",
+      plataforma: "android",
+      code_challenge: "c".repeat(43),
+      redirect_to: "https://frilabr.com/app/auth/callback/extra",
+    }),
+  });
+  const resBad = await tratarAutenticarSocial(reqBad, {
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    db: dbStub(),
+    loginSocialAtivo: true,
+  });
+  assertEquals(resBad.status, 422);
 });
