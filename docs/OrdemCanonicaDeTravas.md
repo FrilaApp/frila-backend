@@ -19,7 +19,7 @@ Sempre que uma transação precisar travar mais de uma entidade do núcleo de va
 ```
 
 ### Exceção documentada (`chamar_profissional`)
-Em `public.chamar_profissional` (`20261117080000_chamar_trava_a_vaga.sql`, vigente em `20261123100000_limites_valor_diaria_be02.sql`), quando `vaga_id IS NOT NULL`, a função trava `estabelecimento` → `profissional` (para atomicidade da cota global de 5 chamadas abertas entre casas distintas, CD-C14) → `vaga` (relida `FOR UPDATE`, B-040). Nenhuma outra função trava `vaga` antes de `profissional`, portanto não há ciclo com essa ordem.
+Em `public.chamar_profissional` (`20261117080000_chamar_trava_a_vaga.sql`, vigente em `20261125160000_piso_teto_da_diaria_so_aviso_b124.sql`), quando `vaga_id IS NOT NULL`, a função trava `estabelecimento` → `profissional` (para atomicidade da cota global de 5 chamadas abertas entre casas distintas, CD-C14) → `vaga` (relida `FOR UPDATE`, B-040). Nenhuma outra função trava `vaga` antes de `profissional`, portanto não há ciclo com essa ordem.
 
 ### Regra de pré-trava para `UPDATE` multi-linha
 Qualquer `UPDATE` que altere múltiplas linhas de `public.vaga`, `public.posicao` ou `public.chamada` **não** pode confiar na ordem física ou de hash do plano do PostgreSQL. Antes do `UPDATE`, a transação deve executar um `PERFORM 1 FROM ... ORDER BY id FOR NO KEY UPDATE` (ou `FOR UPDATE`) cobrindo exatamente o conjunto de linhas que será modificado, no mesmo modo de trava (ver `#562`, `#565`, `#572`).
