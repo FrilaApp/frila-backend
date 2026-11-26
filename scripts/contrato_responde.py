@@ -53,6 +53,11 @@ FORA_DO_ALCANCE = {
     "listarEspecialidades": "leitura de tabela pelo PostgREST: o corpo é dele, e não de função nossa",
     "exportarTurnos": "devolve text/csv e application/pdf, e não JSON: não há schema para conferir",
     "pedirCodigo": "a resposta não tem corpo",
+    "autenticarSenha": "Edge Function em Deno que orquestra Supabase Auth (GoTrue) e desafio de dispositivo; cobertura em supabase/functions/autenticar-senha/index_test.ts",
+    "confirmarDispositivoOtp": "Edge Function em Deno que valida OTP no Supabase Auth (GoTrue) e emite token de dispositivo; cobertura em supabase/functions/confirmar-dispositivo-otp/index_test.ts",
+    "reenviarDispositivoOtp": "Edge Function em Deno que reenvia OTP de desafio via Supabase Auth (GoTrue); cobertura em supabase/functions/reenviar-dispositivo-otp/index_test.ts",
+    "definirSenha": "Edge Function em Deno que atualiza senha via Supabase Auth Admin API; cobertura em supabase/functions/definir-senha/index_test.ts",
+    "revogarDispositivos": "Edge Function em Deno que revoga sessões/dispositivos via GoTrue e privado.revogar_dispositivos_usuario; cobertura em supabase/functions/revogar-dispositivos/index_test.ts",
 }
 
 
@@ -382,6 +387,8 @@ VIGIADAS = {
     ("publicarEscala", "401"): "nao_autenticado",
     ("publicarEscala", "403"): "sem_permissao",
     ("publicarEscala", "422"): "campo_invalido",
+    # Autenticação com dispositivo confiável 30d (0.2.112): RPC vigiada desde o nascimento.
+    ("estadoAutenticacao", "401"): "nao_autenticado",
 }
 
 # Pares que o portão não consegue medir por aqui, com o motivo. Separados dos "ainda não
@@ -428,6 +435,24 @@ ISENTAS = {
     ("lerMidia", "405"): "método não permitido é decidido pela Edge Function ler-midia",
     ("lerMidia", "502"): "falha do Storage ao servir a miniatura, tratada pela Edge Function ler-midia",
     ("lerMidia", "503"): "banco indisponível para a Edge Function ler-midia",
+    # Autenticação com dispositivo confiável 30d (0.2.112): Edge Functions em Deno, testadas no job de Edge Functions da CI (pgTAP 901 cobre as funções privadas de banco).
+    ("autenticarSenha", "401"): "credenciais inválidas ou senha não definida são tratadas pela Edge Function autenticar-senha (Deno)",
+    ("autenticarSenha", "422"): "validação de e-mail, senha e cabeçalhos é feita pela Edge Function autenticar-senha (Deno)",
+    ("autenticarSenha", "429"): "rate limit por e-mail/IP é aplicado pela Edge Function autenticar-senha (Deno + pgTAP 901)",
+    ("confirmarDispositivoOtp", "401"): "código OTP inválido ou sessão inválida são tratados pela Edge Function confirmar-dispositivo-otp (Deno)",
+    ("confirmarDispositivoOtp", "409"): "desafio já consumido ou estado inválido é tratado pela Edge Function confirmar-dispositivo-otp (Deno + pgTAP 901)",
+    ("confirmarDispositivoOtp", "410"): "desafio expirado ou limite de tentativas esgotado é tratado pela Edge Function confirmar-dispositivo-otp (Deno + pgTAP 901)",
+    ("confirmarDispositivoOtp", "422"): "validação de finalidade, código e desafio é feita pela Edge Function confirmar-dispositivo-otp (Deno)",
+    ("confirmarDispositivoOtp", "429"): "rate limit de confirmação OTP é aplicado pela Edge Function confirmar-dispositivo-otp (Deno + pgTAP 901)",
+    ("reenviarDispositivoOtp", "409"): "desafio já consumido ou estado inválido é tratado pela Edge Function reenviar-dispositivo-otp (Deno + pgTAP 901)",
+    ("reenviarDispositivoOtp", "410"): "desafio expirado é tratado pela Edge Function reenviar-dispositivo-otp (Deno + pgTAP 901)",
+    ("reenviarDispositivoOtp", "422"): "validação de desafio_id é feita pela Edge Function reenviar-dispositivo-otp (Deno)",
+    ("reenviarDispositivoOtp", "429"): "cooldown e limite de reenvio OTP são aplicados pela Edge Function reenviar-dispositivo-otp (Deno + pgTAP 901)",
+    ("definirSenha", "401"): "validação de Bearer JWT e dispositivo verificado é feita pela Edge Function definir-senha (Deno)",
+    ("definirSenha", "422"): "política de senha é validada pela Edge Function definir-senha (Deno)",
+    ("definirSenha", "429"): "rate limit de definição de senha é aplicado pela Edge Function definir-senha (Deno)",
+    ("revogarDispositivos", "401"): "validação de Bearer JWT e dispositivo verificado é feita pela Edge Function revogar-dispositivos (Deno)",
+    ("revogarDispositivos", "429"): "rate limit de revogação de dispositivos é aplicado pela Edge Function revogar-dispositivos (Deno)",
 }
 
 
