@@ -120,18 +120,19 @@ Deno.test("autenticar-social: PKCE Web com B-116 válido consome transação, co
   assertEquals(chavesRate.includes(`auth:social:ip:${await hashSha256Hex("203.0.113.77")}`), true);
 });
 
-Deno.test("autenticar-social: P2 conta Apple+Google com provedor divergente da transação PKCE é recusada antes do GoTrue sem gravar sessão", async () => {
+Deno.test("autenticar-social: P2 transação Apple + request apple + código Google (mesmo challenge) é recusada via auth.flow_state antes do GoTrue", async () => {
   let chamouGoTrue = false;
   let chamouConcluir = false;
+  const argsConsumo: unknown[] = [];
   const req = new Request("https://local/functions/v1/autenticar-social", {
     method: "POST",
     headers: await cabecalhosWeb("203.0.113.77"),
     body: JSON.stringify({
-      provedor: "google",
+      provedor: "apple",
       fluxo: "pkce",
       plataforma: "web",
       transacao_id: TX_ID,
-      codigo: "cod-oauth-apple",
+      codigo: "cod-oauth-google-substituido",
       code_verifier: "v".repeat(43),
     }),
   });
@@ -145,7 +146,11 @@ Deno.test("autenticar-social: P2 conta Apple+Google com provedor divergente da t
     anonKey: "anon-test",
     opcoesIp: OPCOES_IP,
     db: dbStub({
-      consumirTransacaoOauth: () => Promise.resolve({ ok: false, motivo: "provedor_divergente" }),
+      consumirTransacaoOauth: (txId, prov, chHash, authCode, chRaw) => {
+        argsConsumo.push({ txId, prov, chHash, authCode, chRaw });
+        // Simula auth.flow_state.provider_type = 'google' <> 'apple' para o mesmo code_challenge.
+        return Promise.resolve({ ok: false, motivo: "provedor_divergente" });
+      },
       concluirLoginSocial: () => {
         chamouConcluir = true;
         return Promise.resolve({ ok: true });
@@ -157,14 +162,24 @@ Deno.test("autenticar-social: P2 conta Apple+Google com provedor divergente da t
   assertEquals((await res.json()).code, "credenciais_invalidas");
   assertEquals(chamouGoTrue, false);
   assertEquals(chamouConcluir, false);
+  assertEquals(argsConsumo.length, 1);
+  const chamada = argsConsumo[0] as Record<string, string>;
+  assertEquals(chamada.txId, TX_ID);
+  assertEquals(chamada.prov, "apple");
+  assertEquals(chamada.authCode, "cod-oauth-google-substituido");
+  assertEquals(chamada.chRaw.length, 43);
 });
 
-Deno.test("autenticar-social: id_token nativo Apple envia hash contra replay; replay devolve 409 e revoga sessão provisória", async () => {
+Deno.test("autenticar-social: falha 500 do GoTrue em id_token não consome hash (retry legítimo funciona); replay devolve 409 e revoga sessão provisória", async () => {
   const hashesRecebidos: (string | null)[] = [];
   let revogouLocal = false;
+  let falharGoTrue = true;
   const fetchFn: typeof fetch = (input) => {
     const url = String(input);
-    if (url.includes("grant_type=id_token")) return Promise.resolve(Response.json(sessaoFake("sess-apple-1")));
+    if (url.includes("grant_type=id_token")) {
+      if (falharGoTrue) return Promise.resolve(new Response("erro transitorio", { status: 500 }));
+      return Promise.resolve(Response.json(sessaoFake("sess-apple-1")));
+    }
     if (url.includes("grant_type=refresh_token")) return Promise.resolve(Response.json(sessaoFake("sess-apple-2")));
     if (url.includes("/auth/v1/logout?scope=local")) {
       revogouLocal = true;
@@ -186,7 +201,23 @@ Deno.test("autenticar-social: id_token nativo Apple envia hash contra replay; re
       }),
     });
 
-  // 1. Primeira tentativa: passa e envia hash de 64 chars (nunca token bruto)
+  // 0. Falha 500 transitória no GoTrue devolve 503 sem chamar concluirLoginSocial (não queima hash)
+  const res503 = await tratarAutenticarSocial(makeReq(), {
+    fetchFn,
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    db: dbStub({
+      concluirLoginSocial: (_u, _s, _p, tokenHash) => {
+        hashesRecebidos.push(tokenHash);
+        return Promise.resolve({ ok: true, precisa_definir_senha: false });
+      },
+    }),
+  });
+  assertEquals(res503.status, 503);
+  assertEquals(hashesRecebidos.length, 0);
+
+  // 1. Retry legítimo após 500: passa e envia hash canônico de 64 chars (nunca token bruto)
+  falharGoTrue = false;
   const res1 = await tratarAutenticarSocial(makeReq(), {
     fetchFn,
     supabaseUrl: "https://proj.supabase.co",

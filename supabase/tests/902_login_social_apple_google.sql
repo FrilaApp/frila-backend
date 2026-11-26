@@ -3,15 +3,18 @@
 -- 1. Conta social (apple/google) sem encrypted_password NÃO fica presa em precisa_definir_senha sob enforcement.
 -- 2. Conta legada OTP-only sem encrypted_password e sem identidade social CONTINUA exigindo senha sob enforcement.
 -- 3. Bypass direto no GoTrue (sem concluir_login_social) é bloqueado por sessao_tem_dispositivo_verificado sob enforcement.
--- 4. P2 conta multivinculada Apple+Google: transação PKCE iniciada com apple recusa provedor google e não grava sessoes_verificadas.
--- 5. Replay de transação PKCE e transação expirada são recusados atomicamente.
+-- 4. P2 conta multivinculada Apple+Google: transação PKCE Apple + request provedor='apple' +
+--    auth_code emitido pelo GoTrue via /authorize?provider=google com o MESMO code_challenge é
+--    recusada via auth.flow_state (provedor_divergente) e não grava sessoes_verificadas.
+-- 5. auth_code ausente em auth.flow_state falha fechado; consumo válido passa e replay bloqueia.
 -- 6. Replay de id_token (mesmo hash) é recusado atomicamente sem persistir token bruto e sem gravar sessoes_verificadas.
--- 7. concluir_login_social comprova auth.identities, grava sessoes_verificadas e hook emite dispositivo_verificado=true.
--- 8. Revogação online (revogar_todos_dispositivos) invalida imediatamente a sessão social.
--- 9. Constraints CHECK/UNIQUE e privilégios de execução/RLS (cobertura de mutação).
+-- 7. Limpeza limitada (limpar_artefatos_login_social_expirados) preserva margem de 1h pós-expiração.
+-- 8. concluir_login_social comprova auth.identities, grava sessoes_verificadas e hook emite dispositivo_verificado=true.
+-- 9. Revogação online (revogar_todos_dispositivos) invalida imediatamente a sessão social.
+-- 10. Constraints CHECK/UNIQUE e privilégios de execução/RLS (cobertura de mutação).
 
 begin;
-select plan(23);
+select plan(26);
 
 -- Liga enforcement somente nesta transação de teste (nunca altera migração/modo sombra).
 update privado.config_auth
@@ -56,34 +59,93 @@ select is(
   'bypass direto no GoTrue sem concluir_login_social e recusado online sob enforcement'
 );
 
--- 4. P2: transação PKCE iniciada com apple recusa consumo declarando google (mesmo em conta Apple+Google)
---    e não grava sessoes_verificadas.
+-- 4. P2: transação PKCE iniciada como apple + request.provedor='apple' + MESMO code_challenge,
+--    mas auth_code emitido pelo GoTrue via /authorize?provider=google (auth.flow_state.provider_type='google')
+--    em conta multivinculada Apple+Google -> DEVE falhar fechado (provedor_divergente) sem gravar sessoes_verificadas.
+insert into auth.flow_state (
+  id, user_id, auth_code, code_challenge_method, code_challenge,
+  provider_type, authentication_method, created_at, updated_at
+)
+values
+  (
+    '90200000-0000-4000-8000-000000000201'::uuid,
+    '90200000-0000-4000-8000-000000000001'::uuid,
+    'cod-google-substituido',
+    's256'::auth.code_challenge_method,
+    repeat('c', 43),
+    'google',
+    'oauth',
+    now(),
+    now()
+  ),
+  (
+    '90200000-0000-4000-8000-000000000202'::uuid,
+    '90200000-0000-4000-8000-000000000001'::uuid,
+    'cod-apple-legitimo',
+    's256'::auth.code_challenge_method,
+    repeat('c', 43),
+    'apple',
+    'oauth',
+    now(),
+    now()
+  );
+
 create temp table tx_p2 as
   select (privado.criar_transacao_oauth_social(
     'apple', 'web', repeat('a', 64), 'https://frila-web-dev.frilabr.workers.dev/app/entrar/apple/retorno'
   ) ->> 'transacao_id')::uuid as id;
 
 select is(
-  privado.consumir_transacao_oauth_social((select id from tx_p2), 'google', repeat('a', 64)) ->> 'motivo',
+  privado.consumir_transacao_oauth_social(
+    (select id from tx_p2),
+    'apple',
+    repeat('a', 64),
+    'cod-google-substituido',
+    repeat('c', 43)
+  ) ->> 'motivo',
   'provedor_divergente',
-  'P2: transacao PKCE iniciada como apple recusa provedor google mesmo em conta multivinculada'
+  'P2: TX apple + request apple + auth_code Google (mesmo challenge) e recusado via auth.flow_state'
 );
 
 select is(
   privado.verificar_sessao_dispositivo_online('90200000-0000-4000-8000-000000000001'::uuid, '90200000-0000-4000-8000-000000000101'::uuid),
   false,
-  'falha de provedor divergente nao registra sessoes_verificadas'
+  'falha de auth_code com provider_type divergente nao registra sessoes_verificadas'
 );
 
--- 5. Consumo válido da transação PKCE + bloqueio de replay da mesma transação.
 select is(
-  (privado.consumir_transacao_oauth_social((select id from tx_p2), 'apple', repeat('a', 64)) ->> 'ok')::boolean,
+  privado.consumir_transacao_oauth_social(
+    (select id from tx_p2),
+    'apple',
+    repeat('a', 64),
+    'cod-inexistente',
+    repeat('c', 43)
+  ) ->> 'motivo',
+  'transacao_invalida',
+  'auth_code ausente em auth.flow_state falha fechado'
+);
+
+-- 5. Consumo válido da transação PKCE (auth.flow_state.provider_type='apple') + bloqueio de replay.
+select is(
+  (privado.consumir_transacao_oauth_social(
+    (select id from tx_p2),
+    'apple',
+    repeat('a', 64),
+    'cod-apple-legitimo',
+    repeat('c', 43)
+  ) ->> 'ok')::boolean,
   true,
-  'consumo de transacao PKCE com provedor e challenge exatos passa'
+  'consumo de transacao PKCE com provider_type e code_challenge exatos em auth.flow_state passa'
 );
 
 select is(
-  privado.consumir_transacao_oauth_social((select id from tx_p2), 'apple', repeat('a', 64)) ->> 'motivo',
+  privado.consumir_transacao_oauth_social(
+    (select id from tx_p2),
+    'apple',
+    repeat('a', 64),
+    'cod-apple-legitimo',
+    repeat('c', 43)
+  ) ->> 'motivo',
   'desafio_ja_usado',
   'replay da mesma transacao PKCE e bloqueado atomicamente'
 );
@@ -146,11 +208,35 @@ select is(
   'sessao social perde autorizacao imediatamente apos revogar_todos_dispositivos'
 );
 
--- 10. Privilégios: anon/authenticated não executam funções privadas nem acessam tabelas privadas.
+-- 10. Limpeza limitada remove apenas artefatos expirados há mais de 1h (preserva janela de margem).
+insert into privado.transacoes_oauth_social (provedor, plataforma, code_challenge_hash, callback_url, criada_em, expira_em)
+values
+  ('apple', 'web', repeat('1', 64), 'https://frilabr.com/app/entrar/apple/retorno', now() - interval '40 min', now() - interval '30 min'),
+  ('apple', 'web', repeat('2', 64), 'https://frilabr.com/app/entrar/apple/retorno', now() - interval '3 hours', now() - interval '2 hours');
+
+insert into privado.tokens_sociais_consumidos (token_hash, provedor, usuario_id, consumido_em, expira_em)
+values
+  (repeat('3', 64), 'apple', '90200000-0000-4000-8000-000000000003'::uuid, now() - interval '25 hours', now() - interval '30 min'),
+  (repeat('4', 64), 'apple', '90200000-0000-4000-8000-000000000003'::uuid, now() - interval '27 hours', now() - interval '2 hours');
+
+select is(
+  privado.limpar_artefatos_login_social_expirados(500),
+  jsonb_build_object('transacoes_removidas', 1, 'tokens_removidos', 1),
+  'limpar_artefatos_login_social_expirados remove apenas linhas expiradas ha mais de 1 hora'
+);
+
+select is(
+  (select count(*)::integer from privado.tokens_sociais_consumidos where token_hash = repeat('3', 64)),
+  1,
+  'token expirado dentro da margem de 1h permanece preservado contra limpeza prematura'
+);
+
+-- 11. Privilégios: anon/authenticated não executam funções privadas nem acessam tabelas privadas.
 select ok(
   not has_function_privilege('authenticated', 'privado.concluir_login_social(uuid, uuid, text, text)', 'EXECUTE')
   and not has_function_privilege('authenticated', 'privado.criar_transacao_oauth_social(text, text, text, text)', 'EXECUTE')
-  and not has_function_privilege('authenticated', 'privado.consumir_transacao_oauth_social(uuid, text, text)', 'EXECUTE'),
+  and not has_function_privilege('authenticated', 'privado.consumir_transacao_oauth_social(uuid, text, text, text, text)', 'EXECUTE')
+  and not has_function_privilege('authenticated', 'privado.limpar_artefatos_login_social_expirados(integer)', 'EXECUTE'),
   'funcoes privadas de login social nao sao executaveis por authenticated'
 );
 

@@ -4,12 +4,15 @@
 // - `iniciar_pkce`: registra transação atômica em `privado.transacoes_oauth_social` vinculando
 //   (transacao_id, provedor, code_challenge_hash, callback_url) com TTL de 10 min e devolve
 //   `url_autorizacao` construída no servidor com `provider=<provedor>`.
-// - `pkce`: calcula `S256(code_verifier)` e consome atomicamente `transacao_id` exigindo
-//   correspondência exata de `(transacao_id, provedor, code_challenge_hash)` ANTES de chamar GoTrue
-//   (fecha spoof de provedor em contas multivinculadas Apple+Google e replay de transação).
+// - `pkce`: calcula `S256(code_verifier)` e consome atomicamente `transacao_id` conferindo tanto
+//   `privado.transacoes_oauth_social` quanto o estado autoritativo do GoTrue em `auth.flow_state`
+//   (`auth_code`, `provider_type`, `code_challenge`, `code_challenge_method='s256'`) ANTES de
+//   chamar `/auth/v1/token?grant_type=pkce` (fecha substituição do código via `/authorize` público
+//   mesmo em contas multivinculadas Apple+Google).
 // - `id_token`: GoTrue valida assinatura/iss contra `provider=<provedor>` enviado pelo servidor,
-//   e `privado.concluir_login_social` consome atomicamente o hash SHA-256 do token em
-//   `privado.tokens_sociais_consumidos` (sem persistir token bruto) contra replay de id_token.
+//   e somente após validação do GoTrue `privado.concluir_login_social` consome atomicamente o hash
+//   SHA-256 canônico do token em `privado.tokens_sociais_consumidos` (sem persistir token bruto),
+//   preservando retries legítimos após 5xx/rede e bloqueando replay com 409 + revogação local.
 // - Rate limit por IP com B-116 fail-closed na Web (403/503) e `cf-connecting-ip` no mobile.
 // - Obriga `grant_type=refresh_token` para o hook emitir JWT final com `dispositivo_verificado = true`.
 // - Nunca registra tokens, códigos OAuth, verifiers ou nonces em log.
@@ -45,6 +48,8 @@ export interface AutenticarSocialDb {
     transacaoId: string,
     provedor: ProvedorSocial,
     codeChallengeHash: string,
+    authCode: string,
+    codeChallenge: string,
   ): Promise<{ ok: boolean; motivo?: string; provedor?: ProvedorSocial }>;
   concluirLoginSocial(
     usuarioId: string,
@@ -131,9 +136,15 @@ function criarDbSql(dbUrl: string): AutenticarSocialDb & { fechar(): Promise<voi
         motivo?: string;
       };
     },
-    async consumirTransacaoOauth(transacaoId, provedor, codeChallengeHash) {
+    async consumirTransacaoOauth(transacaoId, provedor, codeChallengeHash, authCode, codeChallenge) {
       const [row] = await sql`
-        select privado.consumir_transacao_oauth_social(${transacaoId}::uuid, ${provedor}, ${codeChallengeHash}) as res
+        select privado.consumir_transacao_oauth_social(
+          ${transacaoId}::uuid,
+          ${provedor},
+          ${codeChallengeHash},
+          ${authCode},
+          ${codeChallenge}
+        ) as res
       `;
       return (row?.res ?? { ok: false, motivo: "transacao_invalida" }) as {
         ok: boolean;
@@ -206,7 +217,7 @@ export async function tratarAutenticarSocial(req: Request, deps: AutenticarSocia
   } else {
     idToken = typeof corpo.id_token === "string" ? corpo.id_token.trim() : "";
     nonce = typeof corpo.nonce === "string" ? corpo.nonce.trim() : "";
-    if (idToken.length < 16 || idToken.length > 8192) return recusa(422, "campo_invalido", "id_token");
+    if (idToken.length < 16 || idToken.length > 8192 || /\s/.test(idToken)) return recusa(422, "campo_invalido", "id_token");
     if (nonce.length < 16 || nonce.length > 256) return recusa(422, "campo_invalido", "nonce");
   }
 
@@ -252,11 +263,18 @@ export async function tratarAutenticarSocial(req: Request, deps: AutenticarSocia
     }
 
     if (fluxo === "pkce") {
-      // Prova autoritativa do provedor da sessão atual: exige correspondência exata com a transação
-      // server-side criada em iniciar_pkce (provedor + hash(S256(code_verifier))), de uso único.
+      // Prova autoritativa do provedor da sessão atual: exige correspondência exata tanto na
+      // transação server-side (iniciar_pkce) quanto em auth.flow_state do GoTrue (auth_code,
+      // provider_type, code_challenge, s256) ANTES de chamar /auth/v1/token?grant_type=pkce.
       const challengeEsperado = await desafioPkceS256(codeVerifier);
       const challengeHash = await hashSha256Hex(challengeEsperado);
-      const consumo = await db.consumirTransacaoOauth(transacaoId, provedor, challengeHash);
+      const consumo = await db.consumirTransacaoOauth(
+        transacaoId,
+        provedor,
+        challengeHash,
+        codigo,
+        challengeEsperado,
+      );
       if (!consumo.ok) {
         if (consumo.motivo === "desafio_ja_usado") return recusa(409, "desafio_ja_usado");
         if (consumo.motivo === "desafio_expirado") return recusa(410, "desafio_expirado");

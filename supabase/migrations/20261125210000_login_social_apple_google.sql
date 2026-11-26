@@ -2,13 +2,18 @@
 --
 -- Mantém modo sombra (privado.config_auth.exigir_dispositivo_verificado permanece inalterado).
 -- 1. privado.transacoes_oauth_social: vincula atomicamente (transacao_id, provedor,
---    code_challenge_hash, callback_url) com TTL de 10 min e consumo de uso único, provando o
---    provedor real da sessão PKCE atual mesmo em contas multivinculadas Apple+Google.
--- 2. privado.tokens_sociais_consumidos: registra apenas o hash (nunca token bruto) de id_tokens
---    consumidos para proteção atômica contra replay.
--- 3. privado.usuario_precisa_definir_senha(): isenta contas com identidade social ativa
+--    code_challenge_hash, callback_url) com TTL de 10 min e consumo de uso único. Na troca PKCE,
+--    privado.consumir_transacao_oauth_social confere também auth.flow_state (auth_code,
+--    provider_type, code_challenge, code_challenge_method='s256') no banco do GoTrue ANTES de
+--    chamar /auth/v1/token?grant_type=pkce, impedindo substituição do código via /authorize público
+--    em contas multivinculadas Apple+Google.
+-- 2. privado.tokens_sociais_consumidos: registra apenas o hash SHA-256 canônico (nunca token bruto)
+--    de id_tokens já validados pelo GoTrue para proteção atômica contra replay.
+-- 3. privado.limpar_artefatos_login_social_expirados(): limpeza limitada de linhas expiradas há
+--    mais de 1 hora (margem de segurança contra remoção prematura).
+-- 4. privado.usuario_precisa_definir_senha(): isenta contas com identidade social ativa
 --    (apple/google) quando não há pendência explícita em privado.contas_senha_pendente.
--- 4. privado.concluir_login_social(): comprova identidade social, aplica proteção atômica contra
+-- 5. privado.concluir_login_social(): comprova identidade social, aplica proteção atômica contra
 --    replay de id_token (quando informado) e grava privado.sessoes_verificadas (revogável online).
 
 create table if not exists privado.transacoes_oauth_social (
@@ -120,23 +125,38 @@ end $$;
 
 revoke execute on function privado.criar_transacao_oauth_social(text, text, text, text) from public, anon, authenticated;
 
--- Consome atomicamente a transação OAuth PKCE exigindo correspondência exata de
--- (transacao_id, provedor, code_challenge_hash). Garante prova autoritativa do provedor da sessão
--- atual mesmo em contas multivinculadas Apple+Google e uso único contra replay.
+-- Consome atomicamente a transação OAuth PKCE exigindo correspondência exata de:
+-- (a) transação server-side (transacao_id, provedor, code_challenge_hash) não consumida e válida;
+-- (b) estado autoritativo do GoTrue em auth.flow_state (auth_code, provider_type, code_challenge,
+--     code_challenge_method = 's256') ANTES de trocar o código no GoTrue.
+-- Fecha substituição de código emitido por /auth/v1/authorize público com outro provider usando o
+-- mesmo code_challenge em contas multivinculadas Apple+Google.
 create or replace function privado.consumir_transacao_oauth_social(
   p_transacao_id        uuid,
   p_provedor            text,
-  p_code_challenge_hash text
+  p_code_challenge_hash text,
+  p_auth_code           text,
+  p_code_challenge      text
 )
 returns jsonb
 language plpgsql
 security definer set search_path = ''
 as $$
 declare
-  v_agora timestamptz := privado.agora();
-  v_row   privado.transacoes_oauth_social%rowtype;
+  v_agora               timestamptz := privado.agora();
+  v_row                 privado.transacoes_oauth_social%rowtype;
+  v_flow_provider_type  text;
+  v_flow_code_challenge text;
+  v_flow_method         text;
 begin
-  if p_transacao_id is null or p_provedor not in ('apple', 'google') or p_code_challenge_hash is null then
+  if p_transacao_id is null
+     or p_provedor not in ('apple', 'google')
+     or p_code_challenge_hash is null
+     or char_length(p_code_challenge_hash) <> 64
+     or p_auth_code is null
+     or btrim(p_auth_code) = ''
+     or p_code_challenge is null
+     or char_length(p_code_challenge) <> 43 then
     return jsonb_build_object('ok', false, 'motivo', 'transacao_invalida');
   end if;
 
@@ -162,6 +182,22 @@ begin
     return jsonb_build_object('ok', false, 'motivo', 'provedor_divergente');
   end if;
 
+  select fs.provider_type, fs.code_challenge, fs.code_challenge_method::text
+    into v_flow_provider_type, v_flow_code_challenge, v_flow_method
+    from auth.flow_state fs
+   where fs.auth_code = p_auth_code
+   limit 1;
+
+  if not found then
+    return jsonb_build_object('ok', false, 'motivo', 'transacao_invalida');
+  end if;
+
+  if v_flow_provider_type <> p_provedor
+     or v_flow_code_challenge <> p_code_challenge
+     or v_flow_method <> 's256' then
+    return jsonb_build_object('ok', false, 'motivo', 'provedor_divergente');
+  end if;
+
   update privado.transacoes_oauth_social
      set consumida_em = v_agora
    where id = v_row.id;
@@ -169,7 +205,60 @@ begin
   return jsonb_build_object('ok', true, 'provedor', v_row.provedor);
 end $$;
 
-revoke execute on function privado.consumir_transacao_oauth_social(uuid, text, text) from public, anon, authenticated;
+revoke execute on function privado.consumir_transacao_oauth_social(uuid, text, text, text, text) from public, anon, authenticated;
+
+-- Limpeza limitada de transações PKCE e hashes de id_token expirados há mais de 1 hora
+-- (margem de 1h impede remoção prematura antes do término da janela efetiva de replay).
+create or replace function privado.limpar_artefatos_login_social_expirados(
+  p_limite integer default 500
+)
+returns jsonb
+language plpgsql
+security definer set search_path = ''
+as $$
+declare
+  v_corte    timestamptz := privado.agora() - interval '1 hour';
+  v_lim      integer := least(greatest(coalesce(p_limite, 500), 1), 5000);
+  v_tx_apag  integer := 0;
+  v_tok_apag integer := 0;
+begin
+  with alvo as (
+    select id
+      from privado.transacoes_oauth_social
+     where expira_em < v_corte
+     order by expira_em asc
+     limit v_lim
+  ),
+  del as (
+    delete from privado.transacoes_oauth_social t
+     using alvo a
+     where t.id = a.id
+    returning 1
+  )
+  select count(*)::integer into v_tx_apag from del;
+
+  with alvo as (
+    select token_hash
+      from privado.tokens_sociais_consumidos
+     where expira_em < v_corte
+     order by expira_em asc
+     limit v_lim
+  ),
+  del as (
+    delete from privado.tokens_sociais_consumidos t
+     using alvo a
+     where t.token_hash = a.token_hash
+    returning 1
+  )
+  select count(*)::integer into v_tok_apag from del;
+
+  return jsonb_build_object(
+    'transacoes_removidas', v_tx_apag,
+    'tokens_removidos', v_tok_apag
+  );
+end $$;
+
+revoke execute on function privado.limpar_artefatos_login_social_expirados(integer) from public, anon, authenticated;
 
 create or replace function privado.concluir_login_social(
   p_usuario_id        uuid,
