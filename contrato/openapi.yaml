@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.117
+  version: 0.2.118
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -116,6 +116,18 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.118, de 26/11/2026.** Registra a decisão formal da `ADR-003` (Opção A, 26/11/2026)
+    para `POST /functions/v1/autenticar-social` (`autenticarSocial`): aceito o *Automatic Identity
+    Linking* nativo do GoTrue para Apple e Google quando o e-mail verificado coincide com conta
+    existente (preservando `auth.uid`), mantendo Apple Private Relay (`*@privaterelay.appleid.com`)
+    como identidade distinta (`auth.uid` novo). Documenta também o gate server-side fail-closed
+    `LOGIN_SOCIAL_ATIVO` (default desligado, retornando `503 indisponivel` antes de GoTrue/SQL),
+    a canonicalização estrita base64url do `id_token` (`422 campo_invalido` para aliases de bits)
+    e o rate limit mobile fail-closed sem `cf-connecting-ip` (`503 indisponivel`). Nenhum campo,
+    status ou operação nova.
+
+    ---
 
     **Versão 0.2.117, de 25/11/2026.** Fundação server-side de login social Apple e Google
     compatível com `privado.sessoes_verificadas`, `estado_autenticacao` e enforcement de dispositivo
@@ -7254,11 +7266,13 @@ paths:
         (limite explícito: chamadas diretas ao endpoint público do GoTrue não passam pelo replay
         store desta Edge Function, mas não obtêm sessão autorizada no produto).
 
-        Comportamento real de identidade no GoTrue (bloqueio formal antes de Prod): coincidência de
-        e-mail verificado pode ser vinculada pelo próprio GoTrue (200 preservando o `auth.uid`);
-        Apple Private Relay gera identidade distinta (`auth.uid` novo). O código do Frila nunca
-        vincula contas por e-mail ou CPF; conflitos explícitos devolvidos pelo GoTrue retornam
-        `409 conflito_identidade`.
+        Comportamento de identidade no GoTrue (ADR-003, Opção A aprovada em 26/11/2026): provedores
+        confiáveis (`apple` e `google`) com e-mail verificado vinculam automaticamente à conta
+        existente de mesmo e-mail no GoTrue (200 preservando `auth.uid`, sem exigir senha Frila nem
+        OTP 30d); Apple Private Relay gera identidade distinta (`auth.uid` novo). O código do Frila
+        não faz vinculação manual por CPF; conflitos explícitos devolvidos pelo GoTrue retornam
+        `409 conflito_identidade`. Enquanto `LOGIN_SOCIAL_ATIVO` não estiver habilitado no servidor,
+        a função falha fechado com `503 indisponivel` (`Cache-Control: no-store`) antes de GoTrue/SQL.
       security:
         - chaveDoProjeto: []
       x-requisitos: [RF01]
