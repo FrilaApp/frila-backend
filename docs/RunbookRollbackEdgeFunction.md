@@ -2,7 +2,9 @@
 
 Como voltar uma Edge Function do `frila-prod` para uma versão anterior do código depois que um deploy a quebrou. O rollback de **migração** é outro assunto: `docs/RUNBOOK-INCIDENTES.md` (seção 6) e `docs/RunbookHotfixERollback.md` (seção 4).
 
-Convenção (a mesma de `docs/RunbookRotacaoDeSegredos.md`): **MEDIDO** é o que foi lido de uma execução real (com data e fonte); **LIDO** é texto do repositório; **DEDUZIDO** é raciocínio sobre o código; **NAO EXECUTADO: sem banco local** marca cada SQL; **A DEFINIR (Caue)** é fato que só o Cauê sabe. **Nunca se executou um rollback de função em Prod.** Todo comando abaixo é proposta a confirmar.
+Convenção (a mesma de `docs/RunbookRotacaoDeSegredos.md`): **MEDIDO** é o que foi lido de uma execução real (com data e fonte); **LIDO** é texto do repositório; **DEDUZIDO** é raciocínio sobre o código; **EXECUTADO** marca o SQL rodado em banco local descartável, com data e base; **NAO EXECUTAVEL AQUI** marca o que depende de Prod ou de credencial; **A DEFINIR (Caue)** é fato que só o Cauê sabe. **Nunca se executou um rollback de função em Prod.** Todo comando abaixo é proposta a confirmar.
+
+**Execução do SQL (25/11/2026).** Os 3 blocos SQL deste documento foram executados em 25/11/2026 num Postgres local descartável (`supabase db start` sobre a `develop` em `6225a77`: migrações do zero, `seed.sql` e `cenarios.sql`), cada um dentro de `begin read only`; os 3 rodam sem erro. **Não executável fora do Prod:** os comandos de CLI (`supabase functions list`, `supabase functions deploy`), que exigem credencial de Prod, e o conteúdo real de `privado.falha_execucao` e `net._http_response`.
 
 ---
 
@@ -25,7 +27,7 @@ Quais funções existem (LIDO, `supabase/functions/`): `despachar`, `entrar-demo
 ## 2. Diagnóstico (somente leitura)
 
 **2.1 Qual função e qual versão está no Prod.**
-Comando de CLI, leitura. NAO EXECUTADO: sem credencial de Prod. DEDUZIDO que a saída traz nome, versão e data de atualização, como o retrato de `docs/ESTADO.md` ("`despachar` v7, `enviar-push` v9..." em 08/11/2026).
+Comando de CLI, leitura. NAO EXECUTAVEL AQUI: precisa de credencial de Prod. DEDUZIDO que a saída traz nome, versão e data de atualização, como o retrato de `docs/ESTADO.md` ("`despachar` v7, `enviar-push` v9..." em 08/11/2026).
 
 ```bash
 supabase functions list --project-ref hbjkkcenbudiezmamiak
@@ -46,7 +48,7 @@ Para achar o último commit **bom** de uma função: `git log --oneline -- supab
 
 **2.3 O banco ainda é compatível com o código antigo?** A função antiga precisa funcionar com o schema atual do Prod. Veja o que o banco do Prod já tem aplicado:
 
-NAO EXECUTADO: sem banco local. Tabela criada e lida por `scripts/aplicar-remoto.sh:70-77`.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; `topo` = `20261125120000` e `total` = 248 no banco local (o Prod tem 246, `docs/ESTADO.md`). Tabela criada em `scripts/aplicar-remoto.sh:71-73` e lida em `:76-78`.
 
 ```sql
 select max(version) as topo,
@@ -58,7 +60,7 @@ Depois, no repositório, liste o que mudou no código da função e nas migraç�
 
 **2.4 Confirmação de que foi a função e não o banco.** Falhas registradas e respostas HTTP, sem dado pessoal.
 
-NAO EXECUTADO: sem banco local. Tabela em `20260930230000_monitoramento_e_alertas.sql:20-28`. `net._http_response` não guarda a URL chamada (mistura as funções).
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, por falta de dado. Tabela em `20260930230000_monitoramento_e_alertas.sql:20-28`. `net._http_response` não guarda a URL chamada (mistura as funções).
 
 ```sql
 select origem,
@@ -71,7 +73,7 @@ select origem,
  order by hora desc, total desc;
 ```
 
-NAO EXECUTADO: sem banco local.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, por falta de dado.
 
 ```sql
 select status_code,
@@ -112,7 +114,7 @@ Proposta, a confirmar; nunca executada em Prod. **Escrita em Prod: só humano au
 3. Publique **uma função por nome** (sem nome, o comando publica todas):
 
    ```bash
-   # ESCRITA em Prod. NAO EXECUTADO. Token em variável de ambiente, nunca na linha de comando.
+   # ESCRITA em Prod. NAO EXECUTAVEL AQUI: escreve e precisa de credencial de Prod. Token em variável de ambiente, nunca na linha de comando.
    SUPABASE_ACCESS_TOKEN="$TOKEN_DO_OPERADOR" \
      supabase functions deploy <nome> --project-ref hbjkkcenbudiezmamiak --use-api
    ```

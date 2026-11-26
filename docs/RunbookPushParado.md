@@ -2,7 +2,9 @@
 
 O push é o canal que leva a vaga ao profissional. Este runbook cobre o caso em que o aviso não sai, sai atrasado ou falha em série, e como separar "o backend não enviou" de "o backend enviou e o aparelho não mostrou".
 
-Convenção (a mesma de `docs/RunbookRotacaoDeSegredos.md`): **LIDO** é texto do repositório com `arquivo:linha`; **DEDUZIDO** é raciocínio sobre o código; **NAO EXECUTADO: sem banco local** marca cada SQL (escritos a partir das migrações, nunca rodados); **A DEFINIR (Caue)** é fato que só o Cauê sabe.
+Convenção (a mesma de `docs/RunbookRotacaoDeSegredos.md`): **LIDO** é texto do repositório com `arquivo:linha`; **DEDUZIDO** é raciocínio sobre o código; **EXECUTADO** marca o SQL rodado em banco local descartável, com data e base; **NAO EXECUTAVEL AQUI** marca o que depende de Prod ou de credencial; **A DEFINIR (Caue)** é fato que só o Cauê sabe.
+
+**Execução do SQL (25/11/2026).** Os 9 blocos SQL deste documento foram executados em 25/11/2026 num Postgres local descartável (`supabase db start` sobre a `develop` em `6225a77`: migrações do zero, `seed.sql` e `cenarios.sql`), cada um dentro de `begin read only`; os 9 rodam sem erro, e o resultado de cada um está na marca que o antecede. **Não executável fora do Prod:** o conteúdo real do Vault (`agendador_secret`, `push_function_url`, `edge_function_url`), o histórico de `cron.job_run_details` e `net._http_response`, e as linhas reais de `public.notificacao` e `privado.falha_execucao`. O banco local roda as consultas, mas devolve vazio ou dado de semente nesses pontos.
 
 ---
 
@@ -33,10 +35,10 @@ Qualquer um destes:
 
 ## 2. Diagnóstico (somente leitura)
 
-Todos os SQL abaixo: **NAO EXECUTADO: sem banco local**. Rode em sessão com `default_transaction_read_only = on`. Nenhum devolve token de aparelho, `payload` nem identificador de usuário (RN15).
+Todos os SQL abaixo: **EXECUTADO em 25/11/2026 no banco local descartável** (resultado em cada bloco). Rode em sessão com `default_transaction_read_only = on`. Nenhum devolve token de aparelho, `payload` nem identificador de usuário (RN15).
 
 **2.1 Como estão as notificações das últimas 24 horas.**
-NAO EXECUTADO: sem banco local. Colunas de `public.notificacao`: `20260922150500_despacho_turno_ocorrencia.sql:26-34`, `20260925233000_notificacao_para_qualquer_conta.sql:21-27`.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, por falta de dado. Colunas de `public.notificacao`: `20260922150500_despacho_turno_ocorrencia.sql:26-34`, `20260925233000_notificacao_para_qualquer_conta.sql:21-27`.
 
 ```sql
 select estado_entrega,
@@ -52,7 +54,7 @@ select estado_entrega,
 Leitura: muito `pendente` e pouco `enviada` aponta para o caminho **banco para função** (causa A abaixo). Muito `falhou` aponta para o caminho **função para FCM** ou para o aparelho (causas B e C).
 
 **2.2 Há notificação pendente elegível parada, e há quanto tempo?**
-NAO EXECUTADO: sem banco local. A condição de "elegível" é a de `privado.disparar_push()` (`20261104140200_disparar_push_agendador.sql:40-43`).
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 1 linha (`pendentes_elegiveis` = 0). A condição de "elegível" é a de `privado.disparar_push()` (`20261104140200_disparar_push_agendador.sql:40-43`).
 
 ```sql
 select count(*) as pendentes_elegiveis,
@@ -66,7 +68,7 @@ select count(*) as pendentes_elegiveis,
 Com o job ativo e a função sã, a idade da mais antiga fica em segundos. Passando de 15 minutos há problema real.
 
 **2.3 Por que as falhas falharam (agrupado por motivo, sem dado pessoal).**
-NAO EXECUTADO: sem banco local.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, por falta de dado.
 
 ```sql
 select left(coalesce(motivo_falha, '(sem motivo)'), 80) as motivo,
@@ -81,7 +83,7 @@ select left(coalesce(motivo_falha, '(sem motivo)'), 80) as motivo,
 ```
 
 **2.4 O job do agendador existe, está ativo e rodou?**
-NAO EXECUTADO: sem banco local. Mesmo padrão de `docs/RUNBOOK-INCIDENTES.md`, seção 2, itens 3 e 4.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): os dois blocos rodam; o primeiro devolve o job `processar_fila_push` (ativo, `* * * * *`) e o segundo, 1 execução `succeeded`. Mesmo padrão de `docs/RUNBOOK-INCIDENTES.md`, seção 2, itens 3 e 4.
 
 ```sql
 select jobid, jobname, schedule, active
@@ -100,7 +102,7 @@ select runid, status, return_message, start_time, end_time
 Esperado: 1 linha, `active = true`, execuções a cada minuto. Zero linha ou `active = false`: o job foi removido ou desligado. O alerta existente `job_cron_falhou` só vê execução com status `failed` nos últimos 15 minutos; **job que simplesmente não roda não gera alerta** (`20261108110000...sql:575-586`).
 
 **2.5 O banco está conseguindo chamar a função? (respostas HTTP da última hora).**
-NAO EXECUTADO: sem banco local. `net._http_response` não guarda a URL chamada: esta consulta mistura `enviar-push`, `enviar-email` e `despachar`. Use-a para ver o padrão (muito 401, 5xx ou nulo), e confirme a função nos logs (seção 3).
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, por falta de dado. `net._http_response` não guarda a URL chamada: esta consulta mistura `enviar-push`, `enviar-email` e `despachar`. Use-a para ver o padrão (muito 401, 5xx ou nulo), e confirme a função nos logs (seção 3).
 
 ```sql
 select status_code,
@@ -115,7 +117,7 @@ select status_code,
 `401` = segredo desencontrado (ver `docs/RunbookRotacaoDeSegredos.md`, seção 3.1). `500` = a função recebeu e falhou (por exemplo `fcm_service_account_nao_configurada` ou `falha_oauth_google`). `status_code` nulo com `error_msg` = nem chegou (rede, URL errada, projeto pausado).
 
 **2.6 Os segredos e as URLs do Vault existem? (nomes, nunca valores).**
-NAO EXECUTADO: sem banco local. As colunas `updated_at` de `vault.secrets` vêm da extensão e não das migrações: confirmar na primeira execução.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, porque o Vault local não tem esses segredos (em Prod devolve uma linha por nome). As colunas `name` e `decrypted_secret` existem.
 
 ```sql
 select s.name,
@@ -129,7 +131,7 @@ select s.name,
 Esperado no Prod, segundo `docs/ESTADO.md` (08/11/2026): as três presentes. Depois dessa data: NAO MEDIDO.
 
 **2.7 A função registrou falha própria? (tabela sem dado pessoal).**
-NAO EXECUTADO: sem banco local. Tabela em `20260930230000_monitoramento_e_alertas.sql:20-28`.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, por falta de dado. Tabela em `20260930230000_monitoramento_e_alertas.sql:20-28`.
 
 ```sql
 select origem,
@@ -143,7 +145,7 @@ select origem,
 ```
 
 **2.8 Há aparelho registrado? Quão frescos estão os tokens?**
-NAO EXECUTADO: sem banco local. `public.dispositivo`: `20260922150500_despacho_turno_ocorrencia.sql:14-20`, `20261107370000_contratacao_direta_b5c_b5d_b5e_e_exportacao.sql:26` (`versao_app`).
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 2 linhas (`ios` 2, `android` 2, dado da semente). `public.dispositivo`: `20260922150500_despacho_turno_ocorrencia.sql:14-20`, `20261107370000_contratacao_direta_b5c_b5d_b5e_e_exportacao.sql:26` (`versao_app`).
 
 ```sql
 select plataforma,
