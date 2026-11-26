@@ -18,6 +18,51 @@
 # Sem token, a segunda não roda e o script **diz isso em voz alta** em vez de passar
 # calado: verde sobre nada é pior que vermelho.
 set -euo pipefail
+
+# Escolhe no JSON de commits (API do GitHub) o SHA do primeiro commit cuja primeira linha
+# cita a versão exata em um dos formatos: (<v>), (<v>,, <v>), contrato <v>, para <v>.
+escolher_commit_versao() {
+  local json_commits="${1:?escolher_commit_versao precisa do arquivo JSON de commits}"
+  local versao="${2:?escolher_commit_versao precisa da versão}"
+
+  python3 - "$json_commits" "$versao" <<'PY'
+import json
+import re
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        commits = json.load(f)
+    v = sys.argv[2]
+    if not v:
+        print("")
+        sys.exit(0)
+
+    v_esc = re.escape(v)
+    padrao = re.compile(
+        rf"(?:"
+        rf"\({v_esc}(?:\)|,)"
+        rf"|(?<![0-9.]){v_esc}\)"
+        rf"|\b(?:contrato|para)\s+{v_esc}(?![0-9]|\.[0-9])"
+        rf")",
+        re.IGNORECASE,
+    )
+
+    sha = ""
+    for c in commits:
+        msg = (c.get("commit") or {}).get("message") or ""
+        lines = msg.splitlines()
+        first_line = lines[0] if lines else ""
+        if padrao.search(first_line):
+            sha = c.get("sha", "")
+            break
+    print(sha)
+except Exception:
+    sys.exit(1)
+PY
+}
+
+main() {
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 espelho=contrato/openapi.yaml
@@ -131,22 +176,7 @@ if ! curl -fsSL -H "Authorization: Bearer $token" \
   exit 1
 fi
 
-commit_sha=$(python3 -c "
-import json, sys
-try:
-    with open('$tmp_json') as f:
-        commits = json.load(f)
-    v = '$versao'
-    sha = ''
-    for c in commits:
-        first_line = c.get('commit', {}).get('message', '').splitlines()[0]
-        if f'({v})' in first_line or f'contrato {v}' in first_line.lower() or f'para {v}' in first_line.lower():
-            sha = c.get('sha', '')
-            break
-    print(sha)
-except Exception:
-    sys.exit(1)
-")
+commit_sha=$(escolher_commit_versao "$tmp_json" "$versao")
 
 if [ -z "$commit_sha" ]; then
   echo "Não encontrei o commit da versão $versao no histórico recente de FrilaApp/frila-docs."
@@ -177,3 +207,8 @@ echo "  gh api repos/FrilaApp/frila-docs/contents/api/openapi.yaml?ref=$commit_s
 echo "    -H 'Accept: application/vnd.github.raw' > $espelho"
 echo "  shasum -a 256 $espelho | awk '{print \$1}' > $soma"
 exit 1
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

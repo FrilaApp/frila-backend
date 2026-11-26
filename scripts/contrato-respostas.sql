@@ -2085,18 +2085,22 @@ select pg_temp.guarda('promete:aceitarTermos:401', pg_temp.observado(null,
 -- convidar_membro, aceitar_convite_membro, remover_membro e transferir_administracao (0.2.73, B-052): chamadas pelos NOMES do contrato
 -- (estabelecimento_id, email, papel; token), como o PostgREST faz. Contas próprias, ativas: ...00a1 é
 -- contratante que ainda não é membro da casa (aceitar o convite a faz membro, por isso este trecho é o
--- último) e ...00a2 é profissional.
-insert into auth.users (id, email) values
-  ('ee000000-0000-4000-8000-0000000000a1', 'convite_contratante@frila.test'),
-  ('ee000000-0000-4000-8000-0000000000a2', 'convite_profissional@frila.test')
+-- último) e ...00a2 é profissional. B-123: o aceite confere o e-mail, então o convite é para o e-mail da
+-- conta ...00a1 (em maiúsculas, para exercitar lower(btrim())) e a conta tem e-mail confirmado; ...00a3 é
+-- contratante confirmada de outro e-mail (o 403 convite_de_outro_email).
+insert into auth.users (id, email, email_confirmed_at) values
+  ('ee000000-0000-4000-8000-0000000000a1', 'convite_contratante@frila.test', now()),
+  ('ee000000-0000-4000-8000-0000000000a2', 'convite_profissional@frila.test', now()),
+  ('ee000000-0000-4000-8000-0000000000a3', 'convite_outra_conta@frila.test', now())
 on conflict do nothing;
 insert into public.usuario (id, perfil, nome, telefone, email, nascimento, termos_versao, termos_aceite_em, estado) values
   ('ee000000-0000-4000-8000-0000000000a1', 'contratante',  'Convidada Contratante', '+5561999990161', 'convite_contratante@frila.test',  '1990-01-01', '1.0', now(), 'ativa'),
-  ('ee000000-0000-4000-8000-0000000000a2', 'profissional', 'Convidada Profissional', '+5561999990162', 'convite_profissional@frila.test', '1990-01-01', '1.0', now(), 'ativa')
+  ('ee000000-0000-4000-8000-0000000000a2', 'profissional', 'Convidada Profissional', '+5561999990162', 'convite_profissional@frila.test', '1990-01-01', '1.0', now(), 'ativa'),
+  ('ee000000-0000-4000-8000-0000000000a3', 'contratante',  'Outra Contratante',     '+5561999990163', 'convite_outra_conta@frila.test',   '1990-01-01', '1.0', now(), 'ativa')
 on conflict (id) do update set estado = 'ativa';
 create temp table convite_colhido as
   select pg_temp.como('cc000000-0000-4000-8000-000000000001', format(
-    $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'Novo.Membro@frila.test', papel => 'operador') $$,
+    $$ select public.convidar_membro(estabelecimento_id => %L::uuid, email => 'Convite_Contratante@frila.test', papel => 'operador') $$,
     (select casa_id from ids))) as r;
 select pg_temp.guarda('convidarMembro', (select r from convite_colhido));
 
@@ -2119,6 +2123,10 @@ select pg_temp.guarda('promete:aceitarConviteMembro:422', pg_temp.observado('ee0
   $$ select public.aceitar_convite_membro(token => %L) $$, (select r->>'token' from convite_colhido))));
 select pg_temp.guarda('promete:aceitarConviteMembro:422', pg_temp.observado('ee000000-0000-4000-8000-0000000000a1',
   $$ select public.aceitar_convite_membro(token => 'token-que-nao-existe') $$));
+-- B-123 (0.2.115): conta contratante com e-mail confirmado, mas de OUTRO e-mail, leva 403 e o convite não é
+-- consumido (a conta certa ...00a1 aceita logo abaixo, o mesmo token).
+select pg_temp.guarda('promete:aceitarConviteMembro:403', pg_temp.observado('ee000000-0000-4000-8000-0000000000a3', format(
+  $$ select public.aceitar_convite_membro(token => %L) $$, (select r->>'token' from convite_colhido))));
 select pg_temp.guarda('aceitarConviteMembro', pg_temp.como('ee000000-0000-4000-8000-0000000000a1', format(
   $$ select public.aceitar_convite_membro(token => %L) $$, (select r->>'token' from convite_colhido))));
 

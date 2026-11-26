@@ -343,6 +343,7 @@ VIGIADAS = {
     ("convidarMembro", "403"): "sem_permissao",
     ("convidarMembro", "422"): "campo_invalido",
     ("aceitarConviteMembro", "401"): "nao_autenticado",
+    ("aceitarConviteMembro", "403"): "convite_de_outro_email",
     ("aceitarConviteMembro", "422"): "convite_invalido",
     ("removerMembro", "401"): "nao_autenticado",
     ("removerMembro", "403"): "sem_permissao",
@@ -460,8 +461,6 @@ ISENTAS = {
     ("autenticarSocial", "410"): "transação OAuth PKCE expirada é tratada pela Edge Function autenticar-social (Deno + pgTAP 902)",
     ("autenticarSocial", "422"): "validação de provedor, fluxo, plataforma e credenciais é feita pela Edge Function autenticar-social (Deno)",
     ("autenticarSocial", "429"): "rate limit por IP de login social é aplicado pela Edge Function autenticar-social (Deno)",
-    # Contrato 0.2.115 (B-123) já presente na main do frila-docs; implementação em PR #634.
-    ("aceitarConviteMembro", "403"): "contrato 0.2.115 antecipado no espelho; implementação no PR #634 (B-123)",
 }
 
 

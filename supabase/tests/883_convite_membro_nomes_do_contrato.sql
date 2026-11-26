@@ -50,11 +50,12 @@ exception when others then
   return msg::jsonb || det::jsonb;
 end $$;
 
-insert into auth.users (id, email) values
-  ('88300000-0000-4000-8000-000000000001', 'admin.883@teste.invalid'),
-  ('88300000-0000-4000-8000-000000000002', 'novo.883@teste.invalid'),
-  ('88300000-0000-4000-8000-000000000003', 'prof.883@teste.invalid'),
-  ('88300000-0000-4000-8000-000000000004', 'alheio.883@teste.invalid');
+-- B-123: o aceite confere o e-mail do convidado, então quem aceita tem e-mail confirmado.
+insert into auth.users (id, email, email_confirmed_at) values
+  ('88300000-0000-4000-8000-000000000001', 'admin.883@teste.invalid', now()),
+  ('88300000-0000-4000-8000-000000000002', 'novo.883@teste.invalid', now()),
+  ('88300000-0000-4000-8000-000000000003', 'prof.883@teste.invalid', now()),
+  ('88300000-0000-4000-8000-000000000004', 'alheio.883@teste.invalid', now());
 
 insert into public.usuario (id, perfil, nome, email, telefone, nascimento, termos_versao, termos_aceite_em, estado) values
   ('88300000-0000-4000-8000-000000000001', 'contratante',  'Admin 883',   'admin.883@teste.invalid',  '+5561955508831', '1985-01-01', '1.0', now(), 'ativa'),
