@@ -33,7 +33,6 @@ import {
   type OpcoesIpVisitante,
   type PlataformaAuth,
   recusa,
-  renovarSessaoGoTrue,
   resolverIpParaRateLimit,
   responderJson,
   revogarSessaoLocalGoTrue,
@@ -80,6 +79,7 @@ export interface AutenticarSocialDeps {
   opcoesIp?: OpcoesIpVisitante;
   db?: AutenticarSocialDb;
   loginSocialAtivo?: boolean;
+  aguardarMs?: (ms: number) => Promise<void>;
 }
 
 const REGEX_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -87,6 +87,48 @@ const REGEX_VERIFIER_PKCE = /^[A-Za-z0-9_-]{43,128}$/;
 const REGEX_CHALLENGE_PKCE = /^[A-Za-z0-9_-]{43}$/;
 const REGEX_CODIGO_OAUTH = /^[\x21-\x7e]{4,512}$/;
 const REGEX_BASE64URL_ESTRITO = /^[A-Za-z0-9_-]+$/;
+const ATRASOS_RETRY_REFRESH_MS = [150, 300];
+
+async function renovarSessaoComRetryTransitorio(
+  supabaseUrl: string,
+  anonKey: string,
+  refreshToken: string,
+  fetchFn: typeof fetch,
+  aguardarMs: (ms: number) => Promise<void>,
+) {
+  for (let tentativa = 0; tentativa <= ATRASOS_RETRY_REFRESH_MS.length; tentativa++) {
+    let res: Response;
+    try {
+      res = await fetchFn(`${supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": anonKey,
+        },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+    } catch {
+      if (tentativa < ATRASOS_RETRY_REFRESH_MS.length) {
+        await aguardarMs(ATRASOS_RETRY_REFRESH_MS[tentativa]);
+        continue;
+      }
+      return null;
+    }
+
+    if (res.ok) {
+      return validarSessaoGoTrue(await res.json().catch(() => null));
+    }
+
+    // Retenta apenas falhas transitórias (5xx ou 429); 4xx definitivo falha imediato sem retry.
+    const ehTransitorio = res.status >= 500 || res.status === 429;
+    if (ehTransitorio && tentativa < ATRASOS_RETRY_REFRESH_MS.length) {
+      await aguardarMs(ATRASOS_RETRY_REFRESH_MS[tentativa]);
+      continue;
+    }
+    return null;
+  }
+  return null;
+}
 
 function codificarBase64Url(bytes: Uint8Array): string {
   let binario = "";
@@ -405,28 +447,27 @@ export async function tratarAutenticarSocial(req: Request, deps: AutenticarSocia
     const conclusao = await db.concluirLoginSocial(usuarioId, sessionId, provedor, idTokenHash);
     if (!conclusao.ok) {
       await revogarSessaoLocalGoTrue(supabaseUrl, anonKey, sessaoProvisoria.access_token, fetchFn);
-      await db.revogarSessaoPontual(sessionId, usuarioId);
+      await db.revogarSessaoPontual(sessionId, usuarioId).catch(() => {});
       if (conclusao.motivo === "token_ja_usado") return recusa(409, "token_ja_usado");
       return recusa(401, "credenciais_invalidas");
     }
 
     // Obriga refresh_token para o custom_access_token_hook emitir JWT final com dispositivo_verificado = true.
-    // Qualquer falha (HTTP != 200, JSON inválido ou exceção de rede) executa cleanup fail-closed
-    // (`scope=local` + `revogar_sessao_pontual`) sem nunca desconsumir a prova já usada (anti-replay).
-    let sessaoFinal: Awaited<ReturnType<typeof renovarSessaoGoTrue>> = null;
-    try {
-      sessaoFinal = await renovarSessaoGoTrue(
-        supabaseUrl,
-        anonKey,
-        sessaoProvisoria.refresh_token,
-        fetchFn,
-      );
-    } catch {
-      sessaoFinal = null;
-    }
+    // Recuperação segura: retenta até 2 vezes internamente apenas erros transitórios (5xx/429/rede)
+    // mantendo a prova consumida 1 única vez (anti-replay estrito). Se persistir falha ou ocorrer 4xx
+    // definitivo, executa cleanup fail-closed (`scope=local` + `revogar_sessao_pontual`) e devolve 503
+    // exigindo reinício explícito do fluxo pelo cliente (nunca desconsumindo a prova).
+    const aguardarMs = deps.aguardarMs ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+    const sessaoFinal = await renovarSessaoComRetryTransitorio(
+      supabaseUrl,
+      anonKey,
+      sessaoProvisoria.refresh_token,
+      fetchFn,
+      aguardarMs,
+    );
     if (!sessaoFinal) {
       await revogarSessaoLocalGoTrue(supabaseUrl, anonKey, sessaoProvisoria.access_token, fetchFn);
-      await db.revogarSessaoPontual(sessionId, usuarioId);
+      await db.revogarSessaoPontual(sessionId, usuarioId).catch(() => {});
       return recusa(503, "indisponivel");
     }
 
