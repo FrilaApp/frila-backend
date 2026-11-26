@@ -169,6 +169,25 @@ Falhas no segredo do agendador, queda do servidor SMTP ou credenciais inválidas
 ### Causa Raiz
 O banco possui jobs ativos agendados no `pg_cron`. O número cresce com cada job novo: o pgTAP `supabase/tests/390_agendamentos_do_pg_cron.sql` lista 26 nomes conhecidos na `develop` em `a55aab0` (contagem por `awk`, 16/11/2026) e falha se um job novo entrar sem entrar no teste. Todos invocam funções no formato canônico `select privado.<funcao>()`. Se uma migração revogar privilégios, alterar a assinatura da função sem valor default para argumentos, fixar um `search_path` que oculte tipos de dados ou introduzir uma exceção não tratada, o job falha em silêncio no background sem notificar o app.
 
+### Retenção diária (LGPD): o que alerta e o que não alerta
+Medido em `frila-dev` em 26/11/2026 (migração mais nova aplicada: `20261125160000`), só com leitura. Cartão `ZRZrYYAe`.
+
+- **O job:** `retencao_e_limpeza_diaria`, `30 6 * * *` (UTC), ativo, chama `privado.executar_retencao_diaria()`. As 5 últimas execuções (22 a 26/11/2026) terminaram em `succeeded`.
+- **Passo que falha:** cada passo roda num bloco de exceção próprio. A falha vai para `privado.falha_execucao` (origem `executar_retencao_diaria`, código `retencao_passo_falhou`, só o passo e o SQLSTATE) e a rotina segue. O item 6 de `privado.verificar_saude()` (a cada 5 minutos) conta as linhas dos últimos 15 minutos e emite o alerta **`falha_execucao_edge_function`**, no máximo um por hora, na fila `email` da equipe. O pgTAP `supabase/tests/915_retencao_passo_falhou_aciona_alerta.sql` prova esse elo (passo falha, alerta sai uma vez, some fora da janela, aviso sem dado pessoal).
+- **Erro fora dos passos:** a execução do job fica `failed` em `cron.job_run_details` e o item 3 emite `job_cron_falhou` (lido no código, sem teste próprio para a retenção).
+- **Visto em `frila-dev`:** o canal do alerta existe e já disparou (`privado.alerta_emitido`: `falha_execucao_edge_function`, último em 24/11/2026 às 18:45 UTC; as linhas de `privado.falha_execucao` de lá são de `enviar_email` e `saude`). **Nenhuma falha da retenção chegou a acontecer em `frila-dev`** (`privado.falha_execucao` não tem linha de origem `executar_retencao_diaria`), então o alerta da retenção em si não foi visto disparar lá, só provado no pgTAP.
+- **Não há alerta, e a sonda `saude` também não olha:** o job `retencao_e_limpeza_diaria` desativado, apagado ou que deixou de rodar. `job_despacho_parado` e a sonda `privado.consultar_saude_cron` vigiam só `reprocessar_despacho` e `verificar_saude`. Nenhum alerta mede também "linha vencida que a limpeza não apagou". Sem OK do Cauê para uma migração, isso fica na checagem diária (`docs/ChecagemDiariaProd.md`) e nas consultas abaixo.
+- **"Sinal 13":** não existe com esse nome neste repositório. `verificar_saude()` tem os itens 0 a 11; no guarda-chuva `746`, o 13º bloco é `demonstracao_sob_ataque`.
+
+Conferência de leitura (humano, `begin read only`):
+```sql
+select jobname, schedule, active from cron.job where jobname = 'retencao_e_limpeza_diaria';
+select r.status, r.start_time from cron.job_run_details r join cron.job j using (jobid)
+ where j.jobname = 'retencao_e_limpeza_diaria' order by r.start_time desc limit 5;
+select origem, codigo, count(*), max(criada_em) from privado.falha_execucao
+ where origem = 'executar_retencao_diaria' group by 1, 2;
+```
+
 ### Diagnóstico (Somente Leitura)
 1. **Identificar jobs desativados no catálogo do cron:**
    ```sql
