@@ -459,6 +459,7 @@ Deno.test("autenticar-social: excecao de rede no refresh executa cleanup complet
     supabaseUrl: "https://proj.supabase.co",
     anonKey: "anon-test",
     loginSocialAtivo: true,
+    aguardarMs: () => Promise.resolve(),
     db: dbStub({
       revogarSessaoPontual: () => {
         revogouPontual = true;
@@ -471,6 +472,113 @@ Deno.test("autenticar-social: excecao de rede no refresh executa cleanup complet
   assertEquals((await res.json()).code, "indisponivel");
   assertEquals(revogouLocal, true);
   assertEquals(revogouPontual, true);
+});
+
+Deno.test("autenticar-social: falha 503 transitoria no refresh recupera com retry interno bounded e devolve 200 sem desconsumir prova nem revogar", async () => {
+  let tentativasRefresh = 0;
+  let revogouLocal = false;
+  let revogouPontual = false;
+  let chamadasConcluir = 0;
+  const fetchFn: typeof fetch = (input) => {
+    const url = String(input);
+    if (url.includes("grant_type=id_token")) return Promise.resolve(Response.json(sessaoFake("sess-prov")));
+    if (url.includes("grant_type=refresh_token")) {
+      tentativasRefresh++;
+      if (tentativasRefresh < 3) {
+        return Promise.resolve(new Response("temporarily unavailable", { status: 503 }));
+      }
+      return Promise.resolve(Response.json(sessaoFake("sess-recuperada")));
+    }
+    if (url.includes("/auth/v1/logout?scope=local")) {
+      revogouLocal = true;
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    throw new Error(`URL inesperada: ${url}`);
+  };
+
+  const req = new Request("https://local/functions/v1/autenticar-social", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "cf-connecting-ip": "198.51.100.44" },
+    body: JSON.stringify({
+      provedor: "apple",
+      fluxo: "id_token",
+      plataforma: "ios",
+      id_token: fakeJwt("22222222-2222-4222-8222-222222222222"),
+      nonce: "nonce-bruto-32bytes-sintetico",
+    }),
+  });
+
+  const res = await tratarAutenticarSocial(req, {
+    fetchFn,
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    loginSocialAtivo: true,
+    aguardarMs: () => Promise.resolve(),
+    db: dbStub({
+      concluirLoginSocial: () => {
+        chamadasConcluir++;
+        return Promise.resolve({ ok: true, precisa_definir_senha: false });
+      },
+      revogarSessaoPontual: () => {
+        revogouPontual = true;
+        return Promise.resolve();
+      },
+    }),
+  });
+
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.sessao.refresh_token, "ref-sess-recuperada");
+  assertEquals(tentativasRefresh, 3);
+  assertEquals(chamadasConcluir, 1);
+  assertEquals(revogouLocal, false);
+  assertEquals(revogouPontual, false);
+});
+
+Deno.test("autenticar-social: erro 400 definitivo no refresh falha imediato sem retry e executa cleanup fail-closed mesmo se Postgres falhar", async () => {
+  let tentativasRefresh = 0;
+  let revogouLocal = false;
+  const fetchFn: typeof fetch = (input) => {
+    const url = String(input);
+    if (url.includes("grant_type=id_token")) return Promise.resolve(Response.json(sessaoFake("sess-400")));
+    if (url.includes("grant_type=refresh_token")) {
+      tentativasRefresh++;
+      return Promise.resolve(Response.json({ error: "invalid_grant" }, { status: 400 }));
+    }
+    if (url.includes("/auth/v1/logout?scope=local")) {
+      revogouLocal = true;
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    throw new Error(`URL inesperada: ${url}`);
+  };
+
+  const req = new Request("https://local/functions/v1/autenticar-social", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "cf-connecting-ip": "198.51.100.44" },
+    body: JSON.stringify({
+      provedor: "apple",
+      fluxo: "id_token",
+      plataforma: "ios",
+      id_token: fakeJwt("22222222-2222-4222-8222-222222222222"),
+      nonce: "nonce-bruto-32bytes-sintetico",
+    }),
+  });
+
+  const res = await tratarAutenticarSocial(req, {
+    fetchFn,
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    loginSocialAtivo: true,
+    aguardarMs: () => Promise.resolve(),
+    db: dbStub({
+      revogarSessaoPontual: () => Promise.reject(new Error("postgres indisponivel")),
+    }),
+  });
+
+  assertEquals(res.status, 503);
+  assertEquals((await res.json()).code, "indisponivel");
+  assertEquals(tentativasRefresh, 1);
+  assertEquals(revogouLocal, true);
 });
 
 Deno.test("autenticar-social: mobile sem cf-connecting-ip falha fechado (503) sem pular rate limit nem confiar em x-forwarded-for", async () => {
