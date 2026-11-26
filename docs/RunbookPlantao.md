@@ -41,7 +41,7 @@ A tabela é o formulário. Enquanto estiver em branco, **este runbook não defin
 | Quem é o plantão à noite e no fim de semana, ou se não há | A DEFINIR (Caue) | em branco |
 | Canal de acionamento (qual app, qual grupo, qual número) | A DEFINIR (Caue) | em branco |
 | Quem é acionado se o plantão não responder, e em quanto tempo | A DEFINIR (Caue) | em branco |
-| Quem é o encarregado de dados (para `docs/RunbookVazamentoDeDadosPessoais.md`) | A DEFINIR (Caue) | em branco |
+| Quem é o encarregado de dados (para `docs/RunbookVazamentoDeDadosPessoais.md`) | A própria FRILA TECNOLOGIA INOVA SIMPLES (I.S.), pelo `suporte@frilabr.com`, sem pessoa física nomeada (decisão do Cauê de 23/11/2026, cartão `ZRZrYYAe`) | decidido; falta confirmar a assinatura do ato de designação |
 | Quem é o advogado de referência e como acioná-lo | A DEFINIR (Caue) | em branco |
 | Quem é Owner/Admin do projeto `frila-prod` no Supabase | A DEFINIR (Caue) | em branco |
 | Quem tem acesso ao console do Firebase (push) | A DEFINIR (Caue) | em branco |

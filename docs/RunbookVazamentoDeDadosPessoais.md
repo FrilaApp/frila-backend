@@ -177,9 +177,9 @@ Ordem. O relógio da seção 1 corre durante todos estes passos.
 4. **Dimensione** com a seção 2: categorias de dado, número de titulares (limite superior e estimativa), janela, se há dado de menor (o banco guarda `nascimento`; consulta de menores de idade fora deste runbook: **A DEFINIR (Caue)**, junto do advogado).
 5. **Avalie o risco ao titular** com o advogado (**A DEFINIR (Caue)**: quem). A decisão "comunica ou não à ANPD e aos titulares" é do Cauê com o parecer; registre por escrito a decisão **e o motivo**, inclusive se for "não comunicar".
 6. **Comunique, se a decisão for comunicar.**
-   - **À ANPD:** pelo canal oficial da página indicada na seção 1. Preencha com os números das seções 2.1 a 2.7. Quem assina como controlador e quem é o encarregado: **A DEFINIR (Caue)**.
+   - **À ANPD:** pelo canal oficial da página indicada na seção 1. Preencha com os números das seções 2.1 a 2.7. Controlador e encarregado: a FRILA TECNOLOGIA INOVA SIMPLES (I.S.), CNPJ 69.728.564/0001-41, que é também a encarregada, sem pessoa física nomeada (decisão do Cauê de 23/11/2026, cartão `ZRZrYYAe`; `frila-docs`, `juridico/canal-do-titular.md`, item "Encarregado"). Quem assina a comunicação: **A DEFINIR (Caue)**.
    - **Aos titulares:** por e-mail (`suporte@frilabr.com` é o canal do titular: `supabase/operacao/equipe-frila.md`, seção 1). **Push não leva conteúdo de incidente** (RN15: nada de dado pessoal em aviso). Contas `anonimizada` não têm e-mail (seção 2.2). O conteúdo mínimo exigido pela Resolução: **A CONFIRMAR com advogado**. Roteiro de texto, para o advogado revisar: o que aconteceu e quando; quais categorias de dado; qual o risco; o que o Frila já fez; o que o titular pode fazer; como falar com o encarregado. Não invente número nem causa no texto: use só o que está no registro do incidente.
-   - Nome do encarregado e canal: o modelo de resposta ao titular assina "Encarregado de Dados (DPO) / Equipe Frila" (`supabase/operacao/equipe-frila.md`, Modelo D) sem nome de pessoa. **A DEFINIR (Caue)**: quem é o encarregado nomeado.
+   - Nome do encarregado e canal: o encarregado é a própria FRILA TECNOLOGIA INOVA SIMPLES (I.S.), pelo `suporte@frilabr.com`, sem pessoa física nomeada (decisão do Cauê de 23/11/2026, cartão `ZRZrYYAe`; Política de Privacidade, seção 1). O modelo de resposta ao titular (`supabase/operacao/equipe-frila.md`, Modelo D) assina "Equipe Frila", sem nome de pessoa e sem o título de encarregado ou DPO (mesma decisão). O ato formal de designação (`frila-docs`, `juridico/ato-designacao-encarregado.md`) é assinado pelo titular da empresa e guardado fora dos repositórios: **A CONFIRMAR (Caue)** que já foi assinado.
 7. **Depois de resolvido:** registro do incidente (quem soube, quando, o que foi feito, quem decidiu); correção da causa (PR com teste); revisão de `AGENTS.md` e dos runbooks se o caminho falhou; avisar o iOS se a correção exigir versão mínima nova.
 
 Não existe hoje, no repositório, modelo de registro de incidente nem formulário pré-preenchido para a ANPD (buscado em `docs/` e `supabase/operacao/`).
@@ -192,7 +192,7 @@ Não existe hoje, no repositório, modelo de registro de incidente nem formulár
 - **Contenção técnica:** sócio de plantão com acesso ao Supabase e ao GitHub (`docs/RunbookPlantao.md`). **A DEFINIR (Caue)**: quem tem acesso a quê.
 - **Consultas em Prod:** humano autorizado.
 - **Agente de IA:** pode ajudar a redigir o registro e a ler logs que um humano forneça **sem dado pessoal**; não acessa Prod e não recebe segredo (`AGENTS.md`).
-- **Comunicação à ANPD e aos titulares:** o encarregado. **A DEFINIR (Caue)**: nome e contato do encarregado.
+- **Comunicação à ANPD e aos titulares:** o encarregado, que é a própria empresa (`suporte@frilabr.com`), sem pessoa física nomeada. A decisão de comunicar e o texto são do Cauê (seção 5); **A DEFINIR (Caue)**: quem assina e envia, e a delegação quando ele estiver indisponível.
 - **Jurídico:** **A DEFINIR (Caue)**: quem é o advogado de referência e como acioná-lo fora do horário comercial.
 
 ## 5. Quem decide
