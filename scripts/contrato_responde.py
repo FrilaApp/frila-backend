@@ -456,7 +456,8 @@ ISENTAS = {
     # Login social Apple e Google (0.2.117): Edge Function em Deno, testada no job de Edge Functions da CI (pgTAP 902 cobre o banco).
     ("autenticarSocial", "401"): "código PKCE ou ID token inválido/reutilizado ou identidade social ausente é tratado pela Edge Function autenticar-social (Deno + pgTAP 902)",
     ("autenticarSocial", "403"): "assinatura B-116 ausente ou inválida na Web é recusada fail-closed pela Edge Function autenticar-social (Deno)",
-    ("autenticarSocial", "409"): "conflito explícito de identidade devolvido pelo GoTrue é tratado pela Edge Function autenticar-social (Deno)",
+    ("autenticarSocial", "409"): "conflito explícito de identidade, replay de transação PKCE ou replay de id_token é tratado pela Edge Function autenticar-social (Deno + pgTAP 902)",
+    ("autenticarSocial", "410"): "transação OAuth PKCE expirada é tratada pela Edge Function autenticar-social (Deno + pgTAP 902)",
     ("autenticarSocial", "422"): "validação de provedor, fluxo, plataforma e credenciais é feita pela Edge Function autenticar-social (Deno)",
     ("autenticarSocial", "429"): "rate limit por IP de login social é aplicado pela Edge Function autenticar-social (Deno)",
     # Contrato 0.2.115 (B-123) já presente na main do frila-docs; implementação em PR #634.

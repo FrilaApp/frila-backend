@@ -120,16 +120,23 @@ info:
     **Versão 0.2.117, de 25/11/2026.** Fundação server-side de login social Apple e Google
     compatível com `privado.sessoes_verificadas`, `estado_autenticacao` e enforcement de dispositivo
     30 dias (modo sombra permanece desligado). Acrescenta a Edge Function
-    `POST /functions/v1/autenticar-social` (`autenticarSocial`), que executa a troca PKCE S256
-    (`/auth/v1/token?grant_type=pkce`) ou ID token nativo (`/auth/v1/token?grant_type=id_token`) no
-    servidor, comprova a identidade do provedor em `auth.identities`, registra `session_id` em
-    `privado.sessoes_verificadas` (sujeito a revogação online), renova o JWT via `refresh_token`
-    para o hook emitir `dispositivo_verificado = true` e devolve o schema canônico `Sessao`. Contas
-    com identidade social ativa (`apple` ou `google`) sem `encrypted_password` não ficam presas em
-    `precisa_definir_senha = true`. Documenta explicitamente o comportamento real de automatic
-    identity linking do Supabase GoTrue (e-mail verificado coincidente retorna 200 preservando o
-    `auth.uid`; Apple Private Relay cria identidade distinta; vinculação explícita autenticada fica
-    em fluxo separado, nunca por e-mail/CPF no código do produto).
+    `POST /functions/v1/autenticar-social` (`autenticarSocial`) com três fluxos:
+    (a) `iniciar_pkce`, que registra transação atômica server-side em
+    `privado.transacoes_oauth_social` vinculando `(provedor, code_challenge_hash, callback_url)`
+    com TTL de 10 min e devolve `transacao_id` + `url_autorizacao`;
+    (b) `pkce`, que consome atomicamente a transação exigindo correspondência exata de
+    `(transacao_id, provedor, S256(code_verifier))` antes de chamar o GoTrue — provando o provedor
+    da sessão atual mesmo em contas multivinculadas Apple+Google;
+    (c) `id_token`, que valida o `id_token` + `nonce` bruto contra o provedor declarado no GoTrue e
+    consome atomicamente o hash do token em `privado.tokens_sociais_consumidos` (sem persistir token
+    bruto) para impedir replay. Em ambos os fluxos de conclusão, comprova `auth.identities`, grava
+    `privado.sessoes_verificadas` (revogável online), renova o JWT via `refresh_token` para o hook
+    emitir `dispositivo_verificado = true` e devolve o schema canônico `Sessao`. Contas com
+    identidade social ativa (`apple` ou `google`) sem `encrypted_password` não ficam presas em
+    `precisa_definir_senha = true`. **Bloqueio de política antes de Prod:** a política do projeto
+    não autoriza fusão implícita de contas por e-mail; como o GoTrue pode executar automatic
+    identity linking por e-mail verificado (retornando 200), habilitar Apple/Google em Prod exige
+    decisão formal prévia ou controle comprovado no servidor Auth.
 
     ---
 
@@ -7245,7 +7252,23 @@ paths:
             schema:
               oneOf:
                 - type: object
-                  required: [provedor, fluxo, plataforma, codigo, code_verifier]
+                  required: [provedor, fluxo, plataforma, code_challenge, redirect_to]
+                  properties:
+                    provedor:
+                      type: string
+                      enum: [apple, google]
+                    fluxo:
+                      type: string
+                      const: iniciar_pkce
+                    plataforma:
+                      type: string
+                      enum: [ios, android, web]
+                    code_challenge:
+                      type: string
+                    redirect_to:
+                      type: string
+                - type: object
+                  required: [provedor, fluxo, plataforma, transacao_id, codigo, code_verifier]
                   properties:
                     provedor:
                       type: string
@@ -7256,6 +7279,8 @@ paths:
                     plataforma:
                       type: string
                       enum: [ios, android, web]
+                    transacao_id:
+                      $ref: '#/components/schemas/Uuid'
                     codigo:
                       type: string
                     code_verifier:
@@ -7278,26 +7303,43 @@ paths:
                       type: string
       responses:
         '200':
-          description: Sessão social autorizada e renovada com claims server-side.
+          description: Transação PKCE iniciada ou sessão social autorizada e renovada com claims server-side.
           content:
             application/json:
               schema:
-                type: object
-                required: [sessao, provedor, precisa_definir_senha]
-                properties:
-                  sessao:
-                    $ref: '#/components/schemas/Sessao'
-                  provedor:
-                    type: string
-                    enum: [apple, google]
-                  precisa_definir_senha:
-                    type: boolean
+                oneOf:
+                  - type: object
+                    required: [transacao_id, url_autorizacao, expira_em]
+                    properties:
+                      transacao_id:
+                        $ref: '#/components/schemas/Uuid'
+                      url_autorizacao:
+                        type: string
+                      expira_em:
+                        type: string
+                        format: date-time
+                  - type: object
+                    required: [sessao, provedor, precisa_definir_senha]
+                    properties:
+                      sessao:
+                        $ref: '#/components/schemas/Sessao'
+                      provedor:
+                        type: string
+                        enum: [apple, google]
+                      precisa_definir_senha:
+                        type: boolean
         '401':
           $ref: '#/components/responses/NaoAutenticado'
         '403':
           $ref: '#/components/responses/SemPermissao'
         '409':
           $ref: '#/components/responses/Conflito'
+        '410':
+          description: Transação OAuth PKCE expirada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
         '422':
           $ref: '#/components/responses/RegraRecusou'
         '429':

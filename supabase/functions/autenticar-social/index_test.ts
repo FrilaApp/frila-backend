@@ -5,6 +5,7 @@ import { type AutenticarSocialDb, tratarAutenticarSocial } from "./index.ts";
 const SEGREDO_B116 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const CARIMBO = 1764030000;
 const OPCOES_IP = { chavesBrutas: `a1:${SEGREDO_B116}`, agoraSegundos: CARIMBO + 5 };
+const TX_ID = "33333333-3333-4333-8333-333333333333";
 
 function fakeJwt(sessionId: string): string {
   const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" })).replace(/=/g, "");
@@ -36,13 +37,44 @@ async function cabecalhosWeb(ip = "203.0.113.42"): Promise<Record<string, string
 function dbStub(overrides: Partial<AutenticarSocialDb> = {}): AutenticarSocialDb {
   return {
     consumirRateLimit: () => Promise.resolve(true),
+    criarTransacaoOauth: () =>
+      Promise.resolve({ ok: true, transacao_id: TX_ID, expira_em: "2026-11-25T21:10:00Z" }),
+    consumirTransacaoOauth: () => Promise.resolve({ ok: true, provedor: "apple" }),
     concluirLoginSocial: () => Promise.resolve({ ok: true, precisa_definir_senha: false }),
     revogarSessaoPontual: () => Promise.resolve(),
     ...overrides,
   };
 }
 
-Deno.test("autenticar-social: PKCE Web com B-116 válido conclui sessão verificada, renova JWT e devolve precisa_definir_senha=false", async () => {
+Deno.test("autenticar-social: iniciar_pkce cria transação vinculada ao provedor e devolve url_autorizacao server-side", async () => {
+  const req = new Request("https://local/functions/v1/autenticar-social", {
+    method: "POST",
+    headers: await cabecalhosWeb("203.0.113.77"),
+    body: JSON.stringify({
+      provedor: "apple",
+      fluxo: "iniciar_pkce",
+      plataforma: "web",
+      code_challenge: "c".repeat(43),
+      redirect_to: "https://frila-web-dev.frilabr.workers.dev/app/entrar/apple/retorno",
+    }),
+  });
+
+  const res = await tratarAutenticarSocial(req, {
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    opcoesIp: OPCOES_IP,
+    db: dbStub(),
+  });
+
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.transacao_id, TX_ID);
+  const url = new URL(body.url_autorizacao);
+  assertEquals(url.searchParams.get("provider"), "apple");
+  assertEquals(url.searchParams.get("code_challenge_method"), "s256");
+});
+
+Deno.test("autenticar-social: PKCE Web com B-116 válido consome transação, conclui sessão verificada e renova JWT", async () => {
   const chamadas: string[] = [];
   const chavesRate: string[] = [];
   const fetchFn: typeof fetch = (input) => {
@@ -60,6 +92,7 @@ Deno.test("autenticar-social: PKCE Web com B-116 válido conclui sessão verific
       provedor: "apple",
       fluxo: "pkce",
       plataforma: "web",
+      transacao_id: TX_ID,
       codigo: "cod-oauth-1234",
       code_verifier: "v".repeat(43),
     }),
@@ -84,43 +117,103 @@ Deno.test("autenticar-social: PKCE Web com B-116 válido conclui sessão verific
   assertEquals(body.precisa_definir_senha, false);
   assertEquals(body.sessao.refresh_token, "ref-sess-final");
   assertEquals(chamadas.length, 2);
-  assertEquals(chamadas[0].includes("grant_type=pkce"), true);
-  assertEquals(chamadas[1].includes("grant_type=refresh_token"), true);
   assertEquals(chavesRate.includes(`auth:social:ip:${await hashSha256Hex("203.0.113.77")}`), true);
 });
 
-Deno.test("autenticar-social: id_token nativo Apple no iOS envia provider=apple + nonce e renova JWT", async () => {
-  const payloads: Record<string, unknown>[] = [];
-  const fetchFn: typeof fetch = (_input, init) => {
-    const url = String(_input);
-    if (init?.body) payloads.push(JSON.parse(String(init.body)));
-    if (url.includes("grant_type=id_token")) return Promise.resolve(Response.json(sessaoFake("sess-apple-1")));
-    if (url.includes("grant_type=refresh_token")) return Promise.resolve(Response.json(sessaoFake("sess-apple-2")));
-    throw new Error(`URL inesperada: ${url}`);
-  };
-
+Deno.test("autenticar-social: P2 conta Apple+Google com provedor divergente da transação PKCE é recusada antes do GoTrue sem gravar sessão", async () => {
+  let chamouGoTrue = false;
+  let chamouConcluir = false;
   const req = new Request("https://local/functions/v1/autenticar-social", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "cf-connecting-ip": "198.51.100.44" },
+    headers: await cabecalhosWeb("203.0.113.77"),
     body: JSON.stringify({
-      provedor: "apple",
-      fluxo: "id_token",
-      plataforma: "ios",
-      id_token: "eyJhbGciOiJSUzI1NiJ9.payload.assinatura",
-      nonce: "nonce-bruto-32bytes-sintetico",
+      provedor: "google",
+      fluxo: "pkce",
+      plataforma: "web",
+      transacao_id: TX_ID,
+      codigo: "cod-oauth-apple",
+      code_verifier: "v".repeat(43),
     }),
   });
 
   const res = await tratarAutenticarSocial(req, {
+    fetchFn: () => {
+      chamouGoTrue = true;
+      return Promise.resolve(Response.json(sessaoFake()));
+    },
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    opcoesIp: OPCOES_IP,
+    db: dbStub({
+      consumirTransacaoOauth: () => Promise.resolve({ ok: false, motivo: "provedor_divergente" }),
+      concluirLoginSocial: () => {
+        chamouConcluir = true;
+        return Promise.resolve({ ok: true });
+      },
+    }),
+  });
+
+  assertEquals(res.status, 401);
+  assertEquals((await res.json()).code, "credenciais_invalidas");
+  assertEquals(chamouGoTrue, false);
+  assertEquals(chamouConcluir, false);
+});
+
+Deno.test("autenticar-social: id_token nativo Apple envia hash contra replay; replay devolve 409 e revoga sessão provisória", async () => {
+  const hashesRecebidos: (string | null)[] = [];
+  let revogouLocal = false;
+  const fetchFn: typeof fetch = (input) => {
+    const url = String(input);
+    if (url.includes("grant_type=id_token")) return Promise.resolve(Response.json(sessaoFake("sess-apple-1")));
+    if (url.includes("grant_type=refresh_token")) return Promise.resolve(Response.json(sessaoFake("sess-apple-2")));
+    if (url.includes("/auth/v1/logout?scope=local")) {
+      revogouLocal = true;
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    throw new Error(`URL inesperada: ${url}`);
+  };
+
+  const makeReq = () =>
+    new Request("https://local/functions/v1/autenticar-social", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "cf-connecting-ip": "198.51.100.44" },
+      body: JSON.stringify({
+        provedor: "apple",
+        fluxo: "id_token",
+        plataforma: "ios",
+        id_token: "eyJhbGciOiJSUzI1NiJ9.payload.assinatura",
+        nonce: "nonce-bruto-32bytes-sintetico",
+      }),
+    });
+
+  // 1. Primeira tentativa: passa e envia hash de 64 chars (nunca token bruto)
+  const res1 = await tratarAutenticarSocial(makeReq(), {
     fetchFn,
     supabaseUrl: "https://proj.supabase.co",
     anonKey: "anon-test",
-    db: dbStub(),
+    db: dbStub({
+      concluirLoginSocial: (_u, _s, _p, tokenHash) => {
+        hashesRecebidos.push(tokenHash);
+        return Promise.resolve({ ok: true, precisa_definir_senha: false });
+      },
+    }),
   });
+  assertEquals(res1.status, 200);
+  assertEquals(hashesRecebidos[0]?.length, 64);
+  assertEquals(hashesRecebidos[0]?.includes("eyJhbGciOiJSUzI1NiJ9"), false);
 
-  assertEquals(res.status, 200);
-  assertEquals(payloads[0]?.provider, "apple");
-  assertEquals(payloads[0]?.nonce, "nonce-bruto-32bytes-sintetico");
+  // 2. Replay do mesmo id_token: banco devolve token_ja_usado -> 409 + revoga scope=local
+  const res2 = await tratarAutenticarSocial(makeReq(), {
+    fetchFn,
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    db: dbStub({
+      concluirLoginSocial: () => Promise.resolve({ ok: false, motivo: "token_ja_usado" }),
+    }),
+  });
+  assertEquals(res2.status, 409);
+  assertEquals((await res2.json()).code, "token_ja_usado");
+  assertEquals(revogouLocal, true);
 });
 
 Deno.test("autenticar-social: Web sem assinatura B-116 falha fechado (403/503) antes do GoTrue", async () => {
@@ -132,6 +225,7 @@ Deno.test("autenticar-social: Web sem assinatura B-116 falha fechado (403/503) a
       provedor: "google",
       fluxo: "pkce",
       plataforma: "web",
+      transacao_id: TX_ID,
       codigo: "cod-oauth-1234",
       code_verifier: "v".repeat(43),
     }),
@@ -162,64 +256,45 @@ Deno.test("autenticar-social: Web sem assinatura B-116 falha fechado (403/503) a
   assertEquals((await res503.json()).code, "indisponivel");
 });
 
-Deno.test("autenticar-social: conflito de identidade devolve 409 e identidade ausente no banco revoga sessão provisória com scope=local", async () => {
-  // 1. Conflito explícito do GoTrue -> 409 conflito_identidade
-  const reqConflito = new Request("https://local/functions/v1/autenticar-social", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "cf-connecting-ip": "198.51.100.10" },
-    body: JSON.stringify({
-      provedor: "google",
-      fluxo: "pkce",
-      plataforma: "android",
-      codigo: "cod-oauth-1234",
-      code_verifier: "v".repeat(43),
-    }),
-  });
-  const res409 = await tratarAutenticarSocial(reqConflito, {
-    fetchFn: () =>
-      Promise.resolve(Response.json({ error_code: "identity_already_exists" }, { status: 400 })),
+Deno.test("autenticar-social: conflito de identidade 409, replay de transação 409 e transação expirada 410", async () => {
+  const reqBase = () =>
+    new Request("https://local/functions/v1/autenticar-social", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "cf-connecting-ip": "198.51.100.10" },
+      body: JSON.stringify({
+        provedor: "google",
+        fluxo: "pkce",
+        plataforma: "android",
+        transacao_id: TX_ID,
+        codigo: "cod-oauth-1234",
+        code_verifier: "v".repeat(43),
+      }),
+    });
+
+  const res409Conflito = await tratarAutenticarSocial(reqBase(), {
+    fetchFn: () => Promise.resolve(Response.json({ error_code: "identity_already_exists" }, { status: 400 })),
     supabaseUrl: "https://proj.supabase.co",
     anonKey: "anon-test",
     db: dbStub(),
   });
-  assertEquals(res409.status, 409);
-  assertEquals((await res409.json()).code, "conflito_identidade");
+  assertEquals(res409Conflito.status, 409);
+  assertEquals((await res409Conflito.json()).code, "conflito_identidade");
 
-  // 2. concluirLoginSocial recusa (usuário não tem identidade do provedor declarado) -> revoga scope=local + 401
-  let revogouLocal = false;
-  let revogouPontual = false;
-  const reqSemId = new Request("https://local/functions/v1/autenticar-social", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "cf-connecting-ip": "198.51.100.10" },
-    body: JSON.stringify({
-      provedor: "apple",
-      fluxo: "pkce",
-      plataforma: "android",
-      codigo: "cod-oauth-1234",
-      code_verifier: "v".repeat(43),
-    }),
-  });
-  const res401 = await tratarAutenticarSocial(reqSemId, {
-    fetchFn: (input) => {
-      const url = String(input);
-      if (url.includes("grant_type=pkce")) return Promise.resolve(Response.json(sessaoFake("sess-prov")));
-      if (url.includes("/auth/v1/logout?scope=local")) {
-        revogouLocal = true;
-        return Promise.resolve(new Response(null, { status: 204 }));
-      }
-      throw new Error(`URL inesperada: ${url}`);
-    },
+  const res409ReplayTx = await tratarAutenticarSocial(reqBase(), {
+    fetchFn: () => Promise.resolve(Response.json(sessaoFake())),
     supabaseUrl: "https://proj.supabase.co",
     anonKey: "anon-test",
-    db: dbStub({
-      concluirLoginSocial: () => Promise.resolve({ ok: false, motivo: "identidade_social_ausente" }),
-      revogarSessaoPontual: () => {
-        revogouPontual = true;
-        return Promise.resolve();
-      },
-    }),
+    db: dbStub({ consumirTransacaoOauth: () => Promise.resolve({ ok: false, motivo: "desafio_ja_usado" }) }),
   });
-  assertEquals(res401.status, 401);
-  assertEquals(revogouLocal, true);
-  assertEquals(revogouPontual, true);
+  assertEquals(res409ReplayTx.status, 409);
+  assertEquals((await res409ReplayTx.json()).code, "desafio_ja_usado");
+
+  const res410 = await tratarAutenticarSocial(reqBase(), {
+    fetchFn: () => Promise.resolve(Response.json(sessaoFake())),
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    db: dbStub({ consumirTransacaoOauth: () => Promise.resolve({ ok: false, motivo: "desafio_expirado" }) }),
+  });
+  assertEquals(res410.status, 410);
+  assertEquals((await res410.json()).code, "desafio_expirado");
 });
