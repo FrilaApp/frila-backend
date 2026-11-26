@@ -48,7 +48,7 @@ Para achar o último commit **bom** de uma função: `git log --oneline -- supab
 
 **2.3 O banco ainda é compatível com o código antigo?** A função antiga precisa funcionar com o schema atual do Prod. Veja o que o banco do Prod já tem aplicado:
 
-EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; `topo` = `20261125120000` e `total` = 248 no banco local (o Prod tem 246, `docs/ESTADO.md`). Tabela criada e lida por `scripts/aplicar-remoto.sh:70-77`.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; `topo` = `20261125120000` e `total` = 248 no banco local (o Prod tem 246, `docs/ESTADO.md`). Tabela criada em `scripts/aplicar-remoto.sh:71-73` e lida em `:76-78`.
 
 ```sql
 select max(version) as topo,
