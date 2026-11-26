@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.116
+  version: 0.2.117
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -116,6 +116,36 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.117, de 25/11/2026.** Fundação server-side de login social Apple e Google
+    compatível com `privado.sessoes_verificadas`, `estado_autenticacao` e enforcement de dispositivo
+    30 dias (modo sombra permanece desligado). Acrescenta a Edge Function
+    `POST /functions/v1/autenticar-social` (`autenticarSocial`) com três fluxos:
+    (a) `iniciar_pkce`, que registra transação atômica server-side em
+    `privado.transacoes_oauth_social` vinculando `(provedor, code_challenge_hash, callback_url)`
+    com TTL de 10 min e devolve `transacao_id` + `url_autorizacao`;
+    (b) `pkce`, que antes de chamar `/auth/v1/token?grant_type=pkce` consome atomicamente a
+    transação exigindo correspondência exata tanto em `privado.transacoes_oauth_social` quanto no
+    estado autoritativo do GoTrue em `auth.flow_state` (`auth_code`, `provider_type`,
+    `code_challenge`, `code_challenge_method = 's256'`) — impedindo substituição do código via
+    `/auth/v1/authorize` público mesmo em contas multivinculadas Apple+Google (sem confiar em
+    `app_metadata.provider` histórico nem em `amr`);
+    (c) `id_token`, que valida o `id_token` + `nonce` bruto contra o provedor declarado no GoTrue e,
+    somente após validação do Auth (preservando retries após 5xx/rede), consome atomicamente o hash
+    SHA-256 canônico em `privado.tokens_sociais_consumidos` (sem persistir token bruto; replay
+    retorna `409 token_ja_usado` e revoga `scope=local`). Limpeza limitada de artefatos expirados
+    (`privado.limpar_artefatos_login_social_expirados`) mantém margem de 1h pós-expiração. Em ambos
+    os fluxos de conclusão, comprova `auth.identities`, grava `privado.sessoes_verificadas`
+    (revogável online), renova o JWT via `refresh_token` para o hook emitir
+    `dispositivo_verificado = true` e devolve `Sessao`. Sessões criadas diretamente no GoTrue fora
+    desta porta não entram em `privado.sessoes_verificadas` e são bloqueadas sob enforcement. Contas
+    com identidade social ativa (`apple` ou `google`) sem `encrypted_password` não ficam presas em
+    `precisa_definir_senha = true`. **Bloqueio de política antes de Prod:** a política do projeto
+    não autoriza fusão implícita de contas por e-mail; como o GoTrue pode executar automatic
+    identity linking por e-mail verificado (retornando 200), habilitar Apple/Google em Prod exige
+    decisão formal prévia ou controle comprovado no servidor Auth.
+
+    ---
 
     **Versão 0.2.116, de 25/11/2026.** O piso de R$ 50,00 e o teto de R$ 2.000,00 da diária viram
     **só referência**, sem bloqueio (decisão dos três sócios, 25/11/2026; B-124). Qualquer `valor_centavos`
@@ -7187,6 +7217,148 @@ paths:
                     type: integer
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '429':
+          $ref: '#/components/responses/LimiteExcedido'
+
+  /autenticar-social:
+    servers:
+      - url: https://{projeto}.supabase.co/functions/v1
+        variables:
+          projeto:
+            default: frila
+    post:
+      tags: [Exportação e conta]
+      operationId: autenticarSocial
+      summary: Concluir login social Apple ou Google com autorização server-side da sessão
+      description: |
+        0.2.117. Conclui a autenticação social Apple ou Google no servidor com três fluxos:
+        `iniciar_pkce` (cria transação atômica server-side com TTL de 10 min), `pkce` (confere
+        tanto a transação quanto o estado autoritativo do GoTrue em `auth.flow_state` — `auth_code`,
+        `provider_type`, `code_challenge`, `code_challenge_method = 's256'` — ANTES de trocar o
+        código em `/auth/v1/token?grant_type=pkce`, fechando substituição do código via `/authorize`
+        público em contas multivinculadas Apple+Google, sem depender de `app_metadata.provider` nem
+        `amr`) ou `id_token` nativo (via `/auth/v1/token?grant_type=id_token` com `nonce` bruto e
+        consumo atômico do hash SHA-256 canônico em `privado.tokens_sociais_consumidos` somente após
+        validação do GoTrue, preservando retries após 5xx/rede e bloqueando replay com
+        `409 token_ja_usado` + revogação `scope=local`). Rate limit por IP usa B-116 fail-closed na
+        Web (`403 assinatura_ip_invalida` sem assinatura válida, `503 indisponivel` sem chaves
+        configuradas) e `cf-connecting-ip` no mobile (nunca `x-forwarded-for`).
+
+        Após a troca no GoTrue, confirma que o titular possui identidade do provedor declarado em
+        `auth.identities`, registra `session_id` em `privado.sessoes_verificadas` (sujeito a
+        revogação online imediata por `revogar-dispositivos`), renova o JWT via `refresh_token` para
+        o `custom_access_token_hook` emitir `dispositivo_verificado = true` e devolve `Sessao`
+        canônica. Contas com identidade `apple` ou `google` ativa não recebem
+        `precisa_definir_senha = true` por ausência de `encrypted_password`. Bypass direto no GoTrue
+        sem passar por esta porta não grava `sessoes_verificadas` e é bloqueado sob enforcement
+        (limite explícito: chamadas diretas ao endpoint público do GoTrue não passam pelo replay
+        store desta Edge Function, mas não obtêm sessão autorizada no produto).
+
+        Comportamento real de identidade no GoTrue (bloqueio formal antes de Prod): coincidência de
+        e-mail verificado pode ser vinculada pelo próprio GoTrue (200 preservando o `auth.uid`);
+        Apple Private Relay gera identidade distinta (`auth.uid` novo). O código do Frila nunca
+        vincula contas por e-mail ou CPF; conflitos explícitos devolvidos pelo GoTrue retornam
+        `409 conflito_identidade`.
+      security:
+        - chaveDoProjeto: []
+      x-requisitos: [RF01]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [provedor, fluxo, plataforma, code_challenge, redirect_to]
+                  properties:
+                    provedor:
+                      type: string
+                      enum: [apple, google]
+                    fluxo:
+                      type: string
+                      const: iniciar_pkce
+                    plataforma:
+                      type: string
+                      enum: [ios, android, web]
+                    code_challenge:
+                      type: string
+                    redirect_to:
+                      type: string
+                - type: object
+                  required: [provedor, fluxo, plataforma, transacao_id, codigo, code_verifier]
+                  properties:
+                    provedor:
+                      type: string
+                      enum: [apple, google]
+                    fluxo:
+                      type: string
+                      const: pkce
+                    plataforma:
+                      type: string
+                      enum: [ios, android, web]
+                    transacao_id:
+                      $ref: '#/components/schemas/Uuid'
+                    codigo:
+                      type: string
+                    code_verifier:
+                      type: string
+                - type: object
+                  required: [provedor, fluxo, plataforma, id_token, nonce]
+                  properties:
+                    provedor:
+                      type: string
+                      enum: [apple, google]
+                    fluxo:
+                      type: string
+                      const: id_token
+                    plataforma:
+                      type: string
+                      enum: [ios, android, web]
+                    id_token:
+                      type: string
+                    nonce:
+                      type: string
+      responses:
+        '200':
+          description: Transação PKCE iniciada ou sessão social autorizada e renovada com claims server-side.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [transacao_id, url_autorizacao, expira_em]
+                    properties:
+                      transacao_id:
+                        $ref: '#/components/schemas/Uuid'
+                      url_autorizacao:
+                        type: string
+                      expira_em:
+                        type: string
+                        format: date-time
+                  - type: object
+                    required: [sessao, provedor, precisa_definir_senha]
+                    properties:
+                      sessao:
+                        $ref: '#/components/schemas/Sessao'
+                      provedor:
+                        type: string
+                        enum: [apple, google]
+                      precisa_definir_senha:
+                        type: boolean
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          $ref: '#/components/responses/SemPermissao'
+        '409':
+          $ref: '#/components/responses/Conflito'
+        '410':
+          description: Transação OAuth PKCE expirada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
         '429':
           $ref: '#/components/responses/LimiteExcedido'
 
