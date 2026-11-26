@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.114
+  version: 0.2.116
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -116,6 +116,32 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.116, de 25/11/2026.** O piso de R$ 50,00 e o teto de R$ 2.000,00 da diária viram
+    **só referência**, sem bloqueio (decisão dos três sócios, 25/11/2026; B-124). Qualquer `valor_centavos`
+    **positivo** é aceito em `publicar_vaga`, `publicar_escala`, `republicar_vaga` e `chamar_profissional`;
+    só valor zero ou negativo continua recusado (a ausência do campo segue como antes), com `422 campo_invalido` e `details:
+    valor_centavos` (ou `vagas[<i>].valor_centavos` na escala), como desde a 0.2.5. Não existe recusa por
+    faixa neste contrato: o servidor que aplicou o piso e o teto (migração `20261123100000`, BE-02) deixa
+    de recusar. A faixa é a **referência dos apps**: abaixo de R$ 50 (5000 centavos), um aviso curto de
+    valor muito baixo; acima de R$ 2.000 (200000 centavos), um aviso curto de valor muito alto, para
+    conferir. O aviso é um texto na tela, não trava nem impede seguir. A faixa **não** é exposta pela API:
+    os apps usam esses dois números como referência fixa. As vagas antigas fora da faixa seguem legíveis
+    e podem ser republicadas. Nenhum campo, código ou resposta novo.
+
+    ---
+
+    **Versão 0.2.115, de 25/11/2026.** `aceitar_convite_membro` passa a conferir o e-mail do convidado
+    (ROPA, linha 31, regra 1; B-123). Antes só o token valia: quem tivesse o link entrava na casa com
+    qualquer conta de contratante. Agora o e-mail da conta que aceita, **confirmado**, tem de ser o do
+    convite (sem diferença de maiúsculas nem de espaços nas pontas); se não for, a recusa é
+    **`403 convite_de_outro_email`**, sem `details` e sem dizer qual é o e-mail do convite. A recusa
+    **não consome o convite**: a pessoa certa ainda aceita, dentro do prazo de 7 dias. Conta sem e-mail
+    ou com e-mail não confirmado recebe a mesma recusa. Os demais códigos e a ordem das recusas não
+    mudam. O corpo e a resposta de sucesso são os mesmos; o app mostra uma mensagem simples para o
+    código novo (cartão de app).
+
+    ---
 
     **Versão 0.2.114, de 25/11/2026.** Fundação server-side de autenticação por senha com confiança
     de dispositivo por 30 dias e trava server-authoritative `precisa_definir_senha`. Acrescenta a
@@ -3362,6 +3388,13 @@ paths:
         Recusas: `401 nao_autenticado` se sem sessão; `422 perfil_incompativel` se a conta for de profissional;
         `422 convite_invalido` se o token não existir, já tiver sido usado ou estiver expirado.
 
+        **0.2.115, o e-mail confere.** Com o token válido, o e-mail da conta de quem aceita (confirmado) tem
+        de ser o e-mail do convite, sem diferença de maiúsculas nem de espaços nas pontas. Se não for, ou se
+        a conta não tiver e-mail confirmado, a recusa é `403 convite_de_outro_email`, sem `details`: a
+        resposta nunca diz qual é o e-mail do convite. A recusa **não consome** o convite (a pessoa certa
+        ainda aceita até o fim do prazo). A ordem das recusas é: `401`, conta ativa, `422 perfil_incompativel`,
+        `422 convite_invalido`, `403 convite_de_outro_email`.
+
         Os nomes do corpo são os deste contrato, sem `p_` (`token`), desde o B-052 da Forja (0.2.104).
       x-requisitos: [RF21, US24]
       requestBody:
@@ -3396,6 +3429,20 @@ paths:
                     $ref: '#/components/schemas/PapelMembro'
         '401':
           $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          description: |
+            `convite_de_outro_email` (0.2.115): o token é válido, mas a conta que aceita não tem o e-mail do
+            convite (ou não tem e-mail confirmado). Sem `details`; não revela o e-mail do convite. O convite
+            **não é consumido**.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+              example:
+                code: convite_de_outro_email
+                message: convite_de_outro_email
+                details: null
+                hint: null
         '422':
           $ref: '#/components/responses/RegraRecusou'
 
@@ -3750,6 +3797,11 @@ paths:
         sem_permissao`, e é o que responde também quando o estabelecimento não existe; conta
         suspensa recebe `403 sem_permissao` com `details: conta_suspensa` (RN13).
 
+        **Valor (0.2.116).** Só valor positivo vale: `valor_centavos` zero ou negativo é
+        `422 campo_invalido` (`details: valor_centavos`). Qualquer valor positivo é aceito. R$ 50,00 a
+        R$ 2.000,00 é só a referência dos apps para um aviso de valor muito baixo ou muito alto; o servidor
+        não recusa por faixa.
+
         **Modo seleção (RN24), desde a 0.2.24:** `modo = selecao` é aceito quando o início está a
         mais de 24 horas; com 24 horas ou menos, `422 selecao_sem_antecedencia`. A vaga nova é
         notificada igual nos dois modos; no seleção, os candidatos ficam pendentes até a escolha
@@ -3820,7 +3872,9 @@ paths:
         `campo_invalido`, `horario_invalido`, `selecao_sem_antecedencia` (RN24, por item) e o filtro de
         termos. A implementação usa a mesma validação, como em `republicar_vaga`. Uma diferença:
         `posicoes` vai de 1 a 100 por item (em `publicar_vaga`, até 200). Fora disso, `422
-        campo_invalido`, `details: vagas[<i>].posicoes`.
+        campo_invalido`, `details: vagas[<i>].posicoes`. O valor de cada item segue a regra de
+        `publicar_vaga` (0.2.116): só o não positivo é recusado (`vagas[<i>].valor_centavos`); não há
+        faixa.
 
         **Onde está o erro (`details`):**
         - campo do topo: o nome do campo (`chave`, `evento`, `vagas`). `estabelecimento_id` ausente
@@ -4693,7 +4747,9 @@ paths:
         envio conta a partir das 7 h, salvo início antes das 10 h (RN31).
 
         **Valor:** `valor_centavos` é o total fechado do trabalho, que o profissional recebe (RN01,
-        RN29). Os termos não mudam com chamada aberta.
+        RN29). Os termos não mudam com chamada aberta. Na vaga direta nova, só valor positivo vale (0.2.116):
+        zero ou negativo é `422 campo_invalido`, `details: valor_centavos`; não há faixa de piso
+        nem de teto.
 
         **Limites (RN33, RN34):** 1 chamada aberta por par estabelecimento e profissional
         (`409 chamada_ja_aberta`); 24 h depois de recusa (`422 profissional_indisponivel`,

@@ -88,12 +88,15 @@ export async function tratarReenviarDispositivoOtp(
   const db: ReenviarDesafioDb = deps.db ?? sqlDb!;
 
   try {
-    // Em reenviar-dispositivo-otp o payload tem apenas desafio_id (sem plataforma):
-    // só aplica balde de IP se houver assinatura B-116 válida; sem ela, confia nos tetos
-    // atômicos do desafio (cooldown 60s + máx 3 reenvios) e de email_hash (5/10min), evitando 429 global de egress Web.
-    const ipSeguro = await resolverIpParaRateLimit(req, "web", deps.opcoesIp);
-    if (ipSeguro) {
-      const ipHash = await hashSha256Hex(ipSeguro);
+    // Em reenviar-dispositivo-otp o payload traz apenas desafio_id (sem plataforma):
+    // - Se vier do Worker Web (com cabeçalhos B-116), valida HMAC fail-closed (503 sem chaves, 403 se inválido).
+    // - Se vier direto de navegador (Origin sem B-116), recusa fail-closed (403).
+    // - Se vier direto do app mobile (sem Origin e sem B-116), aplica rate limit por cf-connecting-ip.
+    const resultadoIp = await resolverIpParaRateLimit(req, null, deps.opcoesIp);
+    if (!resultadoIp.ok) return recusa(resultadoIp.status, resultadoIp.code);
+
+    if (resultadoIp.ip) {
+      const ipHash = await hashSha256Hex(resultadoIp.ip);
       const okIp = await db.consumirRateLimit(`auth:reenvio:ip:${ipHash}`, 15, 600);
       if (!okIp) return recusa(429, "limite_excedido");
     }

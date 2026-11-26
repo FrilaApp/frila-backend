@@ -5,7 +5,9 @@ O backend inteiro do Frila (banco, Auth, Edge Functions, `pg_cron`, Vault) roda 
 - **Pausa:** o projeto foi pausado por inatividade ou por decisão de alguém.
 - **Indisponibilidade:** o projeto ou a região do fornecedor está fora do ar.
 
-Convenção (a mesma de `docs/RunbookRotacaoDeSegredos.md`): **MEDIDO** é o que foi lido de uma execução real, com data e fonte; **LIDO** é texto do repositório; **DEDUZIDO** é raciocínio; **NAO EXECUTADO: sem banco local** marca cada SQL; **A DEFINIR (Caue)** é fato que só o Cauê sabe.
+Convenção (a mesma de `docs/RunbookRotacaoDeSegredos.md`): **MEDIDO** é o que foi lido de uma execução real, com data e fonte; **LIDO** é texto do repositório; **DEDUZIDO** é raciocínio; **EXECUTADO** marca o SQL rodado em banco local descartável, com data e base; **NAO EXECUTAVEL AQUI** marca o que depende de Prod ou de credencial; **A DEFINIR (Caue)** é fato que só o Cauê sabe.
+
+**Execução do SQL (25/11/2026).** Os 5 blocos SQL deste documento foram executados em 25/11/2026 num Postgres local descartável (`supabase db start` sobre a `develop` em `6225a77`: migrações do zero, `seed.sql` e `cenarios.sql`), cada um dentro de `begin read only`; os 5 rodam sem erro. **Não executável fora do Prod:** o `curl` à função pública `saude` do Prod (seção 2.1, não executado porque esta verificação não toca no Prod) e o estado real do projeto pausado ou fora do ar, que nenhum SQL alcança.
 
 ---
 
@@ -33,7 +35,7 @@ Convenção (a mesma de `docs/RunbookRotacaoDeSegredos.md`): **MEDIDO** é o que
 O endereço da função `saude` do Prod é público e está na variável de repositório `FRILA_PROD_URL_SAUDE` (forma: `https://<ref>.supabase.co/functions/v1/saude`; `mantem-prod-vivo.yml`). A função responde (`supabase/functions/saude/index.ts`, cabeçalho): `200` com `{"ok": true, "status": "saudavel", ...}` quando o banco responde **e** os jobs `reprocessar_despacho` e `verificar_saude` estão ativos com último sucesso dentro da tolerância (300 s e 900 s, padrão de `privado.consultar_saude_cron`, que devolve também `despacho_idade_segundos` e `vigia_idade_segundos`); `503` com `status: "atrasado"` quando o banco responde mas um desses jobs está inativo, sem sucesso registrado ou atrasado; `503` com `status: "indisponivel"` quando o banco não responde; `405` para POST; `HEAD` devolve 200 ou 503 sem corpo. Essa versão da função e a migração `20261116130000_probe_saude_cron.sql` vêm de `25f475a` (#514). **NAO MEDIDO:** se já estão no `frila-prod`. Uma função `saude` antiga devolve só `200` ou `503 indisponivel`, sem os campos de idade.
 
 ```bash
-# Leitura. NAO EXECUTADO. Sem credencial, sem corpo, sem dado pessoal.
+# Leitura. NAO EXECUTAVEL AQUI: bate na função pública `saude` do Prod, e esta verificação não toca no Prod. Sem credencial, sem corpo, sem dado pessoal.
 curl -sS --max-time 20 -o /dev/null -w '%{http_code}\n' "https://hbjkkcenbudiezmamiak.supabase.co/functions/v1/saude"
 ```
 
@@ -52,10 +54,10 @@ curl -sS --max-time 20 -o /dev/null -w '%{http_code}\n' "https://hbjkkcenbudiezm
 
 ### 2.3 Depois que voltar (leitura, com credencial de humano)
 
-Todos os SQL abaixo: **NAO EXECUTADO: sem banco local**. Rode em sessão `default_transaction_read_only = on`. Sem dado pessoal (RN15).
+Todos os SQL abaixo: **EXECUTADO em 25/11/2026 no banco local descartável** (resultado em cada bloco). Rode em sessão `default_transaction_read_only = on`. Sem dado pessoal (RN15).
 
 **A janela em que o banco ficou sem rodar jobs.** O job `processar_fila_email` roda a cada minuto (`docs/RUNBOOK-INCIDENTES.md`, seção 2, item 2), então uma hora sem ~60 execuções delimita o buraco.
-NAO EXECUTADO: sem banco local.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 1 linha (1 execução na hora corrente do banco local).
 
 ```sql
 select date_trunc('hour', d.start_time) as hora,
@@ -68,7 +70,7 @@ select date_trunc('hour', d.start_time) as hora,
 ```
 
 **O que o probe de saúde enxerga (a mesma função que a `saude` chama).** Só leitura, sem dado pessoal. Só existe depois que a migração `20261116130000` estiver aplicada: **NAO MEDIDO** no Prod.
-NAO EXECUTADO: sem banco local. Colunas de `privado.consultar_saude_cron()`: `20261116130000_probe_saude_cron.sql`.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 1 linha (`saudavel` = f e `status` = `atrasado`, porque o banco acabou de subir e os jobs ainda não rodaram). Colunas de `privado.consultar_saude_cron()`: `20261116130000_probe_saude_cron.sql`.
 
 ```sql
 select saudavel,
@@ -81,7 +83,7 @@ select saudavel,
 ```
 
 **Os jobs do `pg_cron` voltaram? Quando cada um rodou pela última vez.** O número esperado de jobs não está fixo aqui: o pgTAP `supabase/tests/390_agendamentos_do_pg_cron.sql` lista 26 nomes conhecidos na `develop` em `a55aab0` (contagem por `awk`, 16/11/2026), e `scripts/checagem-diaria.sh` conta de forma dinâmica (`SELECT count(*) FROM cron.job`). O "13" que havia em `docs/ChecagemDiariaProd.md` foi corrigido nesta mesma entrega. Compare com `scripts/desvio.sh <ref>` (que confere os jobs do `pg_cron`: `README.md`, parágrafo "Desvio."; precisa de banco local, humano).
-NAO EXECUTADO: sem banco local.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 26 linhas (um job do `pg_cron` por linha).
 
 ```sql
 select j.jobname,
@@ -98,7 +100,7 @@ select j.jobname,
 Job `active = false` ou sem execução recente é o achado. Nota: o alerta existente `job_cron_falhou` não vê job que **nunca roda** (`20261108110000_lgpd_registro_acessos_borda.sql:575-586`).
 
 **Filas acumuladas durante a queda.**
-NAO EXECUTADO: sem banco local. Tabelas `pgmq.q_despacho` e `pgmq.q_email` como em `docs/RUNBOOK-INCIDENTES.md`, seções 1 e 2.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 2 linhas (`despacho` 0 e `email` 0). Tabelas `pgmq.q_despacho` e `pgmq.q_email` como em `docs/RUNBOOK-INCIDENTES.md`, seções 1 e 2.
 
 ```sql
 select 'despacho' as fila, count(*) as total, min(enqueued_at) as mais_antiga from pgmq.q_despacho
@@ -109,7 +111,7 @@ select 'email' as fila, count(*) as total, min(enqueued_at) as mais_antiga from 
 **Notificações presas.** Mesmo SQL da seção 2.1 de `docs/RunbookPushParado.md`.
 
 **Vagas que deveriam ter fechado durante a queda.** O job `fechar_turnos_e_vagas` (a cada 5 minutos, `docs/RUNBOOK-INCIDENTES.md`, seção 3) fecha o que expirou; este número deve cair a zero depois que ele rodar.
-NAO EXECUTADO: sem banco local. Colunas `estado` e `inicio_em` de `public.vaga`: lidas em `privado.verificar_saude`, `20261108110000_lgpd_registro_acessos_borda.sql` (bloco 5).
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 1 linha (`vagas_publicadas_ja_iniciadas` = 0). Colunas `estado` e `inicio_em` de `public.vaga`: lidas em `privado.verificar_saude`, `20261108110000_lgpd_registro_acessos_borda.sql` (bloco 5).
 
 ```sql
 select count(*) as vagas_publicadas_ja_iniciadas
