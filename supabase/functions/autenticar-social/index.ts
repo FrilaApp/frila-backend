@@ -198,6 +198,11 @@ const CALLBACKS_PERMITIDOS_PREFIXOS = [
   "frila-auth://auth/callback",
 ];
 
+// Callbacks HTTPS exatos (sem ampliar prefixo) — ex.: Android Release App Link.
+const CALLBACKS_HTTPS_EXATOS = new Set([
+  "https://frilabr.com/app/auth/callback",
+]);
+
 function ehProvedorValido(v: unknown): v is ProvedorSocial {
   return v === "apple" || v === "google";
 }
@@ -206,9 +211,28 @@ function ehFluxoValido(v: unknown): v is FluxoSocial {
   return v === "iniciar_pkce" || v === "pkce" || v === "id_token";
 }
 
-function ehRedirectPermitido(url: string): boolean {
+export function ehRedirectPermitido(url: string): boolean {
   if (url.length < 8 || url.length > 512 || /\s/.test(url)) return false;
-  return CALLBACKS_PERMITIDOS_PREFIXOS.some((prefixo) => url.startsWith(prefixo));
+  if (CALLBACKS_PERMITIDOS_PREFIXOS.some((prefixo) => url.startsWith(prefixo))) {
+    return true;
+  }
+  try {
+    const parsed = new URL(url);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.username ||
+      parsed.password ||
+      parsed.port ||
+      parsed.hash
+    ) {
+      return false;
+    }
+    const base = `${parsed.origin}${parsed.pathname}`;
+    if (!CALLBACKS_HTTPS_EXATOS.has(base)) return false;
+    return url === base || url.startsWith(`${base}?`);
+  } catch {
+    return false;
+  }
 }
 
 async function desafioPkceS256(verifier: string): Promise<string> {
