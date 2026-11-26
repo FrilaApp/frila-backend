@@ -140,9 +140,11 @@ select set_eq(
     -- Apaga o convite de membro 30 dias depois de vencer ou ser aceito, uma vez por dia (LGPD, 20261112200000).
     'apagar_convites_membro_vencidos',
     -- Apaga o contador de buscas de profissionais com mais de um dia, uma vez por dia (CD-B09, 20261116210000).
-    'limpar_contador_busca'
+    'limpar_contador_busca',
+    -- Limpeza limitada de transações PKCE e hashes de id_token expirados há mais de 1h, uma vez por hora (20261125213000).
+    'limpar_artefatos_login_social_expirados'
   ],
-  'Os jobs agendados são exatamente os vinte e seis conhecidos: job novo entra aqui junto com a migração');
+  'Os jobs agendados são exatamente os vinte e sete conhecidos: job novo entra aqui junto com a migração');
 
 select * from finish();
 rollback;

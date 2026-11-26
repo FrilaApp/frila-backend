@@ -44,7 +44,7 @@ select ok(
       from cron.job
      where jobname = 'limpar_artefatos_login_social_expirados'
        and schedule = '17 * * * *'
-       and command = 'select privado.limpar_artefatos_login_social_expirados(500)'
+       and command = 'select privado.limpar_artefatos_login_social_expirados()'
   ),
   'job pg_cron limpar_artefatos_login_social_expirados agendado em 17 * * * * quando pg_cron esta ativo'
 );

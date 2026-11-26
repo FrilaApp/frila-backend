@@ -29,7 +29,7 @@ begin
     perform cron.schedule(
       'limpar_artefatos_login_social_expirados',
       '17 * * * *',
-      'select privado.limpar_artefatos_login_social_expirados(500)'
+      'select privado.limpar_artefatos_login_social_expirados()'
     );
   end if;
 end $$;
