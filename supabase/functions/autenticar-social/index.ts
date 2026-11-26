@@ -9,12 +9,19 @@
 //   (`auth_code`, `provider_type`, `code_challenge`, `code_challenge_method='s256'`) ANTES de
 //   chamar `/auth/v1/token?grant_type=pkce` (fecha substituição do código via `/authorize` público
 //   mesmo em contas multivinculadas Apple+Google).
-// - `id_token`: GoTrue valida assinatura/iss contra `provider=<provedor>` enviado pelo servidor,
-//   e somente após validação do GoTrue `privado.concluir_login_social` consome atomicamente o hash
-//   SHA-256 canônico do token em `privado.tokens_sociais_consumidos` (sem persistir token bruto),
-//   preservando retries legítimos após 5xx/rede e bloqueando replay com 409 + revogação local.
-// - Rate limit por IP com B-116 fail-closed na Web (403/503) e `cf-connecting-ip` no mobile.
+// - Gate server-side fail-closed (`LOGIN_SOCIAL_ATIVO === "true"`, default OFF) avaliado ANTES de
+//   qualquer chamada ao GoTrue ou SQL sensível (impede uso acidental mesmo com Edge publicada e
+//   provedor ligado no Auth).
+// - `id_token`: exige representação JWT base64url estritamente canônica (rejeita aliases de bits
+//   não significativos na assinatura) e calcula SHA-256 sobre os bytes canônicos; somente após
+//   validação do GoTrue `privado.concluir_login_social` consome atomicamente o hash em
+//   `privado.tokens_sociais_consumidos` (sem persistir token bruto).
+// - Rate limit por IP fail-closed: B-116 na Web (403/503) e `cf-connecting-ip` obrigatório no mobile
+//   (recusa 503 se ausente, nunca confia em `x-forwarded-for` nem pula rate limit).
 // - Obriga `grant_type=refresh_token` para o hook emitir JWT final com `dispositivo_verificado = true`.
+//   Em qualquer falha do refresh (HTTP != 200, JSON inválido ou exceção de rede), executa cleanup
+//   (`scope=local` + `privado.revogar_sessao_pontual`) e devolve 503. A prova já consumida (PKCE ou
+//   `id_token`) NUNCA é desconsumida (anti-replay estrito); o cliente deve reiniciar o fluxo social.
 // - Nunca registra tokens, códigos OAuth, verifiers ou nonces em log.
 
 import postgres from "npm:postgres@3.4.4";
@@ -72,12 +79,74 @@ export interface AutenticarSocialDeps {
   origensCors?: string;
   opcoesIp?: OpcoesIpVisitante;
   db?: AutenticarSocialDb;
+  loginSocialAtivo?: boolean;
 }
 
 const REGEX_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const REGEX_VERIFIER_PKCE = /^[A-Za-z0-9_-]{43,128}$/;
 const REGEX_CHALLENGE_PKCE = /^[A-Za-z0-9_-]{43}$/;
 const REGEX_CODIGO_OAUTH = /^[\x21-\x7e]{4,512}$/;
+const REGEX_BASE64URL_ESTRITO = /^[A-Za-z0-9_-]+$/;
+
+function codificarBase64Url(bytes: Uint8Array): string {
+  let binario = "";
+  for (const b of bytes) binario += String.fromCharCode(b);
+  return btoa(binario).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function decodificarBase64UrlCanonico(parte: string): Uint8Array | null {
+  if (!parte || !REGEX_BASE64URL_ESTRITO.test(parte) || parte.length % 4 === 1) return null;
+  const normalizado = parte.replace(/-/g, "+").replace(/_/g, "/");
+  const padding = normalizado.length % 4 === 0 ? "" : "=".repeat(4 - (normalizado.length % 4));
+  let binario: string;
+  try {
+    binario = atob(normalizado + padding);
+  } catch {
+    return null;
+  }
+  const bytes = new Uint8Array(binario.length);
+  for (let i = 0; i < binario.length; i++) bytes[i] = binario.charCodeAt(i);
+  // Rejeita aliases base64url com bits não-significativos alterados no último caractere.
+  if (codificarBase64Url(bytes) !== parte) return null;
+  return bytes;
+}
+
+/**
+ * Valida que o JWT (`header.payload.signature`) possui representação base64url estritamente canônica
+ * em todas as 3 partes e retorna o hash SHA-256 calculado sobre os bytes canônicos decodificados.
+ */
+export async function calcularHashCanonicoIdToken(
+  provedor: ProvedorSocial,
+  idToken: string,
+): Promise<string | null> {
+  const partes = idToken.split(".");
+  if (partes.length !== 3) return null;
+  const decodificadas: Uint8Array[] = [];
+  for (const parte of partes) {
+    const bytes = decodificarBase64UrlCanonico(parte);
+    if (!bytes || bytes.length === 0) return null;
+    decodificadas.push(bytes);
+  }
+  const prefixo = new TextEncoder().encode(`v1|id_token|${provedor}|`);
+  const separador = new Uint8Array([0x2e]); // '.'
+  const total = prefixo.length + decodificadas[0].length + 1 + decodificadas[1].length + 1 + decodificadas[2].length;
+  const buffer = new Uint8Array(total);
+  let offset = 0;
+  buffer.set(prefixo, offset);
+  offset += prefixo.length;
+  buffer.set(decodificadas[0], offset);
+  offset += decodificadas[0].length;
+  buffer.set(separador, offset);
+  offset += 1;
+  buffer.set(decodificadas[1], offset);
+  offset += decodificadas[1].length;
+  buffer.set(separador, offset);
+  offset += 1;
+  buffer.set(decodificadas[2], offset);
+
+  const digest = await crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 const CALLBACKS_PERMITIDOS_PREFIXOS = [
   "https://frila-web-dev.frilabr.workers.dev/app/entrar/",
@@ -175,6 +244,12 @@ function criarDbSql(dbUrl: string): AutenticarSocialDb & { fechar(): Promise<voi
 export async function tratarAutenticarSocial(req: Request, deps: AutenticarSocialDeps = {}): Promise<Response> {
   if (req.method !== "POST") return recusa(405, "metodo_nao_permitido");
 
+  // Gate server-side fail-closed (default OFF) antes de qualquer SQL sensível ou chamada ao GoTrue.
+  const loginSocialAtivo = deps.loginSocialAtivo ?? (Deno.env.get("LOGIN_SOCIAL_ATIVO") === "true");
+  if (!loginSocialAtivo) {
+    return recusa(503, "indisponivel");
+  }
+
   let corpo: Record<string, unknown>;
   try {
     const parsed = await req.json();
@@ -200,6 +275,7 @@ export async function tratarAutenticarSocial(req: Request, deps: AutenticarSocia
   let codigo = "";
   let codeVerifier = "";
   let idToken = "";
+  let idTokenHashCanonico: string | null = null;
   let nonce = "";
 
   if (fluxo === "iniciar_pkce") {
@@ -219,6 +295,8 @@ export async function tratarAutenticarSocial(req: Request, deps: AutenticarSocia
     nonce = typeof corpo.nonce === "string" ? corpo.nonce.trim() : "";
     if (idToken.length < 16 || idToken.length > 8192 || /\s/.test(idToken)) return recusa(422, "campo_invalido", "id_token");
     if (nonce.length < 16 || nonce.length > 256) return recusa(422, "campo_invalido", "nonce");
+    idTokenHashCanonico = await calcularHashCanonicoIdToken(provedor, idToken);
+    if (!idTokenHashCanonico) return recusa(422, "campo_invalido", "id_token");
   }
 
   const fetchFn = deps.fetchFn ?? fetch;
@@ -237,11 +315,14 @@ export async function tratarAutenticarSocial(req: Request, deps: AutenticarSocia
     const resultadoIp = await resolverIpParaRateLimit(req, plataforma, deps.opcoesIp);
     if (!resultadoIp.ok) return recusa(resultadoIp.status, resultadoIp.code);
 
-    if (resultadoIp.ip) {
-      const ipHash = await hashSha256Hex(resultadoIp.ip);
-      const okIp = await db.consumirRateLimit(`auth:social:ip:${ipHash}`, 20, 600);
-      if (!okIp) return recusa(429, "limite_excedido");
+    // Fail-closed: mobile sem `cf-connecting-ip` (ou qualquer origem sem IP confiável) não pode pular rate limit.
+    if (!resultadoIp.ip) {
+      return recusa(503, "indisponivel");
     }
+
+    const ipHash = await hashSha256Hex(resultadoIp.ip);
+    const okIp = await db.consumirRateLimit(`auth:social:ip:${ipHash}`, 20, 600);
+    if (!okIp) return recusa(429, "limite_excedido");
 
     if (fluxo === "iniciar_pkce") {
       const challengeHash = await hashSha256Hex(codeChallenge);
@@ -289,14 +370,19 @@ export async function tratarAutenticarSocial(req: Request, deps: AutenticarSocia
       ? { auth_code: codigo, code_verifier: codeVerifier }
       : { provider: provedor, id_token: idToken, nonce };
 
-    const resAuth = await fetchFn(urlToken, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": anonKey,
-      },
-      body: JSON.stringify(payloadToken),
-    });
+    let resAuth: Response;
+    try {
+      resAuth = await fetchFn(urlToken, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": anonKey,
+        },
+        body: JSON.stringify(payloadToken),
+      });
+    } catch {
+      return recusa(503, "indisponivel");
+    }
 
     if (resAuth.status === 429) return recusa(429, "limite_excedido");
     if (resAuth.status >= 500) return recusa(503, "indisponivel");
@@ -314,9 +400,7 @@ export async function tratarAutenticarSocial(req: Request, deps: AutenticarSocia
 
     const usuarioId = sessaoProvisoria.user.id;
     const sessionId = extrairSessionIdDoJwt(sessaoProvisoria.access_token);
-    const idTokenHash = fluxo === "id_token"
-      ? await hashSha256Hex(`v1|id_token|${provedor}|${idToken}`)
-      : null;
+    const idTokenHash = fluxo === "id_token" ? idTokenHashCanonico : null;
 
     const conclusao = await db.concluirLoginSocial(usuarioId, sessionId, provedor, idTokenHash);
     if (!conclusao.ok) {
@@ -327,12 +411,19 @@ export async function tratarAutenticarSocial(req: Request, deps: AutenticarSocia
     }
 
     // Obriga refresh_token para o custom_access_token_hook emitir JWT final com dispositivo_verificado = true.
-    const sessaoFinal = await renovarSessaoGoTrue(
-      supabaseUrl,
-      anonKey,
-      sessaoProvisoria.refresh_token,
-      fetchFn,
-    );
+    // Qualquer falha (HTTP != 200, JSON inválido ou exceção de rede) executa cleanup fail-closed
+    // (`scope=local` + `revogar_sessao_pontual`) sem nunca desconsumir a prova já usada (anti-replay).
+    let sessaoFinal: Awaited<ReturnType<typeof renovarSessaoGoTrue>> = null;
+    try {
+      sessaoFinal = await renovarSessaoGoTrue(
+        supabaseUrl,
+        anonKey,
+        sessaoProvisoria.refresh_token,
+        fetchFn,
+      );
+    } catch {
+      sessaoFinal = null;
+    }
     if (!sessaoFinal) {
       await revogarSessaoLocalGoTrue(supabaseUrl, anonKey, sessaoProvisoria.access_token, fetchFn);
       await db.revogarSessaoPontual(sessionId, usuarioId);
