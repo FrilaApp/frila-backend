@@ -4,7 +4,9 @@ O que fazer quando dado pessoal de usuários do Frila (profissionais e estabelec
 
 > **Este documento não é parecer jurídico.** Todo prazo e conteúdo de comunicação abaixo vem marcado com a fonte ou com **A CONFIRMAR com advogado**. Não use este texto como única base para decidir se comunica ou não.
 
-Convenção (a mesma de `docs/RunbookRotacaoDeSegredos.md`): **LIDO** é texto do repositório; **DEDUZIDO** é raciocínio; **NAO EXECUTADO: sem banco local** marca cada SQL; **A DEFINIR (Caue)** é fato que só o Cauê sabe.
+Convenção (a mesma de `docs/RunbookRotacaoDeSegredos.md`): **LIDO** é texto do repositório; **DEDUZIDO** é raciocínio; **EXECUTADO** marca o SQL rodado em banco local descartável, com data e base; **NAO EXECUTAVEL AQUI** marca o que depende de Prod ou de credencial; **A DEFINIR (Caue)** é fato que só o Cauê sabe.
+
+**Execução do SQL (25/11/2026).** Os 10 blocos SQL deste documento foram executados em 25/11/2026 num Postgres local descartável (`supabase db start` sobre a `develop` em `6225a77`: migrações do zero, `seed.sql` e `cenarios.sql`), cada um dentro de `begin read only`; os 10 rodam sem erro (os três que usam `:'de'` e `:'ate'` rodam com `psql -v`). **Não executável fora do Prod:** a contagem real de contas e de acessos, `auth.users` real, `privado.registro_acesso` real e `public.pedido_de_exclusao` real. O banco local devolve dado sintético da semente ou vazio.
 
 ---
 
@@ -38,10 +40,10 @@ Como estes números chegaram aqui: busca na web em 16/11/2026 que citou a págin
 
 Objetivo: descobrir **quais dados**, **de quantos titulares** e **em que janela**, sem ler dado pessoal. Todos os SQL abaixo contam; nenhum devolve nome, e-mail, telefone, IP, token ou identificador de usuário (RN15; `docs/NotificacaoDaEquipe.md` proíbe dado pessoal em aviso para as caixas dos sócios). Rode em sessão com `default_transaction_read_only = on`, **em Prod por humano autorizado** (`docs/ChecagemDiariaProd.md`, seção 1).
 
-Todos os SQL abaixo: **NAO EXECUTADO: sem banco local**. As colunas vêm das migrações citadas.
+Todos os SQL abaixo: **EXECUTADO em 25/11/2026 no banco local descartável** (resultado em cada bloco). As colunas vêm das migrações citadas.
 
 **2.1 Quantas contas existem, por perfil e estado (universo máximo).**
-NAO EXECUTADO: sem banco local. `public.usuario`: `20260922150100_identidade.sql:17-29`; `estado` em `ativa`, `suspensa`, `anonimizada`.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 3 linhas (dado da semente). `public.usuario`: `20260922150100_identidade.sql:17-29`; `estado` em `ativa`, `suspensa`, `anonimizada`.
 
 ```sql
 select perfil,
@@ -53,7 +55,7 @@ select perfil,
 ```
 
 **2.2 Quais categorias de dado pessoal cadastral estão preenchidas (contagem por campo).**
-NAO EXECUTADO: sem banco local.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 1 linha (18 contas sintéticas, todas com nome, e-mail, telefone e nascimento).
 
 ```sql
 select count(*) as contas,
@@ -68,7 +70,7 @@ select count(*) as contas,
 Conta `anonimizada` tem nome `Conta encerrada` e e-mail e telefone nulos (`docs/RUNBOOK-INCIDENTES.md`, seção 4): **não dá para avisar essa pessoa por e-mail**. Registre isso na comunicação à ANPD.
 
 **2.3 Contas criadas ou autenticadas na janela suspeita.** Troque `:'de'` e `:'ate'` pelos limites da janela (psql: `-v de="2026-11-01 00:00+00" -v ate="2026-11-05 00:00+00"`).
-NAO EXECUTADO: sem banco local. `auth.users.last_sign_in_at` é coluna do Supabase Auth, não das migrações do repositório: confirmar na primeira execução.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): os dois blocos rodam com `-v de="2026-11-01 00:00:00+00" -v ate="2026-11-25 00:00:00+00"`; cada um devolve 1 linha com 0. `auth.users.last_sign_in_at` é coluna do Supabase Auth, não das migrações do repositório, e existe.
 
 ```sql
 select count(*) as contas_com_login_na_janela
@@ -85,7 +87,7 @@ select count(*) as contas_criadas_ate_o_fim_da_janela
 ```
 
 **2.4 Aparelhos registrados (o token FCM é dado do aparelho, não é lido aqui).**
-NAO EXECUTADO: sem banco local. `public.dispositivo`: `20260922150500_despacho_turno_ocorrencia.sql:14-20`.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 2 linhas (`ios` 2, `android` 2). `public.dispositivo`: `20260922150500_despacho_turno_ocorrencia.sql:14-20`.
 
 ```sql
 select plataforma,
@@ -96,7 +98,7 @@ select plataforma,
 ```
 
 **2.5 A coleta de registro de acessos está ligada? (quem acessou, de que IP, quando).** O registro de acessos (Marco Civil) guarda conta, IP e hora do primeiro uso por hora, só para `service_role`, por 6 meses, e **nasce desligado** (`20261108110000_lgpd_registro_acessos_borda.sql`, comentários de `privado.registro_acesso` e `privado.registro_acesso_coleta`). Se estava desligado na janela do incidente, não há esse rastro.
-NAO EXECUTADO: sem banco local.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 1 linha (`ligada` = f, a coleta vem desligada no banco local).
 
 ```sql
 select ligada,
@@ -106,7 +108,7 @@ select ligada,
 ```
 
 Se ligada, a contagem de contas distintas com registro na janela (sem listar conta nem IP):
-NAO EXECUTADO: sem banco local.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda com `-v de=... -v ate=...`; 1 linha (0 registros, com a coleta desligada).
 
 ```sql
 select count(distinct r.usuario_id) as contas_com_acesso_registrado,
@@ -121,7 +123,7 @@ select count(distinct r.usuario_id) as contas_com_acesso_registrado,
 Estado da coleta em Prod: **NAO MEDIDO**.
 
 **2.6 Falhas e alertas recentes (pode mostrar o início do problema).**
-NAO EXECUTADO: sem banco local. `privado.falha_execucao`: `20260930230000_monitoramento_e_alertas.sql:20-28`. `privado.alerta_emitido` é citada em `docs/ChecagemDiariaProd.md`, bloco 1; as colunas **não foram conferidas** nas migrações por esta revisão, então este runbook não consulta essa tabela.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, por falta de dado. `privado.falha_execucao`: `20260930230000_monitoramento_e_alertas.sql:20-28`. `privado.alerta_emitido` é citada em `docs/ChecagemDiariaProd.md`, bloco 1; as colunas **não foram conferidas** nas migrações por esta revisão, então este runbook não consulta essa tabela.
 
 ```sql
 select origem,
@@ -135,7 +137,7 @@ select origem,
 ```
 
 **2.7 Pedidos de exclusão já concluídos (esses titulares já estão anonimizados).**
-NAO EXECUTADO: sem banco local. `public.pedido_de_exclusao`: `20260930090000_rastro_do_pedido_de_exclusao.sql:35-49`.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, por falta de dado (nenhum pedido de exclusão). `public.pedido_de_exclusao`: `20260930090000_rastro_do_pedido_de_exclusao.sql:35-49`.
 
 ```sql
 select estado,
@@ -148,7 +150,7 @@ select estado,
 ```
 
 **2.8 Há verificação de identidade (documento) em risco?** A RN14 ainda não é chamada pelo app (`docs/ESTADO.md`, 08/11/2026: "0 verificações de identidade em toda a história"). Confirme que continua zero:
-NAO EXECUTADO: sem banco local. `privado.verificacao_identidade`: `docs/VerificacaoDeIdentidade.md`, seção 2.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 1 linha (`verificacoes` = 0). `privado.verificacao_identidade`: `docs/VerificacaoDeIdentidade.md`, seção 2.
 
 ```sql
 select count(*) as verificacoes

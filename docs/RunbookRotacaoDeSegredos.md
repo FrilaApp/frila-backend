@@ -6,8 +6,10 @@ Convenção deste documento (a mesma do restante de `docs/`):
 
 - **LIDO** é o que está no repositório, com `arquivo:linha`. É fato sobre o texto; o comportamento em Prod é dedução até alguém medir.
 - **DEDUZIDO** é raciocínio sobre o código, sem execução.
-- **NAO EXECUTADO: sem banco local** marca cada SQL abaixo. Os SQL deste documento foram escritos a partir das migrações do repositório e não foram rodados contra nenhum banco. Quem roda primeiro, em ambiente de teste ou no `frila-dev`, confere a saída e corrige o texto.
+- **EXECUTADO** marca o SQL de leitura rodado em 25/11/2026 em banco local descartável (ver "Execução do SQL"); **NAO EXECUTAVEL AQUI** marca o que depende de Prod ou de credencial, ou escreve (a rotação em si).
 - **A DEFINIR (Caue)** é um fato que só o Cauê sabe.
+
+**Execução do SQL (25/11/2026).** Os 4 SQL de leitura deste documento foram executados em 25/11/2026 num Postgres local descartável (`supabase db start` sobre a `develop` em `6225a77`: migrações do zero, `seed.sql` e `cenarios.sql`), cada um dentro de `begin read only`; os 4 rodam sem erro. O 5º bloco (a escrita `vault.update_secret`) **não foi executado**: escreve e é só de humano autorizado em Prod. **Não executável fora do Prod:** o conteúdo real do Vault e os comandos de CLI (`supabase secrets set`).
 
 Regras que valem para todas as rotações (`AGENTS.md`, "Nunca" e "Segredos e dados pessoais"):
 
@@ -54,7 +56,7 @@ Inventário. "Onde mora" é onde o valor é guardado; "quem usa" é o que quebra
 Os SQL abaixo só leem. Rode em sessão com `default_transaction_read_only = on` (é o que `scripts/checagem-diaria.sh` faz).
 
 **2.1 Os segredos do Vault existem e estão preenchidos? (só nomes e datas, nunca o valor).**
-NAO EXECUTADO: sem banco local. `vault.decrypted_secrets` aparece em migrações do repositório (por exemplo `20261104140200_disparar_push_agendador.sql`); as colunas `created_at`/`updated_at` de `vault.secrets` vêm da extensão, não das migrações: confirmar na primeira execução.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, porque o Vault local não tem segredos (em Prod devolve uma linha por nome). `vault.decrypted_secrets` aparece em migrações do repositório (por exemplo `20261104140200_disparar_push_agendador.sql`); a coluna `updated_at` de `vault.secrets`, que vem da extensão, existe.
 
 ```sql
 select s.name,
@@ -68,7 +70,7 @@ select s.name,
 Esperado no Prod, segundo `docs/ESTADO.md` (08/11/2026): `agendador_secret`, `edge_function_url`, `email_function_url`, `push_function_url`, `limpar_contas_function_url`, `expurgar_midias_function_url`, `moderar_midia_function_url` presentes; `documento_pepper`, `storage_url`, `storage_jwt_secret` ausentes. Estado depois de 08/11: NAO MEDIDO.
 
 **2.2 O banco está sendo recusado pelas funções? (sinal de segredo desencontrado).**
-NAO EXECUTADO: sem banco local. Tabela `net._http_response` e as colunas usadas já aparecem em `docs/RUNBOOK-INCIDENTES.md`, seção 2.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, por falta de dado. Tabela `net._http_response` e as colunas usadas já aparecem em `docs/RUNBOOK-INCIDENTES.md`, seção 2.
 
 ```sql
 select status_code,
@@ -84,7 +86,7 @@ select status_code,
 Muitos `401` na última hora, depois de uma rotação, quer dizer que Vault e variável da função não têm o mesmo valor.
 
 **2.3 Há falha de execução registrada por função? (sem dado pessoal, RN15).**
-NAO EXECUTADO: sem banco local. Tabela definida em `20260930230000_monitoramento_e_alertas.sql:20-28`.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, por falta de dado. Tabela definida em `20260930230000_monitoramento_e_alertas.sql:20-28`.
 
 ```sql
 select origem,
@@ -98,7 +100,7 @@ select origem,
 ```
 
 **2.4 Notificações pendentes por causa de segredo errado.**
-NAO EXECUTADO: sem banco local. Colunas de `public.notificacao` em `20260922150500_despacho_turno_ocorrencia.sql:26-34` e `20260926020000_registro_dispositivo_e_push.sql:79-80`.
+EXECUTADO em 25/11/2026 (banco local, `develop` em `6225a77`): roda; 0 linhas, por falta de dado. Colunas de `public.notificacao` em `20260922150500_despacho_turno_ocorrencia.sql:26-34` e `20260926020000_registro_dispositivo_e_push.sql:79-80`.
 
 ```sql
 select estado_entrega,
@@ -125,7 +127,7 @@ Passos (DEDUZIDO do código; nunca executado em Prod):
 3. **Logo em seguida** (janela de desencontro; alvo: menos de 1 minuto), atualize o Vault. Escrita em Prod, só humano autorizado:
 
    ```sql
-   -- ESCRITA, não é diagnóstico. NAO EXECUTADO: sem banco local.
+   -- ESCRITA, não é diagnóstico. NAO EXECUTAVEL AQUI: escreve no Vault, e `:'novo_valor'` é variável do `psql` (`-v novo_valor=...`) que o bloco não define. A assinatura `vault.update_secret(secret_id, new_secret, new_name, ...)` foi conferida no banco local.
    -- Padrão de vault.update_secret igual ao de 20261103120000_vault_urls_edge_functions.sql:136.
    select vault.update_secret(
      (select id from vault.secrets where name = 'agendador_secret'),
