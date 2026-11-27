@@ -403,3 +403,41 @@ Deno.test("enviar-midia: nenhum log nem resposta traz o token do cabeçalho", as
   assert(!tudo.includes(TOKEN), "o token não aparece em log nem em resposta");
   assert(!tudo.includes(OUTRO_TOKEN), "o token divergente também não");
 });
+
+Deno.test("enviar-midia: midia_id inválido com token VÁLIDO é 401 e nem log nem resposta trazem o token", async () => {
+  const MIDIA_RUIM = "nao-e-um-uuid";
+  for (const p of [
+    pedido({ midia: MIDIA_RUIM, token: TOKEN }),
+    pedido({ midia: MIDIA_RUIM, token: null, cabecalho: TOKEN }),
+    pedido({ midia: MIDIA_RUIM, token: TOKEN, cabecalho: TOKEN }),
+    // Formato de token certo, mas o banco não o conhece (ramo posterior, depois de consultar): também não loga o token.
+    pedido({ token: null, cabecalho: OUTRO_TOKEN }),
+  ]) {
+    const m = mundo();
+    const e = espiao(m);
+    const r = await handler(p, deps(m, { consumirToken: e.consumirToken }));
+    const texto = await r.text();
+    assertEquals(r.status, 401);
+    const tudo = JSON.stringify(m.eventos) + texto;
+    assert(!tudo.includes(TOKEN), "o token válido não aparece em log nem em resposta");
+    assert(!tudo.includes(OUTRO_TOKEN), "o token desconhecido do banco também não");
+    assert(m.eventos.length > 0, "a recusa é registrada (só o motivo), senão o teste não mediria nada");
+  }
+});
+
+Deno.test("enviar-midia: token malformado (query ou cabeçalho) é 401 e nem log nem resposta o repetem", async () => {
+  const malformados = ["c".repeat(63), "d".repeat(65), "E".repeat(64), `${"f".repeat(63)}g`, "segredo-que-nao-pode-vazar"];
+  for (const ruim of malformados) {
+    for (const p of [pedido({ token: ruim }), pedido({ token: null, cabecalho: ruim })]) {
+      const m = mundo();
+      const e = espiao(m);
+      const r = await handler(p, deps(m, { consumirToken: e.consumirToken }));
+      const texto = await r.text();
+      assertEquals(r.status, 401, ruim);
+      assertEquals(e.recebidos, [], "token malformado não chega ao banco");
+      const tudo = JSON.stringify(m.eventos) + texto;
+      assert(!tudo.includes(ruim), `o token malformado ${ruim.slice(0, 6)}… não aparece em log nem em resposta`);
+      assert(m.eventos.length > 0, "a recusa é registrada (só o motivo)");
+    }
+  }
+});
