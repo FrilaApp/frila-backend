@@ -11,7 +11,7 @@ begin;
 insert into privado.ambiente (eh_teste) values (true) on conflict do nothing;
 select set_config('frila.agora', '2027-06-01 12:00:00+00', true);
 
-select plan(26);
+select plan(29);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 1. Estrutura, permissões e salvaguardas
@@ -72,6 +72,8 @@ select
   'c8420000-0000-4000-8000-000000000001'::uuid as u_prof,
   'c8420000-0000-4000-8000-000000000002'::uuid as u_casa,
   'c8420000-0000-4000-8000-000000000003'::uuid as u_suspenso,
+  'c8420000-0000-4000-8000-000000000004'::uuid as u_anon,
+  'c8420000-0000-4000-8000-000000000014'::uuid as p_anon,
   'c8420000-0000-4000-8000-000000000011'::uuid as p_prof,
   'c8420000-0000-4000-8000-000000000013'::uuid as p_suspenso,
   'c8420000-0000-4000-8000-000000000021'::uuid as e_casa,
@@ -85,12 +87,17 @@ select u_casa, 'contratante'::public.perfil_conta, 'Casa 842', '+5561999998422',
        'casa842@test.invalid', '1988-01-01'::date, '1.0', '2026-09-20 12:00:00-03'::timestamptz, 'ativa'::public.estado_conta from ids
 union all
 select u_suspenso, 'profissional'::public.perfil_conta, 'Prof Suspenso 842', '+5561999998423',
-       'suspenso842@test.invalid', '1990-01-01'::date, '1.0', '2026-09-20 12:00:00-03'::timestamptz, 'suspensa'::public.estado_conta from ids;
+       'suspenso842@test.invalid', '1990-01-01'::date, '1.0', '2026-09-20 12:00:00-03'::timestamptz, 'suspensa'::public.estado_conta from ids
+union all
+select u_anon, 'profissional'::public.perfil_conta, 'Prof Anonimizado 842', '+5561999998424',
+       'anon842@test.invalid', '1991-01-01'::date, '1.0', '2026-09-20 12:00:00-03'::timestamptz, 'ativa'::public.estado_conta from ids;
 
 insert into public.profissional (id, usuario_id, ponto_base)
 select p_prof, u_prof, 'POINT(-47.8800 -15.7700)'::extensions.geography from ids
 union all
-select p_suspenso, u_suspenso, 'POINT(-47.8800 -15.7700)'::extensions.geography from ids;
+select p_suspenso, u_suspenso, 'POINT(-47.8800 -15.7700)'::extensions.geography from ids
+union all
+select p_anon, u_anon, 'POINT(-47.8800 -15.7700)'::extensions.geography from ids;
 
 insert into public.estabelecimento (id, nome, documento, tipo, endereco, ponto)
 select e_casa, 'Bar 842', '80000000000842', 'food_service'::public.tipo_estabelecimento, 'Endereço 842',
@@ -102,9 +109,14 @@ select e_outra, 'Restaurante 842', '80000000000843', 'food_service'::public.tipo
 insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
 select u_casa, e_casa, 'administrador' from ids;
 
+-- A conta anonimizada: estado e instante juntos (anonimizacao_coerente); o vínculo com a equipe e o profissional ficam, como num token antigo.
+update public.usuario set estado = 'anonimizada', anonimizado_em = '2027-01-01 12:00:00+00' where id = (select u_anon from ids);
+
 -- Vincula p_prof na equipe de e_casa
 insert into public.equipe_confianca (estabelecimento_id, profissional_id, adicionado_em)
-select e_casa, p_prof, '2026-10-01 10:00:00+00'::timestamptz from ids;
+select e_casa, p_prof, '2026-10-01 10:00:00+00'::timestamptz from ids
+union all
+select e_casa, p_anon, '2026-10-01 10:00:00+00'::timestamptz from ids;
 
 -- Helper para chamar como um usuário autenticado
 create or replace function pg_temp.como_usuario(p_user_id uuid, p_sql text) returns jsonb
@@ -142,6 +154,28 @@ select throws_matching(
          (select u_suspenso from ids), (select e_casa from ids)),
   'conta_suspensa',
   'sair_da_equipe: 403 para conta suspensa'
+);
+
+-- 401 quando o token é de conta anonimizada (RF25), mesmo com a ligação na equipe; a ligação não é mexida
+select throws_matching(
+  format($$ select pg_temp.como_usuario(%L, 'select public.sair_da_equipe(''%s''::uuid)') $$,
+         (select u_anon from ids), (select e_casa from ids)),
+  'nao_autenticado',
+  'sair_da_equipe: 401 para conta anonimizada'
+);
+
+select is(
+  (select count(*)::int from public.equipe_confianca ec where ec.profissional_id = (select p_anon from ids)),
+  1,
+  'sair_da_equipe: a ligação da conta anonimizada não foi removida'
+);
+
+-- 401 quando o token é de um id sem linha em public.usuario (conta apagada)
+select throws_matching(
+  format($$ select pg_temp.como_usuario(%L, 'select public.sair_da_equipe(''%s''::uuid)') $$,
+         'c8420000-0000-4000-8000-0000000000ff'::uuid, (select e_casa from ids)),
+  'nao_autenticado',
+  'sair_da_equipe: 401 para token sem conta'
 );
 
 -- 422 quando estabelecimento_id é nulo
