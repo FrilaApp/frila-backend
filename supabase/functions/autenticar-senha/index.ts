@@ -37,6 +37,7 @@ export interface AutenticarSenhaDb {
   criarDesafio(usuarioId: string, email: string, emailHash: string, plataforma: PlataformaAuth): Promise<{
     desafio_id: string;
     expira_em: string;
+    cooldown_segundos?: number;
   }>;
   revogarSessaoPontual(sessionId: string | null, usuarioId: string): Promise<void>;
 }
@@ -65,7 +66,7 @@ function criarDbSql(dbUrl: string): AutenticarSenhaDb & { fechar(): Promise<void
     },
     async criarDesafio(usuarioId, email, emailHash, plataforma) {
       const [row] = await sql`select privado.criar_desafio_dispositivo(${usuarioId}::uuid, ${email}, ${emailHash}, ${plataforma}) as res`;
-      return row.res as { desafio_id: string; expira_em: string };
+      return row.res as { desafio_id: string; expira_em: string; cooldown_segundos?: number };
     },
     async revogarSessaoPontual(sessionId, usuarioId) {
       if (!sessionId) return;
@@ -211,12 +212,16 @@ export async function tratarAutenticarSenha(req: Request, deps: AutenticarSenhaD
 
     // 4. Cria desafio de curta duração (10 min) persistindo email_normalizado no servidor.
     const desafio = await db.criarDesafio(usuarioId, email, emailHash, plataforma);
+    const reenviarEmSegundos = desafio.cooldown_segundos === 30 || desafio.cooldown_segundos === 60
+      ? desafio.cooldown_segundos
+      : 60;
 
     return responderJson(200, {
       status: "desafio_otp",
       desafio_id: desafio.desafio_id,
       expira_em: desafio.expira_em,
       descartar_device_token: deviceToken !== null,
+      reenviar_em_segundos: reenviarEmSegundos,
     });
   } finally {
     await sqlDb?.fechar();

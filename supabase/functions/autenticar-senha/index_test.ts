@@ -341,3 +341,53 @@ Deno.test("autenticar-senha: fail-closed devolve 503 se device_token presente se
   assertEquals(res.status, 503);
   assertEquals((await res.json()).code, "indisponivel");
 });
+
+Deno.test("autenticar-senha: desafio_otp devolve reenviar_em_segundos efetivo (60, 30 e fallback 60 na ausência)", async () => {
+  const fetchFn: typeof fetch = (input) => {
+    const url = String(input);
+    if (url.includes("grant_type=password")) {
+      return Promise.resolve(
+        Response.json({
+          access_token: fakeJwt("sess-prov"),
+          token_type: "bearer",
+          expires_in: 3600,
+          refresh_token: "ref-prov",
+          user: { id: "11111111-1111-4111-8111-111111111111", email: "ana@frila.test" },
+        }),
+      );
+    }
+    if (url.includes("/auth/v1/logout")) return Promise.resolve(new Response(null, { status: 204 }));
+    if (url.includes("/auth/v1/otp")) return Promise.resolve(Response.json({}));
+    throw new Error(`URL inesperada: ${url}`);
+  };
+
+  for (const [cooldownDb, esperado] of [[60, 60], [30, 30], [undefined, 60]] as const) {
+    const req = new Request("https://local/functions/v1/autenticar-senha", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "cf-connecting-ip": "198.51.100.88" },
+      body: JSON.stringify({
+        email: "ana@frila.test",
+        senha: "SenhaForte123!",
+        plataforma: "ios",
+      }),
+    });
+    const res = await tratarAutenticarSenha(req, {
+      fetchFn,
+      supabaseUrl: "https://proj.supabase.co",
+      anonKey: "anon-test",
+      pepper: "pepper-test",
+      db: dbStub({
+        criarDesafio: () =>
+          Promise.resolve({
+            desafio_id: "33333333-3333-4333-8333-333333333333",
+            expira_em: "2026-11-27T05:10:00Z",
+            ...(cooldownDb !== undefined ? { cooldown_segundos: cooldownDb } : {}),
+          }),
+      }),
+    });
+    assertEquals(res.status, 200);
+    const body = await res.json();
+    assertEquals(body.status, "desafio_otp");
+    assertEquals(body.reenviar_em_segundos, esperado);
+  }
+});
