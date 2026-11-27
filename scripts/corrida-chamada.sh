@@ -1837,6 +1837,8 @@ update public.usuario set estado = 'anonimizada', anonimizado_em = now() - inter
 SQL
   ga=$(id "$m" 20); gb=$(id "$m" 21); gm=$(id "$m" 22)
   longe_do_cron
+  # B-129: compacta o heap e zera buracos no FSM para alocação física na ordem do INSERT
+  psql -c "vacuum full public.vaga;" >/dev/null || { falhou "rodada $i (27): vacuum full falhou"; erros=$((erros + 1)); continue; }
   vagas_passadas "$m" "$autor" 21 22 20
   ca=$(chamada_direta "$m" "$ga" "$p1" vencida); cb=$(chamada_direta "$m" "$gb" "$p2" vencida)
   fisica=$(ordem_fisica vaga "$ga" "$gb" "$gm")
