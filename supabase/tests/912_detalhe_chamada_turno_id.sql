@@ -12,7 +12,7 @@ begin;
 insert into privado.ambiente (id, eh_teste) values (true, true) on conflict (id) do update set eh_teste = true;
 select set_config('frila.agora', '2026-11-27 15:00:00+00', true);
 update privado.recurso set ligado = true where chave = 'chamada_direta';
-select plan(28);
+select plan(31);
 
 create function pg_temp.como(conta uuid, sql text) returns jsonb language plpgsql as $$
 declare r jsonb;
@@ -45,6 +45,30 @@ create temp table ids as select
   'f9120000-0000-4000-8000-000000000001'::uuid as ch_carla,
   'f9120000-0000-4000-8000-000000000002'::uuid as ch_diego;
 
+-- Um turno da Carla numa OUTRA vaga, com id MENOR que o da vaga da chamada. Quem não filtra a vaga e ordena pelo id da vaga (crescente) escolheria
+-- este turno no lugar do certo: sem ele o teste não distingue "o turno desta vaga" de "o primeiro turno dela".
+insert into public.vaga
+  select (jsonb_populate_record(null::public.vaga, to_jsonb(v) || jsonb_build_object(
+    'id', '00000000-0000-4000-8000-000000009120', 'inicio_em', '2026-10-01 18:00:00+00', 'fim_em', '2026-10-01 23:00:00+00',
+    'chave_cliente', gen_random_uuid()))).*
+    from public.vaga v where v.id = 'd0000000-0000-4000-8000-000000000007';
+insert into public.posicao
+  select (jsonb_populate_record(null::public.posicao, to_jsonb(p) || jsonb_build_object(
+    'id', 'f1000000-0000-4000-8000-000000009120', 'vaga_id', '00000000-0000-4000-8000-000000009120',
+    'profissional_id', 'e0000000-0000-4000-8000-000000000003',
+    'inicio_em', '2026-10-01 18:00:00+00', 'fim_em', '2026-10-01 23:00:00+00', 'confirmado_em', '2026-09-30 12:00:00+00'))).*
+    from public.posicao p where p.id = 'f1000000-0000-4000-8000-000000000701';
+insert into public.turno (id, posicao_id, checkin_em, checkin_tipo, checkin_distancia_m, checkout_em, verificacao, valor_acordado_centavos)
+values ('f2000000-0000-4000-8000-000000009120', 'f1000000-0000-4000-8000-000000009120', '2026-10-01 18:00:00+00', 'geolocalizado', 50,
+        '2026-10-01 23:00:00+00', 'verificado', 15000);
+
+-- Uma OUTRA pessoa (Elisa) já ocupa uma posição desta mesma vaga, com turno criado ANTES do aceite da Carla: quem acha o turno só pela vaga, sem filtrar
+-- o profissional, devolveria o da Elisa. A Carla fica com a outra posição (o aceite escolhe a primeira aberta).
+update public.posicao set estado = 'confirmada', profissional_id = 'e0000000-0000-4000-8000-000000000005', confirmado_em = '2026-11-26 12:00:00+00'
+ where id = 'f1000000-0000-4000-8000-000000000101';
+insert into public.turno (id, posicao_id, valor_acordado_centavos)
+values ('f2000000-0000-4000-8000-000000009121', 'f1000000-0000-4000-8000-000000000101', 15000);
+
 -- A vaga direta e as duas chamadas abertas, como `chamar_profissional` as deixa (20261107300000).
 update public.vaga set origem = 'chamada_direta' where id = (select vaga from ids);
 insert into public.chamada (id, vaga_id, profissional_id, estabelecimento_id, criada_por, estado, expira_em, chave) values
@@ -72,6 +96,9 @@ create temp table aceite as select pg_temp.como((select carla from ids),
 select ok((select (j->>'turno_id') is not null from aceite), '0b o responder_chamada devolveu o turno_id (a base já fazia)');
 select ok((select count(*) >= 2 from public.turno t join public.posicao p on p.id = t.posicao_id where p.profissional_id = (select carla_prof from ids)),
   '0b2 a Carla tem turnos em mais de uma vaga (o turno_id precisa ser o desta vaga, não o primeiro dela)');
+select ok((select p.vaga_id < (select vaga from ids) from public.turno t join public.posicao p on p.id = t.posicao_id where t.id = 'f2000000-0000-4000-8000-000000009120'),
+  '0b3 e o turno dela em outra vaga vem ANTES na ordem crescente do id da vaga (ordenar por vaga sem filtrar escolheria o errado)');
+select isnt((select j->>'turno_id' from aceite), 'f2000000-0000-4000-8000-000000009120', '0b4 o turno desta chamada não é o da outra vaga');
 
 create temp table det_aceita as select pg_temp.detalhe((select carla from ids), (select ch_carla from ids)) as j;
 create temp table det_aceita_casa as select pg_temp.detalhe((select zelia from ids), (select ch_carla from ids)) as j;
@@ -84,8 +111,9 @@ select ok((select exists (
     select 1 from public.turno t join public.posicao p on p.id = t.posicao_id
      where t.id = (j->>'turno_id')::uuid and p.vaga_id = (select vaga from ids) and p.profissional_id = (select carla_prof from ids))
   from det_aceita), 'B4 é o turno da posição da vaga ocupada pela Carla');
-select is((select count(*) from public.turno t join public.posicao p on p.id = t.posicao_id where p.vaga_id = (select vaga from ids)), 1::bigint,
-  'B5 e é o único turno da vaga');
+select is((select count(*) from public.turno t join public.posicao p on p.id = t.posicao_id where p.vaga_id = (select vaga from ids)), 2::bigint,
+  'B5 a vaga tem dois turnos (o da Elisa e o da Carla) e o turno_id é o da Carla');
+select isnt((select j->>'turno_id' from aceite), 'f2000000-0000-4000-8000-000000009121', 'B5b não é o turno da Elisa, que está na mesma vaga');
 
 -- Responder de novo ao aceite (idempotência) e reler: o mesmo turno.
 select is(
