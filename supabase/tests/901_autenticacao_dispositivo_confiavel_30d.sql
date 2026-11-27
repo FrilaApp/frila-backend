@@ -4,7 +4,7 @@
 -- preservação de sessões legadas pré-corte, expiração pelo relógio do banco,
 -- isolamento entre contas, replay/concorrência de desafios e revogação no reset/logout global.
 begin;
-select plan(41);
+select plan(42);
 
 -- ── 1. Privilégios: tabelas e funções privadas inacessíveis a anon/authenticated ─
 select ok(
@@ -364,6 +364,13 @@ select is(
   (privado.reservar_reenvio_desafio(((select res ->> 'desafio_id' from t_reenvio)::uuid)) ->> 'status'),
   'limite_excedido',
   'quarto reenvio é bloqueado pelo teto de 3 reenvios por desafio'
+);
+
+select throws_ok(
+  $$ update privado.config_auth set cooldown_reenvio_otp_segundos = 45 where unica = true $$,
+  '23514',
+  null,
+  'config_auth rejeita cooldown_reenvio_otp_segundos fora de (30, 60)'
 );
 
 update privado.config_auth set cooldown_reenvio_otp_segundos = 60 where unica = true;
