@@ -123,9 +123,11 @@ select pg_temp.conta(n), 'c8700000-0000-4000-8000-0000000000e1', 'administrador'
 insert into public.membro_estabelecimento (usuario_id, estabelecimento_id, papel)
 values (pg_temp.conta(1), 'c8700000-0000-4000-8000-0000000000e2', 'administrador');
 
+-- P1 usa UUID fixo contendo '1990' para exercitar deterministicamente o filtro do teste 16 sem falsos positivos.
+insert into public.profissional (id, usuario_id, ponto_base, atende_todo_df, apresentacao, aval_positivas, aval_total, turnos_realizados, taxa_comparecimento)
+values ('c8701990-0000-4000-8000-000000000101', pg_temp.conta(101), 'POINT(-47.8822 -15.7800)'::extensions.geography, false, 'Apresentação da Maria', 8, 10, 12, 0.950);
 insert into public.profissional (usuario_id, ponto_base, atende_todo_df, apresentacao, aval_positivas, aval_total, turnos_realizados, taxa_comparecimento)
-values (pg_temp.conta(101), 'POINT(-47.8822 -15.7800)'::extensions.geography, false, 'Apresentação da Maria', 8, 10, 12, 0.950),
-       (pg_temp.conta(102), 'POINT(-48.0500 -15.8300)'::extensions.geography, true,  null, 0, 0, 0, null),
+values (pg_temp.conta(102), 'POINT(-48.0500 -15.8300)'::extensions.geography, true,  null, 0, 0, 0, null),
        (pg_temp.conta(103), 'POINT(-47.8822 -15.7800)'::extensions.geography, true,  null, 0, 0, 0, null),
        (pg_temp.conta(104), 'POINT(-47.8822 -15.7800)'::extensions.geography, true,  null, 0, 0, 0, null);
 insert into public.profissional (usuario_id, ponto_base, atende_todo_df)
@@ -204,7 +206,16 @@ select ok(pg_temp.cartao('sem_horario', 101)::text !~ '61987654321|987654321|\+5
   'nenhum valor traz o telefone');
 select ok(pg_temp.cartao('sem_horario', 101)::text !~* 'maria\.souza|@t870',
   'nenhum valor traz o e-mail');
-select ok(pg_temp.cartao('sem_horario', 101)::text !~ '1990|1990-03-15',
+select ok(
+  replace(
+    replace(
+      pg_temp.cartao('sem_horario', 101)::text,
+      (select p.id::text from public.profissional p where p.usuario_id = pg_temp.conta(101)),
+      '<profissional_id>'
+    ),
+    (select f.id::text from public.funcao f where f.nome = 'barista'),
+    '<funcao_id>'
+  ) !~ '1990|1990-03-15',
   'nenhum valor traz a data de nascimento');
 select ok(pg_temp.cartao('sem_horario', 101)::text !~ '47\.88|15\.78|POINT',
   'nenhum valor traz o ponto base (coordenadas)');
