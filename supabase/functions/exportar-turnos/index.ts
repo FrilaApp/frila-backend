@@ -451,6 +451,18 @@ export function criarSqlClient(deps?: HandlerDeps): SqlClient {
   };
 }
 
+// RFC 3339 / ISO-8601 com fuso (`Instante`, contrato: `format: date-time`): data, `T`, hora com segundos, fração opcional e `Z` ou deslocamento.
+// `Date.parse` sozinho aceita `Nov 1, 2026`, `2026-11-01` (sem hora, vira meia-noite UTC) e até `1`; o contrato manda `campo_invalido`.
+const INSTANTE_ISO_8601 = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
+
+function instanteValido(valor: unknown): valor is string {
+  if (typeof valor !== "string" || !INSTANTE_ISO_8601.test(valor) || isNaN(Date.parse(valor))) return false;
+  // `Date.parse` aceita dia inexistente (2026-02-30 vira 2 de março): a data tem de voltar igual.
+  const [ano, mes, dia] = valor.slice(0, 10).split("-").map(Number);
+  const civil = new Date(Date.UTC(ano, mes - 1, dia));
+  return civil.getUTCFullYear() === ano && civil.getUTCMonth() === mes - 1 && civil.getUTCDate() === dia;
+}
+
 export function handler(req: Request, deps?: HandlerDeps): Promise<Response> {
   return comCors(req, deps?.origensCors, () => tratar(req, deps));
 }
@@ -496,7 +508,7 @@ async function tratar(req: Request, deps?: HandlerDeps): Promise<Response> {
   let ateStr: string;
 
   if (corpo.ate !== undefined && corpo.ate !== null && !(typeof corpo.ate === "string" && !corpo.ate.trim())) {
-    if (typeof corpo.ate !== "string" || isNaN(Date.parse(corpo.ate))) {
+    if (!instanteValido(corpo.ate)) {
       return erro(422, "campo_invalido", "ate");
     }
     ateStr = corpo.ate;
@@ -505,7 +517,7 @@ async function tratar(req: Request, deps?: HandlerDeps): Promise<Response> {
   }
 
   if (corpo.de !== undefined && corpo.de !== null && !(typeof corpo.de === "string" && !corpo.de.trim())) {
-    if (typeof corpo.de !== "string" || isNaN(Date.parse(corpo.de))) {
+    if (!instanteValido(corpo.de)) {
       return erro(422, "campo_invalido", "de");
     }
     deStr = corpo.de;

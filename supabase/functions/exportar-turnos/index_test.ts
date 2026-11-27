@@ -1185,3 +1185,53 @@ Deno.test("exportar-turnos: metodos PUT e OPTIONS retornam 405 metodo_nao_permit
 
 
 
+
+// byVNbblH: `de` e `ate` são instantes ISO-8601 com fuso (contrato `Instante`, `format: date-time`); o resto é `422 campo_invalido`.
+Deno.test("recusa 'de' e 'ate' que não são instante ISO-8601 com 422 campo_invalido (details do campo)", async () => {
+  const invalidos = ["Nov 1, 2026", "2026-11-01", "1", "2026-11-01T10:00:00", "2026-11-01 10:00:00Z", "2026-02-30T00:00:00Z", "2026-13-01T00:00:00Z", "2026-09-01T25:00:00Z", "2026-09-01T10:61:00Z", "2026-09-01T10:00:61Z", ""];
+  for (const campo of ["de", "ate"] as const) {
+    for (const valor of invalidos) {
+      if (valor === "") continue; // vazio equivale a omitido (default dos 15 dias), regra anterior
+      const e = criarEspiao();
+      const corpo: Record<string, unknown> = { de: "2026-09-01T00:00:00Z", ate: "2026-09-10T00:00:00Z", formato: "csv" };
+      corpo[campo] = valor;
+      const res = await chamar(e, requisicao(corpo));
+      assertEquals(res.status, 422, `${campo}=${valor}`);
+      const json = await res.json();
+      assertEquals(json.code, "campo_invalido", `${campo}=${valor}`);
+      assertEquals(json.details, campo, `${campo}=${valor}`);
+      assertEquals(e.pedidos.length, 0, `${campo}=${valor}: nada consultado`);
+    }
+  }
+});
+
+Deno.test("recusa 'de' e 'ate' que não são texto (número, objeto) com 422 campo_invalido", async () => {
+  for (const campo of ["de", "ate"] as const) {
+    for (const valor of [1, 1790000000000, {}, ["2026-09-01T00:00:00Z"], true]) {
+      const e = criarEspiao();
+      const corpo: Record<string, unknown> = { de: "2026-09-01T00:00:00Z", ate: "2026-09-10T00:00:00Z", formato: "csv" };
+      corpo[campo] = valor;
+      const res = await chamar(e, requisicao(corpo));
+      assertEquals(res.status, 422, `${campo}=${JSON.stringify(valor)}`);
+      assertEquals((await res.json()).details, campo);
+    }
+  }
+});
+
+Deno.test("aceita 'de' e 'ate' ISO-8601 com Z, com milissegundos (o que o iOS manda) e com deslocamento", async () => {
+  for (
+    const [de, ate] of [
+      ["2026-09-01T00:00:00Z", "2026-09-10T00:00:00Z"],
+      ["2026-09-01T03:00:00.000Z", "2026-10-01T02:59:59.999Z"],
+      ["2026-09-01T00:00:00-03:00", "2026-09-10T00:00:00+00:00"],
+      ["2026-09-01t00:00:00z", "2026-09-10T00:00:00.5+05:30"],
+    ]
+  ) {
+    const e = criarEspiao();
+    const res = await chamar(e, requisicao({ de, ate, formato: "csv" }));
+    assertEquals(res.status, 200, `${de} .. ${ate}`);
+    assertEquals(e.pedidos.length, 1);
+    assertEquals(e.pedidos[0].de, de);
+    assertEquals(e.pedidos[0].ate, ate);
+  }
+});
