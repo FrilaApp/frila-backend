@@ -103,7 +103,7 @@ select is(
 select is(
   (select count(*)::int from jsonb_object_keys(
      pg_temp.como('f0000000-0000-4000-8000-0000000007a1', 'select public.minha_conta()')) k
-    where k not in ('id','perfil','nome','telefone','email','nascimento','estado','termos_versao')),
+    where k not in ('id','perfil','nome','telefone','email','nascimento','estado','termos_versao','precisa_definir_senha')),
   0,
   'e minha_conta também não devolve sinal_idade, idade_aferida_por nem idade_aferida_em');
 
