@@ -1,7 +1,7 @@
 // Edge Function: POST /functions/v1/reenviar-dispositivo-otp
 //
 // Reenvia o OTP de um desafio `login_dispositivo` ativo mantendo o mesmo `desafio_id`,
-// sem incrementar o contador `tentativas` de verificação do código, com cooldown de 60s,
+// sem incrementar o contador `tentativas` de verificação do código, com cooldown de 30s,
 // teto de 3 reenvios por desafio e rate limits por IP/e-mail.
 
 import postgres from "npm:postgres@3.4.4";
@@ -128,7 +128,7 @@ export async function tratarReenviarDispositivoOtp(
       ok: true,
       desafio_id: reserva.desafio_id ?? desafioId,
       expira_em: reserva.expira_em,
-      reenviar_em_segundos: 60,
+      reenviar_em_segundos: 30,
     });
   } finally {
     await sqlDb?.fechar();

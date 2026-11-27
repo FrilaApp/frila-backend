@@ -298,7 +298,7 @@ select is(
   'sessão verificada por OTP com dispositivo_id IS NULL (lembrar_dispositivo=false) recebe dispositivo_verificado = true'
 );
 
--- ── 14. Reenvio de desafio mantém desafio_id, respeita cooldown 60s e não soma tentativas ─
+-- ── 14. Reenvio de desafio mantém desafio_id, respeita cooldown 30s e não soma tentativas ─
 create temp table t_reenvio as
 select (privado.criar_desafio_dispositivo(
   'b2222222-2222-4222-8222-222222222222'::uuid,
@@ -310,17 +310,17 @@ select (privado.criar_desafio_dispositivo(
 select is(
   (privado.reservar_reenvio_desafio(((select res ->> 'desafio_id' from t_reenvio)::uuid)) ->> 'status'),
   'limite_excedido',
-  'reenvio imediato (< 60s após criação) é bloqueado por cooldown'
+  'reenvio imediato (< 30s após criação) é bloqueado por cooldown'
 );
 
 update privado.desafios_dispositivo
-   set criado_em = now() - interval '61 seconds'
+   set criado_em = now() - interval '31 seconds'
  where id = (select (res ->> 'desafio_id')::uuid from t_reenvio);
 
 select is(
   (privado.reservar_reenvio_desafio(((select res ->> 'desafio_id' from t_reenvio)::uuid)) ->> 'status'),
   'ok',
-  'reenvio após 60s mantém o mesmo desafio_id sem incrementar tentativas de verificação'
+  'reenvio após 30s mantém o mesmo desafio_id sem incrementar tentativas de verificação'
 );
 
 -- ── 15. Revogação imediata online (JWT já emitido com dispositivo_verificado=true é bloqueado) ─

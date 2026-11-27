@@ -41,7 +41,7 @@ Deno.test("reenviar-dispositivo-otp: mantém desafio_id, dispara OTP create_user
   const body = await res.json();
   assertEquals(body.ok, true);
   assertEquals(body.desafio_id, id);
-  assertEquals(body.reenviar_em_segundos, 60);
+  assertEquals(body.reenviar_em_segundos, 30);
   assertEquals(payloadsOtp[0]?.email, "ana@frila.test");
   assertEquals(payloadsOtp[0]?.create_user, false);
 });
