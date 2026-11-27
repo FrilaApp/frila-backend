@@ -162,3 +162,65 @@ Deno.test("definir-senha: sem refresh_token devolve sessao=null, trata reauthent
   assertEquals(resSemPepper.status, 503);
   assertEquals((await resSemPepper.json()).code, "indisponivel");
 });
+
+// JsKAV9NV: o contrato (`definir-senha`, 422) separa `campo_obrigatorio` (parâmetro ausente) de `senha_fraca` (menos de 8 caracteres).
+// Cada pedido recusado aqui tem de parar antes de qualquer chamada ao GoTrue ou ao banco.
+async function recusarDefinirSenha(corpoJson: string) {
+  let chamadas = 0;
+  const res = await tratarDefinirSenha(
+    new Request("https://local/functions/v1/definir-senha", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${fakeJwt("sess-1")}` },
+      body: corpoJson,
+    }),
+    {
+      fetchFn: () => {
+        chamadas++;
+        return Promise.resolve(Response.json({ id: "user-1" }));
+      },
+      supabaseUrl: "https://proj.supabase.co",
+      anonKey: "anon-test",
+      db: {
+        verificarSessaoOnline: () => {
+          chamadas++;
+          return Promise.resolve(true);
+        },
+        concluirDefinicaoSenha: () => {
+          chamadas++;
+          return Promise.resolve({ dispositivos_revogados: 0 });
+        },
+      },
+    },
+  );
+  return { status: res.status, corpo: await res.json(), chamadas };
+}
+
+Deno.test("definir-senha: nova_senha ausente (ou nula) é 422 campo_obrigatorio, e nada é chamado", async () => {
+  for (const corpo of ["{}", '{"manter_dispositivo_atual":true}', '{"nova_senha":null}']) {
+    const r = await recusarDefinirSenha(corpo);
+    assertEquals(r.status, 422, corpo);
+    assertEquals(r.corpo.code, "campo_obrigatorio", corpo);
+    assertEquals(r.corpo.details, "nova_senha", corpo);
+    assertEquals(r.chamadas, 0, corpo);
+  }
+});
+
+Deno.test("definir-senha: nova_senha com menos de 8 caracteres (inclusive vazia) segue 422 senha_fraca", async () => {
+  for (const senha of ["", "a", "1234567"]) {
+    const r = await recusarDefinirSenha(JSON.stringify({ nova_senha: senha }));
+    assertEquals(r.status, 422, JSON.stringify(senha));
+    assertEquals(r.corpo.code, "senha_fraca", JSON.stringify(senha));
+    assertEquals(r.corpo.details, "nova_senha", JSON.stringify(senha));
+    assertEquals(r.chamadas, 0, JSON.stringify(senha));
+  }
+});
+
+Deno.test("definir-senha: corpo que não é um objeto JSON é 422 campo_invalido (corpo), e nada é chamado", async () => {
+  for (const corpo of ["[]", '"texto"', "42", "{nao-json"]) {
+    const r = await recusarDefinirSenha(corpo);
+    assertEquals(r.status, 422, corpo);
+    assertEquals(r.corpo.code, "campo_invalido", corpo);
+    assertEquals(r.corpo.details, "corpo", corpo);
+    assertEquals(r.chamadas, 0, corpo);
+  }
+});
