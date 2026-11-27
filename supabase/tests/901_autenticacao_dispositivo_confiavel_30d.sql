@@ -324,7 +324,7 @@ select is(
 );
 
 -- Com cooldown configurado para 30s: < 30s bloqueia, >= 30s libera, e teto 3 continua valendo
-update privado.config_auth set cooldown_reenvio_otp_segundos = 30 where id = 1;
+update privado.config_auth set cooldown_reenvio_otp_segundos = 30 where unica = true;
 
 update privado.desafios_dispositivo
    set ultimo_reenvio_em = now() - interval '25 seconds'
@@ -366,7 +366,7 @@ select is(
   'quarto reenvio é bloqueado pelo teto de 3 reenvios por desafio'
 );
 
-update privado.config_auth set cooldown_reenvio_otp_segundos = 60 where id = 1;
+update privado.config_auth set cooldown_reenvio_otp_segundos = 60 where unica = true;
 
 -- ── 15. Revogação imediata online (JWT já emitido com dispositivo_verificado=true é bloqueado) ─
 select set_config('request.jwt.claims', json_build_object(

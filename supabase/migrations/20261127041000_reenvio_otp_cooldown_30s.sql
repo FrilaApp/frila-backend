@@ -23,7 +23,7 @@ begin
   select coalesce(c.cooldown_reenvio_otp_segundos, 60)
     into v_cooldown
     from privado.config_auth c
-   where c.id = 1;
+   where c.unica = true;
 
   v_cooldown := case when v_cooldown in (30, 60) then v_cooldown else 60 end;
 
