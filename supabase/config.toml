@@ -209,8 +209,9 @@ double_confirm_changes = true
 enable_confirmations = false
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
-# Reenvio no mínimo a cada 30 s (alinhado ao cooldown de reenvio OTP e teto de 3 reenvios).
-max_frequency = "30s"
+# Reenvio no mínimo a cada 60 s (default seguro; reduzir para 30 s apenas em conjunto com
+# privado.config_auth.cooldown_reenvio_otp_segundos e Auth DEV/Prod).
+max_frequency = "60s"
 # Código de 6 dígitos, como o contrato promete em /verify.
 otp_length = 6
 # Dez minutos. O padrão é uma hora, e um código de entrada que vale uma hora é um
@@ -498,7 +499,7 @@ verify_jwt = false
 enabled = true
 verify_jwt = false
 
-# Reenvio de OTP do desafio login_dispositivo mantendo desafio_id, com cooldown 30s e teto de 3 reenvios.
+# Reenvio de OTP do desafio login_dispositivo mantendo desafio_id, com cooldown configurável (default 60s, mín 30s) e teto de 3 reenvios.
 [functions.reenviar-dispositivo-otp]
 enabled = true
 verify_jwt = false

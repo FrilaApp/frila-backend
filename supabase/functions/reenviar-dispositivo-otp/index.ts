@@ -1,8 +1,9 @@
 // Edge Function: POST /functions/v1/reenviar-dispositivo-otp
 //
 // Reenvia o OTP de um desafio `login_dispositivo` ativo mantendo o mesmo `desafio_id`,
-// sem incrementar o contador `tentativas` de verificação do código, com cooldown de 30s,
-// teto de 3 reenvios por desafio e rate limits por IP/e-mail.
+// sem incrementar o contador `tentativas` de verificação do código, com cooldown configurável
+// em `privado.config_auth` (default seguro 60s, mínimo 30s), teto de 3 reenvios por desafio
+// e rate limits por IP/e-mail.
 
 import postgres from "npm:postgres@3.4.4";
 import { comCors } from "../_compartilhado/cors.ts";
@@ -22,6 +23,7 @@ export interface ReenviarDesafioDb {
     email_normalizado?: string;
     email_hash?: string;
     expira_em?: string;
+    cooldown_segundos?: number;
   }>;
 }
 
@@ -124,11 +126,19 @@ export async function tratarReenviarDispositivoOtp(
     if (resOtp.status === 429) return recusa(429, "limite_excedido");
     if (!resOtp.ok) return recusa(503, "indisponivel");
 
+    const cooldownEfetivo =
+      typeof reserva.cooldown_segundos === "number" &&
+        Number.isInteger(reserva.cooldown_segundos) &&
+        reserva.cooldown_segundos >= 30 &&
+        reserva.cooldown_segundos <= 300
+        ? reserva.cooldown_segundos
+        : 60;
+
     return responderJson(200, {
       ok: true,
       desafio_id: reserva.desafio_id ?? desafioId,
       expira_em: reserva.expira_em,
-      reenviar_em_segundos: 30,
+      reenviar_em_segundos: cooldownEfetivo,
     });
   } finally {
     await sqlDb?.fechar();

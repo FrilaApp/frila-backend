@@ -41,9 +41,68 @@ Deno.test("reenviar-dispositivo-otp: mantém desafio_id, dispara OTP create_user
   const body = await res.json();
   assertEquals(body.ok, true);
   assertEquals(body.desafio_id, id);
-  assertEquals(body.reenviar_em_segundos, 30);
+  assertEquals(body.reenviar_em_segundos, 60);
   assertEquals(payloadsOtp[0]?.email, "ana@frila.test");
   assertEquals(payloadsOtp[0]?.create_user, false);
+});
+
+Deno.test("reenviar-dispositivo-otp: propaga cooldown_segundos efetivo (30s) e repassa 429 do GoTrue sem inventar espera", async () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const req30 = new Request("https://local/functions/v1/reenviar-dispositivo-otp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ desafio_id: id }),
+  });
+  const res30 = await tratarReenviarDispositivoOtp(req30, {
+    fetchFn: () => Promise.resolve(Response.json({})),
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    db: {
+      consumirRateLimit: () => Promise.resolve(true),
+      reservarReenvioDesafio: () =>
+        Promise.resolve({
+          status: "ok",
+          desafio_id: id,
+          email_normalizado: "ana@frila.test",
+          email_hash: "hash-ana",
+          expira_em: "2026-11-25T00:15:00Z",
+          cooldown_segundos: 30,
+        }),
+    },
+  });
+  assertEquals(res30.status, 200);
+  assertEquals((await res30.json()).reenviar_em_segundos, 30);
+
+  const req429 = new Request("https://local/functions/v1/reenviar-dispositivo-otp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ desafio_id: id }),
+  });
+  const res429 = await tratarReenviarDispositivoOtp(req429, {
+    fetchFn: () =>
+      Promise.resolve(
+        Response.json(
+          { error_code: "over_email_send_rate_limit", msg: "For security purposes, you can only request this after 45 seconds." },
+          { status: 429 },
+        ),
+      ),
+    supabaseUrl: "https://proj.supabase.co",
+    anonKey: "anon-test",
+    db: {
+      consumirRateLimit: () => Promise.resolve(true),
+      reservarReenvioDesafio: () =>
+        Promise.resolve({
+          status: "ok",
+          desafio_id: id,
+          email_normalizado: "ana@frila.test",
+          email_hash: "hash-ana",
+          expira_em: "2026-11-25T00:15:00Z",
+          cooldown_segundos: 30,
+        }),
+    },
+  });
+  assertEquals(res429.status, 429);
+  assertEquals((await res429.json()).code, "limite_excedido");
 });
 
 Deno.test("reenviar-dispositivo-otp: cooldown/teto devolve 429, expirado 410, já usado 409", async () => {
