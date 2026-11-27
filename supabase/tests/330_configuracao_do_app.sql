@@ -86,6 +86,7 @@ select is(
     'versao_recomendada', '0.1.0',
     'url_da_loja',        'https://apps.apple.com/app/id6815311991',
     'mensagem',           null,
+    'reenviar_otp_em_segundos', 60,
     'recursos',           jsonb_build_object('foto_de_perfil', false, 'chamada_direta', false, 'perfil_rico', false,
                                              'checkin_por_codigo', false,
                                              'busca_profissionais', false)),
@@ -94,8 +95,8 @@ select is(
 select is(
   (select array_agg(k order by k)
      from jsonb_object_keys(pg_temp.anonimo($$ select public.configuracao_do_app('ios') $$)) k),
-  array['mensagem','plataforma','recursos','url_da_loja','versao_minima','versao_recomendada'],
-  'ConfiguracaoDoApp: os cinco campos do contrato, mensagem presente mesmo nula, e os recursos (0.2.54)');
+  array['mensagem','plataforma','recursos','reenviar_otp_em_segundos','url_da_loja','versao_minima','versao_recomendada'],
+  'ConfiguracaoDoApp: os cinco campos do contrato, mensagem presente mesmo nula, recursos (0.2.54) e reenviar_otp_em_segundos (0.2.120)');
 
 select is(
   pg_temp.anonimo($$ select public.configuracao_do_app('ios') $$) -> 'mensagem',
@@ -121,6 +122,7 @@ select is(
     'versao_recomendada', '1.3.0',
     'url_da_loja',        'https://apps.apple.com/app/id6815311991',
     'mensagem',           'Corrigimos um defeito grave. Atualize para continuar.',
+    'reenviar_otp_em_segundos', 60,
     'recursos',           jsonb_build_object('foto_de_perfil', false, 'chamada_direta', false, 'perfil_rico', false,
                                              'checkin_por_codigo', false,
                                              'busca_profissionais', false)),

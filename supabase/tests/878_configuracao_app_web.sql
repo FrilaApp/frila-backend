@@ -33,6 +33,7 @@ select is(
     'versao_recomendada', '0.1.0',
     'url_da_loja',        'https://frilabr.com/app',
     'mensagem',           null,
+    'reenviar_otp_em_segundos', 60,
     'recursos',           jsonb_build_object(
       'foto_de_perfil', false,
       'chamada_direta', false,
