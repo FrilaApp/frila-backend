@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Frila API
-  version: 0.2.118
+  version: 0.2.120
   summary: Contrato entre o app do Frila, em iOS, Android e web, e o backend no Supabase.
   description: |
     Contrato escrito **antes** do backend (decisão B16, 21/09/2026), para que iOS, Android e web
@@ -116,6 +116,32 @@ info:
     | 429 | `limite_excedido` | Limite de requisições |
 
     ## Estado
+
+    **Versão 0.2.120, de 27/11/2026.** Atualiza `POST /functions/v1/reenviar-dispositivo-otp`
+    (`reenviarDispositivoOtp`) para explicitar cooldown efetivo configurável no servidor (padrão 60 segundos;
+    objetivo de 30 segundos condicionado ao alinhamento de `max_frequency` no Auth do ambiente), preservando
+    teto de 3 reenvios por desafio, reserva atômica pré-envio (contabilizada mesmo em `429` ou falha Auth,
+    sem rollback) e obrigatoriedade de os clientes respeitarem `reenviar_em_segundos` efetivo devolvido pelo
+    servidor; adiciona também o campo opcional `reenviar_em_segundos` na resposta `desafio_otp` de
+    `POST /functions/v1/autenticar-senha` e o campo opcional `reenviar_otp_em_segundos` em
+    `ConfiguracaoDoApp` (`/rpc/configuracao_do_app`). Check-in presencial (60 s) permanece inalterado.
+
+    **Versão 0.2.119, de 26/11/2026.** Operação nova, `solicitar_upload_midia_v2`: devolve o token de
+    envio da foto em campo próprio (`upload_token`) e uma `upload_url` **sem** token na query. O app
+    manda o token no cabeçalho `X-Upload-Token` do `PUT` para `enviar-midia`. Motivo (B-102, Fase 2):
+    o Supabase grava a URL inteira dos pedidos às Edge Functions nos logs da plataforma
+    (`function_edge_logs`), e com o token na query ele ia junto (CWE-532, exposição de informação em
+    log). O token é de uso único e a 0.2.110 já reduziu a validade para 15 min; a v2 tira o token do
+    log. Adição compatível, por isso sobe o patch: parâmetros de entrada e recusas iguais aos da
+    `solicitar_upload_midia`; a resposta da v2 não traz `upload_url_miniatura` (descontinuado na
+    0.2.57). **O que não muda:** `solicitar_upload_midia` (v1) continua valendo, sem aviso de
+    descontinuação, até a versão mínima do app subir; `confirmar_upload_midia` segue igual. **O que
+    fica para depois:** a migração da `solicitar_upload_midia_v2` e o cabeçalho `X-Upload-Token` em
+    `enviar-midia` (frila-backend), e a troca da chamada nos apps; enquanto o backend não entrega, a
+    operação existe só neste contrato. Os rascunhos #257 (0.2.98), #305 (0.2.108), #306 (0.2.109)
+    e #322 (0.2.114) reservaram números abaixo da 0.2.118 que já está na `main`; quem for mesclar renumera.
+
+    ---
 
     **Versão 0.2.118, de 26/11/2026.** Registra a decisão formal da `ADR-003` (Opção A, 26/11/2026)
     para `POST /functions/v1/autenticar-social` (`autenticarSocial`): aceito o *Automatic Identity
@@ -859,8 +885,9 @@ info:
       `false`. É o interruptor do servidor: no Prod, os dois nascem desligados até o jurídico e o
       ROPA liberarem. Recurso desligado: as operações dele respondem `403 sem_permissao` com
       `details: recurso_desligado`, e o app esconde a entrada.
-    - **Mídia:** `solicitar_upload_midia` (URL de envio de uso único por 15 min, bucket privado; 0.2.63, prazo 0.2.110),
-      `confirmar_upload_midia` (só enfileira a análise; nada é publicado antes da decisão),
+    - **Mídia:** `solicitar_upload_midia` (URL de envio de uso único por 15 min, bucket privado; 0.2.63, prazo 0.2.110)
+      e `solicitar_upload_midia_v2` (0.2.119: o token vai em `upload_token`, fora da URL, e o app o manda no
+      cabeçalho `X-Upload-Token`), `confirmar_upload_midia` (só enfileira a análise; nada é publicado antes da decisão),
       `remover_midia`, `minhas_midias` e `pedir_nova_analise_midia` (uma vez por foto, com modelo
       mais forte). Só `foto_perfil`; outro `tipo` é recusado com
       `422 midia_invalida` (`tipo_indisponivel`).
@@ -2827,6 +2854,10 @@ paths:
         `estabelecimento_id` para a foto ou logo da casa, por membro da casa). Outro `tipo` é
         `422 midia_invalida` (`tipo_indisponivel`). Formato fora de JPEG é `formato`; acima de 5 MB,
         `tamanho`. Trocar a foto é enviar outra: a anterior aprovada continua até a nova ser aprovada.
+
+        **0.2.119.** O token desta `upload_url` vai na query e, por isso, aparece nos logs de requisição
+        da plataforma. A operação não muda e segue valendo, sem descontinuação, até a versão mínima do
+        app subir. O app que já trata o token fora da URL usa `solicitar_upload_midia_v2`.
       x-requisitos: [RN37, RN46]
       requestBody:
         required: true
@@ -2867,6 +2898,92 @@ paths:
                     description: 0.2.57. Descontinuado antes de ser usado; o servidor gera a miniatura. Pode vir ausente.
                     type: string
                     format: uri
+                  expira_em:
+                    $ref: '#/components/schemas/Instante'
+        '401':
+          $ref: '#/components/responses/NaoAutenticado'
+        '403':
+          description: |
+            `sem_permissao` com `details: recurso_desligado` quando `foto_de_perfil` está desligado em
+            todas as plataformas (0.2.105: o servidor não recebe a plataforma; o desligado por plataforma ou
+            por versão é o app que esconde, pela `configuracao_do_app`); `conta_suspensa` quando a conta está
+            suspensa.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Erro'
+        '422':
+          $ref: '#/components/responses/RegraRecusou'
+
+  /rpc/solicitar_upload_midia_v2:
+    post:
+      tags: [Cadastro e perfil]
+      operationId: solicitarUploadMidiaV2
+      summary: Pedir a URL e o token para enviar uma foto, com o token fora da URL
+      description: |
+        0.2.119. Faz o mesmo que `solicitar_upload_midia` (cria a mídia em `enviando`, para o bucket
+        privado `midia-perfil`, com as mesmas regras de `tipo`, formato, tamanho, dono e permissão), mas
+        devolve o token de envio em campo próprio. Motivo: o Supabase grava a URL inteira dos pedidos às
+        Edge Functions nos logs da plataforma (`function_edge_logs`); com o token na query da
+        `upload_url` da v1, o token ia junto para o log (CWE-532). Na v2 a `upload_url` não carrega
+        token, e o log só vê o `midia_id`.
+
+        **Envio.** O app faz `PUT` na `upload_url` (Edge Function `enviar-midia`) com o JPEG no corpo,
+        `Content-Type: image/jpeg` e o cabeçalho **`X-Upload-Token: <upload_token>`**, **sem** o token da
+        sessão. O token nunca vai na URL. O resto vale como na v1: o token é opaco e de **uso único**, o
+        servidor guarda só o seu hash, 2xx quer dizer gravado, e qualquer outra resposta é falha que não
+        grava nada (token ausente, inválido, vencido ou já usado, mídia fora de `enviando`, corpo acima
+        de 5 MB ou fora de JPEG). Para tentar de novo, o app pede outra URL e outro token. Depois do 2xx,
+        `confirmar_upload_midia` segue igual.
+
+        O prazo é o da v1 (15 min desde a 0.2.110) e `expira_em` informa o instante. A resposta não
+        traz `upload_url_miniatura`: o servidor gera a miniatura (0.2.57). Nenhum código de recusa novo:
+        as recusas são as da `solicitar_upload_midia`.
+
+        **Coexistência.** `solicitar_upload_midia` (v1) continua valendo até a versão mínima do app
+        subir; o app escolhe uma das duas por pedido. O `upload_token` é um segredo: o app não o grava
+        em disco, não o registra em log nem o envia em telemetria.
+      x-requisitos: [RN37, RN46]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tipo, mime, bytes]
+              properties:
+                tipo:
+                  $ref: '#/components/schemas/TipoMidia'
+                mime:
+                  type: string
+                  example: image/jpeg
+                bytes:
+                  type: integer
+                  minimum: 1
+                estabelecimento_id:
+                  description: Para a foto ou o logo da casa. Exige ser membro do estabelecimento.
+                  $ref: '#/components/schemas/Uuid'
+      responses:
+        '200':
+          description: Mídia criada, URL de envio sem token e token de envio.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [midia_id, upload_url, upload_token, expira_em]
+                properties:
+                  midia_id:
+                    $ref: '#/components/schemas/Uuid'
+                  upload_url:
+                    description: URL da Edge Function `enviar-midia`, só com `midia_id` na query e **sem token**. `PUT` com o JPEG e o cabeçalho `X-Upload-Token`, sem o token da sessão.
+                    type: string
+                    format: uri
+                  upload_token:
+                    description: Token de envio, de uso único e válido até `expira_em`. 64 caracteres hexadecimais em minúsculas. Vai no cabeçalho `X-Upload-Token` do `PUT`, nunca na URL. É segredo; não se registra em log.
+                    type: string
+                    pattern: '^[0-9a-f]{64}$'
+                    minLength: 64
+                    maxLength: 64
                   expira_em:
                     $ref: '#/components/schemas/Instante'
         '401':
@@ -6976,6 +7093,9 @@ paths:
                         format: date-time
                       descartar_device_token:
                         type: boolean
+                      reenviar_em_segundos:
+                        type: integer
+                        description: Cooldown efetivo configurado no servidor (padrão 60s; 30s após alinhamento do Auth do ambiente). Campo opcional para retrocompatibilidade.
         '401':
           $ref: '#/components/responses/NaoAutenticado'
         '422':
@@ -7078,9 +7198,14 @@ paths:
       operationId: reenviarDispositivoOtp
       summary: Reenviar código OTP de um desafio login_dispositivo ativo
       description: |
-        0.2.112. Mantém o mesmo `desafio_id`, não incrementa tentativas de verificação do código,
-        exige cooldown mínimo de 60 segundos e teto de 3 reenvios por desafio, disparando OTP com
-        `create_user: false` para o e-mail resolvido no servidor.
+        0.2.112 (atualizado 0.2.120). Mantém o mesmo `desafio_id`, não incrementa tentativas de
+        verificação do código, exige cooldown efetivo configurável no servidor (padrão 60 segundos;
+        objetivo de 30 segundos condicionado ao alinhamento do `max_frequency` no Auth do ambiente)
+        e teto de 3 reenvios por desafio, disparando OTP com `create_user: false` para o e-mail
+        resolvido no servidor. A tentativa é reservada e contabilizada atomicamente antes do envio
+        ao provedor Auth (inclusive em caso de `429` ou falha transitória, sem rollback). `429`
+        ainda pode ocorrer por outros fluxos ao mesmo e-mail ou limites globais SMTP/Auth. Clientes
+        devem respeitar `reenviar_em_segundos` efetivo devolvido pelo servidor.
       security:
         - chaveDoProjeto: []
       x-requisitos: [RF01]
@@ -10114,6 +10239,12 @@ components:
             virar tela vazia.
         recursos:
           $ref: '#/components/schemas/RecursosDoApp'
+        reenviar_otp_em_segundos:
+          type: integer
+          description: |
+            0.2.120. Cooldown efetivo de reenvio OTP configurado no servidor (30 ou 60, padrão 60).
+            Campo opcional para retrocompatibilidade; descreve a política efetiva do backend e não
+            prova sozinho `max_frequency` do Auth (virada para 30 depende de alinhamento operacional).
 
     # ── Dispositivos e conta
 
