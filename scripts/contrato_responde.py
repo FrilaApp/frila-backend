@@ -475,6 +475,9 @@ PENDENTES = {
     # nomes de parâmetro do contrato.
     # Escala de evento (0.2.96): o espelho 0.2.100 entra antes da RPC, que chega no PR #537. Sai daqui
     # no PR que a implementa.
+    # Upload de mídia v2 (0.2.119, frila-docs#309): espelho 0.2.120 entra antes da RPC; sai daqui no PR
+    # que implementar solicitar_upload_midia_v2.
+    "solicitarUploadMidiaV2": "upload de mídia v2 (0.2.119, frila-docs#309), ainda sem implementação na develop",
 }
 
 def recusas_declaradas(doc):
