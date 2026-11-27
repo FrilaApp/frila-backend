@@ -4,7 +4,7 @@
 -- preservação de sessões legadas pré-corte, expiração pelo relógio do banco,
 -- isolamento entre contas, replay/concorrência de desafios e revogação no reset/logout global.
 begin;
-select plan(37);
+select plan(42);
 
 -- ── 1. Privilégios: tabelas e funções privadas inacessíveis a anon/authenticated ─
 select ok(
@@ -298,7 +298,7 @@ select is(
   'sessão verificada por OTP com dispositivo_id IS NULL (lembrar_dispositivo=false) recebe dispositivo_verificado = true'
 );
 
--- ── 14. Reenvio de desafio mantém desafio_id, respeita cooldown 60s e não soma tentativas ─
+-- ── 14. Reenvio de desafio mantém desafio_id, respeita cooldown configurável (default 60s, mín 30s) e teto 3 ─
 create temp table t_reenvio as
 select (privado.criar_desafio_dispositivo(
   'b2222222-2222-4222-8222-222222222222'::uuid,
@@ -310,7 +310,7 @@ select (privado.criar_desafio_dispositivo(
 select is(
   (privado.reservar_reenvio_desafio(((select res ->> 'desafio_id' from t_reenvio)::uuid)) ->> 'status'),
   'limite_excedido',
-  'reenvio imediato (< 60s após criação) é bloqueado por cooldown'
+  'reenvio imediato (< 60s default) é bloqueado por cooldown'
 );
 
 update privado.desafios_dispositivo
@@ -318,10 +318,62 @@ update privado.desafios_dispositivo
  where id = (select (res ->> 'desafio_id')::uuid from t_reenvio);
 
 select is(
+  (privado.reservar_reenvio_desafio(((select res ->> 'desafio_id' from t_reenvio)::uuid)) ->> 'cooldown_segundos'),
+  '60',
+  'reenvio após 60s default libera e informa cooldown_segundos = 60'
+);
+
+-- Com cooldown configurado para 30s: < 30s bloqueia, >= 30s libera, e teto 3 continua valendo
+update privado.config_auth set cooldown_reenvio_otp_segundos = 30 where unica = true;
+
+update privado.desafios_dispositivo
+   set ultimo_reenvio_em = now() - interval '25 seconds'
+ where id = (select (res ->> 'desafio_id')::uuid from t_reenvio);
+
+select is(
+  (privado.reservar_reenvio_desafio(((select res ->> 'desafio_id' from t_reenvio)::uuid)) ->> 'status'),
+  'limite_excedido',
+  'com cooldown 30s, reenvio aos 25s é bloqueado'
+);
+
+update privado.desafios_dispositivo
+   set ultimo_reenvio_em = now() - interval '31 seconds'
+ where id = (select (res ->> 'desafio_id')::uuid from t_reenvio);
+
+select is(
+  (privado.reservar_reenvio_desafio(((select res ->> 'desafio_id' from t_reenvio)::uuid)) ->> 'cooldown_segundos'),
+  '30',
+  'com cooldown 30s, reenvio aos 31s libera e informa cooldown_segundos = 30'
+);
+
+update privado.desafios_dispositivo
+   set ultimo_reenvio_em = now() - interval '31 seconds'
+ where id = (select (res ->> 'desafio_id')::uuid from t_reenvio);
+
+select is(
   (privado.reservar_reenvio_desafio(((select res ->> 'desafio_id' from t_reenvio)::uuid)) ->> 'status'),
   'ok',
-  'reenvio após 60s mantém o mesmo desafio_id sem incrementar tentativas de verificação'
+  'terceiro reenvio (teto 3) ainda é permitido após 30s'
 );
+
+update privado.desafios_dispositivo
+   set ultimo_reenvio_em = now() - interval '31 seconds'
+ where id = (select (res ->> 'desafio_id')::uuid from t_reenvio);
+
+select is(
+  (privado.reservar_reenvio_desafio(((select res ->> 'desafio_id' from t_reenvio)::uuid)) ->> 'status'),
+  'limite_excedido',
+  'quarto reenvio é bloqueado pelo teto de 3 reenvios por desafio'
+);
+
+select throws_ok(
+  $$ update privado.config_auth set cooldown_reenvio_otp_segundos = 45 where unica = true $$,
+  '23514',
+  null,
+  'config_auth rejeita cooldown_reenvio_otp_segundos fora de (30, 60)'
+);
+
+update privado.config_auth set cooldown_reenvio_otp_segundos = 60 where unica = true;
 
 -- ── 15. Revogação imediata online (JWT já emitido com dispositivo_verificado=true é bloqueado) ─
 select set_config('request.jwt.claims', json_build_object(
