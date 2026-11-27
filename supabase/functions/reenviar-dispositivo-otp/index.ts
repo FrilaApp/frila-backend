@@ -126,13 +126,9 @@ export async function tratarReenviarDispositivoOtp(
     if (resOtp.status === 429) return recusa(429, "limite_excedido");
     if (!resOtp.ok) return recusa(503, "indisponivel");
 
-    const cooldownEfetivo =
-      typeof reserva.cooldown_segundos === "number" &&
-        Number.isInteger(reserva.cooldown_segundos) &&
-        reserva.cooldown_segundos >= 30 &&
-        reserva.cooldown_segundos <= 300
-        ? reserva.cooldown_segundos
-        : 60;
+    const cooldownEfetivo = reserva.cooldown_segundos === 30 || reserva.cooldown_segundos === 60
+      ? reserva.cooldown_segundos
+      : 60;
 
     return responderJson(200, {
       ok: true,

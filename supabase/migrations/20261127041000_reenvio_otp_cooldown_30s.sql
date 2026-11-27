@@ -5,7 +5,7 @@
 
 alter table privado.config_auth
   add column if not exists cooldown_reenvio_otp_segundos integer not null default 60
-  check (cooldown_reenvio_otp_segundos between 30 and 300);
+  check (cooldown_reenvio_otp_segundos in (30, 60));
 
 create or replace function privado.reservar_reenvio_desafio(
   p_desafio_id uuid
@@ -25,7 +25,7 @@ begin
     from privado.config_auth c
    where c.id = 1;
 
-  v_cooldown := greatest(30, least(300, coalesce(v_cooldown, 60)));
+  v_cooldown := case when v_cooldown in (30, 60) then v_cooldown else 60 end;
 
   -- Mantém o mesmo desafio_id e NÃO incrementa tentativas de verificação OTP.
   -- Exige cooldown mínimo configurável (default 60s, mínimo 30s) e teto de 3 reenvios por desafio.
