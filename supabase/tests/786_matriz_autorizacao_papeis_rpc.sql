@@ -28,7 +28,7 @@ set local frila.agendador_secret = 'segredo-de-teste';
 -- funcao levanta segredo_ausente, de proposito (RN14, cartao 86CC7PW3).
 select vault.create_secret('jwt-sintetico-da-matriz-786-com-mais-de-32-caracteres', 'storage_jwt_secret');
 
-select plan(286);
+select plan(290);
 
 -- 2. Censo rigoroso do catalogo de rotinas publicas
 select is(
@@ -36,8 +36,8 @@ select is(
    where p.pronamespace = 'public'::regnamespace
      and p.prosecdef = true
      and p.proname not in ('rls_auto_enable')),
-  79::bigint,
-  'censo de RPCs: schema public contem exatamente 79 RPCs expostas (com buscar_profissionais, 0.2.88, aceitar_termos, 0.2.90, publicar_escala, 0.2.96, vaga_publica, 0.2.100, membros_do_estabelecimento, 0.2.103, e estado_autenticacao, 0.2.112)'
+  80::bigint,
+  'censo de RPCs: schema public contem exatamente 80 RPCs expostas (com buscar_profissionais, 0.2.88, aceitar_termos, 0.2.90, publicar_escala, 0.2.96, vaga_publica, 0.2.100, membros_do_estabelecimento, 0.2.103, e estado_autenticacao, 0.2.112)'
 );
 
 -- 3. Fixtures e contas representativas da matriz
@@ -665,19 +665,22 @@ select is(pg_temp.testar_autorizacao(papel,conta,
    when 'solicitar_upload_midia' then case when rotulo='profissional'
      then $$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1)$$
      else $$select public.solicitar_upload_midia('foto_perfil','image/jpeg',1,'78600000-0000-4000-8000-000000000010')$$ end
+   when 'solicitar_upload_midia_v2' then case when rotulo='profissional'
+     then $$select public.solicitar_upload_midia_v2('foto_perfil','image/jpeg',1)$$
+     else $$select public.solicitar_upload_midia_v2('foto_perfil','image/jpeg',1,'78600000-0000-4000-8000-000000000010')$$ end
    when 'minhas_midias' then 'select public.minhas_midias()'
    else format('select public.%I(%L)',operacao,case when rotulo='profissional'
      then '78600000-0000-4000-8000-000000000801' else '78600000-0000-4000-8000-000000000802' end)
  end),
  case when papel='anon' then '42501_SEM_EXECUTE'
-   when rotulo='outro contratante' and operacao='solicitar_upload_midia' then '403_SEM_PERMISSAO'
+   when rotulo='outro contratante' and operacao in ('solicitar_upload_midia','solicitar_upload_midia_v2') then '403_SEM_PERMISSAO'
    when rotulo='outro contratante' and operacao in ('confirmar_upload_midia','remover_midia') then '404_NAO_ENCONTRADO'
    else 'AUTORIZADO' end, operacao || ' [' || rotulo || ']')
 from (values ('anon',null::uuid,'anon'),
  ('authenticated','78600000-0000-4000-8000-000000000003'::uuid,'profissional'),
  ('authenticated','78600000-0000-4000-8000-000000000002'::uuid,'outro contratante'),
  ('authenticated','78600000-0000-4000-8000-000000000001'::uuid,'dono')) papeis(papel,conta,rotulo)
-cross join unnest(array['solicitar_upload_midia','confirmar_upload_midia','remover_midia','minhas_midias']) operacao;
+cross join unnest(array['solicitar_upload_midia','solicitar_upload_midia_v2','confirmar_upload_midia','remover_midia','minhas_midias']) operacao;
 
 -- --- pedir_nova_analise_midia (0.2.54): dono e membro passam a autorização e caem na regra
 -- (a foto da matriz está `enviando`, não recusada); quem não é dono toma 404 ---
