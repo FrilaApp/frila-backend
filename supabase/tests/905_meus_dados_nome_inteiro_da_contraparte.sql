@@ -9,8 +9,9 @@
 --   1  meus_dados da Zélia: a contraparte do turno com a Ana sai com o nome inteiro (e não o curto)
 --   2  a mesma contraparte, lida pelo próprio contratante em meus_turnos (JWT), sai igual: um nome só nos dois caminhos
 --   3  o lado do profissional não muda: a contraparte da Ana continua sendo a casa
+--   2b quem não tem vínculo (outra casa; leitor nulo) lê o nome curto; 2c o comentário da função não está desatualizado
 begin;
-select plan(7);
+select plan(10);
 
 insert into privado.ambiente (id, eh_teste) values (true, true)
 on conflict (id) do update set eh_teste = true;
@@ -66,6 +67,24 @@ select is(
     where e->>'id' = (select turno::text from ids)),
   'Ana Ribeiro',
   'meus_turnos do contratante devolve o mesmo nome inteiro');
+
+-- ── 2b. Quem NÃO tem vínculo continua lendo o nome curto (a regra não virou "sempre inteiro") ───────────
+
+select is(
+  privado.turno_em_json((select turno from ids), 'b0000000-0000-4000-8000-000000000002') -> 'contraparte' ->> 'nome',
+  'Ana R.',
+  '#519: o contratante de OUTRA casa, sem vínculo com a Ana, lê o nome curto');
+
+select is(
+  privado.turno_em_json((select turno from ids), null) -> 'contraparte' ->> 'nome',
+  'Ana R.',
+  '#519: sem leitor (nulo) o nome também sai curto');
+
+-- ── 2c. O comentário do catálogo não promete mais o nome curto "até o ajuste" ─────────────────────────────
+
+select ok(
+  obj_description('privado.nome_do_profissional_para(uuid, uuid)'::regprocedure, 'pg_proc') not like '%até o ajuste%',
+  'o comentário de nome_do_profissional_para não diz mais que a exportação recebe o nome curto até o ajuste');
 
 -- ── 3. O lado do profissional não muda ───────────────────────────────────────
 

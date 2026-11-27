@@ -101,3 +101,8 @@ comment on function privado.turno_em_json(uuid, uuid) is
   'Turno com confirmado_em para janela simétrica do aviso a caminho (0.2.106); mantém coordenadas, cancelamento e avaliação. O nome da contraparte profissional segue o leitor `autor` (0.2.89, #519), não o JWT.';
 revoke execute on function privado.turno_em_json(uuid, uuid) from public, anon, authenticated;
 grant execute on function privado.turno_em_json(uuid, uuid) to service_role;
+
+-- O comentário de `nome_do_profissional_para` (20261116220000) prometia o nome curto na exportação "até o ajuste do
+-- turno_em_json". O ajuste entrou nesta migração: recria o comentário, no mesmo arquivo, para o catálogo não mentir.
+comment on function privado.nome_do_profissional_para(uuid, uuid) is
+  'O nome do profissional como o leitor o vê (contrato 0.2.89): inteiro para o próprio profissional e para o contratante com vínculo vigente (candidatura, turno ou equipe); "Maria L." para todo outro leitor; "Conta encerrada" para conta anonimizada. perfil_publico_profissional o usa com auth.uid(); privado.turno_em_json o usa com o leitor que recebe (`autor`), por isso a exportação do contratante (privado.meus_dados, pela Edge Function, sem sessão) e meus_turnos trazem o nome inteiro de quem tem turno com ele (#519).';
