@@ -78,7 +78,11 @@ export async function tratarDefinirSenha(req: Request, deps: DefinirSenhaDeps = 
   if (corpo.nova_senha === undefined || corpo.nova_senha === null) {
     return recusa(422, "campo_obrigatorio", "nova_senha");
   }
-  const novaSenha = typeof corpo.nova_senha === "string" ? corpo.nova_senha : "";
+  // `nova_senha` é `type: string` no contrato: número, lista, booleano e objeto são `campo_invalido`, não `senha_fraca`.
+  if (typeof corpo.nova_senha !== "string") {
+    return recusa(422, "campo_invalido", "nova_senha");
+  }
+  const novaSenha = corpo.nova_senha;
   if (novaSenha.length < 8) {
     return recusa(422, "senha_fraca", "nova_senha");
   }

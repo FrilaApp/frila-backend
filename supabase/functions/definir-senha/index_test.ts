@@ -224,3 +224,13 @@ Deno.test("definir-senha: corpo que não é um objeto JSON é 422 campo_invalido
     assertEquals(r.chamadas, 0, corpo);
   }
 });
+
+Deno.test("definir-senha: nova_senha que não é texto (número, lista, booleano, objeto) é 422 campo_invalido, e nada é chamado", async () => {
+  for (const corpo of ['{"nova_senha":12345678}', '{"nova_senha":["a"]}', '{"nova_senha":true}', '{"nova_senha":{}}']) {
+    const r = await recusarDefinirSenha(corpo);
+    assertEquals(r.status, 422, corpo);
+    assertEquals(r.corpo.code, "campo_invalido", corpo);
+    assertEquals(r.corpo.details, "nova_senha", corpo);
+    assertEquals(r.chamadas, 0, corpo);
+  }
+});
