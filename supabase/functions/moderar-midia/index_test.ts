@@ -739,6 +739,27 @@ Deno.test("handler: sem segredo ou com segredo errado responde 401 e não lê a 
   assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise");
 });
 
+Deno.test("handler: AGENDADOR_SECRET vazio falha fechado, mesmo com o cabeçalho vazio, e não lê a fila (ynwuzcDY)", async () => {
+  // O teste do handler sempre injeta MOCK_SECRET; o segredo vazio só era coberto na função compartilhada
+  // (_compartilhado/auth_test.ts). Como em despachar/index_test.ts, a configuração vazia é erro do operador: o handler
+  // lança antes de comparar o cabeçalho (e o Deno.serve responde 500), e "" nunca vale como segredo igual a "".
+  const mundo = novoMundo();
+  semear(mundo, MIDIA_1, IMAGEM_BOA);
+  const req = new Request("http://localhost/moderar-midia", {
+    method: "POST",
+    headers: { "x-agendador-secret": "", "Content-Type": "application/json" },
+  });
+
+  await assertRejects(
+    () => handler(req, criarDeps(mundo, { agendadorSecret: "" })),
+    Error,
+    "AGENDADOR_SECRET é obrigatório",
+  );
+
+  assertEquals(mundo.lerLoteArgs.length, 0);
+  assertEquals(mundo.midias.get(MIDIA_1)?.estado, "em_analise");
+});
+
 Deno.test("handler: recusa o segredo apenas por Authorization: Bearer sem x-agendador-secret (BE-03)", async () => {
   const mundo = novoMundo();
   const resp = await handler(
