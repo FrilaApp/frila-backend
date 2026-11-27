@@ -105,8 +105,8 @@ Deno.test("B-116: carimbo dentro de ±60 s passa e fora recusa (bordas 60 e 61)"
   }
 });
 
-Deno.test("B-116: carimbo que não é só dígitos (ou com mais de 12) recusa", async () => {
-  for (const carimbo of ["", "abc", "12.5", "-1", "1e9", " 1795000000", "1795000000 ", "1234567890123"]) {
+Deno.test("B-116: carimbo que não é só dígitos recusa", async () => {
+  for (const carimbo of ["", "abc", "12.5", "-1", "1e9", " 1795000000", "1795000000 "]) {
     const cab = await cabecalhos({ ip: "203.0.113.7", carimbo });
     assertStrictEquals(await verificarIpVisitanteAssinado(pedidoCru(cab), opcoes()), null, `carimbo '${carimbo}'`);
   }
@@ -272,7 +272,7 @@ Deno.test("resolverIpParaRateLimit: web com cabeçalhos válidos devolve o IP as
   assertEquals(r, { ok: true, ip: "203.0.113.7" });
 });
 
-Deno.test("resolverIpParaRateLimit: cabeçalhos B-116 vencidos ou adulterados são 403, mesmo no mobile", async () => {
+Deno.test("resolverIpParaRateLimit: com os 3 cabeçalhos B-116, vencidos ou adulterados são 403, também no mobile", async () => {
   const vencido = await cabecalhos({ ip: "203.0.113.7", carimbo: AGORA - 61 });
   assertEquals(
     await resolverIpParaRateLimit(pedido(vencido), "ios", opcoes()),
@@ -286,7 +286,7 @@ Deno.test("resolverIpParaRateLimit: cabeçalhos B-116 vencidos ou adulterados s�
   );
 });
 
-Deno.test("resolverIpParaRateLimit: cabeçalho B-116 forjado no mobile sem chaves é 503 (sem bypass)", async () => {
+Deno.test("resolverIpParaRateLimit: com os 3 cabeçalhos B-116 no mobile e sem chaves configuradas é 503", async () => {
   const cab = await cabecalhos({ ip: "203.0.113.7", carimbo: AGORA });
   const r = await resolverIpParaRateLimit(pedido(cab), "android", { chavesBrutas: "", agoraSegundos: AGORA });
   assertEquals(r, { ok: false, status: 503, code: "indisponivel" });
@@ -405,5 +405,85 @@ Deno.test("validarSessaoGoTrue: user ausente, não-objeto ou sem id string recus
 Deno.test("validarSessaoGoTrue: o que não é objeto devolve null", () => {
   for (const entrada of [null, undefined, "", "texto", 0, 42, true]) {
     assertStrictEquals(validarSessaoGoTrue(entrada), null, String(entrada));
+  }
+});
+
+// ── regras que ainda faltavam (parecer do time sobre o #654) ───────────────────────────────────
+
+Deno.test("resolverIpParaRateLimit: um cabeçalho B-116 sozinho já fecha (403), sem cair no cf-connecting-ip", async () => {
+  const cab = await cabecalhos({ ip: "203.0.113.7", carimbo: AGORA });
+  for (const [nome, valor] of Object.entries(cab)) {
+    assertEquals(
+      await resolverIpParaRateLimit(pedido({ [nome]: valor }, { "cf-connecting-ip": "198.51.100.1" }), "ios", opcoes()),
+      { ok: false, status: 403, code: "assinatura_ip_invalida" },
+      nome,
+    );
+  }
+});
+
+Deno.test("resolverIpParaRateLimit: x-forwarded-for nunca vira IP", async () => {
+  assertEquals(
+    await resolverIpParaRateLimit(pedido({ "x-forwarded-for": "198.51.100.9" }), "android", opcoes()),
+    { ok: true, ip: null },
+  );
+});
+
+Deno.test("resolverIpParaRateLimit: no mobile, 'origin' sem B-116 segue pelo cf-connecting-ip", async () => {
+  for (const plataforma of ["ios", "android"] as const) {
+    assertEquals(
+      await resolverIpParaRateLimit(
+        pedido({ origin: "https://exemplo.invalid", "cf-connecting-ip": "198.51.100.1" }),
+        plataforma,
+        opcoes(),
+      ),
+      { ok: true, ip: "198.51.100.1" },
+      plataforma,
+    );
+  }
+});
+
+Deno.test("B-116: sem relógio injetado, a janela usa a hora real", async () => {
+  const agora = Math.floor(Date.now() / 1000);
+  const novo = await cabecalhos({ ip: "203.0.113.7", carimbo: agora });
+  assertStrictEquals(await verificarIpVisitanteAssinado(pedido(novo), { chavesBrutas: CHAVES }), "203.0.113.7");
+  const velho = await cabecalhos({ ip: "203.0.113.7", carimbo: agora - 3600 });
+  assertStrictEquals(await verificarIpVisitanteAssinado(pedido(velho), { chavesBrutas: CHAVES }), null);
+});
+
+Deno.test("B-116: carimbo com 13 dígitos recusa mesmo valendo uma hora dentro da janela", async () => {
+  const cab = await cabecalhos({ ip: "203.0.113.7", carimbo: `000${AGORA}` });
+  assertStrictEquals(await verificarIpVisitanteAssinado(pedido(cab), opcoes()), null);
+});
+
+Deno.test("resolverIpParaRateLimit: em rota autenticada o escopo (uid) chega à verificação", async () => {
+  const doUid = await cabecalhos({ ip: "203.0.113.7", carimbo: AGORA, escopo: UID });
+  assertEquals(await resolverIpParaRateLimit(pedido(doUid), "web", opcoes({ escopo: UID })), { ok: true, ip: "203.0.113.7" });
+  const anonimo = await cabecalhos({ ip: "203.0.113.7", carimbo: AGORA });
+  assertEquals(
+    await resolverIpParaRateLimit(pedido(anonimo), "web", opcoes({ escopo: UID })),
+    { ok: false, status: 403, code: "assinatura_ip_invalida" },
+  );
+});
+
+Deno.test("resolverIpParaRateLimit: sem plataforma, 'origin' sem B-116 é 403 mesmo com cf-connecting-ip", async () => {
+  assertEquals(
+    await resolverIpParaRateLimit(
+      pedido({ origin: "https://exemplo.invalid", "cf-connecting-ip": "198.51.100.1" }),
+      null,
+      opcoes(),
+    ),
+    { ok: false, status: 403, code: "assinatura_ip_invalida" },
+  );
+});
+
+Deno.test("B-116: sem chaves nas opções, as chaves vêm de IP_VISITANTE_HMAC_CHAVES (verificação e resolver)", async () => {
+  const antes = Deno.env.get("IP_VISITANTE_HMAC_CHAVES");
+  try {
+    Deno.env.set("IP_VISITANTE_HMAC_CHAVES", CHAVES);
+    const cab = await cabecalhos({ ip: "203.0.113.7", carimbo: AGORA });
+    assertStrictEquals(await verificarIpVisitanteAssinado(pedido(cab), { agoraSegundos: AGORA }), "203.0.113.7");
+    assertEquals(await resolverIpParaRateLimit(pedido(cab), "web", { agoraSegundos: AGORA }), { ok: true, ip: "203.0.113.7" });
+  } finally {
+    if (antes === undefined) Deno.env.delete("IP_VISITANTE_HMAC_CHAVES"); else Deno.env.set("IP_VISITANTE_HMAC_CHAVES", antes);
   }
 });
