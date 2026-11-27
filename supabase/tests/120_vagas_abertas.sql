@@ -396,8 +396,8 @@ create temp table det as
 select is(
   (select array_agg(k order by k) from det, jsonb_object_keys((select j from det)) k),
   array['distancia_km','estabelecimento','estado','fim_em','funcao','id','inclusos',
-        'inicio_em','local','modo','observacoes','oculta','participa_rateio','ponto','posicoes',
-        'posicoes_abertas','publicado_em','regiao_administrativa','responsavel_local','traje','valor_centavos'],
+        'inicio_em','local','modo','observacoes','oculta','origem','participa_rateio','ponto','posicoes',
+        'posicoes_abertas','publicado_em','regiao_administrativa','responsavel_local','traje','vaga_origem_id','valor_centavos'],
   'o detalhe traz exatamente os campos do schema Vaga do contrato');
 
 -- RN10. O telefone da outra parte sai por `contato_do_turno`, depois da confirmação e
