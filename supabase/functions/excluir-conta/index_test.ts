@@ -709,6 +709,51 @@ Deno.test("resiliência: resposta malformada (JSON inválido) em /auth/v1/user r
   assertEquals(corpo, { code: "erro_interno", message: "erro_interno", details: null });
 });
 
+// Cartão C3o9kjC3 (item 112): o Auth fora do ar (5xx em /auth/v1/user) não é "token inválido". Dizer 401 faz o app derrubar a sessão de
+// quem só pegou o Auth num momento ruim; o certo é o mesmo 502 erro_interno que a função já devolve para timeout, falha de rede e
+// corpo ilegível do mesmo /auth/v1/user. Só 4xx do Auth (token recusado) continua 401.
+function depsComAuthRespondendo(status: number, ordem: string[]): HandlerDeps {
+  const deps = mockDeps({ ordem });
+  deps.fetchFn = (input, _init) => {
+    const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (urlStr.includes("/auth/v1/user")) {
+      return Promise.resolve(new Response(JSON.stringify({ message: "x" }), { status, headers: { "Content-Type": "application/json" } }));
+    }
+    return Promise.resolve(new Response("Not Found", { status: 404 }));
+  };
+  return deps;
+}
+
+function pedido(): Request {
+  return new Request("http://localhost", {
+    method: "POST",
+    headers: { Authorization: "Bearer token-valido", "Content-Type": "application/json" },
+    body: JSON.stringify({ confirmar: true }),
+  });
+}
+
+Deno.test("C3o9kjC3: 5xx do Auth em /auth/v1/user devolve 502 erro_interno, não 401, e não toca no banco", async () => {
+  for (const statusDoAuth of [500, 502, 503, 504, 599]) {
+    const ordem: string[] = [];
+    const resposta = await handler(pedido(), depsComAuthRespondendo(statusDoAuth, ordem));
+
+    assertEquals(resposta.status, 502, `Auth ${statusDoAuth}`);
+    assertEquals(await resposta.json(), { code: "erro_interno", message: "erro_interno", details: null }, `Auth ${statusDoAuth}`);
+    assertEquals(ordem, [], `Auth ${statusDoAuth}: nada pode ser registrado nem excluído`);
+  }
+});
+
+Deno.test("C3o9kjC3: 4xx do Auth continua 401 nao_autenticado (token recusado), e não toca no banco", async () => {
+  for (const statusDoAuth of [400, 401, 403, 404, 499]) {
+    const ordem: string[] = [];
+    const resposta = await handler(pedido(), depsComAuthRespondendo(statusDoAuth, ordem));
+
+    assertEquals(resposta.status, 401, `Auth ${statusDoAuth}`);
+    assertEquals(await resposta.json(), { code: "nao_autenticado", message: "nao_autenticado", details: null }, `Auth ${statusDoAuth}`);
+    assertEquals(ordem, [], `Auth ${statusDoAuth}: nada pode ser registrado nem excluído`);
+  }
+});
+
 Deno.test("porta: validacao estrita do formato Authorization Bearer rejeita malformados e aceita case-insensitive", async () => {
   const esquemasInvalidos = [
     "Basic dXNlcjpwYXNz",

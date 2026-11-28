@@ -161,6 +161,11 @@ async function tratar(req: Request, deps?: HandlerDeps): Promise<Response> {
   }
 
   if (!usuarioRes.ok) {
+    // Auth fora do ar (5xx) não é token inválido: 401 derrubaria a sessão de quem só o pegou num mau momento. Como o timeout, a falha
+    // de rede e o corpo ilegível logo acima e abaixo, é 502 erro_interno. 4xx do Auth é token recusado.
+    if (usuarioRes.status >= 500) {
+      return resposta(502, { code: "erro_interno", message: "erro_interno", details: null });
+    }
     return resposta(401, { code: "nao_autenticado", message: "nao_autenticado", details: null });
   }
 
