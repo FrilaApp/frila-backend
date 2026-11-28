@@ -41,6 +41,20 @@ export interface ConfiguracaoSmtp {
   tls: boolean;
 }
 
+const HOSTS_SMTP_LOCAIS = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "[::1]",
+  "host.docker.internal",
+  "mailpit",
+  "inbucket",
+]);
+
+export function ehHostSmtpLocal(host: string): boolean {
+  return HOSTS_SMTP_LOCAIS.has(host.trim().toLowerCase());
+}
+
 export function lerConfiguracaoSmtp(): ConfiguracaoSmtp | null {
   const host = Deno.env.get("SMTP_HOST")?.trim();
   // `SMTP_SENDER` é o nome que o `.env.example` da raiz já usava para o remetente do
@@ -49,12 +63,22 @@ export function lerConfiguracaoSmtp(): ConfiguracaoSmtp | null {
   const remetente = (Deno.env.get("EMAIL_REMETENTE") || Deno.env.get("SMTP_SENDER"))?.trim();
   if (!host || !remetente || !validarDestinatario(remetente) || !validarTextoCabecalhoSmtp(host)) return null;
 
+  const usuario = Deno.env.get("SMTP_USER")?.trim() || undefined;
+  const senha = Deno.env.get("SMTP_PASS")?.trim() || undefined;
+  const temUsuario = Boolean(usuario);
+  const temSenha = Boolean(senha);
+
+  // DEF-02: credencial SMTP parcial (só usuário ou só senha) falha fechado em qualquer ambiente;
+  // fora de host local (Mailpit/Inbucket), autenticação completa é obrigatória.
+  if (temUsuario !== temSenha) return null;
+  if (!temUsuario && !ehHostSmtpLocal(host)) return null;
+
   const porta = Number(Deno.env.get("SMTP_PORT") ?? "587");
   return {
     host,
     porta: Number.isFinite(porta) && porta > 0 ? porta : 587,
-    usuario: Deno.env.get("SMTP_USER")?.trim() || undefined,
-    senha: Deno.env.get("SMTP_PASS")?.trim() || undefined,
+    usuario,
+    senha,
     remetente,
     // 465 é TLS implícito; 587 e 25 sobem por STARTTLS. `SMTP_TLS=0` existe para o
     // Mailpit local, que não fala TLS nenhum.
@@ -116,6 +140,11 @@ export function criarEnvioSmtp(cfg: ConfiguracaoSmtp): Enviar {
       !validarDestinatario(cfg.remetente)
     ) {
       return { ok: false, codigo: "destinatario_invalido", transitorio: false };
+    }
+    const temUsuario = Boolean(cfg.usuario?.trim());
+    const temSenha = Boolean(cfg.senha?.trim());
+    if (temUsuario !== temSenha || (!temUsuario && !ehHostSmtpLocal(cfg.host))) {
+      return { ok: false, codigo: "falha_de_autenticacao", transitorio: false };
     }
     try {
       const { SMTPClient } = await import(

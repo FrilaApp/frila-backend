@@ -1903,3 +1903,78 @@ Deno.test("bB0tV5R8: a origem gravada por enviar-email é a que a sonda do banco
   assertEquals(gravada![1], lida![1]);
   assertEquals(gravada![1], "enviar_email");
 });
+
+Deno.test("DEF-02: lerConfiguracaoSmtp rejeita credencial parcial e ausência de auth em host não local", () => {
+  const chaves = ["SMTP_HOST", "EMAIL_REMETENTE", "SMTP_SENDER", "SMTP_PORT", "SMTP_TLS", "SMTP_USER", "SMTP_PASS"];
+  const backup = Object.fromEntries(chaves.map((k) => [k, Deno.env.get(k)]));
+  try {
+    Deno.env.set("EMAIL_REMETENTE", "noreply@frila.test");
+    Deno.env.delete("SMTP_SENDER");
+    Deno.env.set("SMTP_PORT", "587");
+    Deno.env.delete("SMTP_TLS");
+
+    // Host remoto sem usuário e sem senha -> rejeitado (null)
+    Deno.env.set("SMTP_HOST", "smtp.provedor.example");
+    Deno.env.delete("SMTP_USER");
+    Deno.env.delete("SMTP_PASS");
+    assertEquals(lerConfiguracaoSmtp(), null);
+
+    // Host remoto só com usuário -> rejeitado (null)
+    Deno.env.set("SMTP_USER", "user-only");
+    assertEquals(lerConfiguracaoSmtp(), null);
+
+    // Host remoto só com senha -> rejeitado (null)
+    Deno.env.delete("SMTP_USER");
+    Deno.env.set("SMTP_PASS", "pass-only");
+    assertEquals(lerConfiguracaoSmtp(), null);
+
+    // Host local só com usuário (parcial) -> também rejeitado (null)
+    Deno.env.set("SMTP_HOST", "127.0.0.1");
+    Deno.env.set("SMTP_USER", "user-only");
+    Deno.env.delete("SMTP_PASS");
+    assertEquals(lerConfiguracaoSmtp(), null);
+
+    // Host local sem credenciais (Mailpit/Inbucket) -> aceito
+    Deno.env.delete("SMTP_USER");
+    Deno.env.delete("SMTP_PASS");
+    for (const hostLocal of ["127.0.0.1", "localhost", "mailpit", "inbucket", "host.docker.internal"]) {
+      Deno.env.set("SMTP_HOST", hostLocal);
+      const cfgLocal = lerConfiguracaoSmtp();
+      assertEquals(cfgLocal?.host, hostLocal);
+      assertEquals(cfgLocal?.usuario, undefined);
+      assertEquals(cfgLocal?.senha, undefined);
+    }
+
+    // Host remoto com par completo -> aceito
+    Deno.env.set("SMTP_HOST", "smtp.provedor.example");
+    Deno.env.set("SMTP_USER", "usuario");
+    Deno.env.set("SMTP_PASS", "senha");
+    const cfgRemoto = lerConfiguracaoSmtp();
+    assertEquals(cfgRemoto?.host, "smtp.provedor.example");
+    assertEquals(cfgRemoto?.usuario, "usuario");
+    assertEquals(cfgRemoto?.senha, "senha");
+  } finally {
+    for (const [k, v] of Object.entries(backup)) {
+      if (v !== undefined) Deno.env.set(k, v);
+      else Deno.env.delete(k);
+    }
+  }
+});
+
+Deno.test("DEF-02: criarEnvioSmtp recusa envio com credencial parcial ou host remoto sem auth antes da rede", async () => {
+  const emailTeste: Email = {
+    para: "destino@frila.test",
+    assunto: "Teste DEF-02",
+    texto: "Corpo sintético",
+  };
+  const casos = [
+    { host: "smtp.provedor.example", porta: 587, remetente: "noreply@frila.test", tls: false },
+    { host: "smtp.provedor.example", porta: 587, remetente: "noreply@frila.test", tls: false, usuario: "so-user" },
+    { host: "smtp.provedor.example", porta: 587, remetente: "noreply@frila.test", tls: false, senha: "so-pass" },
+    { host: "localhost", porta: 1025, remetente: "noreply@frila.test", tls: false, usuario: "so-user" },
+  ];
+  for (const cfg of casos) {
+    const res = await criarEnvioSmtp(cfg)(emailTeste);
+    assertEquals(res, { ok: false, codigo: "falha_de_autenticacao", transitorio: false });
+  }
+});
