@@ -558,14 +558,25 @@ async function tratar(req: Request, deps?: HandlerDeps): Promise<Response> {
   const anon = obterVariavel("SUPABASE_ANON_KEY", deps?.anonKey);
 
   // 6. Autenticação e validação do token no Supabase Auth
-  const usuarioRes = await fetchFn(`${origem}/auth/v1/user`, {
-    headers: {
-      apikey: anon,
-      Authorization: autorizacao,
-      "Content-Type": "application/json",
-    },
-  });
+  let usuarioRes: Response;
+  try {
+    usuarioRes = await fetchFn(`${origem}/auth/v1/user`, {
+      headers: {
+        apikey: anon,
+        Authorization: autorizacao,
+        "Content-Type": "application/json",
+      },
+    });
+  } catch {
+    // Auth inalcançável não é token inválido: 401 desloga a pessoa, 502 pede para tentar de novo.
+    console.error("exportar-turnos: Auth inalcancavel");
+    return erro(502, "erro_interno");
+  }
 
+  if (usuarioRes.status >= 500) {
+    console.error("exportar-turnos: Auth indisponivel");
+    return erro(502, "erro_interno");
+  }
   if (!usuarioRes.ok) {
     return erro(401, "nao_autenticado");
   }

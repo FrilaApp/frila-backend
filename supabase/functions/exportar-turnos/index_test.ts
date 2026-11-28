@@ -1144,6 +1144,44 @@ Deno.test("exportar-turnos: usuario com id nao-string no Auth retorna 401 nao_au
   assertEquals(json.code, "nao_autenticado");
 });
 
+// Auth fora do ar não é token inválido: 401 desloga a pessoa (o app trata 401 como sessão perdida), e 502 pede só para tentar de novo.
+Deno.test("exportar-turnos: Auth com 5xx retorna 502 erro_interno, e nao 401, sem consultar o banco", async () => {
+  for (const status of [500, 502, 503, 504]) {
+    const e = criarEspiao();
+    e.fetchFn = () => Promise.resolve(new Response(JSON.stringify({ message: "error" }), { status }));
+    const res = await chamar(e, requisicao());
+    assertEquals(res.status, 502, `Auth ${status}`);
+    assertEquals((await res.json()).code, "erro_interno", `Auth ${status}`);
+    assertEquals(e.pedidos.length, 0, `Auth ${status}`);
+  }
+});
+
+Deno.test("exportar-turnos: falha de rede ao chamar o Auth retorna 502 erro_interno, e nao 401", async () => {
+  const e = criarEspiao();
+  e.fetchFn = () => Promise.reject(new TypeError("error sending request"));
+  const original = console.error;
+  console.error = () => {};
+  try {
+    const res = await chamar(e, requisicao());
+    assertEquals(res.status, 502);
+    assertEquals((await res.json()).code, "erro_interno");
+    assertEquals(e.pedidos.length, 0);
+  } finally {
+    console.error = original;
+  }
+});
+
+Deno.test("exportar-turnos: o Auth recusando o token (4xx) segue retornando 401 nao_autenticado", async () => {
+  for (const status of [400, 401, 403]) {
+    const e = criarEspiao();
+    e.fetchFn = () => Promise.resolve(new Response(JSON.stringify({ message: "invalid" }), { status }));
+    const res = await chamar(e, requisicao());
+    assertEquals(res.status, 401, `Auth ${status}`);
+    assertEquals((await res.json()).code, "nao_autenticado", `Auth ${status}`);
+    assertEquals(e.pedidos.length, 0, `Auth ${status}`);
+  }
+});
+
 Deno.test("exportar-turnos: corpo com JSON quebrado ou nao-objeto retorna 422 campo_obrigatorio formato", async () => {
   const e = criarEspiao();
   const reqQuebrado = new Request(`${URL_BASE}/functions/v1/exportar-turnos`, {
