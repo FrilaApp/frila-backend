@@ -59,13 +59,19 @@ export async function tratarRevogarDispositivos(
   }
 
   // Confirma identidade do titular direto no GoTrue.
-  const resUser = await fetchFn(`${supabaseUrl}/auth/v1/user`, {
-    method: "GET",
-    headers: {
-      "Authorization": `Bearer ${accessToken}`,
-      "apikey": anonKey,
-    },
-  });
+  // Falha de rede (ou timeout) aqui responde como o 5xx logo abaixo: 503 indisponivel, sem lançar.
+  let resUser: Response;
+  try {
+    resUser = await fetchFn(`${supabaseUrl}/auth/v1/user`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "apikey": anonKey,
+      },
+    });
+  } catch {
+    return recusa(503, "indisponivel");
+  }
 
   if (resUser.status === 429) return recusa(429, "limite_excedido");
   if (resUser.status >= 500) return recusa(503, "indisponivel");
