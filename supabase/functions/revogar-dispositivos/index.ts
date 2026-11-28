@@ -6,7 +6,7 @@
 import postgres from "npm:postgres@3.4.4";
 import { extrairBearerToken } from "../_compartilhado/auth.ts";
 import { comCors } from "../_compartilhado/cors.ts";
-import { extrairSessionIdDoJwt, recusa, responderJson } from "../_compartilhado/dispositivo_auth.ts";
+import { extrairSessionIdDoJwt, recusa, responderJson, TIMEOUT_AUTH_MS } from "../_compartilhado/dispositivo_auth.ts";
 
 export interface RevogarDispositivosDb {
   verificarSessaoOnline(usuarioId: string, sessionId: string | null): Promise<boolean>;
@@ -19,6 +19,8 @@ export interface RevogarDispositivosDeps {
   anonKey?: string;
   dbUrl?: string;
   db?: RevogarDispositivosDb;
+  /** Prazo da chamada a `/auth/v1/user`; padrão `TIMEOUT_AUTH_MS`. */
+  timeoutMs?: number;
 }
 
 function criarDbSql(dbUrl: string): RevogarDispositivosDb & { fechar(): Promise<void> } {
@@ -50,6 +52,7 @@ export async function tratarRevogarDispositivos(
   if (!accessToken) return recusa(401, "nao_autenticado");
 
   const fetchFn = deps.fetchFn ?? fetch;
+  const timeoutMs = deps.timeoutMs ?? TIMEOUT_AUTH_MS;
   const supabaseUrl = (deps.supabaseUrl ?? Deno.env.get("SUPABASE_URL") ?? "").replace(/\/$/, "");
   const anonKey = deps.anonKey ?? Deno.env.get("SUPABASE_ANON_KEY") ?? "";
   const dbUrl = deps.dbUrl ?? Deno.env.get("SUPABASE_DB_URL") ?? "";
@@ -68,6 +71,7 @@ export async function tratarRevogarDispositivos(
         "Authorization": `Bearer ${accessToken}`,
         "apikey": anonKey,
       },
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     return recusa(503, "indisponivel");
