@@ -254,6 +254,45 @@ Deno.test("recusa parâmetro 'ate' com data inválida com 422 campo_invalido", a
   assertEquals(json.details, "ate");
 });
 
+// Cartão aNZJBSqS (item 210): `Date.parse` aceita hora 24 ("T24:00:00Z" vira 00:00 do dia seguinte) e o contrato (RFC 3339 `date-time`
+// de `Instante`) não: a hora vai de 00 a 23. Sem a recusa, "de" ou "ate" com hora 24 deslocava o período em silêncio.
+Deno.test("recusa 'de' e 'ate' com hora 24 com 422 campo_invalido, em qualquer forma de fuso", async () => {
+  const comHora24 = [
+    "2026-09-30T24:00:00Z",
+    "2026-09-30T24:00:00.000Z",
+    "2026-09-30t24:00:00z",
+    "2026-09-30T24:00:00+00:00",
+    "2026-09-30T24:00:00-03:00",
+    "2026-09-30T24:30:00Z",
+  ];
+  for (const campo of ["de", "ate"] as const) {
+    for (const valor of comHora24) {
+      const e = criarEspiao();
+      const corpo = campo === "de"
+        ? { de: valor, ate: "2026-10-05T00:00:00Z", formato: "csv" }
+        : { de: "2026-09-01T00:00:00Z", ate: valor, formato: "csv" };
+      const res = await chamar(e, requisicao(corpo));
+      assertEquals(res.status, 422, `${campo}=${valor}`);
+      const json = await res.json();
+      assertEquals(json.code, "campo_invalido", `${campo}=${valor}`);
+      assertEquals(json.details, campo, `${campo}=${valor}`);
+      assertEquals(e.pedidos.length, 0, `${campo}=${valor}: não pode chegar ao banco`);
+    }
+  }
+});
+
+Deno.test("aceita 'de' e 'ate' com hora 00 e 23 (fronteiras da hora válida)", async () => {
+  for (const [de, ate] of [
+    ["2026-09-01T00:00:00Z", "2026-09-30T23:59:59Z"],
+    ["2026-09-01T00:00:00-03:00", "2026-09-30T23:59:59.999+00:00"],
+  ]) {
+    const e = criarEspiao();
+    const res = await chamar(e, requisicao({ de, ate, formato: "csv" }));
+    assert(res.status !== 422, `${de} .. ${ate}: devolveu ${res.status}`);
+    assertEquals(e.pedidos.length, 1, `${de} .. ${ate}`);
+  }
+});
+
 Deno.test("recusa período com 'de' posterior a 'ate' com 422 campo_invalido", async () => {
   const e = criarEspiao();
   const res = await chamar(

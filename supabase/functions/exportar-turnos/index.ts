@@ -453,7 +453,8 @@ export function criarSqlClient(deps?: HandlerDeps): SqlClient {
 
 // RFC 3339 / ISO-8601 com fuso (`Instante`, contrato: `format: date-time`): data, `T`, hora com segundos, fração opcional e `Z` ou deslocamento.
 // `Date.parse` sozinho aceita `Nov 1, 2026`, `2026-11-01` (sem hora, vira meia-noite UTC) e até `1`; o contrato manda `campo_invalido`.
-const INSTANTE_ISO_8601 = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
+// A hora vai de 00 a 23: `Date.parse` aceita `T24:00:00Z` e o transforma em 00:00 do dia seguinte, deslocando o período em silêncio.
+const INSTANTE_ISO_8601 = /^\d{4}-\d{2}-\d{2}[Tt]([01]\d|2[0-3]):\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
 
 function instanteValido(valor: unknown): valor is string {
   if (typeof valor !== "string" || !INSTANTE_ISO_8601.test(valor) || isNaN(Date.parse(valor))) return false;
