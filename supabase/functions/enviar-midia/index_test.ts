@@ -62,10 +62,26 @@ function deps(m: Mundo, extra: Partial<HandlerDeps> = {}): HandlerDeps {
   };
 }
 
-function pedido(opcoes: { metodo?: string; corpo?: Uint8Array; tipo?: string; midia?: string; token?: string; extra?: string; tamanho?: string } = {}) {
-  const url = `${BASE}/functions/v1/enviar-midia?midia_id=${opcoes.midia ?? MIDIA}&token=${opcoes.token ?? TOKEN}${opcoes.extra ?? ""}`;
+function pedido(
+  opcoes: {
+    metodo?: string;
+    corpo?: Uint8Array;
+    tipo?: string;
+    midia?: string;
+    /** Token da query (`token=`); `null` não manda o parâmetro. */
+    token?: string | null;
+    /** Token do cabeçalho `X-Upload-Token`; ausente não manda o cabeçalho. */
+    cabecalho?: string;
+    extra?: string;
+    tamanho?: string;
+  } = {},
+) {
+  const token = opcoes.token === undefined ? TOKEN : opcoes.token;
+  const query = `midia_id=${opcoes.midia ?? MIDIA}${token === null ? "" : `&token=${token}`}${opcoes.extra ?? ""}`;
+  const url = `${BASE}/functions/v1/enviar-midia?${query}`;
   const headers: Record<string, string> = { "Content-Type": opcoes.tipo ?? "image/jpeg" };
   if (opcoes.tamanho) headers["Content-Length"] = opcoes.tamanho;
+  if (opcoes.cabecalho !== undefined) headers["X-Upload-Token"] = opcoes.cabecalho;
   return new Request(url, {
     method: opcoes.metodo ?? "PUT",
     headers,
@@ -244,5 +260,184 @@ Deno.test("BE-01: enviar-midia reutiliza o cliente Postgres de módulo entre PUT
     assertEquals(criados, 2);
   } finally {
     await encerrarClientes();
+  }
+});
+
+// ── B-102, fase 2 (contrato 0.2.119): o token pode vir no cabeçalho X-Upload-Token ──────────────────
+
+const OUTRO_TOKEN = "b".repeat(64);
+
+/** Um consumidor que guarda cada token que o banco recebeu, para provar de onde o token saiu e se algo foi gasto. */
+function espiao(m: Mundo) {
+  const recebidos: string[] = [];
+  const base = consumidorUmaVez(m);
+  return {
+    recebidos,
+    consumirToken: (midiaId: string, token: string) => {
+      recebidos.push(token);
+      return base(midiaId, token);
+    },
+  };
+}
+
+Deno.test("enviar-midia: token só no cabeçalho X-Upload-Token (URL da v2, sem token) grava", async () => {
+  const m = mundo();
+  const e = espiao(m);
+  const r = await handler(pedido({ token: null, cabecalho: TOKEN }), deps(m, { consumirToken: e.consumirToken }));
+  assertEquals(r.status, 200);
+  assertEquals(e.recebidos, [TOKEN]);
+  assertEquals(m.gravados, 1);
+  assertEquals(m.consumidos, 1);
+});
+
+Deno.test("enviar-midia: token só na query (URL da v1) continua gravando", async () => {
+  const m = mundo();
+  const e = espiao(m);
+  const r = await handler(pedido({ token: TOKEN }), deps(m, { consumirToken: e.consumirToken }));
+  assertEquals(r.status, 200);
+  assertEquals(e.recebidos, [TOKEN]);
+  assertEquals(m.gravados, 1);
+});
+
+Deno.test("enviar-midia: cabeçalho e query iguais gravam, e o token é gasto uma vez só", async () => {
+  const m = mundo();
+  const e = espiao(m);
+  const r = await handler(pedido({ token: TOKEN, cabecalho: TOKEN }), deps(m, { consumirToken: e.consumirToken }));
+  assertEquals(r.status, 200);
+  assertEquals(e.recebidos, [TOKEN]);
+  assertEquals(m.consumidos, 1);
+});
+
+Deno.test("enviar-midia: cabeçalho e query diferentes são 400 token_divergente, sem tocar no banco nem no Storage", async () => {
+  const m = mundo();
+  const e = espiao(m);
+  const r = await handler(pedido({ token: OUTRO_TOKEN, cabecalho: TOKEN }), deps(m, { consumirToken: e.consumirToken }));
+  assertEquals(r.status, 400);
+  assertEquals(await r.json(), { ok: false, erro: "token_divergente" });
+  assertEquals(e.recebidos, []);
+  assertEquals(m.chamadas.length, 0);
+  assertEquals(m.consumidos, 0);
+});
+
+Deno.test("enviar-midia: divergente também quando só um dos dois está mal formado, e o token certo não é gasto", async () => {
+  for (const [token, cabecalho] of [["zzz", TOKEN], [TOKEN, "zzz"], [TOKEN, ""], ["", TOKEN], [TOKEN.toUpperCase(), TOKEN]] as const) {
+    const m = mundo();
+    const e = espiao(m);
+    const d = deps(m, { consumirToken: e.consumirToken });
+    const r = await handler(pedido({ token, cabecalho }), d);
+    assertEquals(r.status, 400, `${token.slice(0, 4)}/${cabecalho.slice(0, 4)}`);
+    assertEquals(e.recebidos, []);
+    // O mesmo token ainda serve num pedido correto depois da recusa.
+    assertEquals((await handler(pedido({ token: null, cabecalho: TOKEN }), d)).status, 200);
+  }
+});
+
+Deno.test("enviar-midia: sem token nem na query nem no cabeçalho é 401 e não toca no banco", async () => {
+  const m = mundo();
+  const e = espiao(m);
+  const r = await handler(pedido({ token: null }), deps(m, { consumirToken: e.consumirToken }));
+  assertEquals(r.status, 401);
+  assertEquals(await r.json(), { ok: false, erro: "token_invalido" });
+  assertEquals(e.recebidos, []);
+  assertEquals(m.chamadas.length, 0);
+});
+
+Deno.test("enviar-midia: cabeçalho fora do formato (sozinho) é 401 e não toca no banco", async () => {
+  for (const cabecalho of ["", "abc", "a".repeat(63), "a".repeat(65), "A".repeat(64), `${"a".repeat(63)}g`, `${TOKEN} ${TOKEN}`]) {
+    const m = mundo();
+    const e = espiao(m);
+    const r = await handler(pedido({ token: null, cabecalho }), deps(m, { consumirToken: e.consumirToken }));
+    assertEquals(r.status, 401, JSON.stringify(cabecalho));
+    assertEquals(e.recebidos, [], JSON.stringify(cabecalho));
+  }
+});
+
+Deno.test("enviar-midia: pelo cabeçalho, formato, tamanho e corpo ruim recusam sem gastar o token", async () => {
+  const m = mundo();
+  const e = espiao(m);
+  const d = deps(m, { consumirToken: e.consumirToken });
+  assertEquals((await handler(pedido({ token: null, cabecalho: TOKEN, tipo: "image/png" }), d)).status, 415);
+  assertEquals((await handler(pedido({ token: null, cabecalho: TOKEN, tamanho: String(LIMITE_BYTES + 1) }), d)).status, 413);
+  assertEquals((await handler(pedido({ token: null, cabecalho: TOKEN, corpo: new Uint8Array(LIMITE_BYTES + 1) }), d)).status, 413);
+  assertEquals((await handler(pedido({ token: null, cabecalho: TOKEN, corpo: new Uint8Array(0) }), d)).status, 400);
+  assertEquals((await handler(pedido({ token: null, cabecalho: TOKEN, corpo: new Uint8Array([1, 2, 3, 4]) }), d)).status, 415);
+  assertEquals(e.recebidos, [], "nenhuma das recusas chegou ao banco");
+  assertEquals(m.consumidos, 0);
+  // O mesmo token ainda funciona num PUT válido.
+  assertEquals((await handler(pedido({ token: null, cabecalho: TOKEN }), d)).status, 200);
+  assertEquals(m.consumidos, 1);
+});
+
+Deno.test("enviar-midia: dois PUT simultâneos com o mesmo X-Upload-Token: exatamente 1 grava e o outro recebe 401", async () => {
+  const m = mundo();
+  const d = deps(m);
+  const [a, b] = await Promise.all([
+    handler(pedido({ token: null, cabecalho: TOKEN }), d),
+    handler(pedido({ token: null, cabecalho: TOKEN }), d),
+  ]);
+  assertEquals([a.status, b.status].sort(), [200, 401]);
+  assertEquals(m.gravados, 1);
+  assertEquals(m.consumidos, 1);
+});
+
+Deno.test("enviar-midia: o token do cabeçalho de outra mídia ou errado é 401 (o banco decide)", async () => {
+  const m = mundo();
+  const d = deps(m);
+  assertEquals((await handler(pedido({ token: null, cabecalho: OUTRO_TOKEN }), d)).status, 401);
+  assertEquals((await handler(pedido({ token: null, cabecalho: TOKEN, midia: "81600000-0000-4000-8000-0000000000b2" }), d)).status, 401);
+  assertEquals(m.gravados, 0);
+});
+
+Deno.test("enviar-midia: nenhum log nem resposta traz o token do cabeçalho", async () => {
+  const m = mundo();
+  const respostas: string[] = [];
+  for (const p of [
+    pedido({ token: null, cabecalho: TOKEN }),
+    pedido({ token: null, cabecalho: OUTRO_TOKEN }),
+    pedido({ token: OUTRO_TOKEN, cabecalho: TOKEN }),
+    pedido({ token: null, cabecalho: TOKEN, tipo: "image/png" }),
+  ]) {
+    respostas.push(await (await handler(p, deps(m))).text());
+  }
+  const tudo = JSON.stringify(m.eventos) + respostas.join("");
+  assert(!tudo.includes(TOKEN), "o token não aparece em log nem em resposta");
+  assert(!tudo.includes(OUTRO_TOKEN), "o token divergente também não");
+});
+
+Deno.test("enviar-midia: midia_id inválido com token VÁLIDO é 401 e nem log nem resposta trazem o token", async () => {
+  const MIDIA_RUIM = "nao-e-um-uuid";
+  for (const p of [
+    pedido({ midia: MIDIA_RUIM, token: TOKEN }),
+    pedido({ midia: MIDIA_RUIM, token: null, cabecalho: TOKEN }),
+    pedido({ midia: MIDIA_RUIM, token: TOKEN, cabecalho: TOKEN }),
+    // Formato de token certo, mas o banco não o conhece (ramo posterior, depois de consultar): também não loga o token.
+    pedido({ token: null, cabecalho: OUTRO_TOKEN }),
+  ]) {
+    const m = mundo();
+    const e = espiao(m);
+    const r = await handler(p, deps(m, { consumirToken: e.consumirToken }));
+    const texto = await r.text();
+    assertEquals(r.status, 401);
+    const tudo = JSON.stringify(m.eventos) + texto;
+    assert(!tudo.includes(TOKEN), "o token válido não aparece em log nem em resposta");
+    assert(!tudo.includes(OUTRO_TOKEN), "o token desconhecido do banco também não");
+    assert(m.eventos.length > 0, "a recusa é registrada (só o motivo), senão o teste não mediria nada");
+  }
+});
+
+Deno.test("enviar-midia: token malformado (query ou cabeçalho) é 401 e nem log nem resposta o repetem", async () => {
+  const malformados = ["c".repeat(63), "d".repeat(65), "E".repeat(64), `${"f".repeat(63)}g`, "segredo-que-nao-pode-vazar"];
+  for (const ruim of malformados) {
+    for (const p of [pedido({ token: ruim }), pedido({ token: null, cabecalho: ruim })]) {
+      const m = mundo();
+      const e = espiao(m);
+      const r = await handler(p, deps(m, { consumirToken: e.consumirToken }));
+      const texto = await r.text();
+      assertEquals(r.status, 401, ruim);
+      assertEquals(e.recebidos, [], "token malformado não chega ao banco");
+      const tudo = JSON.stringify(m.eventos) + texto;
+      assert(!tudo.includes(ruim), `o token malformado ${ruim.slice(0, 6)}… não aparece em log nem em resposta`);
+      assert(m.eventos.length > 0, "a recusa é registrada (só o motivo)");
+    }
   }
 });

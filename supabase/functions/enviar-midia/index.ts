@@ -6,6 +6,13 @@
 // guarda só o SHA-256). O app faz `PUT` com o JPEG, `Content-Type: image/jpeg`, sem o token
 // da sessão; 2xx quer dizer gravado. Qualquer outra resposta é falha e não grava nada.
 //
+// O token pode vir de dois lugares (B-102, fase 2, contrato 0.2.119):
+//   - cabeçalho `X-Upload-Token`: o da `solicitar_upload_midia_v2`, que mantém o token fora da URL
+//     (a URL inteira, com a query, vai para o log do gateway; um cabeçalho personalizado, não);
+//   - query `token=`: o da v1, enquanto houver app antigo. Sai quando a versão mínima do app usar a v2.
+// Com os dois presentes e diferentes, o pedido é recusado (400 `token_divergente`) antes de consumir
+// qualquer token: não há como escolher qual dos dois a pessoa quis mandar.
+//
 // A ordem importa:
 //   1. Método, formato do token, Content-Type, tamanho (cabeçalho e leitura limitada a 5 MB) e
 //      assinatura JPEG. Corpo ruim não gasta o token.
@@ -142,7 +149,15 @@ export async function handler(req: Request, deps?: HandlerDeps): Promise<Respons
 
   const url = new URL(req.url);
   const midiaId = (url.searchParams.get("midia_id") ?? "").toLowerCase();
-  const token = url.searchParams.get("token") ?? "";
+  const daQuery = url.searchParams.get("token");
+  const doCabecalho = req.headers.get("x-upload-token");
+  // Presente é "diferente de null": um cabeçalho ou parâmetro vazio conta como mandado (e inválido).
+  if (daQuery !== null && doCabecalho !== null && daQuery !== doCabecalho) {
+    await req.body?.cancel().catch(() => {});
+    registrar({ evento: "enviar_midia_recusado", motivo: "token_divergente" });
+    return resposta(400, "token_divergente");
+  }
+  const token = doCabecalho ?? daQuery ?? "";
   if (!UUID.test(midiaId) || !TOKEN.test(token)) {
     await req.body?.cancel().catch(() => {});
     registrar({ evento: "enviar_midia_recusado", motivo: "token_invalido" });
