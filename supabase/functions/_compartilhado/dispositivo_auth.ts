@@ -25,6 +25,12 @@ export interface SessaoGoTrue {
   };
 }
 
+/**
+ * Prazo do fetch de `/auth/v1/user` nas funções de sessão (`definir-senha`, `revogar-dispositivos`): o mesmo de `excluir-conta`
+ * (`TIMEOUT_PADRAO_MS`). Sem ele, um Auth que aceita a conexão e não responde prenderia a função até o limite da plataforma.
+ */
+export const TIMEOUT_AUTH_MS = 10_000;
+
 export const PLATAFORMAS_VALIDAS = new Set<PlataformaAuth>(["ios", "android", "web"]);
 
 export function ehPlataformaValida(valor: unknown): valor is PlataformaAuth {

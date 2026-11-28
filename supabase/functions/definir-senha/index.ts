@@ -12,6 +12,7 @@ import {
   recusa,
   renovarSessaoGoTrue,
   responderJson,
+  TIMEOUT_AUTH_MS,
 } from "../_compartilhado/dispositivo_auth.ts";
 
 export interface DefinirSenhaDb {
@@ -30,6 +31,8 @@ export interface DefinirSenhaDeps {
   dbUrl?: string;
   pepper?: string;
   db?: DefinirSenhaDb;
+  /** Prazo de cada chamada a `/auth/v1/user`; padrão `TIMEOUT_AUTH_MS`. */
+  timeoutMs?: number;
 }
 
 function criarDbSql(dbUrl: string): DefinirSenhaDb & { fechar(): Promise<void> } {
@@ -96,6 +99,7 @@ export async function tratarDefinirSenha(req: Request, deps: DefinirSenhaDeps = 
     : null;
 
   const fetchFn = deps.fetchFn ?? fetch;
+  const timeoutMs = deps.timeoutMs ?? TIMEOUT_AUTH_MS;
   const supabaseUrl = (deps.supabaseUrl ?? Deno.env.get("SUPABASE_URL") ?? "").replace(/\/$/, "");
   const anonKey = deps.anonKey ?? Deno.env.get("SUPABASE_ANON_KEY") ?? "";
   const pepper = deps.pepper ?? Deno.env.get("DISPOSITIVO_TOKEN_PEPPER") ?? "";
@@ -119,6 +123,7 @@ export async function tratarDefinirSenha(req: Request, deps: DefinirSenhaDeps = 
         "Authorization": `Bearer ${accessToken}`,
         "apikey": anonKey,
       },
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch {
     return recusa(503, "indisponivel");
@@ -148,6 +153,7 @@ export async function tratarDefinirSenha(req: Request, deps: DefinirSenhaDeps = 
         "apikey": anonKey,
       },
       body: JSON.stringify({ password: novaSenha }),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (resPut.status === 429) return recusa(429, "limite_excedido");
