@@ -33,6 +33,7 @@ select is(
     'versao_recomendada', '0.1.0',
     'url_da_loja',        'https://play.google.com/store/apps/details?id=br.com.frila.app',
     'mensagem',           null,
+    'reenviar_otp_em_segundos', 60,
     'recursos',           jsonb_build_object(
       'foto_de_perfil', false,
       'chamada_direta', false,
